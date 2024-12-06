@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Modal } from "@/components/ui/modal";
 import Login from "@/app/(auth-pages)/sign-in/page"; // Adjust the path as needed
-import { getUser } from "@/utils/auth"; // Add appropriate Supabase user-fetching logic
+import { getUser, signOut } from "@/utils/auth"; // Path to the new auth.ts file
+
 
 export default function LandingPage() {
     const [isLoginModalOpen, setLoginModalOpen] = useState(false);
