@@ -1,77 +1,71 @@
 'use client';
 
 import { signInAction } from "@/app/actions";
-import { FormMessage, type Message } from "@/components/form-message";
-import { SubmitButton } from "@/components/submit-button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AuthForm } from "@/components/forms/auth-form";
+import { FormField } from "@/components/forms/form-field";
+import { FormMessage } from "@/components/form-message";
 import Link from "next/link";
-import { useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { type ActionResponse, type ActionSuccessResponse } from "@/types";
-import { formatMessage } from "@/utils/message";
+import { useAuthForm } from "@/utils/hooks/useAuthForm";
+import { signInSchema } from "@/utils/validation/auth";
 
 export default function Login() {
-    const [message, setMessage] = useState<Message | null>(null);
-    const [formError, setFormError] = useState<string | null>(null);
-    const searchParams = useSearchParams();
+    const {
+        message,
+        formError,
+        isSubmitting,
+        handleFormSubmit,
+        formattedMessage
+    } = useAuthForm();
 
-    useEffect(() => {
-        if (searchParams) {
-            const successMessage = searchParams.get('success');
-            const errorMessage = searchParams.get('error');
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const formData = new FormData(e.currentTarget);
+        
+        // Validate form data
+        const result = signInSchema.safeParse({
+            email: formData.get("email"),
+            password: formData.get("password"),
+        });
 
-            if (successMessage) {
-                setMessage({ success: successMessage });
-            } else if (errorMessage) {
-                setMessage({ error: errorMessage });
-            }
+        if (!result.success) {
+            const error = result.error.issues[0];
+            return { success: false, error: error.message };
         }
-    }, [searchParams]);
 
-    async function handleSubmit(formData: FormData) {
-        setMessage(null);
-        setFormError(null);
-
-        try {
-            const res = await signInAction(formData);
-            const data = await res.json() as ActionResponse;
-
-            if (data.kind === "success") {
-                setMessage({ success: data.message });
-            } else {
-                setFormError(data.error);
-            }
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error
-                ? error.message
-                : "An unexpected error occurred while processing your request.";
-
-            setFormError(errorMessage);
-        }
-    }
+        await handleFormSubmit(signInAction, formData);
+    };
 
     return (
-        <form
-            onSubmit={async (e) => {
-                e.preventDefault();
-                const formData = new FormData(e.currentTarget);
-                await handleSubmit(formData);
-            }}
-            className="flex-1 flex flex-col min-w-64"
+        <AuthForm
+            title="Sign in"
+            subtitle={
+                <p className="text-sm text-foreground">
+                    Don't have an account?{" "}
+                    <Link className="text-foreground font-medium underline" href="/sign-up">
+                        Sign up
+                    </Link>
+                </p>
+            }
+            onSubmit={handleSubmit}
+            submitText="Sign in"
+            isSubmitting={isSubmitting}
         >
-            <h1 className="text-2xl font-medium">Sign in</h1>
-            <p className="text-sm text-foreground">
-                Don't have an account?{" "}
-                <Link className="text-foreground font-medium underline" href="/sign-up">
-                    Sign up
-                </Link>
-            </p>
-            <div className="flex flex-col gap-2 [&>input]:mb-3 mt-8">
-                <Label htmlFor="email">Email</Label>
-                <Input name="email" placeholder="you@example.com" required />
+            <FormField
+                label="Email"
+                name="email"
+                type="email"
+                placeholder="you@example.com"
+                required
+            />
+            <div className="space-y-2">
                 <div className="flex justify-between items-center">
-                    <Label htmlFor="password">Password</Label>
+                    <FormField
+                        label="Password"
+                        name="password"
+                        type="password"
+                        placeholder="Your password"
+                        required
+                    />
                     <Link
                         className="text-xs text-foreground underline"
                         href="/forgot-password"
@@ -79,18 +73,9 @@ export default function Login() {
                         Forgot Password?
                     </Link>
                 </div>
-                <Input
-                    type="password"
-                    name="password"
-                    placeholder="Your password"
-                    required
-                />
-                <SubmitButton>
-                    Sign in
-                </SubmitButton>
-
-                <FormMessage message={formatMessage(message, formError)} />
             </div>
-        </form>
+
+            <FormMessage message={formattedMessage} />
+        </AuthForm>
     );
 }

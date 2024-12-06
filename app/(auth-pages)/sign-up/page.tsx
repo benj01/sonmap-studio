@@ -1,95 +1,85 @@
 'use client';
 
 import { signUpAction } from "@/app/actions";
-import { FormMessage, type Message } from "@/components/form-message";
-import { SubmitButton } from "@/components/submit-button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AuthForm } from "@/components/forms/auth-form";
+import { FormField } from "@/components/forms/form-field";
+import { FormMessage } from "@/components/form-message";
 import Link from "next/link";
+import { useAuthForm } from "@/utils/hooks/useAuthForm";
+import { signUpSchema } from "@/utils/validation/auth";
 import { SmtpMessage } from "../smtp-message";
-import { useState, useEffect } from "react";
-import { useSearchParams } from 'next/navigation';
-import { type ActionResponse } from "@/types";
-import { formatMessage } from "@/utils/message";
 
 export default function Signup() {
-    const [message, setMessage] = useState<Message | null>(null);
-    const [formError, setFormError] = useState<string | null>(null);
-    const searchParams = useSearchParams();
+    const {
+        message,
+        formError,
+        isSubmitting,
+        handleFormSubmit,
+        formattedMessage
+    } = useAuthForm();
 
-    useEffect(() => {
-        if (searchParams) {
-            const successMessage = searchParams.get('success');
-            const errorMessage = searchParams.get('error');
-            const messageParam = searchParams.get('message');
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const formData = new FormData(e.currentTarget);
+        
+        // Validate form data
+        const result = signUpSchema.safeParse({
+            email: formData.get("email"),
+            password: formData.get("password"),
+            confirmPassword: formData.get("confirmPassword"),
+        });
 
-            if (successMessage) {
-                setMessage({ success: successMessage });
-            } else if (errorMessage) {
-                setMessage({ error: errorMessage });
-            } else if (messageParam) {
-                setMessage({ message: messageParam });
-            }
+        if (!result.success) {
+            const error = result.error.issues[0];
+            return { success: false, error: error.message };
         }
-    }, [searchParams]);
 
-    async function handleSubmit(formData: FormData) {
-        setMessage(null);
-        setFormError(null);
-
-        try {
-            const res = await signUpAction(formData);
-            const data = await res.json() as ActionResponse;
-
-            if (data.kind === "success") {
-                setMessage({ success: data.message });
-            } else {
-                setFormError(data.error);
-            }
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error
-                ? error.message
-                : "An unexpected error occurred while processing your request.";
-
-            setFormError(errorMessage);
-        }
-    }
+        await handleFormSubmit(signUpAction, formData);
+    };
 
     return (
         <>
-            <form
-                onSubmit={async (e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    await handleSubmit(formData);
-                }}
-                className="flex flex-col min-w-64 max-w-64 mx-auto"
+            <AuthForm
+                title="Sign up"
+                subtitle={
+                    <p className="text-sm text-foreground">
+                        Already have an account?{" "}
+                        <Link className="text-primary font-medium underline" href="/sign-in">
+                            Sign in
+                        </Link>
+                    </p>
+                }
+                onSubmit={handleSubmit}
+                submitText="Sign up"
+                isSubmitting={isSubmitting}
+                className="mx-auto"
             >
-                <h1 className="text-2xl font-medium">Sign up</h1>
-                <p className="text-sm text text-foreground">
-                    Already have an account?{" "}
-                    <Link className="text-primary font-medium underline" href="/sign-in">
-                        Sign in
-                    </Link>
-                </p>
-                <div className="flex flex-col gap-2 [&>input]:mb-3 mt-8">
-                    <Label htmlFor="email">Email</Label>
-                    <Input name="email" placeholder="you@example.com" required />
-                    <Label htmlFor="password">Password</Label>
-                    <Input
-                        type="password"
-                        name="password"
-                        placeholder="Your password"
-                        minLength={6}
-                        required
-                    />
-                    <SubmitButton>
-                        Sign up
-                    </SubmitButton>
+                <FormField
+                    label="Email"
+                    name="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    required
+                />
+                <FormField
+                    label="Password"
+                    name="password"
+                    type="password"
+                    placeholder="Your password"
+                    minLength={6}
+                    required
+                />
+                <FormField
+                    label="Confirm Password"
+                    name="confirmPassword"
+                    type="password"
+                    placeholder="Confirm your password"
+                    minLength={6}
+                    required
+                />
 
-                    <FormMessage message={formatMessage(message, formError)} />
-                </div>
-            </form>
+                <FormMessage message={formattedMessage} />
+            </AuthForm>
             <SmtpMessage />
         </>
     );

@@ -1,87 +1,67 @@
 'use client';
 
 import { forgotPasswordAction } from "@/app/actions";
-import { FormMessage, type Message } from "@/components/form-message";
-import { SubmitButton } from "@/components/submit-button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { AuthForm } from "@/components/forms/auth-form";
+import { FormField } from "@/components/forms/form-field";
+import { FormMessage } from "@/components/form-message";
 import Link from "next/link";
+import { useAuthForm } from "@/utils/hooks/useAuthForm";
+import { forgotPasswordSchema } from "@/utils/validation/auth";
 import { SmtpMessage } from "../smtp-message";
-import { useState, useEffect } from "react";
-import { useSearchParams } from 'next/navigation';
-import { type ActionResponse } from "@/types";
-import { formatMessage } from "@/utils/message";
 
 export default function ForgotPassword() {
-    const searchParams = useSearchParams();
-    const [message, setMessage] = useState<Message | null>(null);
-    const [formError, setFormError] = useState<string | null>(null);
+    const {
+        message,
+        formError,
+        isSubmitting,
+        handleFormSubmit,
+        formattedMessage
+    } = useAuthForm();
 
-    useEffect(() => {
-        if (searchParams) {
-            const successMessage = searchParams.get('success');
-            const errorMessage = searchParams.get('error');
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+        e.preventDefault();
+        const formData = new FormData(e.currentTarget);
+        
+        // Validate form data
+        const result = forgotPasswordSchema.safeParse({
+            email: formData.get("email"),
+        });
 
-            if (successMessage) {
-                setMessage({ success: successMessage });
-            } else if (errorMessage) {
-                setMessage({ error: errorMessage });
-            }
+        if (!result.success) {
+            const error = result.error.issues[0];
+            return { success: false, error: error.message };
         }
-    }, [searchParams]);
 
-    async function handleSubmit(formData: FormData) {
-        setMessage(null);
-        setFormError(null);
-
-        try {
-            const res = await forgotPasswordAction(formData);
-            const data = await res.json() as ActionResponse;
-
-            if (data.kind === "success") {
-                setMessage({ success: data.message });
-            } else {
-                setFormError(data.error);
-            }
-        } catch (error: unknown) {
-            const errorMessage = error instanceof Error
-                ? error.message
-                : "An unexpected error occurred while processing your request.";
-
-            setFormError(errorMessage);
-        }
-    }
+        await handleFormSubmit(forgotPasswordAction, formData);
+    };
 
     return (
         <>
-            <form
-                onSubmit={async (e) => {
-                    e.preventDefault();
-                    const formData = new FormData(e.currentTarget);
-                    await handleSubmit(formData);
-                }}
-                className="flex-1 flex flex-col w-full gap-2 text-foreground [&>input]:mb-6 min-w-64 max-w-64 mx-auto"
-            >
-                <div>
-                    <h1 className="text-2xl font-medium">Reset Password</h1>
+            <AuthForm
+                title="Reset Password"
+                subtitle={
                     <p className="text-sm text-secondary-foreground">
                         Already have an account?{" "}
                         <Link className="text-primary underline" href="/sign-in">
                             Sign in
                         </Link>
                     </p>
-                </div>
-                <div className="flex flex-col gap-2 [&>input]:mb-3 mt-8">
-                    <Label htmlFor="email">Email</Label>
-                    <Input name="email" placeholder="you@example.com" required />
-                    
-                    <SubmitButton>
-                        Reset Password
-                    </SubmitButton>
+                }
+                onSubmit={handleSubmit}
+                submitText="Reset Password"
+                isSubmitting={isSubmitting}
+                className="mx-auto"
+            >
+                <FormField
+                    label="Email"
+                    name="email"
+                    type="email"
+                    placeholder="you@example.com"
+                    required
+                />
 
-                    <FormMessage message={formatMessage(message, formError)} />
-                </div>
-            </form>
+                <FormMessage message={formattedMessage} />
+            </AuthForm>
             <SmtpMessage />
         </>
     );
