@@ -10,6 +10,7 @@ import { SmtpMessage } from "../smtp-message";
 import { useState, useEffect } from "react";
 import { useSearchParams } from 'next/navigation';
 import { type ActionResponse } from "@/types";
+import { formatMessage } from "@/utils/message";
 
 export default function Signup() {
     const [message, setMessage] = useState<Message | null>(null);
@@ -86,17 +87,7 @@ export default function Signup() {
                         Sign up
                     </SubmitButton>
 
-                    <FormMessage 
-                        message={
-                            message ? { 
-                                success: message?.success || 
-                                        message.error || 
-                                        message.message || "" 
-                            } : 
-                            formError ? { error: formError } : 
-                            { message: "" }
-                        }
-                    />
+                    <FormMessage message={formatMessage(message, formError)} />
                 </div>
             </form>
             <SmtpMessage />

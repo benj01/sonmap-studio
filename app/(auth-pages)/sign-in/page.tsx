@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { type ActionResponse, type ActionSuccessResponse } from "@/types";
+import { formatMessage } from "@/utils/message";
 
 export default function Login() {
     const [message, setMessage] = useState<Message | null>(null);
@@ -88,17 +89,7 @@ export default function Login() {
                     Sign in
                 </SubmitButton>
 
-                <FormMessage 
-                    message={
-                        message ? { 
-                            success: message?.success || 
-                                    message.error || 
-                                    message.message || "" 
-                        } : 
-                        formError ? { error: formError } : 
-                        { message: "" }
-                    }
-                />
+                <FormMessage message={formatMessage(message, formError)} />
             </div>
         </form>
     );

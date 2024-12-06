@@ -1,21 +1,13 @@
 "use client";
 
 import { resetPasswordAction } from "@/app/actions";
-import { FormMessage } from "@/components/form-message";
+import { FormMessage, type Message } from "@/components/form-message";
 import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-
-// Define types for messages
-type Message = {
-  message: string;
-} | {
-  success: string;
-} | {
-  error: string;
-};
+import { formatMessage } from "@/utils/message";
 
 // Import ActionResponse type from actions
 type ActionResponse<T = unknown> = {
@@ -91,7 +83,7 @@ export default function ResetPassword() {
         {isSubmitting ? "Resetting password..." : "Reset password"}
       </SubmitButton>
       
-      {message && <FormMessage message={message} />}
+      <FormMessage message={formatMessage(message, formError)} />
       
       {/* Screen reader announcement */}
       {formError && (
