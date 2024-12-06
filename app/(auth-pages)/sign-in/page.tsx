@@ -15,13 +15,13 @@ export default function Login() {
         isSubmitting,
         handleFormSubmit,
         formattedMessage,
-        setFormError
+        setFormError,
     } = useAuthForm();
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         const formData = new FormData(e.currentTarget);
-        
+
         // Validate form data
         const result = signInSchema.safeParse({
             email: formData.get("email"),
@@ -29,12 +29,15 @@ export default function Login() {
         });
 
         if (!result.success) {
-            const error = result.error.issues[0];
-            setFormError(error.message);
+            setFormError(result.error.issues[0].message);
             return;
         }
 
-        await handleFormSubmit(signInAction, formData);
+        const response = await handleFormSubmit(signInAction, formData);
+        if (response.success) {
+            e.currentTarget.reset(); // Clear form fields
+            window.location.href = "/"; // Redirect to landing page
+        }
     };
 
     return (
@@ -43,13 +46,16 @@ export default function Login() {
             subtitle={
                 <p className="text-sm text-foreground">
                     Don't have an account?{" "}
-                    <Link className="text-foreground font-medium underline" href="/sign-up">
+                    <Link
+                        className="text-foreground font-medium underline"
+                        href="/sign-up"
+                    >
                         Sign up
                     </Link>
                 </p>
             }
             onSubmit={handleSubmit}
-            submitText="Sign in"
+            submitText={isSubmitting ? "Signing in..." : "Sign in"}
             isSubmitting={isSubmitting}
         >
             <FormField
