@@ -6,6 +6,7 @@ import { hasEnvVars } from "@/utils/supabase/check-env-vars";
 import { GeistSans } from "geist/font/sans";
 import { ThemeProvider } from "next-themes";
 import Link from "next/link";
+import { Suspense, type ReactNode } from 'react';
 import "./globals.css";
 
 const defaultUrl = process.env.VERCEL_URL
@@ -21,7 +22,7 @@ export const metadata = {
 export default function RootLayout({
   children,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <html lang="en" className={GeistSans.className} suppressHydrationWarning>
@@ -46,7 +47,9 @@ export default function RootLayout({
                 </div>
               </nav>
               <div className="flex flex-col gap-20 max-w-5xl p-5">
-                {children}
+                <Suspense fallback={<div>Loading...</div>}>
+                  {children}
+                </Suspense>
               </div>
 
               <footer className="w-full flex items-center justify-center border-t mx-auto text-center text-xs gap-8 py-16">
