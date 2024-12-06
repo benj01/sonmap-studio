@@ -15,7 +15,8 @@ export default function Signup() {
         formError,
         isSubmitting,
         handleFormSubmit,
-        formattedMessage
+        formattedMessage,
+        setFormError
     } = useAuthForm();
 
     const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -31,7 +32,8 @@ export default function Signup() {
 
         if (!result.success) {
             const error = result.error.issues[0];
-            return { success: false, error: error.message };
+            setFormError(error.message);
+            return;
         }
 
         await handleFormSubmit(signUpAction, formData);
