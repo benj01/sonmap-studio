@@ -9,7 +9,7 @@ import {
     CardDescription, 
     CardHeader, 
     CardTitle 
-} from "@/components/ui/new-card"
+} from "@/components/ui/card"
 import { User } from '@supabase/supabase-js'
 import { Loader2 } from "lucide-react"
 
