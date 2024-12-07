@@ -33,6 +33,9 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const handleLoginModalClose = () => {
+    // implement the logic to close the login modal
+  }
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -60,8 +63,7 @@ export function LoginForm() {
       }
 
       setUser(data.user)
-      router.push('/dashboard')
-      router.refresh()
+      handleLoginModalClose()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to sign in')
       form.setFocus('email') // Focus back to email on error
