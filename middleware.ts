@@ -1,24 +1,85 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { createClient } from '@/utils/supabase/middleware'
+import { createServerClient } from "@supabase/ssr";
 
 export async function middleware(request: NextRequest) {
-  const { supabase, response } = createClient(request)
+  try {
+    // Create an unmodified response
+    let response = NextResponse.next({
+      request: {
+        headers: request.headers,
+      },
+    });
 
-  // Refresh session if expired
-  const { data: { session } } = await supabase.auth.getSession()
+    // Create supabase server client
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          get(name: string) {
+            return request.cookies.get(name)?.value
+          },
+          set(name: string, value: string, options: any) {
+            request.cookies.set({
+              name,
+              value,
+              ...options,
+            })
+            response = NextResponse.next({
+              request: {
+                headers: request.headers,
+              },
+            })
+            response.cookies.set({
+              name,
+              value,
+              ...options,
+            })
+          },
+          remove(name: string, options: any) {
+            request.cookies.set({
+              name,
+              value: '',
+              ...options,
+            })
+            response = NextResponse.next({
+              request: {
+                headers: request.headers,
+              },
+            })
+            response.cookies.set({
+              name,
+              value: '',
+              ...options,
+            })
+          },
+        },
+      }
+    )
 
-  // Protected routes that require authentication
-  const protectedPaths = ['/settings', '/profile']
-  const path = request.nextUrl.pathname
+    // Refresh session if expired
+    const { data: { session } } = await supabase.auth.getSession()
 
-  if (protectedPaths.includes(path)) {
-    if (!session) {
-      // Redirect to login if accessing protected route without session
-      return NextResponse.redirect(new URL('/sign-in', request.url))
+    // Protected routes that require authentication
+    const protectedPaths = ['/settings', '/profile']
+    const path = request.nextUrl.pathname
+
+    if (protectedPaths.includes(path)) {
+      if (!session) {
+        // Redirect to login if accessing protected route without session
+        return NextResponse.redirect(new URL('/sign-in', request.url))
+      }
     }
-  }
 
-  return response
+    return response
+  } catch (e) {
+    // If there's an error, just proceed to the page
+    return NextResponse.next({
+      request: {
+        headers: request.headers,
+      },
+    })
+  }
 }
 
 export const config = {
