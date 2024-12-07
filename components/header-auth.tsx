@@ -8,7 +8,7 @@ import { useAuthStore } from "@/lib/stores";
 import { useEffect } from 'react';
 
 export default function HeaderAuth() {
-  const { user, loading, checkUser } = useAuthStore();
+  const { user, loading, error, checkUser, resetError } = useAuthStore();
 
   useEffect(() => {
     checkUser();
@@ -20,6 +20,24 @@ export default function HeaderAuth() {
         <Badge variant="default" className="font-normal pointer-events-none">
           Please update .env.local file with anon key and url
         </Badge>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center gap-4">
+        <p className="text-destructive text-sm">{error.message}</p>
+        <Button 
+          onClick={() => {
+            resetError();
+            checkUser();
+          }}
+          variant="outline"
+          size="sm"
+        >
+          Try Again
+        </Button>
       </div>
     );
   }
