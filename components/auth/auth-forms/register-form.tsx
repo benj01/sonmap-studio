@@ -21,6 +21,7 @@ import * as z from 'zod'
 import { Eye, EyeOff, Loader2, Check, X } from 'lucide-react'
 import type { SignUpCredentials } from '@/types/api'
 import type { FieldValues, Path } from 'react-hook-form'
+import type { User } from '@supabase/supabase-js'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -102,7 +103,7 @@ export function RegisterForm() {
         throw new Error(data.error || 'Failed to create account')
       }
 
-      setUser(data.user)
+      setUser(data.user as User)
       router.push('/dashboard')
       router.refresh()
     } catch (err) {

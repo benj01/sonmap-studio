@@ -3,16 +3,26 @@
 
 import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/modal";
-import { Dropdown } from "@/components/ui/dropdown";
-import Login from "@/app/(auth-pages)/sign-in/page";
+import { 
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem
+} from "@/components/ui/dropdown-menu";
+import Login from "@/app/auth-pages/sign-in/page";
 import { getUser, signOut } from "@/utils/auth";
+import type { User } from '@supabase/supabase-js'
 
 export default function LandingPage() {
-    // Fetch the user on load
+    const [user, setUser] = useState<User | null>(null);
+    const [isLoginModalOpen, setLoginModalOpen] = useState(false);
+
     useEffect(() => {
         const fetchUser = async () => {
             const fetchedUser = await getUser();
-            setUser(fetchedUser);
+            if (fetchedUser) {
+                setUser(fetchedUser as User); // Type assertion since we know the shape matches
+            }
         };
         fetchUser();
     }, []);
@@ -22,7 +32,7 @@ export default function LandingPage() {
 
     const handleSignOut = async () => {
         await signOut();
-        setUser(null); // Reset user state after signing out
+        setUser(null);
     };
 
     return (
@@ -32,16 +42,18 @@ export default function LandingPage() {
 
             {user ? (
                 <div className="mt-8">
-                    <Dropdown
-                        button={<span className="text-xl font-bold uppercase">{user.email[0]}</span>} // Show user initial
-                    >
-                        <button
-                            onClick={handleSignOut}
-                            className="block w-full text-left px-4 py-2 text-sm hover:bg-gray-100"
-                        >
-                            Sign Out
-                        </button>
-                    </Dropdown>
+                    <DropdownMenu>
+                        <DropdownMenuTrigger className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                            <span className="text-xl font-bold uppercase">
+                                {user.email?.[0] ?? 'U'}
+                            </span>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={handleSignOut}>
+                                Sign Out
+                            </DropdownMenuItem>
+                        </DropdownMenuContent>
+                    </DropdownMenu>
                 </div>
             ) : (
                 <div className="mt-8">

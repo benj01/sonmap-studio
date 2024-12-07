@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/stores/auth'
+import type { User } from '@supabase/supabase-js'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
@@ -19,7 +20,7 @@ export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) 
       if (!user) {
         sessionStorage.setItem('redirectTo', pathname)
         router.push('/sign-in')
-      } else if (allowedRoles && user.role && !allowedRoles.includes(user.role)) {
+      } else if (allowedRoles && user.app_metadata?.role && !allowedRoles.includes(user.app_metadata.role)) {
         router.push('/unauthorized')
       }
     }

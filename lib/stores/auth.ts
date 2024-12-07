@@ -1,10 +1,7 @@
 import { create } from 'zustand'
+import type { User as SupabaseUser } from '@supabase/supabase-js'
 
-export interface User {
-  id: string
-  email: string
-  role?: string
-}
+export type User = SupabaseUser
 
 export interface AuthState {
   user: User | null

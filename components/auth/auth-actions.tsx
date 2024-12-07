@@ -1,10 +1,10 @@
 'use client'
 
 import { useAuthStore } from '@/lib/stores'
-import { useAuth } from '@/lib/stores/auth'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
+import type { User } from '@supabase/supabase-js'
 
 export function AuthActions() {
   const { user, signOut, isLoading } = useAuthStore()
