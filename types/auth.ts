@@ -1,4 +1,4 @@
-import { User } from '@supabase/supabase-js';
+import { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type Message = {
   success?: string;
@@ -7,7 +7,7 @@ export type Message = {
 };
 
 export type AuthState = {
-  user: User | null;
+  user: SupabaseUser | null;
   loading: boolean;
   error: string | null;
 };
@@ -24,10 +24,11 @@ export type AuthFormData = {
   confirmPassword?: string;
 };
 
-export interface User {
-  id: string;
-  email: string;
-  // ... other user properties
+export interface CustomUser extends SupabaseUser {
+  user_metadata: {
+    avatar_url?: string;
+    [key: string]: any;
+  };
 }
 
 export interface SignInCredentials {

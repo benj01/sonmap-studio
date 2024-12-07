@@ -1,11 +1,12 @@
 'use client'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import type { User } from '@/types/auth'
+import type { CustomUser } from '@/types/auth'
 import { getUserInitials } from '@/lib/utils'
+import { cn } from "@/lib/utils"
 
 interface UserAvatarProps {
-  user: Pick<User, 'email' | 'user_metadata'>
+  user: Pick<CustomUser, 'email' | 'user_metadata'>
   className?: string
   fallbackClassName?: string
   size?: 'sm' | 'md' | 'lg'
