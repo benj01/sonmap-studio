@@ -1,35 +1,27 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
-import type { UIState } from '@/types/store'
 
-export const useUIStore = create<UIState>()(
-  persist(
-    (set) => ({
-      theme: 'system',
-      modals: {},
-      loadingStates: {},
+type Theme = 'light' | 'dark' | 'system'
+type ModalId = 'login' | 'register'
 
-      setTheme: (theme) => set({ theme }),
+interface UIState {
+  theme: Theme
+  setTheme: (theme: Theme) => void
+  modals: Record<ModalId, boolean>
+  toggleModal: (modalId: ModalId) => void
+}
 
-      toggleModal: (modalId) => 
-        set((state) => ({
-          modals: {
-            ...state.modals,
-            [modalId]: !state.modals[modalId]
-          }
-        })),
-
-      setLoading: (key, isLoading) =>
-        set((state) => ({
-          loadingStates: {
-            ...state.loadingStates,
-            [key]: isLoading
-          }
-        }))
-    }),
-    {
-      name: 'ui-storage',
-      partialize: (state) => ({ theme: state.theme })
-    }
-  )
-)
+export const useUIStore = create<UIState>((set) => ({
+  theme: 'system',
+  setTheme: (theme) => set({ theme }),
+  modals: {
+    login: false,
+    register: false,
+  },
+  toggleModal: (modalId) => 
+    set((state) => ({
+      modals: {
+        ...state.modals,
+        [modalId]: !state.modals[modalId],
+      },
+    })),
+}))
