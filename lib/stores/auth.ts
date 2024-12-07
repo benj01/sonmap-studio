@@ -1,110 +1,116 @@
 import { create } from 'zustand'
-import { getClient } from '@/utils/supabase/client'
-import { User } from '@supabase/supabase-js'
 import { persist } from 'zustand/middleware'
-
-// Serializable error type
-interface AuthErrorState {
-  message: string
-  code?: string
-}
-
-// Serializable user type
-interface SerializableUser {
-  id: string
-  email?: string
-  phone?: string
-  created_at?: string
-  updated_at?: string
-  user_metadata?: Record<string, any>
-}
-
-interface AuthState {
-  user: SerializableUser | null
-  loading: boolean
-  error: AuthErrorState | null
-  initialized: boolean
-  setUser: (user: User | null) => void
-  setError: (error: AuthErrorState | null) => void
-  setLoading: (loading: boolean) => void
-  signOut: () => Promise<void>
-  checkUser: () => Promise<void>
-  resetError: () => void
-}
-
-// Convert Supabase User to serializable user
-const toSerializableUser = (user: User | null): SerializableUser | null => {
-  if (!user) return null;
-  return {
-    id: user.id,
-    email: user.email,
-    phone: user.phone,
-    created_at: user.created_at,
-    updated_at: user.updated_at,
-    user_metadata: user.user_metadata
-  };
-};
+import type { AuthState, SerializableUser } from '@/types/store'
+import { apiClient } from '@/lib/api-client'
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
-      loading: true,
+      isLoading: true,
       error: null,
       initialized: false,
-      
-      setUser: (user) => set({ user: toSerializableUser(user) }),
-      setError: (error) => set({ error }),
-      setLoading: (loading) => set({ loading }),
-      resetError: () => set({ error: null }),
-      
-      signOut: async () => {
-        const supabase = getClient()
-        set({ loading: true, error: null })
+
+      setUser: (user) => set({ 
+        user: user ? {
+          id: user.id,
+          email: user.email,
+          phone: user.phone,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+          user_metadata: user.user_metadata,
+          app_metadata: user.app_metadata
+        } : null,
+        error: null
+      }),
+
+      signIn: async (credentials) => {
+        set({ isLoading: true, error: null })
         try {
-          const { error } = await supabase.auth.signOut()
-          if (error) throw error
-          set({ user: null, error: null })
-        } catch (error: any) {
+          const response = await apiClient.auth.signIn(credentials)
+          if (response.error) {
+            throw new Error(response.error)
+          }
+          set({ user: response.user })
+        } catch (error) {
           set({ 
-            error: { 
-              message: error.message || 'Error signing out',
-              code: error.code
-            } 
+            error: error instanceof Error ? error.message : 'Failed to sign in'
           })
         } finally {
-          set({ loading: false })
+          set({ isLoading: false })
+        }
+      },
+
+      signUp: async (credentials) => {
+        set({ isLoading: true, error: null })
+        try {
+          const response = await apiClient.auth.signUp(credentials)
+          if (response.error) {
+            throw new Error(response.error)
+          }
+          set({ user: response.user })
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to sign up'
+          })
+        } finally {
+          set({ isLoading: false })
+        }
+      },
+
+      signOut: async () => {
+        set({ isLoading: true, error: null })
+        try {
+          await apiClient.auth.signOut()
+          set({ user: null })
+        } catch (error) {
+          set({ 
+            error: error instanceof Error ? error.message : 'Failed to sign out'
+          })
+        } finally {
+          set({ isLoading: false })
         }
       },
 
       checkUser: async () => {
-        const supabase = getClient()
-        set({ loading: true, error: null })
-        try {
-          const { data: { user }, error } = await supabase.auth.getUser()
-          if (error) throw error
-          set({ 
-            user: toSerializableUser(user), 
-            error: null, 
-            loading: false, 
-            initialized: true 
-          })
-        } catch (error: any) {
-          set({ 
-            user: null, 
-            error: { 
-              message: error.message || 'Error fetching user',
-              code: error.code
-            },
-            loading: false, 
-            initialized: true 
-          })
+        if (!set((state) => state.initialized)) {
+          set({ isLoading: true, error: null })
+          try {
+            const user = await apiClient.auth.getUser()
+            set({ 
+              user: user ? {
+                id: user.id,
+                email: user.email,
+                phone: user.phone,
+                created_at: user.created_at,
+                updated_at: user.updated_at,
+                user_metadata: user.user_metadata,
+                app_metadata: user.app_metadata
+              } : null,
+              initialized: true
+            })
+          } catch (error) {
+            set({ 
+              error: error instanceof Error ? error.message : 'Failed to fetch user',
+              user: null,
+              initialized: true
+            })
+          } finally {
+            set({ isLoading: false })
+          }
         }
       },
+
+      resetError: () => set({ error: null })
     }),
     {
       name: 'auth-storage',
-      partialize: (state) => ({ user: state.user }),
+      partialize: (state) => ({ 
+        user: state.user,
+        initialized: state.initialized
+      })
     }
   )
 )
+
+</```rewritten_file>

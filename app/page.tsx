@@ -8,9 +8,6 @@ import Login from "@/app/(auth-pages)/sign-in/page";
 import { getUser, signOut } from "@/utils/auth";
 
 export default function LandingPage() {
-    const [user, setUser] = useState<any>(null); // User state
-    const [isLoginModalOpen, setLoginModalOpen] = useState(false); // Modal state
-
     // Fetch the user on load
     useEffect(() => {
         const fetchUser = async () => {

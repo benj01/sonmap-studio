@@ -1,38 +1,35 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-
-interface UIState {
-  theme: 'light' | 'dark' | 'system'
-  isLoginModalOpen: boolean
-  isMenuOpen: boolean
-  loadingStates: Record<string, boolean>
-  setTheme: (theme: 'light' | 'dark' | 'system') => void
-  toggleLoginModal: () => void
-  toggleMenu: () => void
-  setLoading: (key: string, isLoading: boolean) => void
-}
+import type { UIState } from '@/types/store'
 
 export const useUIStore = create<UIState>()(
   persist(
     (set) => ({
       theme: 'system',
-      isLoginModalOpen: false,
-      isMenuOpen: false,
+      modals: {},
       loadingStates: {},
+
       setTheme: (theme) => set({ theme }),
-      toggleLoginModal: () => set((state) => ({ isLoginModalOpen: !state.isLoginModalOpen })),
-      toggleMenu: () => set((state) => ({ isMenuOpen: !state.isMenuOpen })),
+
+      toggleModal: (modalId) => 
+        set((state) => ({
+          modals: {
+            ...state.modals,
+            [modalId]: !state.modals[modalId]
+          }
+        })),
+
       setLoading: (key, isLoading) =>
         set((state) => ({
           loadingStates: {
             ...state.loadingStates,
-            [key]: isLoading,
-          },
-        })),
+            [key]: isLoading
+          }
+        }))
     }),
     {
       name: 'ui-storage',
-      partialize: (state) => ({ theme: state.theme }),
+      partialize: (state) => ({ theme: state.theme })
     }
   )
 )
