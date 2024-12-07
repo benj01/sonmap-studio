@@ -3,7 +3,7 @@
 import { type ReactNode } from 'react'
 import { useAuthStore, useUIStore } from '@/lib/stores'
 import { Button } from '@/components/ui/button'
-import { Avatar } from '@/components/ui/avatar'
+import { Avatar } from '@/lib/imports'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
+import { useAuth } from '@/lib/stores/auth'
 
 export function Header() {
   const { user, isLoading, signOut } = useAuthStore()

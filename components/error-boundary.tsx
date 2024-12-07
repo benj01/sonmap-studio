@@ -8,6 +8,7 @@ import { XCircle } from 'lucide-react'
 interface Props {
   children: ReactNode
   fallback?: ReactNode
+  onError?: (error: Error, errorInfo: ErrorInfo) => void
 }
 
 interface State {
@@ -27,6 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('Uncaught error:', error, errorInfo)
+    this.props.onError?.(error, errorInfo)
   }
 
   private handleReset = () => {
@@ -61,4 +63,4 @@ export class ErrorBoundary extends Component<Props, State> {
 
     return this.props.children
   }
-} 
+}

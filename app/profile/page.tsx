@@ -1,14 +1,13 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useAuthStore, useDataStore } from '@/lib/stores'
-import { ProtectedRoute } from '@/components/auth/protected-route'
+import { useAuth } from '@/lib/stores/auth'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Alert } from '@/components/ui/alert'
-import { createClient } from '@/utils/supabase/client'
 import { Loader2 } from 'lucide-react'
+import { createClient } from '@/utils/supabase/client'
 
 interface Profile {
   id: string
@@ -19,146 +18,134 @@ interface Profile {
 }
 
 export default function ProfilePage() {
-  const { user } = useAuthStore()
-  const { fetchData, cache, invalidateCache } = useDataStore()
-  const [isUpdating, setIsUpdating] = useState(false)
-  const [updateError, setUpdateError] = useState<string | null>(null)
-  const [updateSuccess, setUpdateSuccess] = useState(false)
-
-  const profileCacheKey = `profile-${user?.id}`
+  const { user } = useAuth()
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    if (user) {
-      const fetchProfile = async () => {
+    async function loadProfile() {
+      try {
         const supabase = createClient()
-        await fetchData<Profile>(
-          profileCacheKey,
-          async () => {
-            const { data, error } = await supabase
-              .from('profiles')
-              .select('*')
-              .eq('id', user.id)
-              .single()
+        const { data, error } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', user?.id)
+          .single()
 
-            if (error) throw error
-            return data
-          }
-        )
+        if (error) throw error
+        setProfile(data)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load profile')
+      } finally {
+        setLoading(false)
       }
-
-      fetchProfile()
     }
-  }, [user, fetchData, profileCacheKey])
 
-  const handleUpdateProfile = async (e: React.FormEvent<HTMLFormElement>) => {
+    if (user) {
+      loadProfile()
+    }
+  }, [user])
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    if (!user) return
-
-    setIsUpdating(true)
-    setUpdateError(null)
-    setUpdateSuccess(false)
-
-    const formData = new FormData(e.currentTarget)
-    const updates = {
-      id: user.id,
-      username: formData.get('username')?.toString(),
-      full_name: formData.get('full_name')?.toString(),
-      updated_at: new Date().toISOString()
-    }
+    setSaving(true)
+    setError(null)
 
     try {
+      const formData = new FormData(e.currentTarget)
+      const updates = {
+        username: formData.get('username'),
+        full_name: formData.get('full_name'),
+        updated_at: new Date().toISOString(),
+      }
+
       const supabase = createClient()
       const { error } = await supabase
         .from('profiles')
-        .upsert(updates)
+        .update(updates)
+        .eq('id', user?.id)
 
       if (error) throw error
-
-      invalidateCache(profileCacheKey)
-      setUpdateSuccess(true)
-    } catch (error) {
-      setUpdateError(
-        error instanceof Error ? error.message : 'Failed to update profile'
-      )
+      setProfile(prev => prev ? { ...prev, ...updates } : null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update profile')
     } finally {
-      setIsUpdating(false)
+      setSaving(false)
     }
   }
 
-  const cachedProfile = cache[profileCacheKey]
+  if (!user) {
+    return (
+      <Alert>
+        <AlertDescription>
+          Please sign in to view this page.
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="flex justify-center p-8">
+        <Loader2 className="h-6 w-6 animate-spin" />
+      </div>
+    )
+  }
 
   return (
-    <ProtectedRoute>
-      <div className="max-w-2xl mx-auto p-6 space-y-8">
-        <h1 className="text-2xl font-bold">Profile Settings</h1>
-
-        {!cachedProfile ? (
-          <div className="flex justify-center p-8">
-            <Loader2 className="h-6 w-6 animate-spin" />
-          </div>
-        ) : cachedProfile.error ? (
+    <div className="container max-w-2xl py-8">
+      <h1 className="text-2xl font-bold mb-8">Profile</h1>
+      
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
           <Alert variant="destructive">
-            {cachedProfile.error}
+            <AlertDescription>{error}</AlertDescription>
           </Alert>
-        ) : (
-          <form onSubmit={handleUpdateProfile} className="space-y-6">
-            {updateError && (
-              <Alert variant="destructive">{updateError}</Alert>
-            )}
-            
-            {updateSuccess && (
-              <Alert>Profile updated successfully!</Alert>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={user?.email || ''}
-                disabled
-              />
-              <p className="text-sm text-muted-foreground">
-                Email cannot be changed
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
-              <Input
-                id="username"
-                name="username"
-                defaultValue={cachedProfile.data.username || ''}
-                disabled={isUpdating}
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="full_name">Full Name</Label>
-              <Input
-                id="full_name"
-                name="full_name"
-                defaultValue={cachedProfile.data.full_name || ''}
-                disabled={isUpdating}
-              />
-            </div>
-
-            <Button
-              type="submit"
-              disabled={isUpdating}
-            >
-              {isUpdating ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Updating...
-                </>
-              ) : (
-                'Update Profile'
-              )}
-            </Button>
-          </form>
         )}
-      </div>
-    </ProtectedRoute>
+
+        <div className="space-y-2">
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            value={user.email || ''}
+            disabled
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="username">Username</Label>
+          <Input
+            id="username"
+            name="username"
+            defaultValue={profile?.username || ''}
+            disabled={saving}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="full_name">Full Name</Label>
+          <Input
+            id="full_name"
+            name="full_name"
+            defaultValue={profile?.full_name || ''}
+            disabled={saving}
+          />
+        </div>
+
+        <Button type="submit" disabled={saving}>
+          {saving ? (
+            <>
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Saving...
+            </>
+          ) : (
+            'Save Changes'
+          )}
+        </Button>
+      </form>
+    </div>
   )
 }

@@ -23,3 +23,22 @@ export type AuthFormData = {
   password: string;
   confirmPassword?: string;
 };
+
+export interface User {
+  id: string;
+  email: string;
+  // ... other user properties
+}
+
+export interface SignInCredentials {
+  email: string;
+  password: string;
+}
+
+export interface SignUpCredentials extends SignInCredentials {
+  confirmPassword: string;
+}
+
+export interface SerializableUser {
+  // Serializable version of User
+}
