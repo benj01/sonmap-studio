@@ -4,29 +4,14 @@ import { hasEnvVars } from "@/utils/supabase/check-env-vars";
 import Link from "next/link";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import { createClient } from "@/utils/supabase/client";
-import { useState, useEffect } from 'react';
+import { useAuthStore } from "@/lib/stores";
+import { useEffect } from 'react';
 
 export default function HeaderAuth() {
-  const [user, setUser] = useState<any | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const { user, loading, checkUser } = useAuthStore();
 
   useEffect(() => {
-    const getUser = async () => {
-      try {
-        const supabase = createClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        setUser(user);
-      } catch (error) {
-        console.error('Error fetching user:', error);
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    getUser();
+    checkUser();
   }, []);
 
   if (!hasEnvVars) {
@@ -41,7 +26,7 @@ export default function HeaderAuth() {
 
   return (
     <>
-      {isLoading ? ( 
+      {loading ? ( 
         <div className="flex items-center justify-center text-sm text-muted-foreground">
           Loading...
         </div>

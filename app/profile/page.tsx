@@ -1,7 +1,6 @@
 'use client'
 
-import { createClient } from "@/utils/supabase/client"
-import { useEffect, useState } from "react"
+import { useEffect } from "react"
 import { redirect } from 'next/navigation'
 import { 
     Card, 
@@ -10,34 +9,14 @@ import {
     CardHeader, 
     CardTitle 
 } from "@/components/ui/card"
-import { User } from '@supabase/supabase-js'
 import { Loader2 } from "lucide-react"
+import { useAuthStore } from "@/lib/stores"
+import { Button } from "@/components/ui/button"
 
 export default function ProfilePage() {
-    const [user, setUser] = useState<User | null>(null)
-    const [loading, setLoading] = useState(true)
-    const [error, setError] = useState<string | null>(null)
+    const { user, loading, error, checkUser, resetError } = useAuthStore()
 
     useEffect(() => {
-        const checkUser = async () => {
-            try {
-                const supabase = createClient()
-                const { data, error } = await supabase.auth.getUser()
-
-                if (error || !data.user) {
-                    redirect('/sign-in')
-                }
-
-                setUser(data.user)
-            } catch (err) {
-                console.error('Error fetching user:', err)
-                setError('Failed to load user profile')
-                setUser(null)
-            } finally {
-                setLoading(false)
-            }
-        }
-
         checkUser()
     }, [])
 
@@ -55,21 +34,24 @@ export default function ProfilePage() {
     if (error) {
         return (
             <div className="flex items-center justify-center h-full w-full py-12">
-                <div className="text-center">
-                    <p className="text-destructive">{error}</p>
-                    <button 
-                        onClick={() => window.location.reload()} 
-                        className="mt-4 px-4 py-2 bg-primary text-primary-foreground rounded"
+                <div className="text-center space-y-4">
+                    <p className="text-destructive">{error.message}</p>
+                    <Button 
+                        onClick={() => {
+                            resetError()
+                            checkUser()
+                        }}
+                        variant="outline"
                     >
                         Try Again
-                    </button>
+                    </Button>
                 </div>
             </div>
         )
     }
 
     if (!user) {
-        return null
+        redirect('/sign-in')
     }
 
     return (
