@@ -1,13 +1,21 @@
 'use client'
 
 import { useAuthStore } from '@/lib/stores'
+import { useAuth } from '@/lib/stores/auth'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
+import { Loader2 } from 'lucide-react'
 
 export function AuthActions() {
   const { user, signOut, isLoading } = useAuthStore()
 
-  if (isLoading) return null
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+      </div>
+    )
+  }
 
   if (!user) {
     return (

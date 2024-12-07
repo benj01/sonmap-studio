@@ -11,7 +11,6 @@ import {
   FormItem,
   FormLabel,
   FormMessage,
-  FormDescription,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -21,6 +20,7 @@ import { useForm } from 'react-hook-form'
 import * as z from 'zod'
 import { Eye, EyeOff, Loader2, Check, X } from 'lucide-react'
 import type { SignUpCredentials } from '@/types/api'
+import type { FieldValues, Path } from 'react-hook-form'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -37,6 +37,15 @@ const formSchema = z.object({
 })
 
 type FormValues = z.infer<typeof formSchema>
+
+// Add type for form field
+type FormFieldType = {
+  value: string
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
+  onBlur: () => void
+  name: string
+  ref: React.Ref<HTMLInputElement>
+}
 
 export function RegisterForm() {
   const router = useRouter()
@@ -76,7 +85,33 @@ export function RegisterForm() {
     return 'bg-green-500'
   }
 
-  // ... existing onSubmit function ...
+  const onSubmit = async (values: FormValues) => {
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      const response = await fetch('/api/auth/sign-up', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(values),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create account')
+      }
+
+      setUser(data.user)
+      router.push('/dashboard')
+      router.refresh()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create account')
+      form.setFocus('email')
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
 
   return (
     <Form {...form}>
@@ -102,6 +137,7 @@ export function RegisterForm() {
                   autoComplete="email"
                   className="transition-colors"
                   autoFocus
+                  onChange={(e) => field.onChange(e)}
                 />
               </FormControl>
               <FormMessage />
@@ -112,7 +148,7 @@ export function RegisterForm() {
         <FormField
           control={form.control}
           name="password"
-          render={({ field }) => (
+          render={({ field }: { field: FormFieldType }) => (
             <FormItem>
               <FormLabel>Password</FormLabel>
               <FormControl>
@@ -185,7 +221,7 @@ export function RegisterForm() {
         <FormField
           control={form.control}
           name="confirmPassword"
-          render={({ field }) => (
+          render={({ field }: { field: FormFieldType }) => (
             <FormItem>
               <FormLabel>Confirm Password</FormLabel>
               <FormControl>

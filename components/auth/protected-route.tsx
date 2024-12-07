@@ -1,22 +1,29 @@
 'use client'
 
 import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 import { useAuth } from '@/lib/stores/auth'
 
 interface ProtectedRouteProps {
   children: React.ReactNode
+  allowedRoles?: string[]
 }
 
-export function ProtectedRoute({ children }: ProtectedRouteProps) {
+export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const { user, isLoading, initialized } = useAuth()
 
   useEffect(() => {
-    if (initialized && !isLoading && !user) {
-      router.push('/sign-in')
+    if (initialized && !isLoading) {
+      if (!user) {
+        sessionStorage.setItem('redirectTo', pathname)
+        router.push('/sign-in')
+      } else if (allowedRoles && user.role && !allowedRoles.includes(user.role)) {
+        router.push('/unauthorized')
+      }
     }
-  }, [user, isLoading, initialized, router])
+  }, [user, isLoading, initialized, router, pathname, allowedRoles])
 
   if (isLoading || !initialized) {
     return (

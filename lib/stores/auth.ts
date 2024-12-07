@@ -1,16 +1,25 @@
 import { create } from 'zustand'
-import type { User } from '@/types/auth'
 
-interface AuthState {
+export interface User {
+  id: string
+  email: string
+  role?: string
+}
+
+export interface AuthState {
   user: User | null
-  isLoginModalOpen: boolean
+  isLoading: boolean
+  initialized: boolean
   setUser: (user: User | null) => void
-  setLoginModalOpen: (open: boolean) => void
+  signOut: () => Promise<void>
 }
 
 export const useAuth = create<AuthState>((set) => ({
   user: null,
-  isLoginModalOpen: false,
+  isLoading: false,
+  initialized: false,
   setUser: (user) => set({ user }),
-  setLoginModalOpen: (open) => set({ isLoginModalOpen: open })
+  signOut: async () => {
+    // Implement signOut logic here
+  }
 }))
