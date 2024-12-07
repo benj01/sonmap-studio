@@ -1,11 +1,24 @@
-import { type NextRequest } from "next/server";
-import { updateSession } from "@/utils/supabase/middleware";
-
-console.log('SUPABASE_URL exists:', !!process.env.NEXT_PUBLIC_SUPABASE_URL)
-console.log('SUPABASE_ANON_KEY exists:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY)
+import { type NextRequest, NextResponse } from "next/server";
+import { createClient } from '@/utils/supabase/middleware'
 
 export async function middleware(request: NextRequest) {
-  return await updateSession(request);
+  const { supabase, response } = createClient(request)
+
+  // Refresh session if expired
+  const { data: { session } } = await supabase.auth.getSession()
+
+  // Protected routes that require authentication
+  const protectedPaths = ['/settings', '/profile']
+  const path = request.nextUrl.pathname
+
+  if (protectedPaths.includes(path)) {
+    if (!session) {
+      // Redirect to login if accessing protected route without session
+      return NextResponse.redirect(new URL('/sign-in', request.url))
+    }
+  }
+
+  return response
 }
 
 export const config = {
@@ -20,4 +33,4 @@ export const config = {
      */
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
-};
+}

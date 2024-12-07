@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { User as SupabaseUser } from '@supabase/supabase-js'
+import { createClient } from '@/utils/supabase/client'
 
 export type User = SupabaseUser
 
@@ -17,6 +18,8 @@ export const useAuth = create<AuthState>((set) => ({
   initialized: false,
   setUser: (user) => set({ user }),
   signOut: async () => {
-    // Implement signOut logic here
+    const supabase = createClient()
+    await supabase.auth.signOut()
+    set({ user: null })
   }
 }))
