@@ -22,27 +22,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const supabase = createClient()
 
   useEffect(() => {
-    const getUser = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser()
-        setUser(user)
-      } catch (error) {
-        console.error('Error loading user:', error)
-      } finally {
-        setInitialized(true)
-        setIsLoading(false)
-      }
-    }
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null)
+      setInitialized(true)
+      setIsLoading(false)
 
-    getUser()
-  }, [])
+      if (event === 'SIGNED_IN') {
+        router.push('/')
+      } else if (event === 'SIGNED_OUT') {
+        router.push('/')
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [router])
 
   const signOut = async () => {
     try {
       setIsLoading(true)
       await supabase.auth.signOut()
       setUser(null)
-      router.push('/login')
+      router.push('/')
     } catch (error) {
       console.error('Error signing out:', error)
     } finally {

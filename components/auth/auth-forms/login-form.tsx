@@ -20,6 +20,7 @@ import { useForm } from 'react-hook-form'
 import * as z from 'zod'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
 import type { SignInCredentials } from '@/types'
+import { useUIStore } from '@/lib/stores/ui'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -34,6 +35,7 @@ export function LoginForm() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const { toggleModal } = useUIStore()
   const supabase = createClient()
 
   const handleLoginModalClose = () => {
@@ -63,8 +65,8 @@ export function LoginForm() {
         return
       }
 
-      handleLoginModalClose()
-      router.push('/dashboard')
+      // Close the modal after successful login
+      toggleModal('login')
     } catch (err) {
       setFormError('An unexpected error occurred')
     } finally {
