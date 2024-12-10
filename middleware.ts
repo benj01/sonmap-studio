@@ -18,7 +18,7 @@ const AUTH_ROUTES = [
 
 export async function middleware(request: NextRequest) {
   try {
-    const response = NextResponse.next({
+    let response = NextResponse.next({  // Changed from const to let
       request: {
         headers: request.headers,
       },

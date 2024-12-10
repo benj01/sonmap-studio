@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useAuth } from '@/components/providers/auth-provider'
 import { useUIStore } from '@/lib/stores/ui'
 import { useTheme } from 'next-themes'
-import { Moon, Sun, Laptop, Menu } from 'lucide-react'
+import { Moon, Sun, Laptop } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,17 +26,19 @@ export function Header() {
           <Link href="/" className="mr-6 flex items-center space-x-2">
             <span className="font-bold">Sonmap Studio</span>
           </Link>
-          <nav className="flex items-center space-x-6 text-sm font-medium">
-            <Link
-              href="/dashboard"
-              className={cn(
-                "transition-colors hover:text-foreground/80",
-                "text-foreground"
-              )}
-            >
-              Dashboard
-            </Link>
-          </nav>
+          {user && ( // Only show nav items when user is logged in
+            <nav className="flex items-center space-x-6 text-sm font-medium">
+              <Link
+                href="/dashboard"
+                className={cn(
+                  "transition-colors hover:text-foreground/80",
+                  "text-foreground"
+                )}
+              >
+                Dashboard
+              </Link>
+            </nav>
+          )}
         </div>
 
         <div className="flex flex-1 items-center justify-between space-x-2 md:justify-end">
