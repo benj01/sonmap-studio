@@ -9,19 +9,16 @@ import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"
 import { createClient } from '@/utils/supabase/client'
 import { ProjectCard } from '@/components/dashboard/project-card'
-import { DashboardStats } from '@/components/dashboard/dashboard-stats'
+import { DashboardStats as DashboardStatsComponent } from '@/components/dashboard/dashboard-stats'
+import { Database } from '@/types/supabase'
+
+type ProjectRow = Database['public']['Tables']['projects']['Row']
 
 interface ProjectMember {
   count: number
 }
 
-interface Project {
-  id: string
-  name: string
-  description: string | null
-  status: 'active' | 'archived' | 'deleted'
-  created_at: string
-  storage_used: number
+interface Project extends ProjectRow {
   project_members: ProjectMember[]
 }
 
@@ -67,13 +64,13 @@ export default function DashboardPage() {
           throw projectsError
         }
 
-        const typedProjects = projectsData as Project[]
-        setProjects(typedProjects || [])
+        const typedProjects = (projectsData || []) as Project[]
+        setProjects(typedProjects)
 
         // Calculate stats with proper typing
-        const activeProjects = typedProjects.filter((p: Project) => p.status === 'active').length
-        const totalStorage = typedProjects.reduce((acc: number, p: Project) => acc + (p.storage_used || 0), 0)
-        const collaborators = typedProjects.reduce((acc: number, p: Project) => 
+        const activeProjects = typedProjects.filter((p) => p.status === 'active').length
+        const totalStorage = typedProjects.reduce((acc, p) => acc + (p.storage_used || 0), 0)
+        const collaborators = typedProjects.reduce((acc, p) => 
           acc + (p.project_members?.[0]?.count || 0), 0)
 
         setStats({
@@ -110,7 +107,7 @@ export default function DashboardPage() {
         </Button>
       </div>
 
-      <DashboardStats stats={stats} />
+      <DashboardStatsComponent stats={stats} />
 
       <div className="grid gap-6">
         <div className="flex items-center justify-between">

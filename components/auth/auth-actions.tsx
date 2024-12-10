@@ -1,13 +1,12 @@
 'use client'
 
 import { useAuth } from '@/components/providers/auth-provider'
-import { supabaseAuth } from '@/lib/stores/auth'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
 
 export function AuthActions() {
-  const { user, initialized } = useAuth()
+  const { user, initialized, signOut } = useAuth()
 
   if (!initialized) {
     return (
@@ -38,7 +37,7 @@ export function AuthActions() {
       <Button 
         size="sm" 
         variant="outline"
-        onClick={() => supabaseAuth.signOut()}
+        onClick={signOut}
       >
         Sign out
       </Button>

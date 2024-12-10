@@ -7,11 +7,16 @@ import { Footer } from '../components/layout/footer'
 import { Toaster } from '../components/ui'
 import './globals.css'
 
-export default function RootLayout({
-  children,
-}: {
+export const metadata = {
+  title: 'Sonmap Studio',
+  description: 'Project management and collaboration platform',
+}
+
+interface RootLayoutProps {
   children: React.ReactNode
-}) {
+}
+
+export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={GeistSans.className}>

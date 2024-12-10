@@ -11,18 +11,16 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useRouter } from "next/navigation"
 import { formatDistanceToNow } from 'date-fns'
+import { Database } from '@/types/supabase'
+
+type ProjectStatus = Database['public']['Enums']['project_status']
+type ProjectRow = Database['public']['Tables']['projects']['Row']
 
 interface ProjectMember {
   count: number
 }
 
-interface Project {
-  id: string
-  name: string
-  description: string | null
-  status: 'active' | 'archived' | 'deleted'
-  created_at: string
-  storage_used: number
+interface Project extends ProjectRow {
   project_members: ProjectMember[]
 }
 

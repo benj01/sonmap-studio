@@ -1,9 +1,14 @@
-// /lib/stores/auth.ts - Complete rewrite
-
 import { create } from 'zustand'
 import { createClient } from '@/utils/supabase/client'
+import { User } from '@supabase/supabase-js'
 
-// Only store UI-related auth state, not duplicate Supabase auth
+interface AuthState {
+  user: User | null
+  initialized: boolean
+  setUser: (user: User | null) => void
+  setInitialized: (initialized: boolean) => void
+}
+
 interface AuthUIState {
   isLoading: boolean
   error: string | null
@@ -11,14 +16,21 @@ interface AuthUIState {
   resetError: () => void
 }
 
+export const useAuth = create<AuthState>((set) => ({
+  user: null,
+  initialized: false,
+  setUser: (user) => set({ user }),
+  setInitialized: (initialized) => set({ initialized })
+}))
+
 export const useAuthUI = create<AuthUIState>((set) => ({
   isLoading: false,
   error: null,
-  setError: (error) => set({ error }),
+  setError: (error: string | null) => set({ error }),
   resetError: () => set({ error: null })
 }))
 
-// Export Supabase auth utilities for direct usage
+// Supabase auth utilities
 export const supabaseAuth = {
   getUser: async () => {
     const supabase = createClient()

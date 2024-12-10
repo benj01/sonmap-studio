@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { useAuthUI } from '@/lib/stores/auth'
+import { useAuth } from '@/components/providers/auth-provider'
 import type { ActionResponse } from '@/types'
 
 interface UseFormOptions<T> {
@@ -9,14 +9,13 @@ interface UseFormOptions<T> {
 }
 
 export function useForm<T = unknown>(options: UseFormOptions<T> = {}) {
+  const { user } = useAuth()
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const { setError: setAuthError, resetError } = useAuthUI()
   const [formMessage, setFormMessage] = useState<string | null>(null)
 
   const handleSubmit = useCallback(
     async (action: (formData: FormData) => Promise<ActionResponse<T>>, formData: FormData) => {
       setIsSubmitting(true)
-      resetError()
       setFormMessage(null)
 
       try {
@@ -30,13 +29,11 @@ export function useForm<T = unknown>(options: UseFormOptions<T> = {}) {
           }
           return response
         } else {
-          setAuthError(response.error)
           options.onError?.(response.error)
           return response
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred'
-        setAuthError(errorMessage)
         options.onError?.(errorMessage)
         return {
           error: errorMessage,
@@ -46,7 +43,7 @@ export function useForm<T = unknown>(options: UseFormOptions<T> = {}) {
         setIsSubmitting(false)
       }
     },
-    [options, setAuthError, resetError]
+    [options]
   )
 
   return {

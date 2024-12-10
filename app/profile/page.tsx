@@ -4,25 +4,32 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/providers/auth-provider'
 import { LoadingState } from '@/components/shared/loading-state'
-import { supabaseAuth } from '@/lib/stores/auth'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
+import { Database } from '@/types/supabase'
 
-interface Profile {
+type Profile = {
   id: string
-  username?: string
-  full_name?: string
-  avatar_url?: string
+  username?: string | null
+  full_name?: string | null
+  avatar_url?: string | null
+  updated_at: string
+}
+
+type ProfileUpdate = {
+  id: string
+  username: string | null
+  full_name: string | null
   updated_at: string
 }
 
 export default function ProfilePage() {
   const router = useRouter()
-  const { user, initialized } = useAuth()
+  const { user, initialized, signOut } = useAuth()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -36,16 +43,18 @@ export default function ProfilePage() {
 
   useEffect(() => {
     async function loadProfile() {
+      if (!user?.id) return
+
       try {
         const supabase = createClient()
         const { data, error } = await supabase
           .from('profiles')
-          .select('*')
-          .eq('id', user?.id)
+          .select('id, username, full_name, avatar_url, updated_at')
+          .eq('id', user.id)
           .single()
 
         if (error) throw error
-        setProfile(data)
+        setProfile(data as Profile)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load profile')
       } finally {
@@ -60,13 +69,15 @@ export default function ProfilePage() {
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    if (!user?.id) return
+
     setSaving(true)
     setError(null)
 
     try {
       const formData = new FormData(e.currentTarget)
-      const updates = {
-        id: user?.id as string,
+      const updates: ProfileUpdate = {
+        id: user.id,
         username: formData.get('username')?.toString() || null,
         full_name: formData.get('full_name')?.toString() || null,
         updated_at: new Date().toISOString(),
@@ -76,11 +87,10 @@ export default function ProfilePage() {
       const { error } = await supabase
         .from('profiles')
         .update(updates)
-        .eq('id', user?.id)
+        .eq('id', user.id)
 
       if (error) throw error
       
-      // Type-safe profile update
       setProfile(prev => prev ? {
         ...prev,
         username: updates.username || undefined,
@@ -95,7 +105,7 @@ export default function ProfilePage() {
   }
 
   const handleSignOut = async () => {
-    await supabaseAuth.signOut()
+    await signOut()
     router.push('/login')
   }
 
@@ -158,21 +168,28 @@ export default function ProfilePage() {
           />
         </div>
 
-        <Button type="submit" disabled={saving}>
-          {saving ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Saving...
-            </>
-          ) : (
-            'Save Changes'
-          )}
-        </Button>
-      </form>
+        <div className="space-y-4">
+          <Button type="submit" disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              'Save Changes'
+            )}
+          </Button>
 
-      <Button onClick={handleSignOut}>
-        Sign Out
-      </Button>
+          <Button 
+            type="button"
+            variant="outline" 
+            onClick={handleSignOut}
+            className="ml-4"
+          >
+            Sign Out
+          </Button>
+        </div>
+      </form>
     </div>
   )
 }

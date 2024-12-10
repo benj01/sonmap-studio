@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { DataState, CacheItem } from '@/types'
+import type { CacheItem } from '@/types'
+
+export interface DataState {
+  cache: Record<string, CacheItem<any>>
+  fetchData: <T>(key: string, query: () => Promise<T>, ttl?: number) => Promise<T>
+  prefetchData: <T>(key: string, query: () => Promise<T>, ttl?: number) => Promise<void>
+  invalidateCache: (key: string) => void
+  clearCache: () => void
+}
 
 const DEFAULT_TTL = 5 * 60 * 1000 // 5 minutes
 

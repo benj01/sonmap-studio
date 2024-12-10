@@ -1,7 +1,6 @@
 'use client'
 
 import { useAuth } from '@/components/providers/auth-provider'
-import { supabaseAuth } from '@/lib/stores/auth'
 import { useUIStore } from '@/lib/stores/ui'
 import { Button } from '@/components/ui/button'
 import {
@@ -15,7 +14,7 @@ import { Loader2 } from 'lucide-react'
 import { UserAvatar } from '@/components/ui/user-avatar'
 
 export function Header() {
-  const { user, initialized } = useAuth()
+  const { user, initialized, signOut } = useAuth()
   const toggleModal = useUIStore(state => state.toggleModal)
 
   if (!initialized) {
@@ -48,7 +47,7 @@ export function Header() {
                 <DropdownMenuItem asChild>
                   <Link href="/notes">My Notes</Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem className="text-red-600" onClick={() => supabaseAuth.signOut()}>
+                <DropdownMenuItem className="text-red-600" onClick={signOut}>
                   Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>

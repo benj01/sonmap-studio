@@ -1,5 +1,6 @@
 // /types/auth.ts
-import type { User } from '@supabase/supabase-js'
+import { User } from '@supabase/supabase-js'
+import { Message } from './index'  // Add this import
 
 // Basic auth types
 export interface SignInCredentials {
@@ -28,6 +29,6 @@ export interface AuthFormData {
 export interface CustomUser extends User {
   user_metadata: {
     avatar_url?: string
-    [key: string]: any
-  }
+    full_name?: string
+  } & Record<string, any>
 }

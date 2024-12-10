@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 
-type Theme = 'light' | 'dark' | 'system'
-type ModalId = 'login' | 'register'
+export type Theme = 'light' | 'dark' | 'system'
+export type ModalId = 'login' | 'register'
 
-interface UIState {
+export interface UIState {
   theme: Theme
   setTheme: (theme: Theme) => void
   modals: Record<ModalId, boolean>

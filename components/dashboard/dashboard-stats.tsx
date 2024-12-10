@@ -1,7 +1,10 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatBytes } from "@/lib/utils"
+import { Database } from '@/types/supabase'
 
-interface DashboardStats {
+type Project = Database['public']['Tables']['projects']['Row']
+
+export interface DashboardStats {
   totalProjects: number
   activeProjects: number
   totalStorage: number
@@ -13,6 +16,11 @@ interface DashboardStatsProps {
 }
 
 export function DashboardStats({ stats }: DashboardStatsProps) {
+  const getPercentage = (active: number, total: number): string => {
+    if (total === 0) return '0'
+    return ((active / total) * 100).toFixed(0)
+  }
+
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
       <Card>
@@ -33,7 +41,7 @@ export function DashboardStats({ stats }: DashboardStatsProps) {
         <CardContent>
           <div className="text-2xl font-bold">{stats.activeProjects}</div>
           <p className="text-xs text-muted-foreground">
-            {((stats.activeProjects / stats.totalProjects) * 100).toFixed(0)}% of total
+            {getPercentage(stats.activeProjects, stats.totalProjects)}% of total
           </p>
         </CardContent>
       </Card>
