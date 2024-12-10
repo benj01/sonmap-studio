@@ -7,7 +7,8 @@ const PROTECTED_ROUTES = [
   '/profile',
   '/dashboard',
   '/notes',
-  '/protected'
+  '/protected',
+  '/projects/new'
 ];
 
 // Public routes that should redirect to dashboard if authenticated
