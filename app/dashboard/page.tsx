@@ -60,8 +60,8 @@ export default function DashboardPage() {
       const supabase = createClient()
       
       try {
-        // First fetch projects
-        const { data: projectsData, error: projectsError } = await supabase
+        // First fetch owned projects
+        const { data: ownedProjects, error: projectsError } = await supabase
           .from('projects')
           .select('*')
           .eq('owner_id', user.id)
@@ -69,16 +69,41 @@ export default function DashboardPage() {
 
         if (projectsError) throw projectsError
 
+        // Then fetch projects where user is a member (corrected syntax)
+        const { data: memberProjects, error: memberProjectsError } = await supabase
+          .from('project_members')
+          .select('project_id')
+          .eq('user_id', user.id)
+          .not('joined_at', 'is', null)
+
+        if (memberProjectsError) throw memberProjectsError
+
+        // Fetch full project details for member projects
+        let memberProjectDetails = []
+        if (memberProjects && memberProjects.length > 0) {
+          const { data: details, error: memberDetailsError } = await supabase
+            .from('projects')
+            .select('*')
+            .in('id', memberProjects.map(mp => mp.project_id))
+            .order('updated_at', { ascending: false })
+
+          if (memberDetailsError) throw memberDetailsError
+          memberProjectDetails = details || []
+        }
+
+        // Combine the results
+        const allProjects = [...(ownedProjects || []), ...memberProjectDetails]
+
         // Then fetch member counts
         const { data: membersData, error: membersError } = await supabase
           .rpc('get_project_member_counts', {
-            project_ids: (projectsData || []).map(p => p.id)
+            project_ids: allProjects.map(p => p.id)
           })
 
         if (membersError) throw membersError
 
-        // Combine the data
-        const projectsWithMembers = (projectsData || []).map(project => ({
+        // Format projects with member counts
+        const projectsWithMembers = allProjects.map(project => ({
           ...project,
           project_members: [{
             count: membersData?.find(m => m.project_id === project.id)?.count || 0
