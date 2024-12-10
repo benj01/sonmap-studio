@@ -1,45 +1,33 @@
-import { User as SupabaseUser } from '@supabase/supabase-js';
+// /types/auth.ts
+import type { User } from '@supabase/supabase-js'
 
-export type Message = {
-  success?: string;
-  error?: string;
-  message?: string;
-};
-
-export type AuthState = {
-  user: SupabaseUser | null;
-  loading: boolean;
-  error: string | null;
-};
-
-export type AuthFormState = {
-  message: Message | null;
-  formError: string | null;
-  isSubmitting: boolean;
-};
-
-export type AuthFormData = {
-  email: string;
-  password: string;
-  confirmPassword?: string;
-};
-
-export interface CustomUser extends SupabaseUser {
-  user_metadata: {
-    avatar_url?: string;
-    [key: string]: any;
-  };
-}
-
+// Basic auth types
 export interface SignInCredentials {
-  email: string;
-  password: string;
+  email: string
+  password: string
 }
 
 export interface SignUpCredentials extends SignInCredentials {
-  confirmPassword: string;
+  confirmPassword: string
 }
 
-export interface SerializableUser {
-  // Serializable version of User
+// Auth form states
+export interface AuthFormState {
+  message: Message | null
+  formError: string | null
+  isSubmitting: boolean
+}
+
+export interface AuthFormData {
+  email: string
+  password: string
+  confirmPassword?: string
+}
+
+// Custom user types
+export interface CustomUser extends User {
+  user_metadata: {
+    avatar_url?: string
+    [key: string]: any
+  }
 }

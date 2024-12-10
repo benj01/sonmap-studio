@@ -2,7 +2,8 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/stores/auth'
+import { useAuth } from '@/components/providers/auth-provider'
+import { createClient } from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -18,7 +19,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
-import type { SignInCredentials } from '@/types/api'
+import type { SignInCredentials } from '@/types'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -29,10 +30,12 @@ type FormValues = z.infer<typeof formSchema>
 
 export function LoginForm() {
   const router = useRouter()
-  const { setUser } = useAuth()
-  const [error, setError] = useState<string | null>(null)
+  const { user } = useAuth()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [formError, setFormError] = useState<string | null>(null)
+  const supabase = createClient()
+
   const handleLoginModalClose = () => {
     // implement the logic to close the login modal
   }
@@ -45,28 +48,25 @@ export function LoginForm() {
     },
   })
 
-  const onSubmit = async (values: FormValues) => {
+  const onSubmit = async (data: FormValues) => {
     setIsSubmitting(true)
-    setError(null)
+    setFormError(null)
 
     try {
-      const response = await fetch('/api/auth/sign-in', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: data.email,
+        password: data.password,
       })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to sign in')
+      
+      if (authError) {
+        setFormError(authError.message)
+        return
       }
 
-      setUser(data.user)
       handleLoginModalClose()
+      router.push('/dashboard')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to sign in')
-      form.setFocus('email') // Focus back to email on error
+      setFormError('An unexpected error occurred')
     } finally {
       setIsSubmitting(false)
     }
@@ -79,12 +79,13 @@ export function LoginForm() {
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
-        {error && (
+        {formError && (
           <Alert variant="destructive" className="animate-in fade-in-50">
-            <AlertDescription>{error}</AlertDescription>
+            <AlertDescription>{formError}</AlertDescription>
           </Alert>
         )}
 
+        {/* Rest of the form remains the same */}
         <FormField
           control={form.control}
           name="email"

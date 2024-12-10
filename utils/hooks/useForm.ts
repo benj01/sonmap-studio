@@ -1,58 +1,58 @@
 import { useState, useCallback } from 'react'
-import type { ActionResponse } from '@/types/store'
+import { useAuthUI } from '@/lib/stores/auth'
+import type { ActionResponse } from '@/types'
 
 interface UseFormOptions<T> {
   onSuccess?: (data: T) => void
   onError?: (error: string) => void
+  resetOnSuccess?: boolean
 }
 
 export function useForm<T = unknown>(options: UseFormOptions<T> = {}) {
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [message, setMessage] = useState<string | null>(null)
+  const { setError: setAuthError, resetError } = useAuthUI()
+  const [formMessage, setFormMessage] = useState<string | null>(null)
 
   const handleSubmit = useCallback(
-    async (
-      action: (formData: FormData) => Promise<ActionResponse<T>>,
-      formData: FormData
-    ) => {
+    async (action: (formData: FormData) => Promise<ActionResponse<T>>, formData: FormData) => {
       setIsSubmitting(true)
-      setError(null)
-      setMessage(null)
+      resetError()
+      setFormMessage(null)
 
       try {
         const response = await action(formData)
 
-        if (response.success) {
-          setMessage(response.message || 'Success')
+        if ('success' in response) {
+          setFormMessage(response.message)
           options.onSuccess?.(response.data as T)
+          if (options.resetOnSuccess) {
+            formData.forEach((_, key) => formData.delete(key))
+          }
           return response
         } else {
-          setError(response.error)
+          setAuthError(response.error)
           options.onError?.(response.error)
           return response
         }
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'An unexpected error occurred'
-        setError(errorMessage)
+        setAuthError(errorMessage)
         options.onError?.(errorMessage)
         return {
-          success: false as const,
-          error: errorMessage
+          error: errorMessage,
+          code: 'UNKNOWN_ERROR'
         }
       } finally {
         setIsSubmitting(false)
       }
     },
-    [options]
+    [options, setAuthError, resetError]
   )
 
   return {
     isSubmitting,
-    error,
-    message,
+    formMessage,
     handleSubmit,
-    setError,
-    setMessage
+    setFormMessage
   }
 }

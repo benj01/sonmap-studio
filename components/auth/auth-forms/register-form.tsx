@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/stores/auth'
+import { createClient } from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -19,7 +19,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod'
 import { Eye, EyeOff, Loader2, Check, X } from 'lucide-react'
-import type { SignUpCredentials } from '@/types/api'
+import type { SignUpCredentials } from '@/types'
 import type { FieldValues, Path } from 'react-hook-form'
 import type { User } from '@supabase/supabase-js'
 
@@ -50,11 +50,11 @@ type FormFieldType = {
 
 export function RegisterForm() {
   const router = useRouter()
-  const { setUser } = useAuth()
   const [error, setError] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const supabase = createClient()
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -86,29 +86,27 @@ export function RegisterForm() {
     return 'bg-green-500'
   }
 
-  const onSubmit = async (values: FormValues) => {
+  const onSubmit = async (data: FormValues) => {
     setIsSubmitting(true)
     setError(null)
 
     try {
-      const response = await fetch('/api/auth/sign-up', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(values),
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: data.email,
+        password: data.password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`
+        }
       })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to create account')
+      
+      if (authError) {
+        setError(authError.message)
+        return
       }
 
-      setUser(data.user as User)
       router.push('/dashboard')
-      router.refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create account')
-      form.setFocus('email')
+      setError('An unexpected error occurred')
     } finally {
       setIsSubmitting(false)
     }

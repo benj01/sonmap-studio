@@ -1,16 +1,29 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createServerClient } from "@supabase/ssr";
 
+// Protected routes that require authentication
+const PROTECTED_ROUTES = [
+  '/settings',
+  '/profile',
+  '/dashboard',
+  '/notes',
+  '/protected'
+];
+
+// Public routes that should redirect to dashboard if authenticated
+const AUTH_ROUTES = [
+  '/sign-in',
+  '/sign-up'
+];
+
 export async function middleware(request: NextRequest) {
   try {
-    // Create an unmodified response
-    let response = NextResponse.next({
+    const response = NextResponse.next({
       request: {
         headers: request.headers,
       },
     });
 
-    // Create supabase server client
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -57,23 +70,24 @@ export async function middleware(request: NextRequest) {
       }
     )
 
-    // Refresh session if expired
     const { data: { session } } = await supabase.auth.getSession()
-
-    // Protected routes that require authentication
-    const protectedPaths = ['/settings', '/profile']
     const path = request.nextUrl.pathname
 
-    if (protectedPaths.includes(path)) {
-      if (!session) {
-        // Redirect to login if accessing protected route without session
-        return NextResponse.redirect(new URL('/sign-in', request.url))
-      }
+    // Redirect authenticated users away from auth pages
+    if (session && AUTH_ROUTES.some(route => path.startsWith(route))) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+
+    // Redirect unauthenticated users to sign-in for protected routes
+    if (!session && PROTECTED_ROUTES.some(route => path.startsWith(route))) {
+      const redirectUrl = new URL('/sign-in', request.url)
+      redirectUrl.searchParams.set('redirect', path)
+      return NextResponse.redirect(redirectUrl)
     }
 
     return response
   } catch (e) {
-    // If there's an error, just proceed to the page
+    console.error('Middleware error:', e)
     return NextResponse.next({
       request: {
         headers: request.headers,
@@ -84,14 +98,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Match all request paths except:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     * - images - .svg, .png, .jpg, .jpeg, .gif, .webp
-     * Feel free to modify this pattern to include more paths.
-     */
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
   ],
 }

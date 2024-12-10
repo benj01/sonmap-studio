@@ -1,7 +1,10 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useAuth } from '@/lib/stores/auth'
+import { useRouter } from 'next/navigation'
+import { useAuth } from '@/components/providers/auth-provider'
+import { LoadingState } from '@/components/shared/loading-state'
+import { supabaseAuth } from '@/lib/stores/auth'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,11 +21,18 @@ interface Profile {
 }
 
 export default function ProfilePage() {
-  const { user } = useAuth()
+  const router = useRouter()
+  const { user, initialized } = useAuth()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (initialized && !user) {
+      router.push('/login')
+    }
+  }, [user, initialized, router])
 
   useEffect(() => {
     async function loadProfile() {
@@ -56,8 +66,9 @@ export default function ProfilePage() {
     try {
       const formData = new FormData(e.currentTarget)
       const updates = {
-        username: formData.get('username'),
-        full_name: formData.get('full_name'),
+        id: user?.id as string,
+        username: formData.get('username')?.toString() || null,
+        full_name: formData.get('full_name')?.toString() || null,
         updated_at: new Date().toISOString(),
       }
 
@@ -68,12 +79,24 @@ export default function ProfilePage() {
         .eq('id', user?.id)
 
       if (error) throw error
-      setProfile(prev => prev ? { ...prev, ...updates } : null)
+      
+      // Type-safe profile update
+      setProfile(prev => prev ? {
+        ...prev,
+        username: updates.username || undefined,
+        full_name: updates.full_name || undefined,
+        updated_at: updates.updated_at
+      } : null)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to update profile')
     } finally {
       setSaving(false)
     }
+  }
+
+  const handleSignOut = async () => {
+    await supabaseAuth.signOut()
+    router.push('/login')
   }
 
   if (!user) {
@@ -146,6 +169,10 @@ export default function ProfilePage() {
           )}
         </Button>
       </form>
+
+      <Button onClick={handleSignOut}>
+        Sign Out
+      </Button>
     </div>
   )
 }

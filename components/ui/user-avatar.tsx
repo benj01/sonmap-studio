@@ -1,7 +1,7 @@
 'use client'
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import type { CustomUser } from '@/types/auth'
+import type { CustomUser } from '@/types'
 import { getUserInitials } from '@/lib/utils'
 import { cn } from "@/lib/utils"
 

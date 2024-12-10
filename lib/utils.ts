@@ -1,16 +1,11 @@
 import { type ClassValue, clsx } from "clsx"
 import { twMerge } from "tailwind-merge"
+import { redirect } from "next/navigation"
 
-/**
- * Combines class names using clsx and tailwind-merge
- */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-/**
- * Formats a date string or Date object into a localized string
- */
 export function formatDate(input: string | Date): string {
   const date = input instanceof Date ? input : new Date(input)
   return date.toLocaleDateString("en-US", {
@@ -20,29 +15,20 @@ export function formatDate(input: string | Date): string {
   })
 }
 
-/**
- * Generates initials from a user's name or email
- */
 export function getUserInitials(name: string): string {
   return name
-    .split(/[\s@]+/) // Split on spaces and @ symbol
-    .slice(0, 2) // Take first two parts
-    .map(part => part[0]?.toUpperCase() || '') // Get first letter of each part
+    .split(/[\s@]+/)
+    .slice(0, 2)
+    .map(part => part[0]?.toUpperCase() || '')
     .join('')
-    .slice(0, 2) // Ensure maximum of two characters
-    || '??' // Fallback if no valid initials found
+    .slice(0, 2) 
+    || '??'
 }
 
-/**
- * Delays execution for a specified number of milliseconds
- */
 export function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-/**
- * Formats a file size in bytes to a human-readable string
- */
 export function formatFileSize(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let size = bytes
@@ -56,25 +42,15 @@ export function formatFileSize(bytes: number): string {
   return `${size.toFixed(1)} ${units[unitIndex]}`
 }
 
-/**
- * Truncates a string to a maximum length and adds an ellipsis
- */
 export function truncateString(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str
   return str.slice(0, maxLength) + '...'
 }
 
-/**
- * Validates an email address
- */
 export function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  return emailRegex.test(email)
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
 }
 
-/**
- * Generates a random string of specified length
- */
 export function generateRandomString(length: number): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
   return Array.from(
@@ -83,29 +59,17 @@ export function generateRandomString(length: number): string {
   ).join('')
 }
 
-/**
- * Debounces a function
- */
 export function debounce<T extends (...args: any[]) => any>(
   func: T,
   wait: number
 ): (...args: Parameters<T>) => void {
   let timeout: NodeJS.Timeout
-
   return function executedFunction(...args: Parameters<T>) {
-    const later = () => {
-      clearTimeout(timeout)
-      func(...args)
-    }
-
     clearTimeout(timeout)
-    timeout = setTimeout(later, wait)
+    timeout = setTimeout(() => func(...args), wait)
   }
 }
 
-/**
- * Copies text to clipboard
- */
 export async function copyToClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
@@ -116,18 +80,12 @@ export async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-/**
- * Extracts error message from unknown error
- */
 export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error
   return 'An unexpected error occurred'
 }
 
-/**
- * Checks if a value is a plain object
- */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' 
     && value !== null 
@@ -135,12 +93,17 @@ export function isPlainObject(value: unknown): value is Record<string, unknown> 
     && Object.getPrototypeOf(value) === Object.prototype
 }
 
-/**
- * Creates a URL-friendly slug from a string
- */
 export function createSlug(str: string): string {
   return str
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
+}
+
+export function encodedRedirect(
+  type: "error" | "success",
+  path: string,
+  message: string,
+): never {
+  return redirect(`${path}?${type}=${encodeURIComponent(message)}`)
 }

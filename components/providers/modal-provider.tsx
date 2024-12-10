@@ -32,16 +32,14 @@ export function ModalProvider() {
 
   return (
     <>
-      {(Object.entries(MODAL_COMPONENTS)).map(([id, { title, component: ModalComponent }]) => {
+      {Object.entries(MODAL_COMPONENTS).map(([id, { title, component: ModalComponent }]) => {
         const isOpen = modals[id] || false
 
         return (
           <Dialog
             key={id}
             open={isOpen}
-            onOpenChange={(open) => {
-              if (!open) toggleModal(id)
-            }}
+            onOpenChange={(open) => !open && toggleModal(id)}
           >
             <DialogContent>
               <DialogHeader>

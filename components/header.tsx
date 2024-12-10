@@ -1,9 +1,9 @@
 'use client'
 
-import { type ReactNode } from 'react'
-import { useAuthStore, useUIStore } from '@/lib/stores'
+import { useAuth } from '@/components/providers/auth-provider'
+import { supabaseAuth } from '@/lib/stores/auth'
+import { useUIStore } from '@/lib/stores/ui'
 import { Button } from '@/components/ui/button'
-import { Avatar } from '@/lib/imports'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,13 +12,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
-import { useAuth } from '@/lib/stores/auth'
+import { UserAvatar } from '@/components/ui/user-avatar'
 
 export function Header() {
-  const { user, isLoading, signOut } = useAuthStore()
+  const { user, initialized } = useAuth()
   const toggleModal = useUIStore(state => state.toggleModal)
 
-  if (isLoading) {
+  if (!initialized) {
     return (
       <div className="flex items-center justify-center h-16">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -37,14 +37,8 @@ export function Header() {
           {user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  className="relative h-8 w-8 rounded-full"
-                >
-                  <Avatar
-                    className="h-8 w-8"
-                    user={{ name: user.email || 'User' }}
-                  />
+                <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+                  <UserAvatar className="h-8 w-8" user={user} />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
@@ -54,25 +48,17 @@ export function Header() {
                 <DropdownMenuItem asChild>
                   <Link href="/notes">My Notes</Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-red-600"
-                  onClick={() => signOut()}
-                >
+                <DropdownMenuItem className="text-red-600" onClick={() => supabaseAuth.signOut()}>
                   Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           ) : (
             <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => toggleModal('login')}
-              >
+              <Button variant="ghost" onClick={() => toggleModal('login')}>
                 Sign in
               </Button>
-              <Button
-                onClick={() => toggleModal('register')}
-              >
+              <Button onClick={() => toggleModal('register')}>
                 Sign up
               </Button>
             </div>

@@ -1,15 +1,15 @@
 'use client'
 
-import { useAuthStore } from '@/lib/stores'
+import { useAuth } from '@/components/providers/auth-provider'
+import { supabaseAuth } from '@/lib/stores/auth'
 import { Button } from '@/components/ui/button'
 import Link from 'next/link'
 import { Loader2 } from 'lucide-react'
-import type { User } from '@supabase/supabase-js'
 
 export function AuthActions() {
-  const { user, signOut, isLoading } = useAuthStore()
+  const { user, initialized } = useAuth()
 
-  if (isLoading) {
+  if (!initialized) {
     return (
       <div className="flex items-center gap-2">
         <Loader2 className="h-4 w-4 animate-spin" />
@@ -38,7 +38,7 @@ export function AuthActions() {
       <Button 
         size="sm" 
         variant="outline"
-        onClick={() => signOut()}
+        onClick={() => supabaseAuth.signOut()}
       >
         Sign out
       </Button>

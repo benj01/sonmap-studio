@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
-import type { Message } from '@/types/auth';
+import type { Message } from '@/types'
 import { formatMessage } from '@/utils/message';
 import { useAuthStore } from '@/lib/stores';
 

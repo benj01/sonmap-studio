@@ -1,50 +1,47 @@
 'use client'
 
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useContext, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { supabase } from '@/utils/auth'
+import { createClient } from '@/utils/supabase/client'
+import { useAuthUI } from '@/lib/stores/auth'
 import type { User } from '@supabase/supabase-js'
 
 interface AuthContextType {
   user: User | null
-  isLoading: boolean
   initialized: boolean
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null,
-  isLoading: true,
-  initialized: false,
+  initialized: false
 })
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null)
-  const [isLoading, setIsLoading] = useState(true)
-  const [initialized, setInitialized] = useState(false)
   const router = useRouter()
+  const [user, setUser] = useState<User | null>(null)
+  const [initialized, setInitialized] = useState(false)
+  const { setError } = useAuthUI()
+  const supabase = createClient()
 
   useEffect(() => {
-    // Check current auth status
-    const checkAuth = async () => {
+    async function initializeAuth() {
       try {
         const { data: { user } } = await supabase.auth.getUser()
         setUser(user)
       } catch (error) {
-        console.error('Error checking auth status:', error)
+        setError(error instanceof Error ? error.message : 'Auth initialization failed')
       } finally {
-        setIsLoading(false)
         setInitialized(true)
       }
     }
 
     // Initial auth check
-    checkAuth()
+    initializeAuth()
 
-    // Set up auth state listener
+    // Subscribe to auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         setUser(session?.user ?? null)
-        setIsLoading(false)
         
         if (event === 'SIGNED_OUT') {
           router.push('/sign-in')
@@ -55,10 +52,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       subscription.unsubscribe()
     }
-  }, [router])
+  }, [router, setError])
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, initialized }}>
+    <AuthContext.Provider value={{ user, initialized }}>
       {children}
     </AuthContext.Provider>
   )

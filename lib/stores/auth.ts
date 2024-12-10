@@ -1,25 +1,35 @@
+// /lib/stores/auth.ts - Complete rewrite
+
 import { create } from 'zustand'
-import type { User as SupabaseUser } from '@supabase/supabase-js'
 import { createClient } from '@/utils/supabase/client'
 
-export type User = SupabaseUser
-
-export interface AuthState {
-  user: User | null
+// Only store UI-related auth state, not duplicate Supabase auth
+interface AuthUIState {
   isLoading: boolean
-  initialized: boolean
-  setUser: (user: User | null) => void
-  signOut: () => Promise<void>
+  error: string | null
+  setError: (error: string | null) => void
+  resetError: () => void
 }
 
-export const useAuth = create<AuthState>((set) => ({
-  user: null,
+export const useAuthUI = create<AuthUIState>((set) => ({
   isLoading: false,
-  initialized: false,
-  setUser: (user) => set({ user }),
+  error: null,
+  setError: (error) => set({ error }),
+  resetError: () => set({ error: null })
+}))
+
+// Export Supabase auth utilities for direct usage
+export const supabaseAuth = {
+  getUser: async () => {
+    const supabase = createClient()
+    const { data: { user }, error } = await supabase.auth.getUser()
+    if (error) throw error
+    return user
+  },
+
   signOut: async () => {
     const supabase = createClient()
-    await supabase.auth.signOut()
-    set({ user: null })
+    const { error } = await supabase.auth.signOut()
+    if (error) throw error
   }
-}))
+}

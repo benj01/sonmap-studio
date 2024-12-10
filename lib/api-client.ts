@@ -1,13 +1,12 @@
-import { createClient } from '@/utils/supabase/client'
 import type { 
   SignInCredentials, 
-  SignUpCredentials, 
+  SignUpCredentials,
   AuthResponse,
   Profile,
   Note,
   CreateNoteInput,
-  UpdateNoteInput
-} from '@/types/api'
+  UpdateNoteInput 
+} from '@/types'
 
 class ApiClient {
   private supabase = createClient()

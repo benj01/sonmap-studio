@@ -2,21 +2,22 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/stores/auth'
+import { useAuth } from '@/components/providers/auth-provider'
+import { LoadingState } from '@/components/shared/loading-state'
 import { UserSettings } from '@/components/settings/user-settings'
 
 export default function SettingsPage() {
   const router = useRouter()
-  const { user, isLoading } = useAuth()
+  const { user, initialized } = useAuth()
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      router.push('/sign-in')
+    if (initialized && !user) {
+      router.push('/login')
     }
-  }, [user, isLoading, router])
+  }, [user, initialized, router])
 
-  if (isLoading) {
-    return null
+  if (!initialized) {
+    return <LoadingState text="Loading..." />
   }
 
   if (!user) {

@@ -2,21 +2,26 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { useAuth } from '@/lib/stores/auth'
+import { useAuth } from '@/components/providers/auth-provider'
+import { LoadingState } from '@/components/shared/loading-state'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
 export default function DashboardPage() {
   const router = useRouter()
-  const { user, isLoading } = useAuth()
+  const { user, initialized } = useAuth()
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      router.push('/sign-in')
+    if (initialized && !user) {
+      router.push('/login')
     }
-  }, [user, isLoading, router])
+  }, [user, initialized, router])
 
-  if (isLoading || !user) {
-    return null
+  if (!initialized) {
+    return <LoadingState text="Loading..." />
+  }
+
+  if (!user) {
+    return null // Let the useEffect handle redirect
   }
 
   return (

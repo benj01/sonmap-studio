@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { DataState, CacheItem } from '@/types/store'
+import type { DataState, CacheItem } from '@/types'
 
 const DEFAULT_TTL = 5 * 60 * 1000 // 5 minutes
 
