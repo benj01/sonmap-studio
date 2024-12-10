@@ -86,6 +86,8 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(redirectUrl)
     }
 
+    console.log('Middleware: Checking route:', request.nextUrl.pathname)
+
     return response
   } catch (e) {
     console.error('Middleware error:', e)

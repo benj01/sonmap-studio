@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { useToast } from '@/components/ui/use-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowLeft } from 'lucide-react'
 import { Label } from '@/components/ui/label'
-import { useAuth } from '@/lib/stores/auth'
+import { useAuth } from '@/components/providers/auth-provider'
 import { Database } from '@/types/supabase'
 import { LoadingState } from '@/components/shared/loading-state'
 
@@ -18,25 +18,34 @@ type ProjectInsert = Database['public']['Tables']['projects']['Insert']
 
 export default function NewProjectPage() {
   const router = useRouter()
-  const { user, initialized } = useAuth()
+  const { user, initialized, isLoading } = useAuth()
   const { toast } = useToast()
-  const [loading, setLoading] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     description: ''
   })
 
-  useEffect(() => {
-    if (initialized && !user) {
-      router.push('/sign-in')
-    }
-  }, [initialized, user, router])
+  // Show loading state while auth is initializing
+  if (!initialized || isLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <LoadingState text="Loading..." />
+      </div>
+    )
+  }
+
+  // Redirect if not authenticated
+  if (initialized && !user) {
+    router.push('/sign-in')
+    return null
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) return
     
-    setLoading(true)
+    setSubmitting(true)
     try {
       const supabase = createClient()
       
@@ -70,29 +79,14 @@ export default function NewProjectPage() {
         variant: "destructive"
       })
     } finally {
-      setLoading(false)
+      setSubmitting(false)
     }
   }
 
-  // Show loading state while checking auth
-  if (!initialized) {
-    return (
-      <div className="container max-w-2xl py-8">
-        <LoadingState text="Loading..." />
-      </div>
-    )
-  }
-
-  // Don't render anything while redirecting
-  if (!user) {
-    return null
-  }
-
   return (
-    <div className="container max-w-2xl py-8">
+    <div className="flex-1 space-y-4 p-8">
       <Button
         variant="ghost"
-        className="mb-8"
         onClick={() => router.back()}
       >
         <ArrowLeft className="mr-2 h-4 w-4" />
@@ -116,6 +110,7 @@ export default function NewProjectPage() {
                 value={formData.name}
                 onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                 placeholder="Enter project name"
+                disabled={submitting}
               />
             </div>
 
@@ -127,15 +122,16 @@ export default function NewProjectPage() {
                 onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                 placeholder="Enter project description (optional)"
                 rows={4}
+                disabled={submitting}
               />
             </div>
 
             <Button 
               type="submit" 
-              disabled={loading || !formData.name.trim()} 
+              disabled={submitting || !formData.name.trim()} 
               className="w-full"
             >
-              {loading ? 'Creating...' : 'Create Project'}
+              {submitting ? 'Creating...' : 'Create Project'}
             </Button>
           </form>
         </CardContent>
