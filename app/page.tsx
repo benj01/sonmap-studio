@@ -1,39 +1,41 @@
-// Updated Landing Page (page.tsx)
-'use client';
+'use client'
 
-import { useEffect, useState } from "react";
-import { Modal } from "@/components/ui/modal";
+import { useEffect, useState } from "react"
 import { 
   DropdownMenu,
   DropdownMenuTrigger,
   DropdownMenuContent,
   DropdownMenuItem
-} from "@/components/ui/dropdown-menu";
-import Login from "@/app/auth-pages/sign-in/page";
-import { getUser, signOut } from "@/utils/auth";
+} from "@/components/ui/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+} from "@/components/ui/dialog"
+import Login from "@/app/auth-pages/sign-in/page"
+import { getUser, signOut } from "@/utils/auth"
 import type { User } from '@supabase/supabase-js'
 
 export default function LandingPage() {
-    const [user, setUser] = useState<User | null>(null);
-    const [isLoginModalOpen, setLoginModalOpen] = useState(false);
+    const [user, setUser] = useState<User | null>(null)
+    const [isLoginModalOpen, setLoginModalOpen] = useState(false)
 
     useEffect(() => {
         const fetchUser = async () => {
-            const fetchedUser = await getUser();
+            const fetchedUser = await getUser()
             if (fetchedUser) {
-                setUser(fetchedUser as User); // Type assertion since we know the shape matches
+                setUser(fetchedUser as User)
             }
-        };
-        fetchUser();
-    }, []);
+        }
+        fetchUser()
+    }, [])
 
-    const handleLoginModalOpen = () => setLoginModalOpen(true);
-    const handleLoginModalClose = () => setLoginModalOpen(false);
+    const handleLoginModalOpen = () => setLoginModalOpen(true)
+    const handleLoginModalClose = () => setLoginModalOpen(false)
 
     const handleSignOut = async () => {
-        await signOut();
-        setUser(null);
-    };
+        await signOut()
+        setUser(null)
+    }
 
     return (
         <div className="flex flex-col items-center justify-center min-h-screen">
@@ -66,10 +68,12 @@ export default function LandingPage() {
                 </div>
             )}
 
-            {/* Login Modal */}
-            <Modal isOpen={isLoginModalOpen} onClose={handleLoginModalClose}>
-                <Login />
-            </Modal>
+            {/* Login Dialog */}
+            <Dialog open={isLoginModalOpen} onOpenChange={setLoginModalOpen}>
+                <DialogContent>
+                    <Login />
+                </DialogContent>
+            </Dialog>
         </div>
-    );
+    )
 }

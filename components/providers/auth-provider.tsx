@@ -1,69 +1,65 @@
 'use client'
 
-import { createContext, useContext, useEffect } from 'react'
+import { createContext, useContext, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
-import { useAuthUI } from '@/lib/stores/auth'
 import type { User } from '@supabase/supabase-js'
 
 interface AuthContextType {
   user: User | null
   initialized: boolean
+  isLoading: boolean
+  signOut: () => Promise<void>
 }
 
-const AuthContext = createContext<AuthContextType>({
-  user: null,
-  initialized: false
-})
+const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [initialized, setInitialized] = useState(false)
-  const { setError } = useAuthUI()
+  const [isLoading, setIsLoading] = useState(true)
   const supabase = createClient()
 
   useEffect(() => {
-    async function initializeAuth() {
+    const getUser = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser()
         setUser(user)
       } catch (error) {
-        setError(error instanceof Error ? error.message : 'Auth initialization failed')
+        console.error('Error loading user:', error)
       } finally {
         setInitialized(true)
+        setIsLoading(false)
       }
     }
 
-    // Initial auth check
-    initializeAuth()
+    getUser()
+  }, [])
 
-    // Subscribe to auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
-        setUser(session?.user ?? null)
-        
-        if (event === 'SIGNED_OUT') {
-          router.push('/sign-in')
-        }
-      }
-    )
-
-    return () => {
-      subscription.unsubscribe()
+  const signOut = async () => {
+    try {
+      setIsLoading(true)
+      await supabase.auth.signOut()
+      setUser(null)
+      router.push('/login')
+    } catch (error) {
+      console.error('Error signing out:', error)
+    } finally {
+      setIsLoading(false)
     }
-  }, [router, setError])
+  }
 
   return (
-    <AuthContext.Provider value={{ user, initialized }}>
+    <AuthContext.Provider value={{ user, initialized, isLoading, signOut }}>
       {children}
     </AuthContext.Provider>
   )
 }
 
-export const useAuth = () => {
+export function useAuth() {
   const context = useContext(AuthContext)
-  if (!context) {
+  if (context === undefined) {
     throw new Error('useAuth must be used within an AuthProvider')
   }
   return context
