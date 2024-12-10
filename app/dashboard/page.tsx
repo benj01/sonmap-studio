@@ -12,7 +12,8 @@ import { ProjectCard } from '@/components/dashboard/project-card'
 import { DashboardStats as DashboardStatsComponent } from '@/components/dashboard/dashboard-stats'
 import { Database } from '@/types/supabase'
 
-type ProjectRow = Database['public']['Tables']['projects']['Row']
+type Tables = Database['public']['Tables']
+type ProjectRow = Tables['projects']['Row']
 
 interface ProjectMember {
   count: number
@@ -27,6 +28,11 @@ interface DashboardStats {
   activeProjects: number
   totalStorage: number
   collaborators: number
+}
+
+interface ProjectMemberCount {
+  project_id: string
+  count: number
 }
 
 export default function DashboardPage() {
@@ -54,27 +60,41 @@ export default function DashboardPage() {
       const supabase = createClient()
       
       try {
+        // First fetch projects
         const { data: projectsData, error: projectsError } = await supabase
           .from('projects')
-          .select('*, project_members(count)')
+          .select('*')
           .eq('owner_id', user.id)
           .order('updated_at', { ascending: false })
 
-        if (projectsError) {
-          throw projectsError
-        }
+        if (projectsError) throw projectsError
 
-        const typedProjects = (projectsData || []) as Project[]
-        setProjects(typedProjects)
+        // Then fetch member counts
+        const { data: membersData, error: membersError } = await supabase
+          .rpc('get_project_member_counts', {
+            project_ids: (projectsData || []).map(p => p.id)
+          })
 
-        // Calculate stats with proper typing
-        const activeProjects = typedProjects.filter((p) => p.status === 'active').length
-        const totalStorage = typedProjects.reduce((acc, p) => acc + (p.storage_used || 0), 0)
-        const collaborators = typedProjects.reduce((acc, p) => 
-          acc + (p.project_members?.[0]?.count || 0), 0)
+        if (membersError) throw membersError
+
+        // Combine the data
+        const projectsWithMembers = (projectsData || []).map(project => ({
+          ...project,
+          project_members: [{
+            count: membersData?.find(m => m.project_id === project.id)?.count || 0
+          }]
+        })) as Project[]
+
+        setProjects(projectsWithMembers)
+
+        // Calculate stats
+        const activeProjects = projectsWithMembers.filter((p) => p.status === 'active').length
+        const totalStorage = projectsWithMembers.reduce((acc, p) => acc + (p.storage_used || 0), 0)
+        const collaborators = (membersData || []).reduce((acc: number, m) => 
+          acc + (m.count || 0), 0)
 
         setStats({
-          totalProjects: typedProjects.length,
+          totalProjects: projectsWithMembers.length,
           activeProjects,
           totalStorage,
           collaborators

@@ -191,7 +191,15 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      get_project_member_counts: {
+        Args: {
+          project_ids: string[]  // UUID is represented as string in TypeScript
+        }
+        Returns: {
+          project_id: string
+          count: number
+        }[]
+      }
     }
     Enums: {
       project_status: "active" | "archived" | "deleted"
