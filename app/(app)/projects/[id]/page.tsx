@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ArrowLeft, Settings, Users, Files, Map } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
+import { FileManager } from '@/components/files/file-manager' // New import
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -141,19 +142,7 @@ export default function ProjectPage({ params: paramsPromise }) {
           </Card>
         </TabsContent>
         <TabsContent value="files" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Project Files</CardTitle>
-              <CardDescription>
-                Manage your project files and documents.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="h-[300px] bg-muted rounded-lg flex items-center justify-center">
-                File Management Coming Soon
-              </div>
-            </CardContent>
-          </Card>
+          <FileManager projectId={projectId} /> {/* New component integration */}
         </TabsContent>
         <TabsContent value="members" className="space-y-4">
           <Card>
