@@ -1,5 +1,6 @@
 'use client'
 
+import { use } from 'react'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
@@ -21,23 +22,24 @@ interface Project {
   storage_used: number
 }
 
-export default function ProjectPage({ params }: { params: { id: string } }) {
+export default function ProjectPage({ params: paramsPromise }) {
+  const params = use(paramsPromise)
+  const projectId = params.id
+  const [project, setProject] = useState(null)
+  const supabase = createClient()
   const router = useRouter()
   const { toast } = useToast()
-  const [project, setProject] = useState<Project | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    const fetchProject = async () => {
-      const supabase = createClient()
-
+    async function loadProject() {
       const { data, error } = await supabase
         .from('projects')
         .select('*')
-        .eq('id', params.id)
+        .eq('id', projectId)
         .single()
-
+      
       if (error) {
         console.error('Error fetching project:', error)
         setError(error.message)
@@ -53,9 +55,8 @@ export default function ProjectPage({ params }: { params: { id: string } }) {
       setProject(data)
       setIsLoading(false)
     }
-
-    fetchProject()
-  }, [params.id, router, toast])
+    loadProject()
+  }, [projectId, supabase, router, toast])
 
   if (isLoading) {
     return <LoadingState text="Loading project..." />
