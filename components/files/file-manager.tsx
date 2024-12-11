@@ -23,6 +23,19 @@ export function FileManager({ projectId }: FileManagerProps) {
   const { toast } = useToast()
   const supabase = createClient()
 
+  // Check session on component mount
+  useEffect(() => {
+    async function checkSession() {
+      const { data, error } = await supabase.auth.getSession()
+      if (error) {
+        console.error('Error fetching session:', error)
+        return
+      }
+      console.log('Authenticated user ID:', data?.session?.user?.id)
+    }
+    checkSession()
+  }, [])
+
   useEffect(() => {
     loadFiles()
   }, [projectId])

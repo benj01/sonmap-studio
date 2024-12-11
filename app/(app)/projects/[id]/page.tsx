@@ -1,7 +1,6 @@
 'use client'
 
 import { use } from 'react'
-import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -10,7 +9,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ArrowLeft, Settings, Users, Files, Map } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
-import { FileManager } from '@/components/files/file-manager' // New import
+import { FileManager } from '@/components/files/file-manager'
+import { useEffect, useState } from 'react' // Missing import added
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -23,10 +23,16 @@ interface Project {
   storage_used: number
 }
 
-export default function ProjectPage({ params: paramsPromise }) {
-  const params = use(paramsPromise)
+// Add proper typing for params
+interface PageParams {
+  params: {
+    id: string
+  }
+}
+
+export default function ProjectPage({ params }: PageParams) {
   const projectId = params.id
-  const [project, setProject] = useState(null)
+  const [project, setProject] = useState<Project | null>(null) // Add proper typing for the project state
   const supabase = createClient()
   const router = useRouter()
   const { toast } = useToast()
