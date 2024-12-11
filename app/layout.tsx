@@ -3,8 +3,8 @@ import { Inter } from 'next/font/google'
 import { Toaster } from '@/components/ui/toaster'
 import { AuthProvider } from '@/components/providers/auth-provider'
 import { ThemeProvider } from '@/components/providers/theme-provider'
-import { SiteHeader } from '@/components/layout/site-header'
-import { SiteNavigation } from '@/components/layout/site-navigation'
+import { Header } from '@/components/layout/header' // Updated import
+import { SiteNavigation } from '@/components/layout/site-navigation';
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -29,9 +29,9 @@ export default function RootLayout({
         >
           <AuthProvider>
             <div className="relative flex min-h-screen flex-col">
-              <SiteHeader />
+              <Header /> {/* Updated usage */}
               <div className="flex flex-1">
-                <SiteNavigation />
+                <SiteNavigation /> {/* This needs to be created */}
                 <main className="flex-1 bg-background">
                   {children}
                 </main>
