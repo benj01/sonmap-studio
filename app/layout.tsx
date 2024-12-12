@@ -4,7 +4,6 @@ import { Toaster } from '@/components/ui/toaster'
 import { AuthProvider } from '@/components/providers/auth-provider'
 import { ThemeProvider } from '@/components/providers/theme-provider'
 import { Header } from '@/components/layout/header'
-import { SiteNavigation } from '@/components/layout/site-navigation'
 import { ModalProvider } from '@/components/providers/modal-provider'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -34,16 +33,13 @@ export default function RootLayout({
         >
           <AuthProvider>
             <div className="relative flex min-h-screen flex-col">
+              {/* Global Header */}
               <Header />
-              <div className="flex flex-1">
-                <SiteNavigation />
-                <main className="flex-1 bg-background">
-                  {children}
-                </main>
-              </div>
+              {/* Main Content */}
+              <main className="flex-1 bg-background">{children}</main>
             </div>
             <Toaster />
-            <ModalProvider /> {/* Added ModalProvider here */}
+            <ModalProvider />
           </AuthProvider>
         </ThemeProvider>
       </body>

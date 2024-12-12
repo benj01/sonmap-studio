@@ -61,6 +61,7 @@ export default function ProjectPage({ params }: PageParams) {
 
         setProject(data)
       } catch (err) {
+        console.error("Error loading project:", err);
         setError('An unexpected error occurred while loading the project.')
       } finally {
         setIsLoading(false)

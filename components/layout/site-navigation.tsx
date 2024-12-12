@@ -9,12 +9,7 @@ export function SiteNavigation() {
   return (
     <nav>
       <ul>
-        {/* Render the Dashboard link only if the user is logged in */}
-        {user && (
-          <li>
-            <Link href="/dashboard">Dashboard</Link>
-          </li>
-        )}
+        {/* Other navigation links for logged-in users can go here */}
       </ul>
     </nav>
   )

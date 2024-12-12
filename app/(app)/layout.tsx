@@ -16,6 +16,7 @@ export default async function AppLayout({
       redirect('/sign-in')
     }
 
+    // Return children without duplicating navigation
     return <>{children}</>
   } catch (error) {
     console.error('Error fetching session:', error)
