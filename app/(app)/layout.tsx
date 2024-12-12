@@ -6,12 +6,20 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode
 }) {
-  const supabase = await createClient()
-  const { data: { session } } = await supabase.auth.getSession()
+  try {
+    const supabase = await createClient()
+    const {
+      data: { session },
+    } = await supabase.auth.getSession()
 
-  if (!session) {
-    redirect('/sign-in')
+    if (!session) {
+      redirect('/sign-in')
+    }
+
+    return <>{children}</>
+  } catch (error) {
+    console.error('Error fetching session:', error)
+    // Optionally, redirect to a custom error page or fallback
+    redirect('/error')
   }
-
-  return children
 }
