@@ -5,6 +5,7 @@ import { AuthProvider } from '@/components/providers/auth-provider'
 import { ThemeProvider } from '@/components/providers/theme-provider'
 import { Header } from '@/components/layout/header'
 import { SiteNavigation } from '@/components/layout/site-navigation'
+import { ModalProvider } from '@/components/providers/modal-provider'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -42,6 +43,7 @@ export default function RootLayout({
               </div>
             </div>
             <Toaster />
+            <ModalProvider /> {/* Added ModalProvider here */}
           </AuthProvider>
         </ThemeProvider>
       </body>

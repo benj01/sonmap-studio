@@ -41,10 +41,13 @@ export function ModalProvider() {
             open={isOpen}
             onOpenChange={(open) => !open && toggleModal(id)}
           >
-            <DialogContent>
+            <DialogContent aria-describedby="modal-description">
               <DialogHeader>
                 <DialogTitle>{title}</DialogTitle>
               </DialogHeader>
+              <div id="modal-description" className="sr-only">
+                {title} dialog window
+              </div>
               <ModalComponent />
             </DialogContent>
           </Dialog>

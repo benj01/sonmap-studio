@@ -1,6 +1,6 @@
 'use client'
 
-// import { use } from 'react'
+import { use } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ArrowLeft, Settings, Users, Files, Map } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
 import { FileManager } from '@/components/files/file-manager'
-import { useEffect, useState } from 'react' // Missing import added
+import { useEffect, useState } from 'react'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -23,16 +23,13 @@ interface Project {
   storage_used: number
 }
 
-// Add proper typing for params
 interface PageParams {
-  params: {
-    id: string
-  }
+  params: Promise<{ id: string }>
 }
 
 export default function ProjectPage({ params }: PageParams) {
-  const projectId = params.id
-  const [project, setProject] = useState<Project | null>(null) // Add proper typing for the project state
+  const { id: projectId } = use(params) // Unwrap async params using `use`
+  const [project, setProject] = useState<Project | null>(null)
   const supabase = createClient()
   const router = useRouter()
   const { toast } = useToast()
@@ -41,29 +38,37 @@ export default function ProjectPage({ params }: PageParams) {
 
   useEffect(() => {
     async function loadProject() {
-      const { data, error } = await supabase
-        .from('projects')
-        .select('*')
-        .eq('id', projectId)
-        .single()
-      
-      if (error) {
-        console.error('Error fetching project:', error)
-        setError(error.message)
-        toast({
-          title: 'Error',
-          description: 'Failed to load project',
-          variant: 'destructive'
-        })
-        router.push('/dashboard')
-        return
-      }
+      try {
+        const { data, error } = await supabase
+          .from('projects')
+          .select('*')
+          .eq('id', projectId)
+          .single()
 
-      setProject(data)
-      setIsLoading(false)
+        if (error) {
+          setError(error.message)
+          toast({
+            title: 'Error',
+            description: error.message,
+            action: (
+              <Button variant="link" onClick={() => router.reload()}>
+                Retry
+              </Button>
+            ),
+          })
+          return
+        }
+
+        setProject(data)
+      } catch (err) {
+        setError('An unexpected error occurred while loading the project.')
+      } finally {
+        setIsLoading(false)
+      }
     }
+
     loadProject()
-  }, [projectId, supabase, router, toast])
+  }, [projectId, supabase, toast, router])
 
   if (isLoading) {
     return <LoadingState text="Loading project..." />
@@ -110,7 +115,7 @@ export default function ProjectPage({ params }: PageParams) {
         </div>
         <Button
           variant="outline"
-          onClick={() => router.push(`/projects/${params.id}/settings`)}
+          onClick={() => router.push(`/projects/${projectId}/settings`)}
         >
           <Settings className="mr-2 h-4 w-4" />
           Settings
@@ -148,7 +153,7 @@ export default function ProjectPage({ params }: PageParams) {
           </Card>
         </TabsContent>
         <TabsContent value="files" className="space-y-4">
-          <FileManager projectId={projectId} /> {/* New component integration */}
+          <FileManager projectId={projectId} />
         </TabsContent>
         <TabsContent value="members" className="space-y-4">
           <Card>

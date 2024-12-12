@@ -1,9 +1,12 @@
 'use client'
 
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import * as z from 'zod'
 import { useAuth } from '@/components/providers/auth-provider'
 import { createClient } from '@/utils/supabase/client'
+import { useUIStore } from '@/lib/stores/ui'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -15,32 +18,21 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { useForm } from 'react-hook-form'
-import * as z from 'zod'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
-import type { SignInCredentials } from '@/types'
-import { useUIStore } from '@/lib/stores/ui'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
-  password: z.string().min(6, 'Password must be at least 6 characters')
+  password: z.string().min(6, 'Password must be at least 6 characters'),
 })
 
 type FormValues = z.infer<typeof formSchema>
 
 export function LoginForm() {
-  const router = useRouter()
-  const { user } = useAuth()
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const { toggleModal } = useUIStore()
   const supabase = createClient()
-
-  const handleLoginModalClose = () => {
-    // implement the logic to close the login modal
-  }
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -55,17 +47,17 @@ export function LoginForm() {
     setFormError(null)
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      const { error: authError } = await supabase.auth.signInWithPassword({
         email: data.email,
         password: data.password,
       })
-      
+
       if (authError) {
         setFormError(authError.message)
         return
       }
 
-      // Close the modal after successful login
+      // Close the login modal after successful login
       toggleModal('login')
     } catch (err) {
       setFormError('An unexpected error occurred')
@@ -87,7 +79,6 @@ export function LoginForm() {
           </Alert>
         )}
 
-        {/* Rest of the form remains the same */}
         <FormField
           control={form.control}
           name="email"
