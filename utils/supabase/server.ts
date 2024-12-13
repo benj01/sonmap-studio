@@ -11,20 +11,23 @@ export function createClient() {
     {
       cookies: {
         get(name: string) {
-          return cookieStore.get(name)?.value
+          const cookie = cookieStore.get(name)
+          return cookie?.value
         },
         set(name: string, value: string, options: any) {
           try {
             cookieStore.set({ name, value, ...options })
           } catch (error) {
             // Handle cookie setting error
+            console.error('Error setting cookie:', error)
           }
         },
         remove(name: string, options: any) {
           try {
-            cookieStore.set({ name, value: '', ...options })
+            cookieStore.delete({ name, ...options })
           } catch (error) {
             // Handle cookie removal error
+            console.error('Error removing cookie:', error)
           }
         },
       },

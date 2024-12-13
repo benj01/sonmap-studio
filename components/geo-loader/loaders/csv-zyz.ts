@@ -1,7 +1,7 @@
-// components/geo-loader/loaders/csv-xyz.ts
+// components/geo-loader/loaders/csv-zyz.ts
 
 import Papa from 'papaparse';
-import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature } from '../../../types/geo';
+import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
 import { CoordinateTransformer, COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 import _ from 'lodash';
 
@@ -100,12 +100,21 @@ export class CsvXyzLoader implements GeoFileLoader {
       const bounds = this.calculateBounds(samplePoints);
 
       // Generate preview
-      const preview = this.generatePreview(samplePoints);
+      const preview: GeoFeatureCollection = {
+        type: 'FeatureCollection',
+        features: samplePoints.map(point => ({
+          type: 'Feature',
+          geometry: {
+            type: 'Point',
+            coordinates: point.z !== undefined ? 
+              [point.x, point.y, point.z] : 
+              [point.x, point.y]
+          },
+          properties: { z: point.z }
+        }))
+      };
 
       return {
-        columnMapping,
-        headers,
-        delimiter,
         coordinateSystem: suggestedCRS,
         bounds,
         preview
@@ -134,9 +143,10 @@ export class CsvXyzLoader implements GeoFileLoader {
       const columnMapping = this.detectColumnMapping(headers);
 
       // Create coordinate transformer if needed
-      const transformer = options.coordinateSystem && options.targetSystem ? 
-        new CoordinateTransformer(options.coordinateSystem, options.targetSystem) :
-        null;
+      let transformer: CoordinateTransformer | undefined;
+      if (options.coordinateSystem && options.targetSystem) {
+        transformer = new CoordinateTransformer(options.coordinateSystem, options.targetSystem);
+      }
 
       // Convert rows to features
       const features = this.convertToGeoFeatures(parseResult.data, headers, columnMapping, transformer);
@@ -219,25 +229,6 @@ export class CsvXyzLoader implements GeoFileLoader {
         properties
       };
     });
-  }
-
-  private generatePreview(points: Array<{ x: number; y: number; z?: number }>) {
-    // Take a sample of points for preview
-    const samplePoints = points.slice(0, 1000).map(point => ({
-      type: 'Feature',
-      geometry: {
-        type: 'Point',
-        coordinates: point.z !== undefined ? 
-          [point.x, point.y, point.z] : 
-          [point.x, point.y]
-      },
-      properties: { z: point.z }
-    }));
-
-    return {
-      type: 'FeatureCollection',
-      features: samplePoints
-    };
   }
 }
 

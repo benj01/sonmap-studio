@@ -3,10 +3,18 @@
 export type GeoFileType = 'dxf' | 'shp' | 'xyz' | 'csv' | 'txt';
 
 export interface GeoFeature {
-  type: string;
-  geometry: any;
+  type: 'Feature';
+  geometry: {
+    type: 'Point' | 'LineString' | 'Polygon';
+    coordinates: number[];
+  };
   properties: Record<string, any>;
   layer?: string;
+}
+
+export interface GeoFeatureCollection {
+  type: 'FeatureCollection';
+  features: GeoFeature[];
 }
 
 export interface LoaderOptions {
@@ -51,7 +59,7 @@ export interface GeoFileLoader {
     layers?: string[];
     coordinateSystem?: string;
     bounds?: LoaderResult['bounds'];
-    preview?: GeoFeature[];
+    preview?: GeoFeatureCollection;
   }>;
   load: (file: File, options: LoaderOptions) => Promise<LoaderResult>;
 }

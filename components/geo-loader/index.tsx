@@ -1,12 +1,13 @@
-import React, { useState, useCallback } from 'react';
-import Map, { Source, Layer } from 'react-map-gl';
+import React, { useState, useCallback, useEffect } from 'react';
+import Map, { Source, Layer, ViewStateChangeEvent } from 'react-map-gl';
 import { Card, CardHeader, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import type { GeoFileType, LoaderOptions, LoaderResult } from '../types/geo';
+import type { GeoFileType, LoaderOptions, LoaderResult } from '../../types/geo';
+import { loaderRegistry } from './loaders';
 
 interface GeoLoaderProps {
   file: File;
@@ -37,19 +38,47 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
     zoom: 1
   });
 
+  // Initialize analysis when file changes
+  useEffect(() => {
+    analyzeFile();
+  }, [file]);
+
   // Handle file analysis
   const analyzeFile = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const loader = await getLoaderForFile(file);
+      // Validate file and get appropriate loader
+      const { valid, loader, error: validationError } = await loaderRegistry.validateFile(file);
+      
+      if (!valid || !loader) {
+        throw new Error(validationError || 'Unsupported file type');
+      }
+
+      // Get recommended options for this file type
+      const recommendedOptions = await loaderRegistry.getRecommendedOptions(file);
+      setOptions(prev => ({ ...prev, ...recommendedOptions }));
+
+      // Analyze the file
       const analysisResult = await loader.analyze(file);
       setAnalysis(analysisResult);
       
       // If bounds are available, adjust map view
       if (analysisResult.bounds) {
-        // Convert bounds to center point and zoom level
-        // Implementation needed
+        const { minX, minY, maxX, maxY } = analysisResult.bounds;
+        const centerLng = (minX + maxX) / 2;
+        const centerLat = (minY + maxY) / 2;
+        
+        // Calculate appropriate zoom level based on bounds
+        const latZoom = Math.log2(360 / (maxY - minY)) - 1;
+        const lngZoom = Math.log2(360 / (maxX - minX)) - 1;
+        const zoom = Math.min(latZoom, lngZoom, 20); // Cap at zoom level 20
+
+        setViewState({
+          latitude: centerLat,
+          longitude: centerLng,
+          zoom: zoom
+        });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to analyze file');
@@ -63,7 +92,11 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
     setLoading(true);
     setError(null);
     try {
-      const loader = await getLoaderForFile(file);
+      const { loader } = await loaderRegistry.validateFile(file);
+      if (!loader) {
+        throw new Error('No suitable loader found for this file');
+      }
+
       const result = await loader.load(file, options);
       onLoad(result);
     } catch (err) {
@@ -103,7 +136,7 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
               </div>
 
               {/* Layer Selection (for DXF/SHP) */}
-              {analysis?.layers && (
+              {analysis?.layers && analysis.layers.length > 0 && (
                 <div>
                   <label className="text-sm font-medium">Layers</label>
                   <div className="space-y-2">
@@ -126,7 +159,7 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
               )}
 
               {/* CSV/TXT specific options */}
-              {(file.name.endsWith('.csv') || file.name.endsWith('.txt')) && (
+              {(file.name.endsWith('.csv') || file.name.endsWith('.txt') || file.name.endsWith('.xyz')) && (
                 <div className="space-y-4">
                   <div>
                     <label className="text-sm font-medium">Delimiter</label>
@@ -159,8 +192,9 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
             <div className="h-96 relative">
               <Map
                 {...viewState}
-                onMove={evt => setViewState(evt.viewState)}
+                onMove={(evt: ViewStateChangeEvent) => setViewState(evt.viewState)}
                 mapStyle="mapbox://styles/mapbox/light-v11"
+                mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
               >
                 {analysis?.preview && (
                   <Source

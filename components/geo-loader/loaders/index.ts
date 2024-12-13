@@ -2,7 +2,7 @@
 
 import { GeoFileLoader } from '../../../types/geo';
 import dxfLoader from './dxf';
-import csvXyzLoader from './csv-xyz';
+import csvXyzLoader from './csv-zyz';
 import shapefileLoader from './shapefile';
 
 class LoaderRegistry {

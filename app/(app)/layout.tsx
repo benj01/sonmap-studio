@@ -1,5 +1,7 @@
 // app/(app)/layout.tsx
+import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { cookies } from 'next/headers'
 
 export default async function AppLayout({
   children,
@@ -7,7 +9,9 @@ export default async function AppLayout({
   children: React.ReactNode
 }) {
   try {
+    const cookieStore = cookies()
     const supabase = createClient()
+
     const {
       data: { session },
     } = await supabase.auth.getSession()

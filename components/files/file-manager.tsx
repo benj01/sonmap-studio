@@ -9,14 +9,16 @@ import { Database } from '@/types/supabase'
 import { FileUpload } from './file-upload'
 import { FileItem } from './file-item'
 import { createClient } from '@/utils/supabase/client'
+import { LoaderResult } from '@/types/geo'
 
 type ProjectFile = Database['public']['Tables']['project_files']['Row']
 
 interface FileManagerProps {
   projectId: string
+  onGeoImport?: (result: LoaderResult, file: ProjectFile) => void
 }
 
-export function FileManager({ projectId }: FileManagerProps) {
+export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -62,7 +64,6 @@ export function FileManager({ projectId }: FileManagerProps) {
 
   const refreshProjectStorage = async () => {
     try {
-      // Fetch updated project data to get new storage value
       const { data, error } = await supabase
         .from('projects')
         .select('storage_used')
@@ -70,8 +71,6 @@ export function FileManager({ projectId }: FileManagerProps) {
         .single()
 
       if (error) throw error
-
-      // The database trigger we created earlier should have updated the storage_used value
       console.log('Updated storage usage:', data.storage_used)
     } catch (error) {
       console.error('Error refreshing storage:', error)
@@ -102,7 +101,7 @@ export function FileManager({ projectId }: FileManagerProps) {
       if (dbError) throw dbError
 
       setFiles(prevFiles => prevFiles.filter(f => f.id !== fileId))
-      await refreshProjectStorage() // Refresh storage after delete
+      await refreshProjectStorage()
 
       toast({
         title: 'Success',
@@ -113,6 +112,16 @@ export function FileManager({ projectId }: FileManagerProps) {
         title: 'Error',
         description: 'Failed to delete file',
         variant: 'destructive',
+      })
+    }
+  }
+
+  const handleImport = (result: LoaderResult, file: ProjectFile) => {
+    if (onGeoImport) {
+      onGeoImport(result, file)
+      toast({
+        title: 'Success',
+        description: 'File imported successfully',
       })
     }
   }
@@ -171,6 +180,7 @@ export function FileManager({ projectId }: FileManagerProps) {
                 file={file}
                 viewMode={viewMode}
                 onDelete={handleDeleteFile}
+                onImport={(result) => handleImport(result, file)}
               />
             ))}
           </div>
