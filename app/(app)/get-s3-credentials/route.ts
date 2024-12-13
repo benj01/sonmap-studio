@@ -1,16 +1,23 @@
 import { NextResponse } from 'next/server';
 import { createSupabaseServerClient } from '@/utils/supabase/server';
 
-export async function POST() {
-    const supabase = createSupabaseServerClient()
+export async function POST(req: Request) {
+    try {
+        const { fileName } = await req.json();
+        const supabase = createSupabaseServerClient();
 
-    const { data, error } = await supabase.storage.getS3CredentialsForBucket('project-files');
+        const { data, error } = await supabase.storage
+            .from('project-files')
+            .createSignedUploadUrl(fileName);
 
-    if (error) {
-        console.error(error)
-        return NextResponse.json({ error }, { status: 500 });
+        if (error) {
+            console.error('Error getting signed URL:', error);
+            return NextResponse.json({ error: error.message }, { status: 500 });
+        }
+
+        return NextResponse.json(data);
+    } catch (error: any) {
+        console.error('Error in route handler:', error);
+        return NextResponse.json({ error: error.message }, { status: 500 });
     }
-    const { accessKey, secretKey, region, endpoint} = data
-
-    return NextResponse.json({ accessKeyId: accessKey, secretAccessKey: secretKey, region, endpoint })
 }

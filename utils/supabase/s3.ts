@@ -1,22 +1,23 @@
 import { S3Client } from '@aws-sdk/client-s3';
-import { getSupabaseStorageS3Credentials } from './server'
 
-export async function createS3Client() {
-  const s3Creds = await getSupabaseStorageS3Credentials()
+export async function getSignedUploadUrl(fileName: string) {
+  try {
+    const response = await fetch('/api/get-s3-credentials', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ fileName }),
+    });
 
-  if (!s3Creds) {
-   throw new Error("Could not get S3 credentials")
+    if (!response.ok) {
+      throw new Error('Failed to get upload URL');
+    }
+
+    const data = await response.json();
+    return data.signedUrl;
+  } catch (error) {
+    console.error('Error getting signed URL:', error);
+    throw error;
   }
-  
-  const {endpoint, accessKeyId, secretAccessKey, region } = s3Creds
-  
-  return new S3Client({
-    endpoint: endpoint,
-    credentials: {
-      accessKeyId: accessKeyId,
-      secretAccessKey: secretAccessKey,
-    },
-    region: region,
-    signatureVersion: 'v4',
-  })
 }

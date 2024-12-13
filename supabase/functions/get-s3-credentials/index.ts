@@ -8,31 +8,36 @@ serve(async (req) => {
   }
 
   try {
-      const bucket = "project-files";
-        const { data, error } = await supabaseAdmin.storage.getS3CredentialsForBucket(bucket);
+    // Use the storage API to get a signed URL which includes credentials
+    const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
+      .from('project-files')
+      .createSignedUploadUrl('temp-credential-check.txt');
 
-        if (error) {
-            console.error(error)
-            return new Response(
-                JSON.stringify({ error: error.message }),
-                {
-                    headers: { "Content-Type": "application/json", ...corsHeaders },
-                    status: 500,
-                }
-            );
-        }
-      
+    if (signedUrlError) {
+      console.error(signedUrlError);
       return new Response(
-          JSON.stringify(data),
-          {
-            headers: { "Content-Type": "application/json", ...corsHeaders },
-          }
+        JSON.stringify({ error: signedUrlError.message }),
+        {
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+          status: 500,
+        }
       );
+    }
+
+    return new Response(
+      JSON.stringify(signedUrlData),
+      {
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      }
+    );
 
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-      status: 400,
-    });
+    return new Response(
+      JSON.stringify({ error: error.message }), 
+      {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+        status: 400,
+      }
+    );
   }
 });
