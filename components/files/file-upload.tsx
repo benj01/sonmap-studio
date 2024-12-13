@@ -13,9 +13,10 @@ type ProjectFile = Database['public']['Tables']['project_files']['Row']
 interface FileUploadProps {
   projectId: string
   onUploadComplete: (file: ProjectFile) => void
+  onStorageUpdate?: () => void  // New prop
 }
 
-export function FileUpload({ projectId, onUploadComplete }: FileUploadProps) {
+export function FileUpload({ projectId, onUploadComplete, onStorageUpdate }: FileUploadProps) {
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -63,6 +64,9 @@ export function FileUpload({ projectId, onUploadComplete }: FileUploadProps) {
         .single()
 
       if (dbError) throw dbError
+
+      // Call onStorageUpdate after successful upload
+      onStorageUpdate?.()
 
       toast({
         title: 'Success',

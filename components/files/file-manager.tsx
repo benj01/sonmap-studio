@@ -23,7 +23,6 @@ export function FileManager({ projectId }: FileManagerProps) {
   const { toast } = useToast()
   const supabase = createClient()
 
-  // Check session on component mount
   useEffect(() => {
     async function checkSession() {
       const { data, error } = await supabase.auth.getSession()
@@ -61,8 +60,27 @@ export function FileManager({ projectId }: FileManagerProps) {
     }
   }
 
-  const handleUploadComplete = (newFile: ProjectFile) => {
+  const refreshProjectStorage = async () => {
+    try {
+      // Fetch updated project data to get new storage value
+      const { data, error } = await supabase
+        .from('projects')
+        .select('storage_used')
+        .eq('id', projectId)
+        .single()
+
+      if (error) throw error
+
+      // The database trigger we created earlier should have updated the storage_used value
+      console.log('Updated storage usage:', data.storage_used)
+    } catch (error) {
+      console.error('Error refreshing storage:', error)
+    }
+  }
+
+  const handleUploadComplete = async (newFile: ProjectFile) => {
     setFiles(prevFiles => [newFile, ...prevFiles])
+    await refreshProjectStorage()
   }
 
   const handleDeleteFile = async (fileId: string) => {
@@ -84,6 +102,8 @@ export function FileManager({ projectId }: FileManagerProps) {
       if (dbError) throw dbError
 
       setFiles(prevFiles => prevFiles.filter(f => f.id !== fileId))
+      await refreshProjectStorage() // Refresh storage after delete
+
       toast({
         title: 'Success',
         description: 'File deleted successfully',
@@ -126,7 +146,8 @@ export function FileManager({ projectId }: FileManagerProps) {
             </div>
             <FileUpload 
               projectId={projectId} 
-              onUploadComplete={handleUploadComplete} 
+              onUploadComplete={handleUploadComplete}
+              onStorageUpdate={refreshProjectStorage}
             />
           </div>
         </div>
