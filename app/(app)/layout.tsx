@@ -1,4 +1,4 @@
-import { redirect } from 'next/navigation'
+// app/(app)/layout.tsx
 import { createClient } from '@/utils/supabase/server'
 
 export default async function AppLayout({
@@ -7,7 +7,7 @@ export default async function AppLayout({
   children: React.ReactNode
 }) {
   try {
-    const supabase = await createClient()
+    const supabase = createClient()
     const {
       data: { session },
     } = await supabase.auth.getSession()
@@ -16,11 +16,16 @@ export default async function AppLayout({
       redirect('/sign-in')
     }
 
-    // Return children without duplicating navigation
     return <>{children}</>
   } catch (error) {
     console.error('Error fetching session:', error)
-    // Optionally, redirect to a custom error page or fallback
-    redirect('/error')
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold">Something went wrong</h1>
+          <p className="mt-2">Please try refreshing the page</p>
+        </div>
+      </div>
+    )
   }
 }

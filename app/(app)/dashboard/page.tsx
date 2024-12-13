@@ -48,12 +48,6 @@ export default function DashboardPage() {
   })
 
   useEffect(() => {
-    if (initialized && !user) {
-      router.push('/login')
-    }
-  }, [user, initialized, router])
-
-  useEffect(() => {
     const fetchData = async () => {
       if (!user) return
 
@@ -79,7 +73,7 @@ export default function DashboardPage() {
         if (memberProjectsError) throw memberProjectsError
 
         // Fetch full project details for member projects
-        let memberProjectDetails = []
+        let memberProjectDetails: ProjectRow[] = []
         if (memberProjects && memberProjects.length > 0) {
           const { data: details, error: memberDetailsError } = await supabase
             .from('projects')
