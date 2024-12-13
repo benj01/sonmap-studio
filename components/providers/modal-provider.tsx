@@ -1,6 +1,6 @@
 'use client'
 
-import { useUIStore } from '@/lib/stores/ui'
+import { useUIStore, ModalId } from '@/lib/stores/ui'
 import {
   Dialog,
   DialogContent,
@@ -15,7 +15,7 @@ type ModalConfig = {
   component: React.ComponentType
 }
 
-const MODAL_COMPONENTS: Record<string, ModalConfig> = {
+const MODAL_COMPONENTS: Record<ModalId, ModalConfig> = {
   login: {
     title: 'Sign in to your account',
     component: LoginForm,
@@ -33,13 +33,13 @@ export function ModalProvider() {
   return (
     <>
       {Object.entries(MODAL_COMPONENTS).map(([id, { title, component: ModalComponent }]) => {
-        const isOpen = modals[id] || false
+        const isOpen = modals[id as ModalId] || false
 
         return (
           <Dialog
             key={id}
             open={isOpen}
-            onOpenChange={(open) => !open && toggleModal(id)}
+            onOpenChange={(open) => !open && toggleModal(id as ModalId)}
           >
             <DialogContent aria-describedby="modal-description">
               <DialogHeader>

@@ -1,3 +1,4 @@
+import { createClient } from '@supabase/supabase-js'
 import type { 
   SignInCredentials, 
   SignUpCredentials,
@@ -9,7 +10,10 @@ import type {
 } from '@/types'
 
 class ApiClient {
-  private supabase = createClient()
+  private supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
 
   // Auth methods
   auth = {
@@ -122,4 +126,9 @@ class ApiClient {
   }
 }
 
-export const apiClient = new ApiClient() 
+// Validate environment variables before creating the instance
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+  throw new Error('Missing required Supabase environment variables')
+}
+
+export const apiClient = new ApiClient()
