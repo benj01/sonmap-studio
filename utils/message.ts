@@ -1,15 +1,11 @@
-import { type Message } from "@/components/form-message";
+import { type ResetPasswordMessage } from "@/app/protected/reset-password/page";
 
-export function formatMessage(message: Message | null, formError: string | null): Message {
-    if (message) {
-        // Pick the first available non-empty field
-        return { 
-            success: message.success || 
-                    message.error || 
-                    message.message || "" 
-        };
-    } else if (formError) {
-        return { error: formError };
-    }
-    return { message: "" };
+export function formatMessage(
+  message: ResetPasswordMessage | null,
+  formError: string | null
+): string | undefined {
+  if (formError) return formError;
+  if (message?.success) return message.success;
+  if (message?.error) return message.error;
+  return undefined;
 }

@@ -1,6 +1,6 @@
 // components/geo-loader/loaders/shapefile.ts
 
-import shapefile from 'shapefile';
+import * as shapefile from 'shapefile';
 import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
 import { CoordinateTransformer } from '../utils/coordinate-systems';
 
@@ -98,19 +98,38 @@ class ShapefileLoader implements GeoFileLoader {
 
     features.forEach(feature => {
       const coords = feature.geometry.coordinates;
-      if (feature.geometry.type === 'Point') {
-        const [x, y] = coords;
+      if (feature.geometry.type === 'Point' && Array.isArray(coords) && coords.length >= 2) {
+        const x = coords[0] as number;
+        const y = coords[1] as number;
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
         maxX = Math.max(maxX, x);
         maxY = Math.max(maxY, y);
-      } else if (feature.geometry.type === 'LineString' || feature.geometry.type === 'Polygon') {
-        coords.forEach((coord: number[]) => {
-          const [x, y] = coord;
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
+      } else if (feature.geometry.type === 'LineString' && Array.isArray(coords)) {
+        coords.forEach(coord => {
+           if (Array.isArray(coord) && coord.length >= 2) {
+            const x = coord[0] as number;
+            const y = coord[1] as number;
+            minX = Math.min(minX, x);
+            minY = Math.min(minY, y);
+            maxX = Math.max(maxX, x);
+            maxY = Math.max(maxY, y);
+          }
+        });
+      } else if (feature.geometry.type === 'Polygon' && Array.isArray(coords)) {
+        coords.forEach(ring => {
+          if (Array.isArray(ring)) {
+            ring.forEach(coord => {
+              if (Array.isArray(coord) && coord.length >= 2) {
+                const x = coord[0] as number;
+                const y = coord[1] as number;
+                minX = Math.min(minX, x);
+                minY = Math.min(minY, y);
+                maxX = Math.max(maxX, x);
+                maxY = Math.max(maxY, y);
+              }
+            });
+          }
         });
       }
     });

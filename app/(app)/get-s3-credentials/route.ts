@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import { createSupabaseServerClient } from '@/utils/supabase/server';
+import createClient from '@/utils/supabase/server';
 
 export async function POST(req: Request) {
     try {
         const { fileName } = await req.json();
-        const supabase = createSupabaseServerClient();
+        const supabase = await createClient();
 
         const { data, error } = await supabase.storage
             .from('project-files')

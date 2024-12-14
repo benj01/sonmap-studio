@@ -1,7 +1,7 @@
 'use client';
 
 import { resetPasswordAction } from "@/app/actions";
-import { FormMessage, type Message } from "@/components/form-message";
+import { FormMessage } from "@/components/form-message";
 import { SubmitButton } from "@/components/submit-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,9 +12,11 @@ import { type ActionResponse } from "@/types";
 
 export const dynamic = 'force-dynamic';
 
+type ResetPasswordMessage = { success?: string; error?: string };
+
 export default function ResetPassword() {
   const searchParams = useSearchParams();
-  const [message, setMessage] = useState<Message | null>(null);
+  const [message, setMessage] = useState<ResetPasswordMessage | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 

@@ -1,21 +1,21 @@
-import React from 'react';
+import React from "react";
+import { type ResetPasswordMessage } from "@/app/protected/reset-password/page";
 
-interface FormMessageProps {
-  message?: string;
-  type?: 'error' | 'success';
-}
+type FormMessageProps = {
+  message?: string | ResetPasswordMessage | null;
+};
 
-export default function FormMessage({ message, type = 'error' }: FormMessageProps) {
+export function FormMessage({ message }: FormMessageProps) {
   if (!message) return null;
 
-  const colorClasses = {
-    error: 'text-red-500',
-    success: 'text-green-500'
-  };
+  if (typeof message === "string") {
+    return <p>{message}</p>;
+  }
 
   return (
-    <p className={`text-sm mt-2 ${colorClasses[type]}`}>
-      {message}
-    </p>
+    <div>
+      {message.success && <p className="text-success">{message.success}</p>}
+      {message.error && <p className="text-error">{message.error}</p>}
+    </div>
   );
 }
