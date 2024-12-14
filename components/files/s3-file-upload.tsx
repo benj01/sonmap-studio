@@ -3,11 +3,11 @@
 import { useState } from 'react';
 import { Button } from '../ui/button';
 import { useToast } from '../ui/use-toast';
-import { getSignedUploadUrl } from '@/utils/supabase/s3';
-import { Progress } from '@/components/ui/progress';
+import { getSignedUploadUrl } from 'utils/supabase/s3';
+import { Progress } from '../ui/progress';
 
 interface S3FileUploadProps {
-  onUploadComplete?: (file: { name: string; size: number; type: string }) => void; // Optional callback for upload completion
+  onUploadComplete?: (file: { name: string; size: number; type: string }) => void;
 }
 
 export function S3FileUpload({ onUploadComplete }: S3FileUploadProps) {
@@ -52,14 +52,12 @@ export function S3FileUpload({ onUploadComplete }: S3FileUploadProps) {
             description: 'File uploaded successfully',
           });
 
-          // Notify the parent component if the onUploadComplete prop is provided
           onUploadComplete?.({
             name: selectedFile.name,
             size: selectedFile.size,
             type: selectedFile.type,
           });
 
-          // Reset file input and progress
           setSelectedFile(null);
           setUploadProgress(0);
         } else {
@@ -92,7 +90,11 @@ export function S3FileUpload({ onUploadComplete }: S3FileUploadProps) {
 
   return (
     <div>
-      <input type="file" accept="image/*" onChange={handleFileChange} />
+      <input 
+        type="file" 
+        accept=".txt,.csv,.xyz,.dxf,.shp"
+        onChange={handleFileChange} 
+      />
       <Button onClick={handleUpload} disabled={!selectedFile || uploadProgress > 0}>
         Upload
       </Button>

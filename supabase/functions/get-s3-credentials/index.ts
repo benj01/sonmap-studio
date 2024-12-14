@@ -8,10 +8,23 @@ serve(async (req) => {
   }
 
   try {
+    // Parse the request body to get the filename
+    const { fileName } = await req.json();
+    
+    if (!fileName) {
+      return new Response(
+        JSON.stringify({ error: "fileName is required" }),
+        {
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+          status: 400,
+        }
+      );
+    }
+
     // Use the storage API to get a signed URL which includes credentials
     const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
       .from('project-files')
-      .createSignedUploadUrl('temp-credential-check.txt');
+      .createSignedUploadUrl(fileName);
 
     if (signedUrlError) {
       console.error(signedUrlError);
