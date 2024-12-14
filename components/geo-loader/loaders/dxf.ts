@@ -1,6 +1,7 @@
 // components/geo-loader/loaders/dxf.ts
 
-import * as DxfParser from 'dxf-parser';
+import DxfParser from 'dxf-parser';
+
 import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature } from '../../../types/geo';
 import { CoordinateTransformer, CoordinateSystem, COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 
