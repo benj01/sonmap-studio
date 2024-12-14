@@ -1,15 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from 'components/ui/card'
+import { Button } from 'components/ui/button'
 import { List, Grid } from 'lucide-react'
-import { useToast } from '@/components/ui/use-toast'
-import { Database } from '@/types/supabase'
-import { S3FileUpload } from './s3-file-upload' // Updated import
+import { useToast } from 'components/ui/use-toast'
+import { Database } from 'types/supabase'
+import { S3FileUpload } from './s3-file-upload'
 import { FileItem } from './file-item'
-import { createClient } from '@/utils/supabase/client'
-import { LoaderResult } from '@/types/geo'
+import { createClient } from 'utils/supabase/client'
+import { LoaderResult } from 'types/geo'
 
 type ProjectFile = Database['public']['Tables']['project_files']['Row']
 
@@ -43,6 +43,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
   const loadFiles = async () => {
     try {
+      setIsLoading(true)
       const { data, error } = await supabase
         .from('project_files')
         .select('*')
@@ -79,7 +80,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
   const handleUploadComplete = async (uploadedFile: { name: string; size: number; type: string }) => {
     try {
-      const storagePath = `projects/${projectId}/${uploadedFile.name}`
+      const storagePath = `${projectId}/${uploadedFile.name}`
       
       // Add the uploaded file to the database
       const { data: newFile, error } = await supabase
@@ -96,8 +97,8 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
       if (error) throw error
 
-      // Update UI state with the new file
-      setFiles(prevFiles => [newFile, ...prevFiles])
+      // Refresh the files list after upload
+      await loadFiles()
       await refreshProjectStorage()
 
       toast({
@@ -118,19 +119,32 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       const fileToDelete = files.find(f => f.id === fileId)
       if (!fileToDelete) return
 
+      // Delete from storage first
+      // Remove 'projects/' prefix if it exists in the storage path
+      const storagePath = fileToDelete.storage_path.replace(/^projects\//, '')
+      console.log('Deleting file from storage:', storagePath)
+
       const { error: storageError } = await supabase.storage
         .from('project-files')
-        .remove([fileToDelete.storage_path])
+        .remove([storagePath])
 
-      if (storageError) throw storageError
+      if (storageError) {
+        console.error('Storage deletion error:', storageError)
+        throw storageError
+      }
 
+      // Then delete from database
       const { error: dbError } = await supabase
         .from('project_files')
         .delete()
         .eq('id', fileId)
 
-      if (dbError) throw dbError
+      if (dbError) {
+        console.error('Database deletion error:', dbError)
+        throw dbError
+      }
 
+      // Remove from local state
       setFiles(prevFiles => prevFiles.filter(f => f.id !== fileId))
       await refreshProjectStorage()
 
@@ -139,11 +153,14 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         description: 'File deleted successfully',
       })
     } catch (error) {
+      console.error('Delete error:', error)
       toast({
         title: 'Error',
         description: 'Failed to delete file',
         variant: 'destructive',
       })
+      // Refresh files list to ensure UI is in sync
+      await loadFiles()
     }
   }
 
@@ -184,7 +201,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
                 <List className="h-4 w-4" />
               </Button>
             </div>
-            <S3FileUpload // Updated to use the new prop
+            <S3FileUpload
               onUploadComplete={handleUploadComplete}
             />
           </div>

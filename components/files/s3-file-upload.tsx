@@ -7,10 +7,11 @@ import { getSignedUploadUrl } from 'utils/supabase/s3';
 import { Progress } from '../ui/progress';
 
 interface S3FileUploadProps {
+  projectId: string;
   onUploadComplete?: (file: { name: string; size: number; type: string }) => void;
 }
 
-export function S3FileUpload({ onUploadComplete }: S3FileUploadProps) {
+export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const { toast } = useToast();
@@ -32,7 +33,7 @@ export function S3FileUpload({ onUploadComplete }: S3FileUploadProps) {
     }
 
     try {
-      const signedUrl = await getSignedUploadUrl(selectedFile.name);
+      const signedUrl = await getSignedUploadUrl(selectedFile.name, projectId);
 
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', signedUrl, true);
@@ -92,7 +93,7 @@ export function S3FileUpload({ onUploadComplete }: S3FileUploadProps) {
     <div>
       <input 
         type="file" 
-        accept=".txt,.csv,.xyz,.dxf,.shp"
+        accept=".txt,.csv,.xyz,.dxf,.shp,.dbf,.shx,.prj"
         onChange={handleFileChange} 
       />
       <Button onClick={handleUpload} disabled={!selectedFile || uploadProgress > 0}>

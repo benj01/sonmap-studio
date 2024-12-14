@@ -8,8 +8,8 @@ serve(async (req) => {
   }
 
   try {
-    // Parse the request body to get the filename
-    const { fileName } = await req.json();
+    // Parse the request body to get the filename and projectId
+    const { fileName, projectId } = await req.json();
     
     if (!fileName) {
       return new Response(
@@ -21,10 +21,23 @@ serve(async (req) => {
       );
     }
 
+    if (!projectId) {
+      return new Response(
+        JSON.stringify({ error: "projectId is required" }),
+        {
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+          status: 400,
+        }
+      );
+    }
+
+    // Create the full path including the project ID
+    const filePath = `${projectId}/${fileName}`;
+
     // Use the storage API to get a signed URL which includes credentials
     const { data: signedUrlData, error: signedUrlError } = await supabaseAdmin.storage
       .from('project-files')
-      .createSignedUploadUrl(fileName);
+      .createSignedUploadUrl(filePath);
 
     if (signedUrlError) {
       console.error(signedUrlError);
