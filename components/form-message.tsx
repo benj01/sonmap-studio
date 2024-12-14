@@ -1,8 +1,7 @@
 import React from "react";
-import { type ResetPasswordMessage } from "@/app/protected/reset-password/page";
 
 type FormMessageProps = {
-  message?: string | ResetPasswordMessage | null;
+  message?: string | { success?: string; error?: string } | null;
 };
 
 export function FormMessage({ message }: FormMessageProps) {
@@ -19,3 +18,5 @@ export function FormMessage({ message }: FormMessageProps) {
     </div>
   );
 }
+
+export default FormMessage;

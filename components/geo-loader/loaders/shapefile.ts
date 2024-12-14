@@ -14,7 +14,7 @@ class ShapefileLoader implements GeoFileLoader {
       const arrayBuffer = await file.arrayBuffer();
       const source = await shapefile.open(arrayBuffer);
       const header = await source.header;
-      
+
       // Extract layers (in shapefiles, there's typically one layer)
       const layers = ['default'];
 
@@ -23,13 +23,13 @@ class ShapefileLoader implements GeoFileLoader {
         minX: header.bbox[0],
         minY: header.bbox[1],
         maxX: header.bbox[2],
-        maxY: header.bbox[3]
+        maxY: header.bbox[3],
       };
 
       // Generate preview with a sample of features
       const preview: GeoFeatureCollection = {
         type: 'FeatureCollection',
-        features: []
+        features: [],
       };
 
       // Read a sample of features for preview
@@ -44,7 +44,7 @@ class ShapefileLoader implements GeoFileLoader {
         layers,
         coordinateSystem: 'EPSG:4326', // Shapefiles typically use WGS84
         bounds,
-        preview
+        preview,
       };
     } catch (error) {
       console.error('Shapefile analysis error:', error);
@@ -63,6 +63,12 @@ class ShapefileLoader implements GeoFileLoader {
       let feature;
       while ((feature = await source.read())) {
         const geoFeature = feature.value as GeoFeature;
+
+        // Optionally remove attributes based on `importAttributes`
+        if (!options.importAttributes) {
+          geoFeature.properties = {}; // Clear attributes if not importing
+        }
+
         features.push(geoFeature);
 
         // Count feature types
@@ -81,8 +87,8 @@ class ShapefileLoader implements GeoFileLoader {
         statistics: {
           pointCount: features.length,
           layerCount: 1,
-          featureTypes
-        }
+          featureTypes,
+        },
       };
     } catch (error) {
       console.error('Shapefile loading error:', error);
@@ -96,7 +102,7 @@ class ShapefileLoader implements GeoFileLoader {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    features.forEach(feature => {
+    features.forEach((feature) => {
       const coords = feature.geometry.coordinates;
       if (feature.geometry.type === 'Point' && Array.isArray(coords) && coords.length >= 2) {
         const x = coords[0] as number;
@@ -106,8 +112,8 @@ class ShapefileLoader implements GeoFileLoader {
         maxX = Math.max(maxX, x);
         maxY = Math.max(maxY, y);
       } else if (feature.geometry.type === 'LineString' && Array.isArray(coords)) {
-        coords.forEach(coord => {
-           if (Array.isArray(coord) && coord.length >= 2) {
+        coords.forEach((coord) => {
+          if (Array.isArray(coord) && coord.length >= 2) {
             const x = coord[0] as number;
             const y = coord[1] as number;
             minX = Math.min(minX, x);
@@ -117,9 +123,9 @@ class ShapefileLoader implements GeoFileLoader {
           }
         });
       } else if (feature.geometry.type === 'Polygon' && Array.isArray(coords)) {
-        coords.forEach(ring => {
+        coords.forEach((ring) => {
           if (Array.isArray(ring)) {
-            ring.forEach(coord => {
+            ring.forEach((coord) => {
               if (Array.isArray(coord) && coord.length >= 2) {
                 const x = coord[0] as number;
                 const y = coord[1] as number;

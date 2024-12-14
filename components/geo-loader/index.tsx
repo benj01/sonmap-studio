@@ -8,6 +8,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import type { GeoFileType, LoaderOptions, LoaderResult } from '../../types/geo';
 import { loaderRegistry } from './loaders';
+import { FormatSettings } from './components/format-settings';
 
 interface GeoLoaderProps {
   file: File;
@@ -24,60 +25,52 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
     bounds?: LoaderResult['bounds'];
     preview?: any;
   } | null>(null);
-  
+
   const [options, setOptions] = useState<LoaderOptions>({
     selectedLayers: [],
     coordinateSystem: undefined,
     targetSystem: 'EPSG:4326', // Default to WGS84
   });
 
-  // Map view state
   const [viewState, setViewState] = useState({
     longitude: 0,
     latitude: 0,
-    zoom: 1
+    zoom: 1,
   });
 
-  // Initialize analysis when file changes
   useEffect(() => {
     analyzeFile();
   }, [file]);
 
-  // Handle file analysis
   const analyzeFile = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      // Validate file and get appropriate loader
       const { valid, loader, error: validationError } = await loaderRegistry.validateFile(file);
-      
+
       if (!valid || !loader) {
         throw new Error(validationError || 'Unsupported file type');
       }
 
-      // Get recommended options for this file type
       const recommendedOptions = await loaderRegistry.getRecommendedOptions(file);
-      setOptions(prev => ({ ...prev, ...recommendedOptions }));
+      setOptions((prev) => ({ ...prev, ...recommendedOptions }));
 
-      // Analyze the file
       const analysisResult = await loader.analyze(file);
       setAnalysis(analysisResult);
-      
-      // If bounds are available, adjust map view
+
       if (analysisResult.bounds) {
         const { minX, minY, maxX, maxY } = analysisResult.bounds;
         const centerLng = (minX + maxX) / 2;
         const centerLat = (minY + maxY) / 2;
-        
-        // Calculate appropriate zoom level based on bounds
+
         const latZoom = Math.log2(360 / (maxY - minY)) - 1;
         const lngZoom = Math.log2(360 / (maxX - minX)) - 1;
-        const zoom = Math.min(latZoom, lngZoom, 20); // Cap at zoom level 20
+        const zoom = Math.min(latZoom, lngZoom, 20);
 
         setViewState({
           latitude: centerLat,
           longitude: centerLng,
-          zoom: zoom
+          zoom: zoom,
         });
       }
     } catch (err) {
@@ -87,7 +80,6 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
     }
   }, [file]);
 
-  // Handle import with current options
   const handleImport = async () => {
     setLoading(true);
     setError(null);
@@ -117,75 +109,14 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
             <TabsTrigger value="settings">Settings</TabsTrigger>
             <TabsTrigger value="preview">Preview</TabsTrigger>
           </TabsList>
-          
+
           <TabsContent value="settings">
-            {/* Coordinate System Settings */}
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium">
-                  Source Coordinate System
-                </label>
-                <Input
-                  value={options.coordinateSystem || ''}
-                  onChange={(e) => setOptions({
-                    ...options,
-                    coordinateSystem: e.target.value
-                  })}
-                  placeholder={analysis?.coordinateSystem || 'EPSG:4326'}
-                />
-              </div>
-
-              {/* Layer Selection (for DXF/SHP) */}
-              {analysis?.layers && analysis.layers.length > 0 && (
-                <div>
-                  <label className="text-sm font-medium">Layers</label>
-                  <div className="space-y-2">
-                    {analysis.layers.map(layer => (
-                      <div key={layer} className="flex items-center space-x-2">
-                        <Checkbox
-                          checked={options.selectedLayers?.includes(layer)}
-                          onCheckedChange={(checked) => {
-                            const newLayers = checked
-                              ? [...(options.selectedLayers || []), layer]
-                              : options.selectedLayers?.filter(l => l !== layer);
-                            setOptions({ ...options, selectedLayers: newLayers });
-                          }}
-                        />
-                        <label>{layer}</label>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* CSV/TXT specific options */}
-              {(file.name.endsWith('.csv') || file.name.endsWith('.txt') || file.name.endsWith('.xyz')) && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="text-sm font-medium">Delimiter</label>
-                    <Input
-                      value={options.delimiter || ''}
-                      onChange={(e) => setOptions({
-                        ...options,
-                        delimiter: e.target.value
-                      })}
-                      placeholder=","
-                    />
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium">Skip Rows</label>
-                    <Input
-                      type="number"
-                      value={options.skipRows || 0}
-                      onChange={(e) => setOptions({
-                        ...options,
-                        skipRows: parseInt(e.target.value)
-                      })}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
+            <FormatSettings
+              fileType={file.name.split('.').pop() || ''}
+              analysis={analysis}
+              options={options}
+              onOptionsChange={setOptions}
+            />
           </TabsContent>
 
           <TabsContent value="preview">
@@ -197,16 +128,13 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
                 mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
               >
                 {analysis?.preview && (
-                  <Source
-                    type="geojson"
-                    data={analysis.preview}
-                  >
+                  <Source type="geojson" data={analysis.preview}>
                     <Layer
                       id="preview-layer"
                       type="circle"
                       paint={{
                         'circle-radius': 3,
-                        'circle-color': '#007cbf'
+                        'circle-color': '#007cbf',
                       }}
                     />
                   </Source>

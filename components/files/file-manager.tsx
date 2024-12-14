@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { List, Grid } from 'lucide-react'
 import { useToast } from '@/components/ui/use-toast'
 import { Database } from '@/types/supabase'
-import { FileUpload } from './file-upload'
+import { S3FileUpload } from './s3-file-upload' // Updated import
 import { FileItem } from './file-item'
 import { createClient } from '@/utils/supabase/client'
 import { LoaderResult } from '@/types/geo'
@@ -77,9 +77,40 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
     }
   }
 
-  const handleUploadComplete = async (newFile: ProjectFile) => {
-    setFiles(prevFiles => [newFile, ...prevFiles])
-    await refreshProjectStorage()
+  const handleUploadComplete = async (uploadedFile: { name: string; size: number; type: string }) => {
+    try {
+      const storagePath = `projects/${projectId}/${uploadedFile.name}`
+      
+      // Add the uploaded file to the database
+      const { data: newFile, error } = await supabase
+        .from('project_files')
+        .insert({
+          project_id: projectId,
+          name: uploadedFile.name,
+          size: uploadedFile.size,
+          file_type: uploadedFile.type,
+          storage_path: storagePath,
+        })
+        .select()
+        .single()
+
+      if (error) throw error
+
+      // Update UI state with the new file
+      setFiles(prevFiles => [newFile, ...prevFiles])
+      await refreshProjectStorage()
+
+      toast({
+        title: 'Success',
+        description: 'File uploaded and saved successfully',
+      })
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to save uploaded file to the database',
+        variant: 'destructive',
+      })
+    }
   }
 
   const handleDeleteFile = async (fileId: string) => {
@@ -153,10 +184,8 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
                 <List className="h-4 w-4" />
               </Button>
             </div>
-            <FileUpload 
-              projectId={projectId} 
+            <S3FileUpload // Updated to use the new prop
               onUploadComplete={handleUploadComplete}
-              onStorageUpdate={refreshProjectStorage}
             />
           </div>
         </div>

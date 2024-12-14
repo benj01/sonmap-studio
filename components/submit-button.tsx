@@ -3,10 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 
 interface SubmitButtonProps {
-  loading?: boolean; // Indicates a loading state
-  children: React.ReactNode; // Button label or content
-  className?: string; // Additional CSS classes
-  disabled?: boolean; // Disabled state for the button
+  loading?: boolean; // Indicates loading state
+  children: React.ReactNode; // Content inside the button
+  className?: string; // Additional styles
+  disabled?: boolean; // Disables the button
 }
 
 export function SubmitButton({

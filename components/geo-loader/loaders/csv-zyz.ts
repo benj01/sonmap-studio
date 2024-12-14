@@ -2,7 +2,7 @@
 
 import Papa from 'papaparse';
 import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
-import { CoordinateTransformer, COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { CoordinateTransformer } from '../utils/coordinate-systems';
 import _ from 'lodash';
 
 interface ColumnMapping {
@@ -31,28 +31,25 @@ export class CsvXyzLoader implements GeoFileLoader {
     const delimiters = [',', ';', '\t', ' '];
     const counts = delimiters.map(d => ({
       delimiter: d,
-      count: firstLine.split(d).length
+      count: firstLine.split(d).length,
     }));
-    
-    // Choose delimiter that creates the most columns
+
+    // Choose the delimiter that creates the most columns
     const bestDelimiter = _.maxBy(counts, 'count');
     return bestDelimiter?.delimiter || ',';
   }
 
   private detectColumnMapping(headers: string[]): ColumnMapping {
     const mapping: ColumnMapping = { x: 0, y: 1 };
-    
-    // Try to identify coordinate columns
+
     headers.forEach((header, index) => {
       const lowerHeader = header.toLowerCase().trim();
-      
+
       if (['x', 'longitude', 'lon', 'east', 'easting'].some(h => lowerHeader.includes(h))) {
         mapping.x = index;
-      }
-      else if (['y', 'latitude', 'lat', 'north', 'northing'].some(h => lowerHeader.includes(h))) {
+      } else if (['y', 'latitude', 'lat', 'north', 'northing'].some(h => lowerHeader.includes(h))) {
         mapping.y = index;
-      }
-      else if (['z', 'height', 'elevation', 'alt', 'altitude'].some(h => lowerHeader.includes(h))) {
+      } else if (['z', 'height', 'elevation', 'alt', 'altitude'].some(h => lowerHeader.includes(h))) {
         mapping.z = index;
       }
     });
@@ -65,59 +62,48 @@ export class CsvXyzLoader implements GeoFileLoader {
       const content = await this.readFileContent(file);
       const lines = content.split('\n');
       const firstLine = lines[0];
-      
-      // Detect delimiter
+
       const delimiter = this.detectDelimiter(firstLine);
-      
-      // Parse a sample of the file
       const sampleSize = Math.min(1000, lines.length);
       const sampleContent = lines.slice(0, sampleSize).join('\n');
-      
+
       const parseResult = Papa.parse(sampleContent, {
         delimiter,
         header: true,
         dynamicTyping: true,
-        skipEmptyLines: true
+        skipEmptyLines: true,
       });
 
-      // Detect column structure
       const headers = parseResult.meta.fields || [];
       const columnMapping = this.detectColumnMapping(headers);
 
-      // Extract sample points for coordinate system detection
       const samplePoints = parseResult.data
         .map((row: any) => ({
           x: Number(row[headers[columnMapping.x]]),
           y: Number(row[headers[columnMapping.y]]),
-          z: columnMapping.z !== undefined ? Number(row[headers[columnMapping.z]]) : undefined
+          z: columnMapping.z !== undefined ? Number(row[headers[columnMapping.z]]) : undefined,
         }))
         .filter(point => !isNaN(point.x) && !isNaN(point.y));
 
-      // Detect coordinate system
       const suggestedCRS = CoordinateTransformer.suggestCoordinateSystem(samplePoints);
-
-      // Calculate bounds
       const bounds = this.calculateBounds(samplePoints);
 
-      // Generate preview
       const preview: GeoFeatureCollection = {
         type: 'FeatureCollection',
         features: samplePoints.map(point => ({
           type: 'Feature',
           geometry: {
             type: 'Point',
-            coordinates: point.z !== undefined ? 
-              [point.x, point.y, point.z] : 
-              [point.x, point.y]
+            coordinates: point.z !== undefined ? [point.x, point.y, point.z] : [point.x, point.y],
           },
-          properties: { z: point.z }
-        }))
+          properties: { z: point.z },
+        })),
       };
 
       return {
         coordinateSystem: suggestedCRS,
         bounds,
-        preview
+        preview,
       };
     } catch (error) {
       console.error('CSV/XYZ Analysis error:', error);
@@ -128,48 +114,42 @@ export class CsvXyzLoader implements GeoFileLoader {
   async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
     try {
       const content = await this.readFileContent(file);
-      
-      // Parse the entire file
+
       const parseResult = Papa.parse(content, {
-        delimiter: options.delimiter,
+        delimiter: options.delimiter || this.detectDelimiter(content.split('\n')[0]),
         header: true,
         dynamicTyping: true,
         skipEmptyLines: true,
-        transform: (value) => value.trim(),
-        transformHeader: (header) => header.trim()
       });
 
       const headers = parseResult.meta.fields || [];
       const columnMapping = this.detectColumnMapping(headers);
 
-      // Create coordinate transformer if needed
-      let transformer: CoordinateTransformer | undefined;
-      if (options.coordinateSystem && options.targetSystem) {
-        transformer = new CoordinateTransformer(options.coordinateSystem, options.targetSystem);
+      const transformer = options.coordinateSystem && options.targetSystem
+        ? new CoordinateTransformer(options.coordinateSystem, options.targetSystem)
+        : undefined;
+
+      let features = this.convertToGeoFeatures(parseResult.data, headers, columnMapping, transformer);
+
+      if (options.simplificationTolerance) {
+        features = this.simplifyFeatures(features, options.simplificationTolerance);
       }
 
-      // Convert rows to features
-      const features = this.convertToGeoFeatures(parseResult.data, headers, columnMapping, transformer);
-
-      // Calculate bounds
       const points = features.map(f => ({
         x: f.geometry.coordinates[0],
         y: f.geometry.coordinates[1],
-        z: f.geometry.coordinates[2]
+        z: f.geometry.coordinates[2],
       }));
       const bounds = this.calculateBounds(points);
-
-      // Calculate statistics
-      const statistics = {
-        pointCount: features.length,
-        featureTypes: { 'Point': features.length }
-      };
 
       return {
         features,
         bounds,
-        statistics,
-        coordinateSystem: options.coordinateSystem
+        statistics: {
+          pointCount: features.length,
+          featureTypes: { Point: features.length },
+        },
+        coordinateSystem: options.coordinateSystem,
       };
     } catch (error) {
       console.error('CSV/XYZ Loading error:', error);
@@ -182,7 +162,7 @@ export class CsvXyzLoader implements GeoFileLoader {
       minX: Math.min(...points.map(p => p.x)),
       minY: Math.min(...points.map(p => p.y)),
       maxX: Math.max(...points.map(p => p.x)),
-      maxY: Math.max(...points.map(p => p.y))
+      maxY: Math.max(...points.map(p => p.y)),
     };
   }
 
@@ -205,17 +185,12 @@ export class CsvXyzLoader implements GeoFileLoader {
       if (transformer) {
         const transformed = transformer.transform({ x, y, z });
         coordinates = [transformed.x, transformed.y];
-        if (transformed.z !== undefined) {
-          coordinates.push(transformed.z);
-        }
+        if (transformed.z !== undefined) coordinates.push(transformed.z);
       }
 
-      // Create properties object from all columns except coordinates
       const properties: { [key: string]: any } = {};
       headers.forEach((header, index) => {
-        if (index !== columnMapping.x && 
-            index !== columnMapping.y && 
-            index !== columnMapping.z) {
+        if (index !== columnMapping.x && index !== columnMapping.y && index !== columnMapping.z) {
           properties[header] = row[header];
         }
       });
@@ -224,11 +199,15 @@ export class CsvXyzLoader implements GeoFileLoader {
         type: 'Feature',
         geometry: {
           type: 'Point',
-          coordinates
+          coordinates,
         },
-        properties
+        properties,
       };
     });
+  }
+
+  private simplifyFeatures(features: GeoFeature[], tolerance: number): GeoFeature[] {
+    return _.sampleSize(features, Math.ceil(features.length * (1 - tolerance / 100)));
   }
 }
 

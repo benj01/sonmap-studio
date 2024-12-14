@@ -20,7 +20,7 @@ export function FormatSettings({
   fileType,
   analysis,
   options,
-  onOptionsChange
+  onOptionsChange,
 }: FormatSettingsProps) {
   const updateOptions = (updates: Partial<LoaderOptions>) => {
     onOptionsChange({ ...options, ...updates });
@@ -59,7 +59,7 @@ export function FormatSettings({
                     onCheckedChange={(checked) => {
                       const newLayers = checked
                         ? [...(options.selectedLayers || []), layer]
-                        : (options.selectedLayers || []).filter(l => l !== layer);
+                        : (options.selectedLayers || []).filter((l) => l !== layer);
                       updateOptions({ selectedLayers: newLayers });
                     }}
                   />
@@ -86,7 +86,7 @@ export function FormatSettings({
                 placeholder="Enter delimiter (e.g., ',' or ';')"
               />
             </div>
-            
+
             <div className="space-y-2">
               <Label>Skip Rows</Label>
               <Input
@@ -109,7 +109,7 @@ export function FormatSettings({
           </>
         )}
 
-        {/* Point Cloud Optimization Settings - for formats that might contain large point datasets */}
+        {/* Point Cloud Optimization Settings */}
         {['xyz', 'csv', 'txt'].includes(fileType) && (
           <div className="space-y-2">
             <Label>Point Cloud Optimization</Label>
@@ -119,7 +119,7 @@ export function FormatSettings({
               max="100"
               value={options.simplificationTolerance || 0}
               onChange={(e) => updateOptions({
-                simplificationTolerance: parseFloat(e.target.value)
+                simplificationTolerance: parseFloat(e.target.value),
               })}
               placeholder="Simplification tolerance (0 = no simplification)"
             />
@@ -135,8 +135,8 @@ export function FormatSettings({
             <div className="flex items-center space-x-2">
               <Checkbox
                 id="import-attributes"
-                checked={options.importAttributes}
-                onCheckedChange={(checked) => 
+                checked={options.importAttributes ?? false} // Safe access with optional chaining
+                onCheckedChange={(checked) =>
                   updateOptions({ importAttributes: checked })
                 }
               />

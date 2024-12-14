@@ -3,13 +3,17 @@
 import { useState } from 'react';
 import { Button } from '../ui/button';
 import { useToast } from '../ui/use-toast';
-import { useLoadingState } from '@/utils/hooks/useLoadingState';
 import { getSignedUploadUrl } from '@/utils/supabase/s3';
+import { Progress } from '@/components/ui/progress';
 
-export function S3FileUpload() {
+interface S3FileUploadProps {
+  onUploadComplete?: (file: { name: string; size: number; type: string }) => void; // Optional callback for upload completion
+}
+
+export function S3FileUpload({ onUploadComplete }: S3FileUploadProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const { toast } = useToast();
-  const { isLoading, setLoading } = useLoadingState();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
@@ -27,26 +31,55 @@ export function S3FileUpload() {
       return;
     }
 
-    setLoading(true);
     try {
       const signedUrl = await getSignedUploadUrl(selectedFile.name);
 
-      const uploadResponse = await fetch(signedUrl, {
-        method: 'PUT',
-        body: selectedFile,
-        headers: {
-          'Content-Type': selectedFile.type,
-        },
-      });
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', signedUrl, true);
+      xhr.setRequestHeader('Content-Type', selectedFile.type);
 
-      if (!uploadResponse.ok) {
-        throw new Error('Upload failed');
-      }
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          const percentComplete = (event.loaded / event.total) * 100;
+          setUploadProgress(percentComplete);
+        }
+      };
 
-      toast({
-        title: 'Success',
-        description: 'File uploaded successfully',
-      });
+      xhr.onload = () => {
+        if (xhr.status === 200) {
+          toast({
+            title: 'Success',
+            description: 'File uploaded successfully',
+          });
+
+          // Notify the parent component if the onUploadComplete prop is provided
+          onUploadComplete?.({
+            name: selectedFile.name,
+            size: selectedFile.size,
+            type: selectedFile.type,
+          });
+
+          // Reset file input and progress
+          setSelectedFile(null);
+          setUploadProgress(0);
+        } else {
+          toast({
+            title: 'Error',
+            description: 'Upload failed.',
+            variant: 'destructive',
+          });
+        }
+      };
+
+      xhr.onerror = () => {
+        toast({
+          title: 'Error',
+          description: 'Network error during upload.',
+          variant: 'destructive',
+        });
+      };
+
+      xhr.send(selectedFile);
     } catch (error: any) {
       console.error('Error uploading file:', error);
       toast({
@@ -54,17 +87,16 @@ export function S3FileUpload() {
         description: `Error uploading file: ${error.message}`,
         variant: 'destructive',
       });
-    } finally {
-      setLoading(false);
     }
   };
 
   return (
     <div>
       <input type="file" accept="image/*" onChange={handleFileChange} />
-      <Button onClick={handleUpload} disabled={!selectedFile || isLoading} loading={isLoading}>
+      <Button onClick={handleUpload} disabled={!selectedFile || uploadProgress > 0}>
         Upload
       </Button>
+      {uploadProgress > 0 && <Progress value={uploadProgress} className="mt-2" />}
     </div>
   );
 }

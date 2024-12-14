@@ -20,7 +20,13 @@ export function useGeoLoader(): UseGeoLoaderResult {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<any | null>(null);
-  const [options, setOptions] = useState<LoaderOptions>({});
+
+  // Initialize options with sensible defaults, including `importAttributes`
+  const [options, setOptions] = useState<LoaderOptions>({
+    coordinateSystem: 'EPSG:4326', // Default to WGS84
+    importAttributes: false, // Default for shapefiles
+  });
+
   const [supportedExtensions, setSupportedExtensions] = useState<string[]>([]);
 
   // Get supported extensions on mount
@@ -56,8 +62,12 @@ export function useGeoLoader(): UseGeoLoaderResult {
 
       // Set recommended options based on file type and analysis
       const recommendedOptions = await loaderRegistry.getRecommendedOptions(file);
-      setOptions(recommendedOptions);
 
+      // Merge recommended options with existing options
+      setOptions((prevOptions) => ({
+        ...prevOptions,
+        ...recommendedOptions,
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to analyze file');
       setAnalysis(null);
@@ -77,6 +87,7 @@ export function useGeoLoader(): UseGeoLoaderResult {
         throw new Error('No suitable loader found for this file type');
       }
 
+      // Load the file with the current options
       return await loader.load(file, options);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load file');

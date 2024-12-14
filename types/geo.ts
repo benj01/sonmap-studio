@@ -21,12 +21,13 @@ export interface LoaderOptions {
   // Common options
   coordinateSystem?: string;
   targetSystem?: string;
-  
-  // Format specific options
+
+  // Format-specific options
   delimiter?: string;     // For CSV/TXT
   skipRows?: number;      // For CSV/TXT
   skipColumns?: number;   // For CSV/TXT
   selectedLayers?: string[]; // For DXF/SHP
+  importAttributes?: boolean; // For SHP (newly added)
   boundingBox?: {         // For spatial filtering
     minX: number;
     minY: number;

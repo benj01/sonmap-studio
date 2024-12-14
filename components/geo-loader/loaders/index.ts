@@ -1,6 +1,6 @@
 // components/geo-loader/loaders/index.ts
 
-import { GeoFileLoader } from '../../../types/geo';
+import { GeoFileLoader, LoaderOptions } from '../../../types/geo';
 import dxfLoader from './dxf';
 import csvXyzLoader from './csv-zyz';
 import shapefileLoader from './shapefile';
@@ -56,26 +56,27 @@ class LoaderRegistry {
       if (!loader) {
         return {
           valid: false,
-          error: `Unsupported file type: ${file.name}`
+          error: `Unsupported file type: ${file.name}`,
         };
       }
 
       // Basic size validation (adjust limits as needed)
-      if (file.size > 100 * 1024 * 1024) { // 100MB
+      if (file.size > 100 * 1024 * 1024) {
+        // 100MB
         return {
           valid: false,
-          error: 'File is too large. Maximum size is 100MB.'
+          error: 'File is too large. Maximum size is 100MB.',
         };
       }
 
       return {
         valid: true,
-        loader
+        loader,
       };
     } catch (error) {
       return {
         valid: false,
-        error: error instanceof Error ? error.message : 'Unknown error validating file'
+        error: error instanceof Error ? error.message : 'Unknown error validating file',
       };
     }
   }
@@ -86,30 +87,30 @@ class LoaderRegistry {
   }
 
   // Get recommended loader options based on file type
-  async getRecommendedOptions(file: File): Promise<any> {
+  async getRecommendedOptions(file: File): Promise<LoaderOptions> {
     const loader = await this.getLoaderForFile(file);
     if (!loader) return {};
 
     const ext = this.getFileExtension(file.name);
-    
+
     switch (ext) {
       case 'csv':
       case 'txt':
       case 'xyz':
         return {
-          delimiter: ',',  // Default delimiter, will be auto-detected
+          delimiter: ',', // Default delimiter, will be auto-detected
           skipRows: 0,
           skipColumns: 0,
-          hasHeaders: true
+          simplificationTolerance: 0, // No simplification by default
         };
       case 'dxf':
         return {
           selectedLayers: [], // Will be populated after analysis
-          importStyles: true
+          importStyles: true, // Specific to DXF
         };
       case 'shp':
         return {
-          importAttributes: true
+          importAttributes: true, // Ensure attributes are imported by default
         };
       default:
         return {};

@@ -3,81 +3,25 @@
 import { resetPasswordAction } from "@/app/actions";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { SubmitButton } from "@/components/submit-button"; // Moved to components
+import { FormMessage } from "@/components/form-message"; // Moved to components
 import { useState, useEffect } from "react";
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams } from "next/navigation";
 import { formatMessage } from "@/utils/message";
 import { type ActionResponse } from "@/types";
-import React from 'react';
-import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
 
-export const dynamic = 'force-dynamic';
-
-export type ExtendedMessage = FormMessageType & {
-  success?: string;
-  error?: string;
-};
-
-interface SubmitButtonProps {
-  loading?: boolean;
-  children: React.ReactNode;
-  className?: string;
-  disabled?: boolean; // Allow the `disabled` prop
-}
-
-export function SubmitButton({ 
-  loading = false, 
-  children, 
-  className = '',
-  disabled = false
-}: SubmitButtonProps) {
-  return (
-    <Button
-      type="submit"
-      disabled={disabled}
-      className={className}
-    >
-      {loading ? (
-        <>
-          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          Loading...
-        </>
-      ) : (
-        children
-      )}
-    </Button>
-  );
-}
-
-type FormMessageProps = {
-  message?: string | { success?: string; error?: string } | null;
-};
-
-export function FormMessage({ message }: FormMessageProps) {
-  if (!message) return null;
-
-  if (typeof message === "string") {
-    return <p>{message}</p>;
-  }
-
-  return (
-    <div>
-      {message.success && <p className="text-success">{message.success}</p>}
-      {message.error && <p className="text-error">{message.error}</p>}
-    </div>
-  );
-}
+export const dynamic = "force-dynamic";
 
 export default function ResetPassword() {
   const searchParams = useSearchParams();
-  const [message, setMessage] = useState<ExtendedMessage | null>(null);
+  const [message, setMessage] = useState<{ success?: string; error?: string } | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (searchParams) {
-      const successMessage = searchParams.get('success');
-      const errorMessage = searchParams.get('error');
+      const successMessage = searchParams.get("success");
+      const errorMessage = searchParams.get("error");
 
       if (successMessage) {
         setMessage({ success: successMessage });
@@ -94,7 +38,7 @@ export default function ResetPassword() {
 
     try {
       const res = await resetPasswordAction(formData);
-      const data = await res.json() as ActionResponse;
+      const data = (await res.json()) as ActionResponse;
 
       if (data.kind === "success") {
         setMessage({ success: data.message });
@@ -102,9 +46,10 @@ export default function ResetPassword() {
         setFormError(data.error);
       }
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error
-        ? error.message
-        : "An unexpected error occurred while processing your request.";
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : "An unexpected error occurred while processing your request.";
       setFormError(errorMessage);
     } finally {
       setIsSubmitting(false);
@@ -112,7 +57,7 @@ export default function ResetPassword() {
   };
 
   return (
-    <form 
+    <form
       onSubmit={async (e) => {
         e.preventDefault();
         const formData = new FormData(e.currentTarget);

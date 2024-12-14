@@ -32,7 +32,7 @@ export class DxfLoader implements GeoFileLoader {
       // Extract available layers
       const layers = Object.keys(dxf.tables.layer.layers);
 
-      // Sample some points to detect coordinate system
+      // Sample points to detect coordinate system
       const samplePoints = this.extractSamplePoints(dxf);
       const suggestedCRS = CoordinateTransformer.suggestCoordinateSystem(samplePoints);
 
@@ -46,7 +46,7 @@ export class DxfLoader implements GeoFileLoader {
         layers,
         coordinateSystem: suggestedCRS,
         bounds,
-        preview
+        preview,
       };
     } catch (error) {
       console.error('DXF Analysis error:', error);
@@ -60,17 +60,18 @@ export class DxfLoader implements GeoFileLoader {
       const dxf = this.parser.parseSync(content);
 
       // Create coordinate transformer if needed
-      const transformer = options.coordinateSystem && options.targetSystem ? 
-        new CoordinateTransformer(options.coordinateSystem, options.targetSystem) :
-        null;
+      const transformer =
+        options.coordinateSystem && options.targetSystem
+          ? new CoordinateTransformer(options.coordinateSystem, options.targetSystem)
+          : null;
 
       // Convert DXF entities to GeoFeatures
       const features = this.convertToGeoFeatures(dxf, options.selectedLayers, transformer);
 
       // Calculate bounds
-      const bounds = transformer ? 
-        transformer.transformBounds(this.calculateBounds(dxf)) :
-        this.calculateBounds(dxf);
+      const bounds = transformer
+        ? transformer.transformBounds(this.calculateBounds(dxf))
+        : this.calculateBounds(dxf);
 
       // Gather statistics
       const statistics = this.calculateStatistics(features);
@@ -80,7 +81,7 @@ export class DxfLoader implements GeoFileLoader {
         bounds,
         layers: Object.keys(dxf.tables.layer.layers),
         coordinateSystem: options.coordinateSystem,
-        statistics
+        statistics,
       };
     } catch (error) {
       console.error('DXF Loading error:', error);
@@ -90,10 +91,10 @@ export class DxfLoader implements GeoFileLoader {
 
   private extractSamplePoints(dxf: any): Array<{ x: number; y: number }> {
     const points: Array<{ x: number; y: number }> = [];
-    
+
     // Sample points from entities
     if (dxf.entities) {
-      for (const entity of dxf.entities.slice(0, 10)) { // Sample first 10 entities
+      for (const entity of dxf.entities.slice(0, 10)) {
         if (entity.vertices) {
           points.push(...entity.vertices.map((v: any) => ({ x: v.x, y: v.y })));
         } else if (entity.position) {
@@ -106,7 +107,10 @@ export class DxfLoader implements GeoFileLoader {
   }
 
   private calculateBounds(dxf: any) {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
 
     const updateBounds = (x: number, y: number) => {
       minX = Math.min(minX, x);
@@ -129,7 +133,11 @@ export class DxfLoader implements GeoFileLoader {
     return { minX, minY, maxX, maxY };
   }
 
-  private convertToGeoFeatures(dxf: any, selectedLayers?: string[], transformer?: CoordinateTransformer): GeoFeature[] {
+  private convertToGeoFeatures(
+    dxf: any,
+    selectedLayers?: string[],
+    transformer?: CoordinateTransformer
+  ): GeoFeature[] {
     const features: GeoFeature[] = [];
 
     if (!dxf.entities) return features;
@@ -154,15 +162,15 @@ export class DxfLoader implements GeoFileLoader {
           type: 'LineString',
           coordinates: [
             this.transformPoint([entity.start.x, entity.start.y], transformer),
-            this.transformPoint([entity.end.x, entity.end.y], transformer)
-          ]
+            this.transformPoint([entity.end.x, entity.end.y], transformer),
+          ],
         };
         break;
 
       case 'POINT':
         geometry = {
           type: 'Point',
-          coordinates: this.transformPoint([entity.position.x, entity.position.y], transformer)
+          coordinates: this.transformPoint([entity.position.x, entity.position.y], transformer),
         };
         break;
 
@@ -170,14 +178,14 @@ export class DxfLoader implements GeoFileLoader {
       case 'LWPOLYLINE':
         geometry = {
           type: 'LineString',
-          coordinates: entity.vertices.map((v: any) => 
+          coordinates: entity.vertices.map((v: any) =>
             this.transformPoint([v.x, v.y], transformer)
-          )
+          ),
         };
         break;
 
       // Add more entity types as needed
-      
+
       default:
         return null;
     }
@@ -188,13 +196,16 @@ export class DxfLoader implements GeoFileLoader {
       properties: {
         layer: entity.layer,
         type: entity.type,
-        ...entity.properties
+        ...(entity.properties || {}),
       },
-      layer: entity.layer
+      layer: entity.layer,
     };
   }
 
-  private transformPoint(point: [number, number], transformer?: CoordinateTransformer): [number, number] {
+  private transformPoint(
+    point: [number, number],
+    transformer?: CoordinateTransformer
+  ): [number, number] {
     if (!transformer) return point;
     const transformed = transformer.transform({ x: point[0], y: point[1] });
     return [transformed.x, transformed.y];
@@ -203,12 +214,11 @@ export class DxfLoader implements GeoFileLoader {
   private generatePreview(dxf: any): any {
     // Generate a simplified GeoJSON for preview
     // Include only a subset of features for performance
-    const previewFeatures = this.convertToGeoFeatures(dxf)
-      .slice(0, 1000); // Limit to first 1000 features for preview
+    const previewFeatures = this.convertToGeoFeatures(dxf).slice(0, 1000); // Limit to first 1000 features for preview
 
     return {
       type: 'FeatureCollection',
-      features: previewFeatures
+      features: previewFeatures,
     };
   }
 
@@ -216,7 +226,7 @@ export class DxfLoader implements GeoFileLoader {
     const featureTypes: Record<string, number> = {};
     let pointCount = 0;
 
-    features.forEach(feature => {
+    features.forEach((feature) => {
       // Count feature types
       const type = feature.properties.type;
       featureTypes[type] = (featureTypes[type] || 0) + 1;
@@ -231,8 +241,8 @@ export class DxfLoader implements GeoFileLoader {
 
     return {
       pointCount,
-      layerCount: new Set(features.map(f => f.layer)).size,
-      featureTypes
+      layerCount: new Set(features.map((f) => f.layer)).size,
+      featureTypes,
     };
   }
 }
