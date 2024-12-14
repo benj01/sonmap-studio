@@ -1,125 +1,58 @@
-// components/geo-loader/loaders/index.ts
-
-import { GeoFileLoader, LoaderOptions } from '../../../types/geo';
 import dxfLoader from './dxf';
-import csvXyzLoader from './csv-zyz';
 import shapefileLoader from './shapefile';
+import csvLoader from './csv-zyz';
 
 class LoaderRegistry {
-  private loaders: GeoFileLoader[] = [];
+  private loaders = [dxfLoader, shapefileLoader, csvLoader];
 
-  constructor() {
-    // Register all available loaders
-    this.registerLoader(dxfLoader);
-    this.registerLoader(csvXyzLoader);
-    this.registerLoader(shapefileLoader);
-  }
-
-  registerLoader(loader: GeoFileLoader) {
-    this.loaders.push(loader);
-  }
-
-  async getLoaderForFile(file: File): Promise<GeoFileLoader | null> {
+  async validateFile(file: File) {
     for (const loader of this.loaders) {
       if (await loader.canLoad(file)) {
-        return loader;
+        return { valid: true, loader };
       }
     }
-    return null;
+    return { valid: false, error: 'No suitable loader found for this file type' };
   }
 
-  async getSupportedExtensions(): Promise<string[]> {
-    // Create a dummy file for each extension to test with canLoad
-    const extensions = ['.dxf', '.shp', '.csv', '.xyz', '.txt'];
-    const supportedExts = [];
-
-    for (const ext of extensions) {
-      const dummyFile = new File([], `dummy${ext}`);
-      for (const loader of this.loaders) {
-        if (await loader.canLoad(dummyFile)) {
-          supportedExts.push(ext);
-          break;
-        }
-      }
-    }
-
-    return supportedExts;
+  async getLoaderForFile(file: File) {
+    const { loader } = await this.validateFile(file);
+    return loader;
   }
 
-  async validateFile(file: File): Promise<{
-    valid: boolean;
-    loader?: GeoFileLoader;
-    error?: string;
-  }> {
-    try {
-      const loader = await this.getLoaderForFile(file);
-      if (!loader) {
-        return {
-          valid: false,
-          error: `Unsupported file type: ${file.name}`,
-        };
-      }
-
-      // Basic size validation (adjust limits as needed)
-      if (file.size > 100 * 1024 * 1024) {
-        // 100MB
-        return {
-          valid: false,
-          error: 'File is too large. Maximum size is 100MB.',
-        };
-      }
-
-      return {
-        valid: true,
-        loader,
-      };
-    } catch (error) {
-      return {
-        valid: false,
-        error: error instanceof Error ? error.message : 'Unknown error validating file',
-      };
-    }
+  async getSupportedExtensions() {
+    return ['.dxf', '.shp', '.csv'];
   }
 
-  // Helper function to get file extension
-  getFileExtension(filename: string): string {
-    return filename.slice((filename.lastIndexOf('.') - 1 >>> 0) + 2).toLowerCase();
-  }
-
-  // Get recommended loader options based on file type
-  async getRecommendedOptions(file: File): Promise<LoaderOptions> {
-    const loader = await this.getLoaderForFile(file);
+  async getRecommendedOptions(file: File) {
+    const { loader } = await this.validateFile(file);
     if (!loader) return {};
 
-    const ext = this.getFileExtension(file.name);
-
+    // Get file extension
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    
     switch (ext) {
-      case 'csv':
-      case 'txt':
-      case 'xyz':
-        return {
-          delimiter: ',', // Default delimiter, will be auto-detected
-          skipRows: 0,
-          skipColumns: 0,
-          simplificationTolerance: 0, // No simplification by default
-        };
       case 'dxf':
         return {
-          selectedLayers: [], // Will be populated after analysis
-          importStyles: true, // Specific to DXF
+          coordinateSystem: 'EPSG:4326', // Default to WGS84
+          targetSystem: 'EPSG:4326'
         };
       case 'shp':
         return {
-          importAttributes: true, // Ensure attributes are imported by default
+          importAttributes: true
         };
       default:
         return {};
     }
   }
+
+  setLogCallback(callback: (message: string) => void) {
+    // Set log callback for all loaders
+    this.loaders.forEach(loader => {
+      if ('setLogCallback' in loader) {
+        (loader as any).setLogCallback(callback);
+      }
+    });
+  }
 }
 
-// Create and export singleton instance
 export const loaderRegistry = new LoaderRegistry();
-
-// Export type for use in other components
-export type { GeoFileLoader };

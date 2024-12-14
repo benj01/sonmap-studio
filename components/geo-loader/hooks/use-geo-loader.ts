@@ -9,6 +9,7 @@ interface UseGeoLoaderResult {
   error: string | null;
   analysis: any | null;
   options: LoaderOptions;
+  logs: string[];
   setOptions: (options: LoaderOptions) => void;
   analyzeFile: (file: File) => Promise<void>;
   loadFile: (file: File) => Promise<LoaderResult | null>;
@@ -20,6 +21,7 @@ export function useGeoLoader(): UseGeoLoaderResult {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<any | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
 
   // Initialize options with sensible defaults, including `importAttributes`
   const [options, setOptions] = useState<LoaderOptions>({
@@ -28,6 +30,10 @@ export function useGeoLoader(): UseGeoLoaderResult {
   });
 
   const [supportedExtensions, setSupportedExtensions] = useState<string[]>([]);
+
+  const addLog = useCallback((message: string) => {
+    setLogs(prev => [...prev, `[${new Date().toISOString()}] ${message}`]);
+  }, []);
 
   // Get supported extensions on mount
   useState(() => {
@@ -39,12 +45,15 @@ export function useGeoLoader(): UseGeoLoaderResult {
     const validation = await loaderRegistry.validateFile(file);
     
     if (!validation.valid) {
-      setError(validation.error || 'Invalid file');
+      const errorMsg = validation.error || 'Invalid file';
+      setError(errorMsg);
+      addLog(`Validation failed: ${errorMsg}`);
       return false;
     }
     
+    addLog(`File validation successful: ${file.name}`);
     return true;
-  }, []);
+  }, [addLog]);
 
   const analyzeFile = useCallback(async (file: File) => {
     if (!await validateFile(file)) return;
@@ -52,6 +61,7 @@ export function useGeoLoader(): UseGeoLoaderResult {
     setLoading(true);
     setError(null);
     try {
+      addLog(`Starting analysis of file: ${file.name}`);
       const loader = await loaderRegistry.getLoaderForFile(file);
       if (!loader) {
         throw new Error('No suitable loader found for this file type');
@@ -59,6 +69,7 @@ export function useGeoLoader(): UseGeoLoaderResult {
 
       const analysisResult = await loader.analyze(file);
       setAnalysis(analysisResult);
+      addLog(`Analysis complete. Found ${analysisResult?.layers?.length || 0} layers`);
 
       // Set recommended options based on file type and analysis
       const recommendedOptions = await loaderRegistry.getRecommendedOptions(file);
@@ -68,13 +79,16 @@ export function useGeoLoader(): UseGeoLoaderResult {
         ...prevOptions,
         ...recommendedOptions,
       }));
+      addLog('Updated import options with recommended settings');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to analyze file');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to analyze file';
+      setError(errorMsg);
+      addLog(`Analysis error: ${errorMsg}`);
       setAnalysis(null);
     } finally {
       setLoading(false);
     }
-  }, [validateFile]);
+  }, [validateFile, addLog]);
 
   const loadFile = useCallback(async (file: File): Promise<LoaderResult | null> => {
     if (!await validateFile(file)) return null;
@@ -82,26 +96,32 @@ export function useGeoLoader(): UseGeoLoaderResult {
     setLoading(true);
     setError(null);
     try {
+      addLog(`Starting import of file: ${file.name}`);
       const loader = await loaderRegistry.getLoaderForFile(file);
       if (!loader) {
         throw new Error('No suitable loader found for this file type');
       }
 
       // Load the file with the current options
-      return await loader.load(file, options);
+      const result = await loader.load(file, options);
+      addLog(`Import complete. Processed ${result.features.length} features`);
+      return result;
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load file');
+      const errorMsg = err instanceof Error ? err.message : 'Failed to load file';
+      setError(errorMsg);
+      addLog(`Import error: ${errorMsg}`);
       return null;
     } finally {
       setLoading(false);
     }
-  }, [options, validateFile]);
+  }, [options, validateFile, addLog]);
 
   return {
     loading,
     error,
     analysis,
     options,
+    logs,
     setOptions,
     analyzeFile,
     loadFile,

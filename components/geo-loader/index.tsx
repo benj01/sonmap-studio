@@ -9,32 +9,32 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import type { GeoFileType, LoaderOptions, LoaderResult } from '../../types/geo';
 import { loaderRegistry } from './loaders';
 import { FormatSettings } from './components/format-settings';
+import { useGeoLoader } from './hooks/use-geo-loader';
 
 interface GeoLoaderProps {
   file: File;
   onLoad: (result: LoaderResult) => void;
   onCancel: () => void;
+  onLogsUpdate?: (logs: string[]) => void;
 }
 
-export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
-  const [loading, setLoading] = useState(false);
+export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoLoaderProps) {
+  const {
+    loading,
+    error: loaderError,
+    analysis,
+    options,
+    logs,
+    setOptions,
+    analyzeFile,
+    loadFile,
+  } = useGeoLoader();
+
   const [error, setError] = useState<{
     title?: string;
     message: string;
     details?: string;
   } | null>(null);
-  const [analysis, setAnalysis] = useState<{
-    layers?: string[];
-    coordinateSystem?: string;
-    bounds?: LoaderResult['bounds'];
-    preview?: any;
-  } | null>(null);
-
-  const [options, setOptions] = useState<LoaderOptions>({
-    selectedLayers: [],
-    coordinateSystem: undefined,
-    targetSystem: 'EPSG:4326', // Default to WGS84
-  });
 
   const [viewState, setViewState] = useState({
     longitude: 0,
@@ -42,9 +42,20 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
     zoom: 1,
   });
 
+  // Update logs whenever they change
   useEffect(() => {
-    analyzeFile();
-  }, [file]);
+    onLogsUpdate?.(logs);
+  }, [logs, onLogsUpdate]);
+
+  useEffect(() => {
+    analyzeFile(file);
+  }, [file, analyzeFile]);
+
+  useEffect(() => {
+    if (loaderError) {
+      handleError(new Error(loaderError));
+    }
+  }, [loaderError]);
 
   const handleError = (err: unknown) => {
     if (err instanceof Error) {
@@ -95,93 +106,35 @@ export default function GeoLoader({ file, onLoad, onCancel }: GeoLoaderProps) {
     }
   };
 
-  const analyzeFile = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // Validate file size
-      if (file.size === 0) {
-        throw new Error('The file is empty');
-      }
-
-      // Validate file extension
-      const extension = file.name.split('.').pop()?.toLowerCase();
-      if (!extension) {
-        throw new Error('File has no extension');
-      }
-
-      const { valid, loader, error: validationError } = await loaderRegistry.validateFile(file);
-
-      if (!valid || !loader) {
-        throw new Error(validationError || `Unsupported file type: .${extension}`);
-      }
-
-      const recommendedOptions = await loaderRegistry.getRecommendedOptions(file);
-      setOptions((prev) => ({ ...prev, ...recommendedOptions }));
-
-      const analysisResult = await loader.analyze(file);
+  useEffect(() => {
+    if (analysis?.bounds) {
+      const { minX, minY, maxX, maxY } = analysis.bounds;
       
-      // Validate analysis result
-      if (!analysisResult) {
-        throw new Error('File analysis failed to return a result');
+      // Validate bounds values
+      if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+        console.warn('Invalid bounds values detected, using default view');
+        return;
       }
 
-      setAnalysis(analysisResult);
+      const centerLng = (minX + maxX) / 2;
+      const centerLat = (minY + maxY) / 2;
 
-      if (analysisResult.bounds) {
-        const { minX, minY, maxX, maxY } = analysisResult.bounds;
-        
-        // Validate bounds values
-        if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-          console.warn('Invalid bounds values detected, using default view');
-          return;
-        }
+      const latZoom = Math.log2(360 / (maxY - minY)) - 1;
+      const lngZoom = Math.log2(360 / (maxX - minX)) - 1;
+      const zoom = Math.min(latZoom, lngZoom, 20);
 
-        const centerLng = (minX + maxX) / 2;
-        const centerLat = (minY + maxY) / 2;
-
-        const latZoom = Math.log2(360 / (maxY - minY)) - 1;
-        const lngZoom = Math.log2(360 / (maxX - minX)) - 1;
-        const zoom = Math.min(latZoom, lngZoom, 20);
-
-        setViewState({
-          latitude: centerLat,
-          longitude: centerLng,
-          zoom: zoom,
-        });
-      }
-    } catch (err) {
-      handleError(err);
-    } finally {
-      setLoading(false);
+      setViewState({
+        latitude: centerLat,
+        longitude: centerLng,
+        zoom: zoom,
+      });
     }
-  }, [file]);
+  }, [analysis]);
 
   const handleImport = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const { loader } = await loaderRegistry.validateFile(file);
-      if (!loader) {
-        throw new Error('No suitable loader found for this file');
-      }
-
-      const result = await loader.load(file, options);
-      
-      // Validate import result
-      if (!result || !result.features) {
-        throw new Error('Import failed to return valid features');
-      }
-
-      if (result.features.length === 0) {
-        throw new Error('No valid features found in the file');
-      }
-
+    const result = await loadFile(file);
+    if (result) {
       onLoad(result);
-    } catch (err) {
-      handleError(err);
-    } finally {
-      setLoading(false);
     }
   };
 
