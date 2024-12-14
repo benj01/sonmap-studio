@@ -25,13 +25,53 @@ export class DxfLoader implements GeoFileLoader {
     });
   }
 
+  private safeParseSync(content: string): any {
+    try {
+      const dxf = this.parser.parseSync(content);
+      if (!dxf) {
+        throw new Error('DXF parsing resulted in null or undefined');
+      }
+      return dxf;
+    } catch (error) {
+      console.error('DXF parsing error:', error);
+      throw new Error(`Failed to parse DXF content: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   async analyze(file: File) {
     try {
       const content = await this.readFileContent(file);
-      const dxf = this.parser.parseSync(content);
+      const dxf = this.safeParseSync(content);
 
-      // Extract available layers
-      const layers = Object.keys(dxf.tables.layer.layers);
+      // Extract available layers with safe access
+      let layers: string[] = [];
+      try {
+        if (dxf.tables?.layer?.layers) {
+          const layerTable = dxf.tables.layer.layers;
+          // Ensure we're dealing with an object that has properties
+          if (typeof layerTable === 'object' && layerTable !== null) {
+            layers = Object.keys(layerTable);
+          }
+        }
+      } catch (error) {
+        console.warn('Error extracting layers from layer table:', error);
+      }
+
+      // If no layers found in table, try to extract from entities
+      if (layers.length === 0 && Array.isArray(dxf.entities)) {
+        const layerSet = new Set<string>();
+        dxf.entities.forEach((entity: any) => {
+          if (entity && typeof entity.layer === 'string') {
+            layerSet.add(entity.layer);
+          }
+        });
+        layers = Array.from(layerSet);
+      }
+
+      // If still no layers found, add default layer
+      if (layers.length === 0) {
+        layers = ['0'];  // DXF default layer
+      }
 
       // Sample points to detect coordinate system
       const samplePoints = this.extractSamplePoints(dxf);
@@ -51,20 +91,20 @@ export class DxfLoader implements GeoFileLoader {
       };
     } catch (error) {
       console.error('DXF Analysis error:', error);
-      throw new Error('Failed to analyze DXF file');
+      throw new Error(`Failed to analyze DXF file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
     try {
       const content = await this.readFileContent(file);
-      const dxf = this.parser.parseSync(content);
+      const dxf = this.safeParseSync(content);
 
       // Create coordinate transformer if needed
-      const transformer =
-        options.coordinateSystem && options.targetSystem
-          ? new CoordinateTransformer(options.coordinateSystem, options.targetSystem)
-          : null;
+      let transformer: CoordinateTransformer | undefined = undefined;
+      if (options.coordinateSystem && options.targetSystem) {
+        transformer = new CoordinateTransformer(options.coordinateSystem, options.targetSystem);
+      }
 
       // Convert DXF entities to GeoFeatures
       const features = this.convertToGeoFeatures(dxf, options.selectedLayers, transformer);
@@ -80,28 +120,34 @@ export class DxfLoader implements GeoFileLoader {
       return {
         features,
         bounds,
-        layers: Object.keys(dxf.tables.layer.layers),
+        layers: options.selectedLayers || [],
         coordinateSystem: options.coordinateSystem,
         statistics,
       };
     } catch (error) {
       console.error('DXF Loading error:', error);
-      throw new Error('Failed to load DXF file');
+      throw new Error(`Failed to load DXF file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
   private extractSamplePoints(dxf: any): Array<{ x: number; y: number }> {
     const points: Array<{ x: number; y: number }> = [];
 
-    // Sample points from entities
-    if (dxf.entities) {
-      for (const entity of dxf.entities.slice(0, 10)) {
-        if (entity.vertices) {
-          points.push(...entity.vertices.map((v: any) => ({ x: v.x, y: v.y })));
-        } else if (entity.position) {
-          points.push({ x: entity.position.x, y: entity.position.y });
+    try {
+      // Safely check if entities exists and is an array
+      if (Array.isArray(dxf.entities)) {
+        for (const entity of dxf.entities.slice(0, 10)) {
+          if (Array.isArray(entity.vertices)) {
+            points.push(...entity.vertices
+              .filter((v: any) => typeof v.x === 'number' && typeof v.y === 'number')
+              .map((v: any) => ({ x: v.x, y: v.y })));
+          } else if (entity.position && typeof entity.position.x === 'number' && typeof entity.position.y === 'number') {
+            points.push({ x: entity.position.x, y: entity.position.y });
+          }
         }
       }
+    } catch (error) {
+      console.warn('Error extracting sample points:', error);
     }
 
     return points;
@@ -114,21 +160,31 @@ export class DxfLoader implements GeoFileLoader {
       maxY = -Infinity;
 
     const updateBounds = (x: number, y: number) => {
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
+      if (typeof x === 'number' && typeof y === 'number') {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
     };
 
-    // Process all entities
-    if (dxf.entities) {
-      for (const entity of dxf.entities) {
-        if (entity.vertices) {
-          entity.vertices.forEach((v: any) => updateBounds(v.x, v.y));
-        } else if (entity.position) {
-          updateBounds(entity.position.x, entity.position.y);
+    try {
+      // Process all entities
+      if (Array.isArray(dxf.entities)) {
+        for (const entity of dxf.entities) {
+          if (Array.isArray(entity.vertices)) {
+            entity.vertices.forEach((v: any) => {
+              if (v && typeof v.x === 'number' && typeof v.y === 'number') {
+                updateBounds(v.x, v.y);
+              }
+            });
+          } else if (entity.position && typeof entity.position.x === 'number' && typeof entity.position.y === 'number') {
+            updateBounds(entity.position.x, entity.position.y);
+          }
         }
       }
+    } catch (error) {
+      console.warn('Error calculating bounds:', error);
     }
 
     return { minX, minY, maxX, maxY };
@@ -141,7 +197,7 @@ export class DxfLoader implements GeoFileLoader {
   ): GeoFeature[] {
     const features: GeoFeature[] = [];
 
-    if (!dxf.entities) return features;
+    if (!Array.isArray(dxf.entities)) return features;
 
     for (const entity of dxf.entities) {
       // Skip if entity's layer is not selected
@@ -155,52 +211,70 @@ export class DxfLoader implements GeoFileLoader {
   }
 
   private entityToGeoFeature(entity: any, transformer?: CoordinateTransformer): GeoFeature | null {
+    if (!entity || typeof entity.type !== 'string') return null;
+
     let geometry: any = null;
 
-    switch (entity.type) {
-      case 'LINE':
-        geometry = {
-          type: 'LineString',
-          coordinates: [
-            this.transformPoint([entity.start.x, entity.start.y], transformer),
-            this.transformPoint([entity.end.x, entity.end.y], transformer),
-          ],
-        };
-        break;
+    try {
+      switch (entity.type) {
+        case 'LINE':
+          if (entity.start?.x != null && entity.start?.y != null && 
+              entity.end?.x != null && entity.end?.y != null) {
+            geometry = {
+              type: 'LineString',
+              coordinates: [
+                this.transformPoint([entity.start.x, entity.start.y], transformer),
+                this.transformPoint([entity.end.x, entity.end.y], transformer),
+              ],
+            };
+          }
+          break;
 
-      case 'POINT':
-        geometry = {
-          type: 'Point',
-          coordinates: this.transformPoint([entity.position.x, entity.position.y], transformer),
-        };
-        break;
+        case 'POINT':
+          if (entity.position?.x != null && entity.position?.y != null) {
+            geometry = {
+              type: 'Point',
+              coordinates: this.transformPoint([entity.position.x, entity.position.y], transformer),
+            };
+          }
+          break;
 
-      case 'POLYLINE':
-      case 'LWPOLYLINE':
-        geometry = {
-          type: 'LineString',
-          coordinates: entity.vertices.map((v: any) =>
-            this.transformPoint([v.x, v.y], transformer)
-          ),
-        };
-        break;
+        case 'POLYLINE':
+        case 'LWPOLYLINE':
+          if (Array.isArray(entity.vertices)) {
+            const validVertices = entity.vertices
+              .filter((v: any) => v?.x != null && v?.y != null)
+              .map((v: any) => this.transformPoint([v.x, v.y], transformer));
 
-      // Add more entity types as needed
+            if (validVertices.length >= 2) {
+              geometry = {
+                type: 'LineString',
+                coordinates: validVertices,
+              };
+            }
+          }
+          break;
 
-      default:
-        return null;
+        default:
+          return null;
+      }
+
+      if (!geometry) return null;
+
+      return {
+        type: 'Feature',
+        geometry,
+        properties: {
+          layer: typeof entity.layer === 'string' ? entity.layer : '0',
+          type: entity.type,
+          ...(entity.properties || {}),
+        },
+        layer: typeof entity.layer === 'string' ? entity.layer : '0',
+      };
+    } catch (error) {
+      console.warn('Error converting entity to GeoFeature:', error);
+      return null;
     }
-
-    return {
-      type: 'Feature',
-      geometry,
-      properties: {
-        layer: entity.layer,
-        type: entity.type,
-        ...(entity.properties || {}),
-      },
-      layer: entity.layer,
-    };
   }
 
   private transformPoint(
@@ -213,14 +287,22 @@ export class DxfLoader implements GeoFileLoader {
   }
 
   private generatePreview(dxf: any): any {
-    // Generate a simplified GeoJSON for preview
-    // Include only a subset of features for performance
-    const previewFeatures = this.convertToGeoFeatures(dxf).slice(0, 1000); // Limit to first 1000 features for preview
+    try {
+      // Generate a simplified GeoJSON for preview
+      // Include only a subset of features for performance
+      const previewFeatures = this.convertToGeoFeatures(dxf).slice(0, 1000); // Limit to first 1000 features for preview
 
-    return {
-      type: 'FeatureCollection',
-      features: previewFeatures,
-    };
+      return {
+        type: 'FeatureCollection',
+        features: previewFeatures,
+      };
+    } catch (error) {
+      console.warn('Error generating preview:', error);
+      return {
+        type: 'FeatureCollection',
+        features: [],
+      };
+    }
   }
 
   private calculateStatistics(features: GeoFeature[]) {
@@ -228,21 +310,27 @@ export class DxfLoader implements GeoFileLoader {
     let pointCount = 0;
 
     features.forEach((feature) => {
-      // Count feature types
-      const type = feature.properties.type;
-      featureTypes[type] = (featureTypes[type] || 0) + 1;
+      try {
+        // Count feature types
+        const type = feature.properties?.type;
+        if (typeof type === 'string') {
+          featureTypes[type] = (featureTypes[type] || 0) + 1;
+        }
 
-      // Count points
-      if (feature.geometry.type === 'Point') {
-        pointCount++;
-      } else if (feature.geometry.type === 'LineString') {
-        pointCount += feature.geometry.coordinates.length;
+        // Count points
+        if (feature.geometry.type === 'Point') {
+          pointCount++;
+        } else if (feature.geometry.type === 'LineString' && Array.isArray(feature.geometry.coordinates)) {
+          pointCount += feature.geometry.coordinates.length;
+        }
+      } catch (error) {
+        console.warn('Error calculating statistics for feature:', error);
       }
     });
 
     return {
       pointCount,
-      layerCount: new Set(features.map((f) => f.layer)).size,
+      layerCount: new Set(features.map((f) => f.layer).filter(Boolean)).size,
       featureTypes,
     };
   }

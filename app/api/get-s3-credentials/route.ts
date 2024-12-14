@@ -3,11 +3,18 @@ import { NextResponse } from 'next/server';
 
 export async function POST(request: Request) {
   try {
-    const { fileName } = await request.json();
+    const { fileName, projectId } = await request.json();
 
     if (!fileName) {
       return NextResponse.json(
         { error: 'fileName is required' },
+        { status: 400 }
+      );
+    }
+
+    if (!projectId) {
+      return NextResponse.json(
+        { error: 'projectId is required' },
         { status: 400 }
       );
     }
@@ -26,7 +33,7 @@ export async function POST(request: Request) {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
         },
-        body: JSON.stringify({ fileName }),
+        body: JSON.stringify({ fileName, projectId }),
       }
     );
 

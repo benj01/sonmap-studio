@@ -1,6 +1,6 @@
-import { Dialog, DialogContent } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'components/ui/dialog'
 import GeoLoader from '../index'
-import { LoaderResult } from '@/types/geo'
+import { LoaderResult } from 'types/geo'
 
 interface GeoImportDialogProps {
   isOpen: boolean
@@ -20,6 +20,9 @@ export function GeoImportDialog({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl">
+        <DialogHeader>
+          <DialogTitle>Import Geometry File</DialogTitle>
+        </DialogHeader>
         <GeoLoader
           file={file}
           onLoad={(result) => {

@@ -26,18 +26,6 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   const supabase = createClient()
 
   useEffect(() => {
-    async function checkSession() {
-      const { data, error } = await supabase.auth.getSession()
-      if (error) {
-        console.error('Error fetching session:', error)
-        return
-      }
-      console.log('Authenticated user ID:', data?.session?.user?.id)
-    }
-    checkSession()
-  }, [])
-
-  useEffect(() => {
     loadFiles()
   }, [projectId])
 
@@ -53,6 +41,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       if (error) throw error
       setFiles(data || [])
     } catch (error) {
+      console.error('Error loading files:', error)
       toast({
         title: 'Error',
         description: 'Failed to load files',
@@ -97,8 +86,8 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
       if (error) throw error
 
-      // Refresh the files list after upload
-      await loadFiles()
+      // Update local state
+      setFiles(prevFiles => [newFile, ...prevFiles])
       await refreshProjectStorage()
 
       toast({
@@ -106,6 +95,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         description: 'File uploaded and saved successfully',
       })
     } catch (error) {
+      console.error('Error uploading file:', error)
       toast({
         title: 'Error',
         description: 'Failed to save uploaded file to the database',
@@ -117,12 +107,36 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   const handleDeleteFile = async (fileId: string) => {
     try {
       const fileToDelete = files.find(f => f.id === fileId)
-      if (!fileToDelete) return
+      if (!fileToDelete) {
+        console.error('File not found:', fileId)
+        return
+      }
 
-      // Delete from storage first
-      // Remove 'projects/' prefix if it exists in the storage path
+      // Delete from database first
+      console.log('Deleting from database:', fileId, projectId)
+      const { error: dbError, count } = await supabase
+        .from('project_files')
+        .delete()
+        .match({
+          id: fileId,
+          project_id: projectId
+        })
+        .select()
+
+      if (dbError) {
+        console.error('Database deletion error:', dbError)
+        throw dbError
+      }
+
+      console.log('Database deletion result:', count)
+
+      if (count === 0) {
+        throw new Error('File not found in database')
+      }
+
+      // Then delete from storage
       const storagePath = fileToDelete.storage_path.replace(/^projects\//, '')
-      console.log('Deleting file from storage:', storagePath)
+      console.log('Deleting from storage:', storagePath)
 
       const { error: storageError } = await supabase.storage
         .from('project-files')
@@ -133,18 +147,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         throw storageError
       }
 
-      // Then delete from database
-      const { error: dbError } = await supabase
-        .from('project_files')
-        .delete()
-        .eq('id', fileId)
-
-      if (dbError) {
-        console.error('Database deletion error:', dbError)
-        throw dbError
-      }
-
-      // Remove from local state
+      // Update local state
       setFiles(prevFiles => prevFiles.filter(f => f.id !== fileId))
       await refreshProjectStorage()
 
@@ -156,7 +159,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       console.error('Delete error:', error)
       toast({
         title: 'Error',
-        description: 'Failed to delete file',
+        description: error instanceof Error ? error.message : 'Failed to delete file',
         variant: 'destructive',
       })
       // Refresh files list to ensure UI is in sync
@@ -202,6 +205,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
               </Button>
             </div>
             <S3FileUpload
+              projectId={projectId}
               onUploadComplete={handleUploadComplete}
             />
           </div>
