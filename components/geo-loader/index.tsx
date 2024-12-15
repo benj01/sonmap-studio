@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardHeader, CardContent } from 'components/ui/card';
+import { Card, CardHeader, CardContent, CardFooter } from 'components/ui/card';
 import { Button } from 'components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from 'components/ui/alert';
 import type { LoaderResult } from '../../types/geo';
@@ -104,62 +104,68 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
   };
 
   return (
-    <Card className="w-full max-w-4xl">
-      <CardHeader>
-        <h3 className="text-lg font-semibold">Import {file.name}</h3>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4">
-          {/* Settings Panel */}
-          <div className="space-y-4">
-            <h4 className="font-medium">Settings</h4>
-            <FormatSettings
-              fileType={file.name.split('.').pop() || ''}
-              analysis={analysis}
-              options={options}
-              onOptionsChange={setOptions}
-            />
-          </div>
+    <div className="relative w-full max-w-4xl">
+      <Card className="flex flex-col">
+        <CardHeader>
+          <h3 className="text-lg font-semibold">Import {file.name}</h3>
+        </CardHeader>
+        
+        <CardContent className="flex-1 space-y-6">
+          <div className="grid grid-cols-2 gap-4">
+            {/* Settings Panel */}
+            <div className="space-y-4">
+              <h4 className="font-medium">Settings</h4>
+              <FormatSettings
+                fileType={file.name.split('.').pop() || ''}
+                analysis={analysis}
+                options={options}
+                onOptionsChange={setOptions}
+              />
+            </div>
 
-          {/* Preview Map Panel */}
-          <div className="space-y-4">
-            <h4 className="font-medium">Preview</h4>
-            <div className="h-96">
-              {analysis?.preview && (
-                <PreviewMap
-                  preview={analysis.preview}
-                  bounds={analysis.bounds}
-                  coordinateSystem={analysis.coordinateSystem}
-                  visibleLayers={options.visibleLayers}
-                />
-              )}
+            {/* Preview Map Panel */}
+            <div className="space-y-4">
+              <h4 className="font-medium">Preview</h4>
+              <div className="h-96 relative">
+                {analysis?.preview && (
+                  <PreviewMap
+                    preview={analysis.preview}
+                    bounds={analysis.bounds}
+                    coordinateSystem={analysis.coordinateSystem}
+                    visibleLayers={options.visibleLayers}
+                  />
+                )}
+              </div>
             </div>
           </div>
-        </div>
 
-        {error && (
-          <Alert variant="destructive" className="mt-4">
-            {error.title && <AlertTitle>{error.title}</AlertTitle>}
-            <AlertDescription>
-              {error.message}
-              {error.details && (
-                <div className="mt-2 text-sm opacity-80">
-                  {error.details}
-                </div>
-              )}
-            </AlertDescription>
-          </Alert>
-        )}
+          {error && (
+            <Alert variant="destructive">
+              {error.title && <AlertTitle>{error.title}</AlertTitle>}
+              <AlertDescription>
+                {error.message}
+                {error.details && (
+                  <div className="mt-2 text-sm opacity-80">
+                    {error.details}
+                  </div>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
 
-        <div className="flex justify-end space-x-2 mt-4">
-          <Button variant="outline" onClick={onCancel}>
-            Cancel
-          </Button>
-          <Button onClick={handleImport} disabled={loading}>
-            {loading ? 'Importing...' : 'Import'}
-          </Button>
+        {/* Ensure footer is above map overlays */}
+        <div className="relative z-50">
+          <CardFooter className="flex justify-end space-x-2 border-t pt-4">
+            <Button variant="outline" onClick={onCancel} className="relative z-50">
+              Cancel
+            </Button>
+            <Button onClick={handleImport} disabled={loading} className="relative z-50">
+              {loading ? 'Importing...' : 'Import'}
+            </Button>
+          </CardFooter>
         </div>
-      </CardContent>
-    </Card>
+      </Card>
+    </div>
   );
 }

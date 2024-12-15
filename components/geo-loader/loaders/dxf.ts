@@ -73,22 +73,33 @@ export class DxfLoader implements GeoFileLoader {
     
     if (Array.isArray(dxf.entities)) {
       dxf.entities.forEach((entity: any) => {
-        if (entity.vertices) {
+        // Handle POINT entities
+        if (entity.type === 'POINT' && entity.position) {
+          if (isFinite(entity.position.x) && isFinite(entity.position.y)) {
+            points.push({ x: entity.position.x, y: entity.position.y });
+          }
+        }
+        // Handle vertices from polylines
+        else if (entity.vertices) {
           entity.vertices.forEach((v: any) => {
             if (v.x !== undefined && v.y !== undefined && isFinite(v.x) && isFinite(v.y)) {
               points.push({ x: v.x, y: v.y });
             }
           });
-        } else if (entity.position) {
-          if (isFinite(entity.position.x) && isFinite(entity.position.y)) {
-            points.push({ x: entity.position.x, y: entity.position.y });
-          }
-        } else if (entity.start && entity.end) {
+        }
+        // Handle line endpoints
+        else if (entity.start && entity.end) {
           if (isFinite(entity.start.x) && isFinite(entity.start.y)) {
             points.push({ x: entity.start.x, y: entity.start.y });
           }
           if (isFinite(entity.end.x) && isFinite(entity.end.y)) {
             points.push({ x: entity.end.x, y: entity.end.y });
+          }
+        }
+        // Handle INSERT entities (block references) which can represent points
+        else if (entity.type === 'INSERT' && entity.position) {
+          if (isFinite(entity.position.x) && isFinite(entity.position.y)) {
+            points.push({ x: entity.position.x, y: entity.position.y });
           }
         }
       });
@@ -125,18 +136,8 @@ export class DxfLoader implements GeoFileLoader {
       }
     };
 
-    if (Array.isArray(dxf.entities)) {
-      dxf.entities.forEach((entity: any) => {
-        if (entity.vertices) {
-          entity.vertices.forEach((v: any) => updateBounds(v.x, v.y));
-        } else if (entity.position) {
-          updateBounds(entity.position.x, entity.position.y);
-        } else if (entity.start && entity.end) {
-          updateBounds(entity.start.x, entity.start.y);
-          updateBounds(entity.end.x, entity.end.y);
-        }
-      });
-    }
+    const points = this.collectPoints(dxf);
+    points.forEach(point => updateBounds(point.x, point.y));
 
     // If no valid bounds were found, return a default area
     if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
@@ -148,9 +149,22 @@ export class DxfLoader implements GeoFileLoader {
 
   private generatePreview(dxf: any): GeoFeatureCollection {
     const features = this.convertToGeoFeatures(dxf);
+    
+    // Ensure we include a good mix of each geometry type in the preview
+    const pointFeatures = features.filter(f => f.geometry.type === 'Point');
+    const lineFeatures = features.filter(f => f.geometry.type === 'LineString');
+    const polygonFeatures = features.filter(f => f.geometry.type === 'Polygon');
+
+    // Take up to 500 of each type to ensure good representation
+    const selectedFeatures = [
+      ...pointFeatures.slice(0, 500),
+      ...lineFeatures.slice(0, 250),
+      ...polygonFeatures.slice(0, 250)
+    ];
+
     return {
       type: 'FeatureCollection',
-      features: features.slice(0, 1000), // Limit for performance
+      features: selectedFeatures
     };
   }
 
@@ -163,13 +177,17 @@ export class DxfLoader implements GeoFileLoader {
           if (feature) features.push(feature);
         });
       }
-    } catch {
-      // Log warning if needed
+    } catch (error) {
+      console.error('Error converting entities to features:', error);
     }
     return features;
   }
 
   private transformPoint(point: { x: number; y: number }): [number, number] {
+    if (!isFinite(point.x) || !isFinite(point.y)) {
+      console.warn('Invalid point coordinates:', point);
+      return [0, 0]; // Default to origin for invalid points
+    }
     return [point.x, point.y];
   }
 
@@ -179,6 +197,16 @@ export class DxfLoader implements GeoFileLoader {
     let geometry: GeoFeature['geometry'] | null = null;
 
     switch (entity.type) {
+      case 'POINT':
+      case 'INSERT': // Handle block references as points
+        if (entity.position) {
+          const point = this.transformPoint(entity.position);
+          geometry = {
+            type: 'Point',
+            coordinates: point,
+          };
+        }
+        break;
       case 'LINE':
         if (entity.start && entity.end) {
           const start = this.transformPoint(entity.start);
@@ -186,15 +214,6 @@ export class DxfLoader implements GeoFileLoader {
           geometry = {
             type: 'LineString',
             coordinates: [start, end],
-          };
-        }
-        break;
-      case 'POINT':
-        if (entity.position) {
-          const point = this.transformPoint(entity.position);
-          geometry = {
-            type: 'Point',
-            coordinates: point,
           };
         }
         break;
@@ -253,6 +272,13 @@ export class DxfLoader implements GeoFileLoader {
     const coordinateSystem = this.detectCoordinateSystem(dxf);
     const bounds = this.calculateBounds(dxf);
     const preview = this.generatePreview(dxf);
+
+    console.debug('DXF Analysis:', {
+      layerCount: layers.length,
+      coordinateSystem,
+      bounds,
+      previewFeatureCount: preview.features.length
+    });
 
     return { 
       layers, 

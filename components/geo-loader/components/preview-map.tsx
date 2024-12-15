@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import Map, { Source, Layer, ViewStateChangeEvent } from 'react-map-gl';
-import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
-import { GeoFeatureCollection } from '../../../types/geo';
+import React, { useEffect, useState, useMemo } from 'react';
+import Map, { Source, Layer, ViewStateChangeEvent, AttributionControl } from 'react-map-gl';
+import { COORDINATE_SYSTEMS, createTransformer } from '../utils/coordinate-systems';
+import { GeoFeatureCollection, GeoFeature, Point, LineString, Polygon } from '../../../types/geo';
 
 interface PreviewMapProps {
   preview: GeoFeatureCollection;
@@ -29,48 +29,128 @@ export function PreviewMap({
     pitch: 0
   });
 
+  // Transform coordinates if needed
+  const transformCoordinates = (coordinates: number[], transformer: any): [number, number] => {
+    const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
+    return [transformed.x, transformed.y];
+  };
+
+  const transformGeometry = (geometry: Point | LineString | Polygon, transformer: any): Point | LineString | Polygon => {
+    switch (geometry.type) {
+      case 'Point':
+        return {
+          type: 'Point',
+          coordinates: transformCoordinates(geometry.coordinates, transformer)
+        };
+      case 'LineString':
+        return {
+          type: 'LineString',
+          coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, transformer))
+        };
+      case 'Polygon':
+        return {
+          type: 'Polygon',
+          coordinates: geometry.coordinates.map(ring => 
+            ring.map(coord => transformCoordinates(coord, transformer))
+          )
+        };
+      default:
+        return geometry;
+    }
+  };
+
+  // Memoize transformed features to prevent unnecessary recalculations
+  const transformedFeatures = useMemo(() => {
+    if (!preview?.features) return [];
+
+    let features = preview.features;
+    if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+      try {
+        const transformer = createTransformer(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84);
+        features = features.map(feature => ({
+          ...feature,
+          geometry: transformGeometry(feature.geometry, transformer)
+        }));
+      } catch (error) {
+        console.error('Error transforming coordinates:', error);
+      }
+    }
+    return features;
+  }, [preview, coordinateSystem]);
+
+  // Memoize filtered features by visibility
+  const { pointFeatures, lineFeatures, polygonFeatures } = useMemo(() => {
+    // Filter features by visible layers - only show features from explicitly visible layers
+    const visibleFeatures = transformedFeatures.filter(f => 
+      f.properties?.layer && visibleLayers.includes(f.properties.layer)
+    );
+
+    // Log visibility info for debugging
+    console.debug('Feature visibility:', {
+      totalFeatures: transformedFeatures.length,
+      visibleFeatures: visibleFeatures.length,
+      visibleLayers
+    });
+
+    // Group features by geometry type
+    return {
+      pointFeatures: {
+        type: 'FeatureCollection' as const,
+        features: visibleFeatures.filter(f => f.geometry.type === 'Point')
+      },
+      lineFeatures: {
+        type: 'FeatureCollection' as const,
+        features: visibleFeatures.filter(f => f.geometry.type === 'LineString')
+      },
+      polygonFeatures: {
+        type: 'FeatureCollection' as const,
+        features: visibleFeatures.filter(f => f.geometry.type === 'Polygon')
+      }
+    };
+  }, [transformedFeatures, visibleLayers]);
+
   useEffect(() => {
     if (bounds) {
-      // Convert bounds to center point if needed
-      if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
-        // Convert Swiss coordinates to WGS84 for the map
-        // This would need proper coordinate transformation
-        // For now, we'll just use a rough approximation
-        const swissToWGS84 = (x: number, y: number) => ({
-          lng: (x - 2600000) / 1000000 * 7.43861 + 8.23,
-          lat: (y - 1200000) / 1000000 * 6.37758 + 46.82
-        });
+      try {
+        // Convert bounds to center point if needed
+        if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+          const transformer = createTransformer(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84);
+          const transformedBounds = transformer.transformBounds(bounds);
+          
+          // Calculate center and zoom
+          const center = {
+            lng: (transformedBounds.minX + transformedBounds.maxX) / 2,
+            lat: (transformedBounds.minY + transformedBounds.maxY) / 2
+          };
 
-        const center = swissToWGS84(
-          (bounds.minX + bounds.maxX) / 2,
-          (bounds.minY + bounds.maxY) / 2
-        );
+          // Calculate zoom level based on bounds extent in meters
+          const width = bounds.maxX - bounds.minX;
+          const height = bounds.maxY - bounds.minY;
+          const maxDimension = Math.max(width, height);
+          const zoom = Math.floor(14 - Math.log2(maxDimension / 1000));
 
-        // Calculate zoom level based on bounds extent
-        const width = bounds.maxX - bounds.minX;
-        const height = bounds.maxY - bounds.minY;
-        const maxDimension = Math.max(width, height);
-        const zoom = Math.floor(14 - Math.log2(maxDimension / 1000));
+          setViewState(prev => ({
+            ...prev,
+            longitude: center.lng,
+            latitude: center.lat,
+            zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
+          }));
+        } else {
+          // For WGS84 coordinates
+          const width = bounds.maxX - bounds.minX;
+          const height = bounds.maxY - bounds.minY;
+          const maxDimension = Math.max(width, height);
+          const zoom = Math.floor(14 - Math.log2(maxDimension));
 
-        setViewState(prev => ({
-          ...prev,
-          longitude: center.lng,
-          latitude: center.lat,
-          zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
-        }));
-      } else {
-        // For WGS84 coordinates
-        const width = bounds.maxX - bounds.minX;
-        const height = bounds.maxY - bounds.minY;
-        const maxDimension = Math.max(width, height);
-        const zoom = Math.floor(14 - Math.log2(maxDimension));
-
-        setViewState(prev => ({
-          ...prev,
-          longitude: (bounds.minX + bounds.maxX) / 2,
-          latitude: (bounds.minY + bounds.maxY) / 2,
-          zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
-        }));
+          setViewState(prev => ({
+            ...prev,
+            longitude: (bounds.minX + bounds.maxX) / 2,
+            latitude: (bounds.minY + bounds.maxY) / 2,
+            zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
+          }));
+        }
+      } catch (error) {
+        console.error('Error setting map view state:', error);
       }
     }
   }, [bounds, coordinateSystem]);
@@ -84,10 +164,10 @@ export function PreviewMap({
     point: {
       type: 'circle',
       paint: {
-        'circle-radius': 4,
+        'circle-radius': 6,
         'circle-color': '#007cbf',
         'circle-opacity': 0.8,
-        'circle-stroke-width': 1,
+        'circle-stroke-width': 2,
         'circle-stroke-color': '#fff'
       }
     },
@@ -117,72 +197,50 @@ export function PreviewMap({
     }
   } as const;
 
-  const renderLayers = () => {
-    if (!preview?.features?.length) return null;
-
-    // Filter features by visible layers
-    const visibleFeatures = preview.features.filter(f => 
-      visibleLayers.length === 0 || // Show all if no layers specified
-      (f.properties?.layer && visibleLayers.includes(f.properties.layer))
-    );
-
-    // Group features by geometry type
-    const pointFeatures = {
-      type: 'FeatureCollection',
-      features: visibleFeatures.filter(f => 
-        f.geometry.type === 'Point'
-      )
-    };
-
-    const lineFeatures = {
-      type: 'FeatureCollection',
-      features: visibleFeatures.filter(f => 
-        f.geometry.type === 'LineString'
-      )
-    };
-
-    const polygonFeatures = {
-      type: 'FeatureCollection',
-      features: visibleFeatures.filter(f => 
-        f.geometry.type === 'Polygon'
-      )
-    };
-
-    return (
-      <>
-        {pointFeatures.features.length > 0 && (
-          <Source type="geojson" data={pointFeatures}>
-            <Layer {...layerStyles.point} />
-          </Source>
-        )}
-
-        {lineFeatures.features.length > 0 && (
-          <Source type="geojson" data={lineFeatures}>
-            <Layer {...layerStyles.line} />
-          </Source>
-        )}
-
-        {polygonFeatures.features.length > 0 && (
-          <Source type="geojson" data={polygonFeatures}>
-            <Layer {...layerStyles.polygon} />
-            <Layer {...layerStyles.polygonOutline} />
-          </Source>
-        )}
-      </>
-    );
-  };
-
   return (
     <div className="h-full w-full relative">
-      <Map
-        {...viewState}
-        onMove={onMove}
-        style={{ width: '100%', height: '100%' }}
-        mapStyle="mapbox://styles/mapbox/light-v11"
-        mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
-      >
-        {renderLayers()}
-      </Map>
+      {/* Map container with lower z-index */}
+      <div className="absolute inset-0 z-0">
+        <Map
+          {...viewState}
+          onMove={onMove}
+          style={{ width: '100%', height: '100%' }}
+          mapStyle="mapbox://styles/mapbox/light-v11"
+          mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
+          attributionControl={false}
+        >
+          {pointFeatures.features.length > 0 && (
+            <Source type="geojson" data={pointFeatures}>
+              <Layer id="points" {...layerStyles.point} />
+            </Source>
+          )}
+
+          {lineFeatures.features.length > 0 && (
+            <Source type="geojson" data={lineFeatures}>
+              <Layer id="lines" {...layerStyles.line} />
+            </Source>
+          )}
+
+          {polygonFeatures.features.length > 0 && (
+            <Source type="geojson" data={polygonFeatures}>
+              <Layer id="polygons" {...layerStyles.polygon} />
+              <Layer id="polygon-outlines" {...layerStyles.polygonOutline} />
+            </Source>
+          )}
+
+          {/* Attribution with lower z-index */}
+          <div className="absolute bottom-0 right-0 z-10">
+            <AttributionControl
+              compact={true}
+              style={{
+                margin: '0 8px 8px 0',
+                backgroundColor: 'rgba(255, 255, 255, 0.7)',
+                fontSize: '10px'
+              }}
+            />
+          </div>
+        </Map>
+      </div>
     </div>
   );
 }

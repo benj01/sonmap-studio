@@ -50,13 +50,13 @@ export function useGeoLoader() {
 
     try {
       log(`Analyzing ${file.name}...`);
-      const analysisResult = await loader.analyze(file);
+      const analysisResult = await loader.analyze(file) as AnalyzeResult;
       
-      // Initialize visible layers with all available layers
+      // Initialize both selected and visible layers with all available layers
       setOptions(prev => ({
         ...prev,
-        selectedLayers: [], // Reset selected layers
-        visibleLayers: [...analysisResult.layers] // Show all layers by default
+        selectedLayers: analysisResult.layers,
+        visibleLayers: analysisResult.layers
       }));
       
       setAnalysis(analysisResult);

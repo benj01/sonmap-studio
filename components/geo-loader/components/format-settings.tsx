@@ -24,7 +24,42 @@ export function FormatSettings({
   onOptionsChange,
 }: FormatSettingsProps) {
   const updateOptions = (updates: Partial<LoaderOptions>) => {
-    onOptionsChange({ ...options, ...updates });
+    const newOptions = { ...options, ...updates };
+    console.debug('Updating format options:', {
+      previous: options,
+      updates,
+      new: newOptions
+    });
+    onOptionsChange(newOptions);
+  };
+
+  const handleSelectAll = (type: 'selection' | 'visibility') => {
+    if (!analysis?.layers) {
+      console.warn('No layers available for selection');
+      return;
+    }
+    
+    if (type === 'selection') {
+      const allSelected = analysis.layers.length === (options.selectedLayers || []).length;
+      const newSelectedLayers = allSelected ? [] : [...analysis.layers];
+      console.debug('Toggling all layer selection:', {
+        wasAllSelected: allSelected,
+        newSelectedLayers
+      });
+      updateOptions({
+        selectedLayers: newSelectedLayers
+      });
+    } else {
+      const allVisible = analysis.layers.length === (options.visibleLayers || []).length;
+      const newVisibleLayers = allVisible ? [] : [...analysis.layers];
+      console.debug('Toggling all layer visibility:', {
+        wasAllVisible: allVisible,
+        newVisibleLayers
+      });
+      updateOptions({
+        visibleLayers: newVisibleLayers
+      });
+    }
   };
 
   return (
@@ -35,7 +70,13 @@ export function FormatSettings({
           <Label>Coordinate System</Label>
           <Select
             value={options.coordinateSystem || analysis?.coordinateSystem || ''}
-            onValueChange={(value) => updateOptions({ coordinateSystem: value })}
+            onValueChange={(value) => {
+              console.debug('Changing coordinate system:', {
+                from: options.coordinateSystem || analysis?.coordinateSystem,
+                to: value
+              });
+              updateOptions({ coordinateSystem: value });
+            }}
           >
             <SelectTrigger>
               <SelectValue placeholder="Select coordinate system" />
@@ -50,7 +91,37 @@ export function FormatSettings({
         {/* DXF-specific settings */}
         {fileType === 'dxf' && analysis?.layers && (
           <div className="space-y-2">
-            <Label>Layers</Label>
+            <div className="flex items-center justify-between mb-2">
+              <Label>Layers</Label>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="select-all"
+                    checked={analysis.layers.length === (options.selectedLayers || []).length}
+                    onCheckedChange={() => handleSelectAll('selection')}
+                  />
+                  <label
+                    htmlFor="select-all"
+                    className="text-xs text-gray-500"
+                  >
+                    Select All
+                  </label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="show-all"
+                    checked={analysis.layers.length === (options.visibleLayers || []).length}
+                    onCheckedChange={() => handleSelectAll('visibility')}
+                  />
+                  <label
+                    htmlFor="show-all"
+                    className="text-xs text-gray-500"
+                  >
+                    Show All
+                  </label>
+                </div>
+              </div>
+            </div>
             <div className="max-h-48 overflow-y-auto space-y-2">
               {analysis.layers.map((layer: string) => (
                 <div key={layer} className="flex items-center justify-between space-x-4">
@@ -63,6 +134,11 @@ export function FormatSettings({
                           const newLayers = checked
                             ? [...(options.selectedLayers || []), layer]
                             : (options.selectedLayers || []).filter((l) => l !== layer);
+                          console.debug('Toggling layer selection:', {
+                            layer,
+                            checked,
+                            newLayers
+                          });
                           updateOptions({ selectedLayers: newLayers });
                         }
                       }}
@@ -74,24 +150,21 @@ export function FormatSettings({
                       {layer}
                     </label>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id={`visibility-${layer}`}
-                      checked={options.visibleLayers?.includes(layer)}
-                      onCheckedChange={(checked) => {
-                        const newVisibleLayers = checked
-                          ? [...(options.visibleLayers || []), layer]
-                          : (options.visibleLayers || []).filter((l) => l !== layer);
-                        updateOptions({ visibleLayers: newVisibleLayers });
-                      }}
-                    />
-                    <label
-                      htmlFor={`visibility-${layer}`}
-                      className="text-sm text-gray-500"
-                    >
-                      Show
-                    </label>
-                  </div>
+                  <Switch
+                    id={`visibility-${layer}`}
+                    checked={options.visibleLayers?.includes(layer)}
+                    onCheckedChange={(checked) => {
+                      const newVisibleLayers = checked
+                        ? [...(options.visibleLayers || []), layer]
+                        : (options.visibleLayers || []).filter((l) => l !== layer);
+                      console.debug('Toggling layer visibility:', {
+                        layer,
+                        checked,
+                        newVisibleLayers
+                      });
+                      updateOptions({ visibleLayers: newVisibleLayers });
+                    }}
+                  />
                 </div>
               ))}
             </div>
