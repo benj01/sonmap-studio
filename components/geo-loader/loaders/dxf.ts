@@ -1,6 +1,6 @@
 import DxfParser from 'dxf-parser';
 import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
-import { CoordinateTransformer, COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 
 class CustomDxfParser extends DxfParser {
   constructor() {
@@ -101,22 +101,27 @@ export class DxfLoader implements GeoFileLoader {
     const points = this.collectPoints(dxf);
     if (points.length === 0) return COORDINATE_SYSTEMS.WGS84;
     
-    return CoordinateTransformer.suggestCoordinateSystem(points);
+    // Check if points are likely in Swiss coordinates
+    const sampleSize = Math.min(points.length, 10);
+    const sample = points.slice(0, sampleSize);
+    const isSwiss = sample.every(point => {
+      const isXInRange = point.x >= 2485000 && point.x <= 2835000;
+      const isYInRange = point.y >= 1075000 && point.y <= 1295000;
+      return isXInRange && isYInRange;
+    });
+
+    return isSwiss ? COORDINATE_SYSTEMS.SWISS_LV95 : COORDINATE_SYSTEMS.WGS84;
   }
 
-  private calculateBounds(dxf: any, transformer?: CoordinateTransformer): { minX: number; minY: number; maxX: number; maxY: number } {
+  private calculateBounds(dxf: any): { minX: number; minY: number; maxX: number; maxY: number } {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     
     const updateBounds = (x: number, y: number) => {
       if (x !== undefined && y !== undefined && isFinite(x) && isFinite(y)) {
-        let point = { x, y };
-        if (transformer) {
-          point = transformer.transform(point);
-        }
-        minX = Math.min(minX, point.x);
-        minY = Math.min(minY, point.y);
-        maxX = Math.max(maxX, point.x);
-        maxY = Math.max(maxY, point.y);
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
       }
     };
 
@@ -141,20 +146,20 @@ export class DxfLoader implements GeoFileLoader {
     return { minX, minY, maxX, maxY };
   }
 
-  private generatePreview(dxf: any, transformer?: CoordinateTransformer): GeoFeatureCollection {
-    const features = this.convertToGeoFeatures(dxf, transformer);
+  private generatePreview(dxf: any): GeoFeatureCollection {
+    const features = this.convertToGeoFeatures(dxf);
     return {
       type: 'FeatureCollection',
       features: features.slice(0, 1000), // Limit for performance
     };
   }
 
-  private convertToGeoFeatures(dxf: any, transformer?: CoordinateTransformer): GeoFeature[] {
+  private convertToGeoFeatures(dxf: any): GeoFeature[] {
     const features: GeoFeature[] = [];
     try {
       if (Array.isArray(dxf.entities)) {
         dxf.entities.forEach((entity: any) => {
-          const feature = this.entityToGeoFeature(entity, transformer);
+          const feature = this.entityToGeoFeature(entity);
           if (feature) features.push(feature);
         });
       }
@@ -164,15 +169,11 @@ export class DxfLoader implements GeoFileLoader {
     return features;
   }
 
-  private transformPoint(point: { x: number; y: number }, transformer?: CoordinateTransformer): [number, number] {
-    if (transformer) {
-      const transformed = transformer.transform(point);
-      return [transformed.x, transformed.y];
-    }
+  private transformPoint(point: { x: number; y: number }): [number, number] {
     return [point.x, point.y];
   }
 
-  private entityToGeoFeature(entity: any, transformer?: CoordinateTransformer): GeoFeature | null {
+  private entityToGeoFeature(entity: any): GeoFeature | null {
     if (!entity || !entity.type) return null;
 
     let geometry: GeoFeature['geometry'] | null = null;
@@ -180,8 +181,8 @@ export class DxfLoader implements GeoFileLoader {
     switch (entity.type) {
       case 'LINE':
         if (entity.start && entity.end) {
-          const start = this.transformPoint(entity.start, transformer);
-          const end = this.transformPoint(entity.end, transformer);
+          const start = this.transformPoint(entity.start);
+          const end = this.transformPoint(entity.end);
           geometry = {
             type: 'LineString',
             coordinates: [start, end],
@@ -190,7 +191,7 @@ export class DxfLoader implements GeoFileLoader {
         break;
       case 'POINT':
         if (entity.position) {
-          const point = this.transformPoint(entity.position, transformer);
+          const point = this.transformPoint(entity.position);
           geometry = {
             type: 'Point',
             coordinates: point,
@@ -201,7 +202,7 @@ export class DxfLoader implements GeoFileLoader {
       case 'LWPOLYLINE':
         if (entity.vertices?.length >= 3) {
           const coordinates = entity.vertices.map((v: any) => 
-            this.transformPoint(v, transformer)
+            this.transformPoint(v)
           );
           // Close the polygon if it's not already closed
           if (coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
@@ -217,7 +218,7 @@ export class DxfLoader implements GeoFileLoader {
           geometry = {
             type: 'LineString',
             coordinates: entity.vertices.map((v: any) => 
-              this.transformPoint(v, transformer)
+              this.transformPoint(v)
             ),
           };
         }
@@ -241,27 +242,23 @@ export class DxfLoader implements GeoFileLoader {
 
   async analyze(file: File): Promise<{
     layers: string[];
-    coordinateSystem?: string;
+    coordinateSystem: string;
     bounds: LoaderResult['bounds'];
     preview: GeoFeatureCollection;
   }> {
     const content = await this.readFileContent(file);
     const dxf = this.parseContent(content);
 
-    const detectedSystem = this.detectCoordinateSystem(dxf);
-    const transformer = detectedSystem !== COORDINATE_SYSTEMS.WGS84 
-      ? new CoordinateTransformer(detectedSystem, COORDINATE_SYSTEMS.WGS84)
-      : undefined;
-
     const layers = this.extractLayers(dxf);
-    const bounds = this.calculateBounds(dxf, transformer);
-    const preview = this.generatePreview(dxf, transformer);
+    const coordinateSystem = this.detectCoordinateSystem(dxf);
+    const bounds = this.calculateBounds(dxf);
+    const preview = this.generatePreview(dxf);
 
     return { 
       layers, 
       bounds, 
       preview,
-      coordinateSystem: detectedSystem
+      coordinateSystem
     };
   }
 
@@ -269,18 +266,14 @@ export class DxfLoader implements GeoFileLoader {
     const content = await this.readFileContent(file);
     const dxf = this.parseContent(content);
     
-    const detectedSystem = this.detectCoordinateSystem(dxf);
-    const transformer = detectedSystem !== COORDINATE_SYSTEMS.WGS84 
-      ? new CoordinateTransformer(detectedSystem, COORDINATE_SYSTEMS.WGS84)
-      : undefined;
-
     const selectedLayers = options.selectedLayers || [];
-    const features = this.convertToGeoFeatures(dxf, transformer).filter(
+    const features = this.convertToGeoFeatures(dxf).filter(
       feature => selectedLayers.length === 0 || selectedLayers.includes(feature.properties.layer)
     );
     
-    const bounds = this.calculateBounds(dxf, transformer);
+    const bounds = this.calculateBounds(dxf);
     const layers = this.extractLayers(dxf);
+    const coordinateSystem = this.detectCoordinateSystem(dxf);
 
     const statistics = {
       pointCount: features.length,
@@ -296,7 +289,7 @@ export class DxfLoader implements GeoFileLoader {
       features, 
       bounds, 
       layers,
-      coordinateSystem: detectedSystem,
+      coordinateSystem,
       statistics 
     };
   }

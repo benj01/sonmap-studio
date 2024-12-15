@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import Map, { Source, Layer, ViewStateChangeEvent } from 'react-map-gl';
-import { Card } from 'components/ui/card';
 import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 import { GeoFeatureCollection } from '../../../types/geo';
 
@@ -13,12 +12,14 @@ interface PreviewMapProps {
     maxY: number;
   };
   coordinateSystem?: string;
+  visibleLayers?: string[];
 }
 
 export function PreviewMap({ 
   preview, 
   bounds, 
-  coordinateSystem 
+  coordinateSystem,
+  visibleLayers = []
 }: PreviewMapProps) {
   const [viewState, setViewState] = useState({
     longitude: 0,
@@ -119,24 +120,30 @@ export function PreviewMap({
   const renderLayers = () => {
     if (!preview?.features?.length) return null;
 
+    // Filter features by visible layers
+    const visibleFeatures = preview.features.filter(f => 
+      visibleLayers.length === 0 || // Show all if no layers specified
+      (f.properties?.layer && visibleLayers.includes(f.properties.layer))
+    );
+
     // Group features by geometry type
     const pointFeatures = {
       type: 'FeatureCollection',
-      features: preview.features.filter(f => 
+      features: visibleFeatures.filter(f => 
         f.geometry.type === 'Point'
       )
     };
 
     const lineFeatures = {
       type: 'FeatureCollection',
-      features: preview.features.filter(f => 
+      features: visibleFeatures.filter(f => 
         f.geometry.type === 'LineString'
       )
     };
 
     const polygonFeatures = {
       type: 'FeatureCollection',
-      features: preview.features.filter(f => 
+      features: visibleFeatures.filter(f => 
         f.geometry.type === 'Polygon'
       )
     };
@@ -166,17 +173,16 @@ export function PreviewMap({
   };
 
   return (
-    <Card className="w-full">
-      <div className="h-96 relative">
-        <Map
-          {...viewState}
-          onMove={onMove}
-          mapStyle="mapbox://styles/mapbox/light-v11"
-          mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
-        >
-          {renderLayers()}
-        </Map>
-      </div>
-    </Card>
+    <div className="h-full w-full relative">
+      <Map
+        {...viewState}
+        onMove={onMove}
+        style={{ width: '100%', height: '100%' }}
+        mapStyle="mapbox://styles/mapbox/light-v11"
+        mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
+      >
+        {renderLayers()}
+      </Map>
+    </div>
   );
 }

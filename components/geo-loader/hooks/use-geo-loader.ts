@@ -3,7 +3,7 @@ import dxfLoader from '../loaders/dxf';
 import shapefileLoader from '../loaders/shapefile';
 import csvXyzLoader from '../loaders/csv-zyz';
 import { optimizePoints } from '../utils/optimization';
-import type { GeoFileType, LoaderOptions, LoaderResult, GeoFeatureCollection } from '../../../types/geo';
+import type { GeoFileType, LoaderOptions, LoaderResult, GeoFeatureCollection, AnalyzeResult } from '../../../types/geo';
 
 const loaderMap = {
   dxf: dxfLoader,
@@ -13,19 +13,18 @@ const loaderMap = {
   txt: csvXyzLoader,
 } as const;
 
-type AnalysisState = {
-  layers?: string[];
-  coordinateSystem?: string;
-  bounds?: LoaderResult['bounds'];
-  preview?: GeoFeatureCollection;
+type AnalysisState = (AnalyzeResult & {
   statistics?: LoaderResult['statistics'];
-} | null;
+}) | null;
 
 export function useGeoLoader() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisState>(null);
-  const [options, setOptions] = useState<LoaderOptions>({});
+  const [options, setOptions] = useState<LoaderOptions>({
+    selectedLayers: [],
+    visibleLayers: []
+  });
   const [logs, setLogs] = useState<string[]>([]);
   const fileRef = useRef<File | null>(null);
 
@@ -52,6 +51,14 @@ export function useGeoLoader() {
     try {
       log(`Analyzing ${file.name}...`);
       const analysisResult = await loader.analyze(file);
+      
+      // Initialize visible layers with all available layers
+      setOptions(prev => ({
+        ...prev,
+        selectedLayers: [], // Reset selected layers
+        visibleLayers: [...analysisResult.layers] // Show all layers by default
+      }));
+      
       setAnalysis(analysisResult);
       log(`Analysis complete.`);
     } catch (err: any) {
@@ -61,13 +68,6 @@ export function useGeoLoader() {
       setLoading(false);
     }
   }, []);
-
-    // Re-analyze file when options change, specifically selectedLayers
-    useEffect(() => {
-        if (fileRef.current && options.selectedLayers) {
-            analyzeFile(fileRef.current);
-        }
-    }, [options, analyzeFile]);
 
   const loadFile = useCallback(async (file: File, loadOptions?: LoaderOptions): Promise<LoaderResult | null> => {
     setLoading(true);
@@ -104,6 +104,24 @@ export function useGeoLoader() {
     }
   }, [options, log]);
 
+  const toggleLayerVisibility = useCallback((layer: string) => {
+    setOptions(prev => ({
+      ...prev,
+      visibleLayers: prev.visibleLayers?.includes(layer)
+        ? prev.visibleLayers.filter(l => l !== layer)
+        : [...(prev.visibleLayers || []), layer]
+    }));
+  }, []);
+
+  const toggleLayerSelection = useCallback((layer: string) => {
+    setOptions(prev => ({
+      ...prev,
+      selectedLayers: prev.selectedLayers?.includes(layer)
+        ? prev.selectedLayers.filter(l => l !== layer)
+        : [...(prev.selectedLayers || []), layer]
+    }));
+  }, []);
+
   return {
     loading,
     error,
@@ -113,5 +131,7 @@ export function useGeoLoader() {
     setOptions,
     analyzeFile,
     loadFile,
+    toggleLayerVisibility,
+    toggleLayerSelection
   };
 }

@@ -40,7 +40,8 @@ export interface LoaderOptions {
   delimiter?: string;     // For CSV/TXT
   skipRows?: number;      // For CSV/TXT
   skipColumns?: number;   // For CSV/TXT
-  selectedLayers?: string[]; // For DXF/SHP
+  selectedLayers?: string[]; // For DXF/SHP - Layers to import
+  visibleLayers?: string[]; // For DXF/SHP - Layers to show in preview
   importAttributes?: boolean; // For SHP
   boundingBox?: {         // For spatial filtering
     minX: number;
@@ -68,13 +69,20 @@ export interface LoaderResult {
   };
 }
 
+export interface AnalyzeResult {
+  layers: string[];
+  coordinateSystem: string;
+  bounds: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  preview: GeoFeatureCollection;
+}
+
 export interface GeoFileLoader {
   canLoad: (file: File) => Promise<boolean>;
-  analyze: (file: File) => Promise<{
-    layers?: string[];
-    coordinateSystem?: string;
-    bounds?: LoaderResult['bounds'];
-    preview?: GeoFeatureCollection;
-  }>;
+  analyze: (file: File) => Promise<AnalyzeResult>;
   load: (file: File, options: LoaderOptions) => Promise<LoaderResult>;
 }

@@ -1,11 +1,10 @@
-import React, { useState, useCallback, useEffect } from 'react';
-import Map, { Source, Layer, ViewStateChangeEvent } from 'react-map-gl';
+import React, { useState, useEffect } from 'react';
 import { Card, CardHeader, CardContent } from 'components/ui/card';
 import { Button } from 'components/ui/button';
 import { Alert, AlertDescription, AlertTitle } from 'components/ui/alert';
-import type { GeoFileType, LoaderOptions, LoaderResult } from '../../types/geo';
-import { loaderRegistry } from './loaders';
+import type { LoaderResult } from '../../types/geo';
 import { FormatSettings } from './components/format-settings';
+import { PreviewMap } from './components/preview-map';
 import { useGeoLoader } from './hooks/use-geo-loader';
 
 interface GeoLoaderProps {
@@ -32,12 +31,6 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
     message: string;
     details?: string;
   } | null>(null);
-
-  const [viewState, setViewState] = useState({
-    longitude: 0,
-    latitude: 0,
-    zoom: 1,
-  });
 
   // Update logs whenever they change
   useEffect(() => {
@@ -103,31 +96,6 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
     }
   };
 
-  useEffect(() => {
-    if (analysis?.bounds) {
-      const { minX, minY, maxX, maxY } = analysis.bounds;
-      
-      // Validate bounds values
-      if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-        console.warn('Invalid bounds values detected, using default view');
-        return;
-      }
-
-      const centerLng = (minX + maxX) / 2;
-      const centerLat = (minY + maxY) / 2;
-
-      const latZoom = Math.log2(360 / (maxY - minY)) - 1;
-      const lngZoom = Math.log2(360 / (maxX - minX)) - 1;
-      const zoom = Math.min(latZoom, lngZoom, 20);
-
-      setViewState({
-        latitude: centerLat,
-        longitude: centerLng,
-        zoom: zoom,
-      });
-    }
-  }, [analysis]);
-
   const handleImport = async () => {
     const result = await loadFile(file);
     if (result) {
@@ -156,26 +124,15 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
           {/* Preview Map Panel */}
           <div className="space-y-4">
             <h4 className="font-medium">Preview</h4>
-            <div className="h-96 relative">
-              <Map
-                {...viewState}
-                onMove={(evt: ViewStateChangeEvent) => setViewState(evt.viewState)}
-                mapStyle="mapbox://styles/mapbox/light-v11"
-                mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
-              >
-                {analysis?.preview && (
-                  <Source type="geojson" data={analysis.preview}>
-                    <Layer
-                      id="preview-layer"
-                      type="circle"
-                      paint={{
-                        'circle-radius': 3,
-                        'circle-color': '#007cbf',
-                      }}
-                    />
-                  </Source>
-                )}
-              </Map>
+            <div className="h-96">
+              {analysis?.preview && (
+                <PreviewMap
+                  preview={analysis.preview}
+                  bounds={analysis.bounds}
+                  coordinateSystem={analysis.coordinateSystem}
+                  visibleLayers={options.visibleLayers}
+                />
+              )}
             </div>
           </div>
         </div>
