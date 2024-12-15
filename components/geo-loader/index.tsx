@@ -1,11 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import Map, { Source, Layer, ViewStateChangeEvent } from 'react-map-gl';
-import { Card, CardHeader, CardContent } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card, CardHeader, CardContent } from 'components/ui/card';
+import { Button } from 'components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from 'components/ui/alert';
 import type { GeoFileType, LoaderOptions, LoaderResult } from '../../types/geo';
 import { loaderRegistry } from './loaders';
 import { FormatSettings } from './components/format-settings';
@@ -144,22 +141,21 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
         <h3 className="text-lg font-semibold">Import {file.name}</h3>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="settings">
-          <TabsList>
-            <TabsTrigger value="settings">Settings</TabsTrigger>
-            <TabsTrigger value="preview">Preview</TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="settings">
+        <div className="grid grid-cols-2 gap-4">
+          {/* Settings Panel */}
+          <div className="space-y-4">
+            <h4 className="font-medium">Settings</h4>
             <FormatSettings
               fileType={file.name.split('.').pop() || ''}
               analysis={analysis}
               options={options}
               onOptionsChange={setOptions}
             />
-          </TabsContent>
+          </div>
 
-          <TabsContent value="preview">
+          {/* Preview Map Panel */}
+          <div className="space-y-4">
+            <h4 className="font-medium">Preview</h4>
             <div className="h-96 relative">
               <Map
                 {...viewState}
@@ -181,8 +177,8 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
                 )}
               </Map>
             </div>
-          </TabsContent>
-        </Tabs>
+          </div>
+        </div>
 
         {error && (
           <Alert variant="destructive" className="mt-4">

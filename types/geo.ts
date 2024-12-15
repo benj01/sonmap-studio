@@ -2,12 +2,26 @@
 
 export type GeoFileType = 'dxf' | 'shp' | 'xyz' | 'csv' | 'txt';
 
+export type Point = {
+  type: 'Point';
+  coordinates: [number, number];
+};
+
+export type LineString = {
+  type: 'LineString';
+  coordinates: Array<[number, number]>;
+};
+
+export type Polygon = {
+  type: 'Polygon';
+  coordinates: Array<Array<[number, number]>>;
+};
+
+export type Geometry = Point | LineString | Polygon;
+
 export interface GeoFeature {
   type: 'Feature';
-  geometry: {
-    type: 'Point' | 'LineString' | 'Polygon';
-    coordinates: number[];
-  };
+  geometry: Geometry;
   properties: Record<string, any>;
   layer?: string;
 }
@@ -27,7 +41,7 @@ export interface LoaderOptions {
   skipRows?: number;      // For CSV/TXT
   skipColumns?: number;   // For CSV/TXT
   selectedLayers?: string[]; // For DXF/SHP
-  importAttributes?: boolean; // For SHP (newly added)
+  importAttributes?: boolean; // For SHP
   boundingBox?: {         // For spatial filtering
     minX: number;
     minY: number;

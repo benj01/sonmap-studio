@@ -1,12 +1,11 @@
-// components/geo-loader/components/preview-map.tsx
-
 import React, { useEffect, useState } from 'react';
 import Map, { Source, Layer, ViewStateChangeEvent } from 'react-map-gl';
-import { Card } from '@/components/ui/card';
+import { Card } from 'components/ui/card';
 import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { GeoFeatureCollection } from '../../../types/geo';
 
 interface PreviewMapProps {
-  preview: any;
+  preview: GeoFeatureCollection;
   bounds?: {
     minX: number;
     minY: number;
@@ -46,19 +45,30 @@ export function PreviewMap({
           (bounds.minY + bounds.maxY) / 2
         );
 
+        // Calculate zoom level based on bounds extent
+        const width = bounds.maxX - bounds.minX;
+        const height = bounds.maxY - bounds.minY;
+        const maxDimension = Math.max(width, height);
+        const zoom = Math.floor(14 - Math.log2(maxDimension / 1000));
+
         setViewState(prev => ({
           ...prev,
           longitude: center.lng,
           latitude: center.lat,
-          zoom: 10 // Adjust zoom based on bounds extent
+          zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
         }));
       } else {
         // For WGS84 coordinates
+        const width = bounds.maxX - bounds.minX;
+        const height = bounds.maxY - bounds.minY;
+        const maxDimension = Math.max(width, height);
+        const zoom = Math.floor(14 - Math.log2(maxDimension));
+
         setViewState(prev => ({
           ...prev,
           longitude: (bounds.minX + bounds.maxX) / 2,
           latitude: (bounds.minY + bounds.maxY) / 2,
-          zoom: 10 // Adjust zoom based on bounds extent
+          zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
         }));
       }
     }
@@ -68,28 +78,40 @@ export function PreviewMap({
     setViewState(evt.viewState);
   };
 
-  // Style configuration for different geometry types
+  // Enhanced style configuration for different geometry types
   const layerStyles = {
     point: {
       type: 'circle',
       paint: {
         'circle-radius': 4,
         'circle-color': '#007cbf',
-        'circle-opacity': 0.8
+        'circle-opacity': 0.8,
+        'circle-stroke-width': 1,
+        'circle-stroke-color': '#fff'
       }
     },
     line: {
       type: 'line',
       paint: {
         'line-color': '#007cbf',
-        'line-width': 2
+        'line-width': 2,
+        'line-opacity': 0.8
       }
     },
     polygon: {
       type: 'fill',
       paint: {
         'fill-color': '#007cbf',
-        'fill-opacity': 0.4
+        'fill-opacity': 0.4,
+        'fill-outline-color': '#fff'
+      }
+    },
+    polygonOutline: {
+      type: 'line',
+      paint: {
+        'line-color': '#007cbf',
+        'line-width': 1,
+        'line-opacity': 0.8
       }
     }
   } as const;
@@ -100,22 +122,22 @@ export function PreviewMap({
     // Group features by geometry type
     const pointFeatures = {
       type: 'FeatureCollection',
-      features: preview.features.filter((f: any) => 
+      features: preview.features.filter(f => 
         f.geometry.type === 'Point'
       )
     };
 
     const lineFeatures = {
       type: 'FeatureCollection',
-      features: preview.features.filter((f: any) => 
-        f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString'
+      features: preview.features.filter(f => 
+        f.geometry.type === 'LineString'
       )
     };
 
     const polygonFeatures = {
       type: 'FeatureCollection',
-      features: preview.features.filter((f: any) => 
-        f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'
+      features: preview.features.filter(f => 
+        f.geometry.type === 'Polygon'
       )
     };
 
@@ -136,6 +158,7 @@ export function PreviewMap({
         {polygonFeatures.features.length > 0 && (
           <Source type="geojson" data={polygonFeatures}>
             <Layer {...layerStyles.polygon} />
+            <Layer {...layerStyles.polygonOutline} />
           </Source>
         )}
       </>

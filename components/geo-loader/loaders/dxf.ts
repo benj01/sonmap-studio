@@ -1,54 +1,25 @@
 import DxfParser from 'dxf-parser';
-import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature } from '../../../types/geo';
-import { CoordinateTransformer, CoordinateSystem, COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
+import { CoordinateTransformer, COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 
-// Extend DxfParser to handle the boolean parsing issue
 class CustomDxfParser extends DxfParser {
   constructor() {
     super();
-    // Override the parseBoolean method with more robust DXF handling and debugging
     (this as any).parseBoolean = (str: string | number | boolean): boolean => {
-      console.log('parseBoolean called with:', { value: str, type: typeof str });
-
-      // Validate input type
       if (str === undefined || str === null) {
-      console.warn('Received null or undefined for boolean parsing');
-      return false;
+        return false;
       }
-
-      // Handle direct boolean values
       if (typeof str === 'boolean') return str;
-
-      // Handle numeric values - in DXF, any non-zero is true
       if (typeof str === 'number') return str !== 0;
-
-      // Handle string values with enhanced DXF support
       if (typeof str === 'string') {
-      const normalized = str.toLowerCase().trim();
-
-      // Standard boolean strings
-      if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
-      if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
-
-      // DXF-specific case: interpret any numeric string as a boolean
-      const num = parseFloat(normalized);
-      if (!isNaN(num)) {
-        // Log the DXF-specific handling for debugging
-        console.log(`Interpreting numeric string "${str}" as boolean: ${num > 0}`);
-        return num > 0;
+        const normalized = str.toLowerCase().trim();
+        if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+        const num = parseFloat(normalized);
+        return !isNaN(num) && num > 0;
       }
-
-      // Log a warning for unhandled cases
-      console.warn(`Unexpected string input for parseBoolean: "${str}"`);
-      return false;
-      }
-
-      // Log a warning for unhandled types
-      console.warn(`Unhandled parseBoolean input: "${str}"`);
       return false;
     };
-    
-    
   }
 }
 
@@ -64,501 +35,269 @@ export class DxfLoader implements GeoFileLoader {
   }
 
   private async readFileContent(file: File): Promise<string> {
-    if (!file) {
-      throw new Error('No file provided');
-    }
-
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result;
-        if (typeof result !== 'string') {
-          reject(new Error('Failed to read file as text'));
-          return;
-        }
-        // Validate file content
-        if (result.trim().length === 0) {
-          reject(new Error('DXF file is empty'));
-          return;
-        }
-        // Basic DXF header validation
-        if (!result.includes('$ACADVER') && !result.includes('SECTION')) {
-          reject(new Error('File does not appear to be a valid DXF format'));
-          return;
-        }
-        resolve(result);
-      };
-      reader.onerror = (e) => reject(new Error(`Failed to read file: ${e.target?.error?.message || 'Unknown error'}`));
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read file content'));
       reader.readAsText(file);
     });
   }
 
-  private safeParseSync(content: string): any {
-    if (!content || typeof content !== 'string') {
-      throw new Error('Invalid DXF content provided');
-    }
-  
+  private parseContent(content: string): any {
     try {
-      console.log('Attempting to parse DXF content...');
-      const dxf = this.parser.parseSync(content);
-      console.log('DXF parsing successful:', {
-        hasEntities: !!dxf?.entities,
-        entityCount: dxf?.entities?.length,
-        hasHeader: !!dxf?.header,
-      });
-  
-      if (!dxf) {
-        throw new Error('DXF parsing resulted in null or undefined');
-      }
-  
-      // Enhanced DXF structure validation
-      if (!dxf.entities) {
-        throw new Error('Invalid DXF structure: missing entities section');
-      }
-  
-      if (!Array.isArray(dxf.entities)) {
-        throw new Error('Invalid DXF structure: entities section is not an array');
-      }
-  
-      // Log details of entities to identify problematic input
-      dxf.entities.forEach((entity: any, index: number) => {
-        console.log(`Entity ${index}:`, JSON.stringify(entity, null, 2));
-      });
-  
-      return dxf;
+      return this.parser.parseSync(content);
     } catch (error) {
-      console.error('DXF Parsing Error Details:', {
-        error: error instanceof Error
-          ? {
-              name: error.name,
-              message: error.message,
-              stack: error.stack,
-            }
-          : error,
-        contentLength: content.length,
-        contentPreview: content.substring(0, 200),
-      });
-  
-      throw error;
+      throw new Error('Error parsing DXF content');
     }
   }
-  
 
-  async analyze(file: File) {
-    if (!file) {
-      throw new Error('No file provided for analysis');
-    }
-
+  private extractLayers(dxf: any): string[] {
+    const layers = new Set<string>();
     try {
-      console.log('Starting DXF analysis for file:', file.name);
-
-      // Validate file size
-      if (file.size === 0) {
-        throw new Error('DXF file is empty');
+      if (dxf.tables?.layer?.layers) {
+        Object.keys(dxf.tables.layer.layers).forEach((layer) => layers.add(layer));
       }
-
-      const content = await this.readFileContent(file);
-
-      // Additional content validation
-      if (content.length < 100) {
-        // Minimum size for a valid DXF
-        throw new Error('DXF file appears to be truncated or corrupted');
-      }
-
-      console.log('File content read successfully, length:', content.length);
-
-      const dxf = this.safeParseSync(content);
-      console.log('DXF parsed successfully');
-
-      // Extract available layers with enhanced error handling and validation
-      let layers: string[] = [];
-      try {
-        if (dxf.tables?.layer?.layers) {
-          const layerTable = dxf.tables.layer.layers;
-          if (typeof layerTable === 'object' && layerTable !== null) {
-            layers = Object.keys(layerTable).filter(
-              (layer) => layer !== undefined && layer !== null && layer.trim() !== ''
-            );
-          }
-        }
-        console.log('Extracted layers:', layers);
-      } catch (error) {
-        console.warn('Error extracting layers from layer table:', error);
-        // Continue execution to try alternative layer extraction
-      }
-
-      // If no layers found in table, try to extract from entities
-      if (layers.length === 0 && Array.isArray(dxf.entities)) {
-        const layerSet = new Set<string>();
+      if (Array.isArray(dxf.entities)) {
         dxf.entities.forEach((entity: any) => {
-          if (entity && typeof entity.layer === 'string' && entity.layer.trim() !== '') {
-            layerSet.add(entity.layer);
-          }
+          if (entity.layer) layers.add(entity.layer);
         });
-        layers = Array.from(layerSet);
-        console.log('Extracted layers from entities:', layers);
       }
-
-      // If still no layers found, add default layer
-      if (layers.length === 0) {
-        layers = ['0']; // DXF default layer
-        console.warn('No layers found in DXF file, using default layer "0"');
-      }
-
-      // Validate and extract sample points
-      const samplePoints = this.extractSamplePoints(dxf);
-      console.log('Extracted sample points:', samplePoints.length);
-
-      if (samplePoints.length === 0) {
-        console.warn('No valid points found for coordinate system detection');
-      }
-
-      // Validate coordinate values
-      const hasInvalidCoordinates = samplePoints.some(
-        (point) => !isFinite(point.x) || !isFinite(point.y)
-      );
-      if (hasInvalidCoordinates) {
-        throw new Error('DXF file contains invalid coordinate values');
-      }
-
-      const suggestedCRS = CoordinateTransformer.suggestCoordinateSystem(samplePoints);
-      console.log('Suggested coordinate system:', suggestedCRS);
-
-      // Calculate and validate bounds
-      const bounds = this.calculateBounds(dxf);
-      console.log('Calculated bounds:', bounds);
-
-      if (
-        bounds.minX === Infinity ||
-        bounds.minY === Infinity ||
-        bounds.maxX === -Infinity ||
-        bounds.maxY === -Infinity
-      ) {
-        throw new Error(
-          'Could not calculate valid bounds from DXF content - file may be corrupted or contain invalid coordinates'
-        );
-      }
-
-      // Generate and validate preview
-      const preview = this.generatePreview(dxf);
-      console.log('Generated preview features count:', preview.features.length);
-
-      if (!preview.features || preview.features.length === 0) {
-        console.warn('No previewable features found in DXF file');
-      }
-
-      return {
-        layers,
-        coordinateSystem: suggestedCRS,
-        bounds,
-        preview,
-      };
-    } catch (error) {
-      console.error('DXF Analysis error:', error);
-      throw new Error(`Failed to analyze DXF file: ${error.message}`);
+    } catch {
+      // Log warning if needed
     }
+    return layers.size > 0 ? Array.from(layers) : ['0']; // Default layer
   }
 
-  async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
-    if (!file) {
-      throw new Error('No file provided for loading');
-    }
-
-    try {
-      console.log('Starting DXF load with options:', options);
-
-      const content = await this.readFileContent(file);
-      const dxf = this.safeParseSync(content);
-
-      // Create coordinate transformer if needed
-      let transformer: CoordinateTransformer | undefined = undefined;
-      if (options.coordinateSystem && options.targetSystem) {
-        transformer = new CoordinateTransformer(options.coordinateSystem, options.targetSystem);
-      }
-
-      // Convert DXF entities to GeoFeatures
-      const features = this.convertToGeoFeatures(dxf, options.selectedLayers, transformer);
-      console.log('Converted features count:', features.length);
-
-      if (features.length === 0) {
-        console.warn('No valid features extracted from DXF file');
-      }
-
-      // Calculate bounds
-      const bounds = transformer
-        ? transformer.transformBounds(this.calculateBounds(dxf))
-        : this.calculateBounds(dxf);
-
-      // Gather statistics
-      const statistics = this.calculateStatistics(features);
-      console.log('Calculated statistics:', statistics);
-
-      return {
-        features,
-        bounds,
-        layers: options.selectedLayers || [],
-        coordinateSystem: options.coordinateSystem,
-        statistics,
-      };
-    } catch (error) {
-      console.error('DXF Loading error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      throw new Error(`Failed to load DXF file: ${errorMessage}. Please ensure the file is a valid DXF format and try again.`);
-    }
-  }
-
-  private extractSamplePoints(dxf: any): Array<{ x: number; y: number }> {
-    const points: Array<{ x: number; y: number }> = [];
-
-    try {
-      if (!Array.isArray(dxf.entities)) {
-        console.warn('No valid entities array found for sample point extraction');
-        return points;
-      }
-
-      for (const entity of dxf.entities.slice(0, 10)) {
-        if (Array.isArray(entity.vertices)) {
-          points.push(
-            ...entity.vertices
-              .filter(
-                (v: any) =>
-                  v &&
-                  typeof v.x === 'number' &&
-                  !isNaN(v.x) &&
-                  typeof v.y === 'number' &&
-                  !isNaN(v.y)
-              )
-              .map((v: any) => ({ x: v.x, y: v.y }))
-          );
-        } else if (
-          entity.position &&
-          typeof entity.position.x === 'number' &&
-          !isNaN(entity.position.x) &&
-          typeof entity.position.y === 'number' &&
-          !isNaN(entity.position.y)
-        ) {
-          points.push({ x: entity.position.x, y: entity.position.y });
+  private collectPoints(dxf: any): { x: number; y: number }[] {
+    const points: { x: number; y: number }[] = [];
+    
+    if (Array.isArray(dxf.entities)) {
+      dxf.entities.forEach((entity: any) => {
+        if (entity.vertices) {
+          entity.vertices.forEach((v: any) => {
+            if (v.x !== undefined && v.y !== undefined && isFinite(v.x) && isFinite(v.y)) {
+              points.push({ x: v.x, y: v.y });
+            }
+          });
+        } else if (entity.position) {
+          if (isFinite(entity.position.x) && isFinite(entity.position.y)) {
+            points.push({ x: entity.position.x, y: entity.position.y });
+          }
+        } else if (entity.start && entity.end) {
+          if (isFinite(entity.start.x) && isFinite(entity.start.y)) {
+            points.push({ x: entity.start.x, y: entity.start.y });
+          }
+          if (isFinite(entity.end.x) && isFinite(entity.end.y)) {
+            points.push({ x: entity.end.x, y: entity.end.y });
+          }
         }
-      }
-    } catch (error) {
-      console.warn('Error extracting sample points:', error);
+      });
     }
 
     return points;
   }
 
-  private calculateBounds(dxf: any) {
-    let minX = Infinity,
-      minY = Infinity,
-      maxX = -Infinity,
-      maxY = -Infinity;
+  private detectCoordinateSystem(dxf: any): string {
+    const points = this.collectPoints(dxf);
+    if (points.length === 0) return COORDINATE_SYSTEMS.WGS84;
+    
+    return CoordinateTransformer.suggestCoordinateSystem(points);
+  }
 
+  private calculateBounds(dxf: any, transformer?: CoordinateTransformer): { minX: number; minY: number; maxX: number; maxY: number } {
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    
     const updateBounds = (x: number, y: number) => {
-      if (typeof x === 'number' && !isNaN(x) && typeof y === 'number' && !isNaN(y)) {
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
+      if (x !== undefined && y !== undefined && isFinite(x) && isFinite(y)) {
+        let point = { x, y };
+        if (transformer) {
+          point = transformer.transform(point);
+        }
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
       }
     };
 
-    try {
-      if (!Array.isArray(dxf.entities)) {
-        console.warn('No valid entities array found for bounds calculation');
-        return { minX, minY, maxX, maxY };
-      }
-
-      for (const entity of dxf.entities) {
-        if (Array.isArray(entity.vertices)) {
-          entity.vertices.forEach((v: any) => {
-            if (v && typeof v.x === 'number' && typeof v.y === 'number') {
-              updateBounds(v.x, v.y);
-            }
-          });
-        } else if (
-          entity.position &&
-          typeof entity.position.x === 'number' &&
-          typeof entity.position.y === 'number'
-        ) {
+    if (Array.isArray(dxf.entities)) {
+      dxf.entities.forEach((entity: any) => {
+        if (entity.vertices) {
+          entity.vertices.forEach((v: any) => updateBounds(v.x, v.y));
+        } else if (entity.position) {
           updateBounds(entity.position.x, entity.position.y);
+        } else if (entity.start && entity.end) {
+          updateBounds(entity.start.x, entity.start.y);
+          updateBounds(entity.end.x, entity.end.y);
         }
-      }
-    } catch (error) {
-      console.warn('Error calculating bounds:', error);
+      });
+    }
+
+    // If no valid bounds were found, return a default area
+    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+      return { minX: -180, minY: -90, maxX: 180, maxY: 90 };
     }
 
     return { minX, minY, maxX, maxY };
   }
 
-  private convertToGeoFeatures(
-    dxf: any,
-    selectedLayers?: string[],
-    transformer?: CoordinateTransformer
-  ): GeoFeature[] {
+  private generatePreview(dxf: any, transformer?: CoordinateTransformer): GeoFeatureCollection {
+    const features = this.convertToGeoFeatures(dxf, transformer);
+    return {
+      type: 'FeatureCollection',
+      features: features.slice(0, 1000), // Limit for performance
+    };
+  }
+
+  private convertToGeoFeatures(dxf: any, transformer?: CoordinateTransformer): GeoFeature[] {
     const features: GeoFeature[] = [];
-
-    if (!Array.isArray(dxf.entities)) {
-      console.warn('No valid entities array found for feature conversion');
-      return features;
-    }
-
-    for (const entity of dxf.entities) {
-      try {
-        // Skip if entity's layer is not selected
-        if (selectedLayers && !selectedLayers.includes(entity.layer)) continue;
-
-        const feature = this.entityToGeoFeature(entity, transformer);
-        if (feature) features.push(feature);
-      } catch (error) {
-        console.warn('Error converting entity to feature:', error);
-        // Continue processing other entities
+    try {
+      if (Array.isArray(dxf.entities)) {
+        dxf.entities.forEach((entity: any) => {
+          const feature = this.entityToGeoFeature(entity, transformer);
+          if (feature) features.push(feature);
+        });
       }
+    } catch {
+      // Log warning if needed
     }
-
     return features;
   }
 
+  private transformPoint(point: { x: number; y: number }, transformer?: CoordinateTransformer): [number, number] {
+    if (transformer) {
+      const transformed = transformer.transform(point);
+      return [transformed.x, transformed.y];
+    }
+    return [point.x, point.y];
+  }
+
   private entityToGeoFeature(entity: any, transformer?: CoordinateTransformer): GeoFeature | null {
-    if (!entity || typeof entity.type !== 'string') {
-      return null;
+    if (!entity || !entity.type) return null;
+
+    let geometry: GeoFeature['geometry'] | null = null;
+
+    switch (entity.type) {
+      case 'LINE':
+        if (entity.start && entity.end) {
+          const start = this.transformPoint(entity.start, transformer);
+          const end = this.transformPoint(entity.end, transformer);
+          geometry = {
+            type: 'LineString',
+            coordinates: [start, end],
+          };
+        }
+        break;
+      case 'POINT':
+        if (entity.position) {
+          const point = this.transformPoint(entity.position, transformer);
+          geometry = {
+            type: 'Point',
+            coordinates: point,
+          };
+        }
+        break;
+      case 'POLYLINE':
+      case 'LWPOLYLINE':
+        if (entity.vertices?.length >= 3) {
+          const coordinates = entity.vertices.map((v: any) => 
+            this.transformPoint(v, transformer)
+          );
+          // Close the polygon if it's not already closed
+          if (coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
+              coordinates[0][1] !== coordinates[coordinates.length - 1][1]) {
+            coordinates.push([coordinates[0][0], coordinates[0][1]]);
+          }
+          geometry = {
+            type: 'Polygon',
+            coordinates: [coordinates], // Polygon coordinates must be an array of linear rings
+          };
+        } else if (entity.vertices?.length === 2) {
+          // If only 2 vertices, treat as LineString
+          geometry = {
+            type: 'LineString',
+            coordinates: entity.vertices.map((v: any) => 
+              this.transformPoint(v, transformer)
+            ),
+          };
+        }
+        break;
     }
 
-    let geometry: any = null;
-
-    try {
-      switch (entity.type.toUpperCase()) {
-        case 'LINE':
-          if (this.isValidPoint(entity.start) && this.isValidPoint(entity.end)) {
-            geometry = {
-              type: 'LineString',
-              coordinates: [
-                this.transformPoint([entity.start.x, entity.start.y], transformer),
-                this.transformPoint([entity.end.x, entity.end.y], transformer),
-              ],
-            };
-          }
-          break;
-
-        case 'POINT':
-          if (this.isValidPoint(entity.position)) {
-            geometry = {
-              type: 'Point',
-              coordinates: this.transformPoint([entity.position.x, entity.position.y], transformer),
-            };
-          }
-          break;
-
-        case 'POLYLINE':
-        case 'LWPOLYLINE':
-          if (Array.isArray(entity.vertices)) {
-            const validVertices = entity.vertices
-              .filter((v: any) => this.isValidPoint(v))
-              .map((v: any) => this.transformPoint([v.x, v.y], transformer));
-
-            if (validVertices.length >= 2) {
-              geometry = {
-                type: 'LineString',
-                coordinates: validVertices,
-              };
-            }
-          }
-          break;
-
-        default:
-          return null;
-      }
-
-      if (!geometry) return null;
-
+    if (geometry) {
       return {
         type: 'Feature',
         geometry,
-        properties: {
-          layer: typeof entity.layer === 'string' ? entity.layer : '0',
+        properties: { 
+          layer: entity.layer || '0', 
           type: entity.type,
-          ...(entity.properties || {}),
+          ...entity.properties
         },
-        layer: typeof entity.layer === 'string' ? entity.layer : '0',
       };
-    } catch (error) {
-      console.warn('Error converting entity to GeoFeature:', error);
-      return null;
     }
+
+    return null;
   }
 
-  private isValidPoint(point: any): boolean {
-    return (
-      point &&
-      typeof point.x === 'number' &&
-      !isNaN(point.x) &&
-      typeof point.y === 'number' &&
-      !isNaN(point.y)
+  async analyze(file: File): Promise<{
+    layers: string[];
+    coordinateSystem?: string;
+    bounds: LoaderResult['bounds'];
+    preview: GeoFeatureCollection;
+  }> {
+    const content = await this.readFileContent(file);
+    const dxf = this.parseContent(content);
+
+    const detectedSystem = this.detectCoordinateSystem(dxf);
+    const transformer = detectedSystem !== COORDINATE_SYSTEMS.WGS84 
+      ? new CoordinateTransformer(detectedSystem, COORDINATE_SYSTEMS.WGS84)
+      : undefined;
+
+    const layers = this.extractLayers(dxf);
+    const bounds = this.calculateBounds(dxf, transformer);
+    const preview = this.generatePreview(dxf, transformer);
+
+    return { 
+      layers, 
+      bounds, 
+      preview,
+      coordinateSystem: detectedSystem
+    };
+  }
+
+  async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
+    const content = await this.readFileContent(file);
+    const dxf = this.parseContent(content);
+    
+    const detectedSystem = this.detectCoordinateSystem(dxf);
+    const transformer = detectedSystem !== COORDINATE_SYSTEMS.WGS84 
+      ? new CoordinateTransformer(detectedSystem, COORDINATE_SYSTEMS.WGS84)
+      : undefined;
+
+    const selectedLayers = options.selectedLayers || [];
+    const features = this.convertToGeoFeatures(dxf, transformer).filter(
+      feature => selectedLayers.length === 0 || selectedLayers.includes(feature.properties.layer)
     );
-  }
+    
+    const bounds = this.calculateBounds(dxf, transformer);
+    const layers = this.extractLayers(dxf);
 
-  private transformPoint(
-    point: [number, number],
-    transformer?: CoordinateTransformer
-  ): [number, number] {
-    if (!transformer) return point;
-    try {
-      const transformed = transformer.transform({ x: point[0], y: point[1] });
-      return [transformed.x, transformed.y];
-    } catch (error) {
-      console.warn('Error transforming point:', error);
-      return point;
-    }
-  }
+    const statistics = {
+      pointCount: features.length,
+      layerCount: layers.length,
+      featureTypes: features.reduce((acc: Record<string, number>, feature) => {
+        const type = feature.properties.type;
+        acc[type] = (acc[type] || 0) + 1;
+        return acc;
+      }, {}),
+    };
 
-  private generatePreview(dxf: any): any {
-    try {
-      // Generate a simplified GeoJSON for preview
-      // Include only a subset of features for performance
-      const previewFeatures = this.convertToGeoFeatures(dxf).slice(0, 1000); // Limit to first 1000 features
-
-      return {
-        type: 'FeatureCollection',
-        features: previewFeatures,
-      };
-    } catch (error) {
-      console.warn('Error generating preview:', error);
-      return {
-        type: 'FeatureCollection',
-        features: [],
-      };
-    }
-  }
-
-  private calculateStatistics(features: GeoFeature[]) {
-    const featureTypes: Record<string, number> = {};
-    let pointCount = 0;
-
-    features.forEach((feature) => {
-      try {
-        // Count feature types
-        const type = feature.properties?.type;
-        if (typeof type === 'string') {
-          featureTypes[type] = (featureTypes[type] || 0) + 1;
-        }
-
-        // Count points
-        if (feature.geometry.type === 'Point') {
-          pointCount++;
-        } else if (
-          feature.geometry.type === 'LineString' &&
-          Array.isArray(feature.geometry.coordinates)
-        ) {
-          pointCount += feature.geometry.coordinates.length;
-        }
-      } catch (error) {
-        console.warn('Error calculating statistics for feature:', error);
-      }
-    });
-
-    return {
-      pointCount,
-      layerCount: new Set(features.map((f) => f.layer).filter(Boolean)).size,
-      featureTypes,
+    return { 
+      features, 
+      bounds, 
+      layers,
+      coordinateSystem: detectedSystem,
+      statistics 
     };
   }
 }

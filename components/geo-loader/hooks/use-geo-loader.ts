@@ -1,120 +1,108 @@
-// components/geo-loader/hooks/use-geo-loader.ts
+import { useState, useCallback, useRef, useEffect } from 'react';
+import dxfLoader from '../loaders/dxf';
+import shapefileLoader from '../loaders/shapefile';
+import csvXyzLoader from '../loaders/csv-zyz';
+import { optimizePoints } from '../utils/optimization';
+import type { GeoFileType, LoaderOptions, LoaderResult, GeoFeatureCollection } from '../../../types/geo';
 
-import { useState, useCallback } from 'react';
-import { loaderRegistry } from '../loaders';
-import type { LoaderOptions, LoaderResult } from '../../../types/geo';
+const loaderMap = {
+  dxf: dxfLoader,
+  shp: shapefileLoader,
+  'csv-zyz': csvXyzLoader,
+  xyz: csvXyzLoader,
+  txt: csvXyzLoader,
+} as const;
 
-interface UseGeoLoaderResult {
-  loading: boolean;
-  error: string | null;
-  analysis: any | null;
-  options: LoaderOptions;
-  logs: string[];
-  setOptions: (options: LoaderOptions) => void;
-  analyzeFile: (file: File) => Promise<void>;
-  loadFile: (file: File) => Promise<LoaderResult | null>;
-  validateFile: (file: File) => Promise<boolean>;
-  supportedExtensions: string[];
-}
+type AnalysisState = {
+  layers?: string[];
+  coordinateSystem?: string;
+  bounds?: LoaderResult['bounds'];
+  preview?: GeoFeatureCollection;
+  statistics?: LoaderResult['statistics'];
+} | null;
 
-export function useGeoLoader(): UseGeoLoaderResult {
+export function useGeoLoader() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<any | null>(null);
+  const [analysis, setAnalysis] = useState<AnalysisState>(null);
+  const [options, setOptions] = useState<LoaderOptions>({});
   const [logs, setLogs] = useState<string[]>([]);
+  const fileRef = useRef<File | null>(null);
 
-  // Initialize options with sensible defaults, including `importAttributes`
-  const [options, setOptions] = useState<LoaderOptions>({
-    coordinateSystem: 'EPSG:4326', // Default to WGS84
-    importAttributes: false, // Default for shapefiles
-  });
-
-  const [supportedExtensions, setSupportedExtensions] = useState<string[]>([]);
-
-  const addLog = useCallback((message: string) => {
-    setLogs(prev => [...prev, `[${new Date().toISOString()}] ${message}`]);
-  }, []);
-
-  // Get supported extensions on mount
-  useState(() => {
-    loaderRegistry.getSupportedExtensions().then(setSupportedExtensions);
-  });
-
-  const validateFile = useCallback(async (file: File): Promise<boolean> => {
-    setError(null);
-    const validation = await loaderRegistry.validateFile(file);
-    
-    if (!validation.valid) {
-      const errorMsg = validation.error || 'Invalid file';
-      setError(errorMsg);
-      addLog(`Validation failed: ${errorMsg}`);
-      return false;
-    }
-    
-    addLog(`File validation successful: ${file.name}`);
-    return true;
-  }, [addLog]);
+  const log = (message: string) => {
+    setLogs((prevLogs) => [...prevLogs, message]);
+  };
 
   const analyzeFile = useCallback(async (file: File) => {
-    if (!await validateFile(file)) return;
-
+    fileRef.current = file;
     setLoading(true);
     setError(null);
-    try {
-      addLog(`Starting analysis of file: ${file.name}`);
-      const loader = await loaderRegistry.getLoaderForFile(file);
-      if (!loader) {
-        throw new Error('No suitable loader found for this file type');
-      }
+    setAnalysis(null);
+    setLogs([]);
 
+    const fileType = file.name.split('.').pop()?.toLowerCase() as keyof typeof loaderMap;
+    const loader = loaderMap[fileType];
+
+    if (!loader) {
+      setError(`Unsupported file type: ${fileType}`);
+      setLoading(false);
+      return;
+    }
+
+    try {
+      log(`Analyzing ${file.name}...`);
       const analysisResult = await loader.analyze(file);
       setAnalysis(analysisResult);
-      addLog(`Analysis complete. Found ${analysisResult?.layers?.length || 0} layers`);
-
-      // Set recommended options based on file type and analysis
-      const recommendedOptions = await loaderRegistry.getRecommendedOptions(file);
-
-      // Merge recommended options with existing options
-      setOptions((prevOptions) => ({
-        ...prevOptions,
-        ...recommendedOptions,
-      }));
-      addLog('Updated import options with recommended settings');
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to analyze file';
-      setError(errorMsg);
-      addLog(`Analysis error: ${errorMsg}`);
-      setAnalysis(null);
+      log(`Analysis complete.`);
+    } catch (err: any) {
+        setError(err.message || 'Failed to analyze file');
+        console.error(err);
     } finally {
       setLoading(false);
     }
-  }, [validateFile, addLog]);
+  }, []);
 
-  const loadFile = useCallback(async (file: File): Promise<LoaderResult | null> => {
-    if (!await validateFile(file)) return null;
+    // Re-analyze file when options change, specifically selectedLayers
+    useEffect(() => {
+        if (fileRef.current && options.selectedLayers) {
+            analyzeFile(fileRef.current);
+        }
+    }, [options, analyzeFile]);
 
+  const loadFile = useCallback(async (file: File, loadOptions?: LoaderOptions): Promise<LoaderResult | null> => {
     setLoading(true);
     setError(null);
+    setLogs([]);
+
+    const fileType = file.name.split('.').pop()?.toLowerCase() as keyof typeof loaderMap;
+    const loader = loaderMap[fileType];
+
+    if (!loader) {
+      setError(`Unsupported file type: ${fileType}`);
+      setLoading(false);
+      return null;
+    }
+
     try {
-      addLog(`Starting import of file: ${file.name}`);
-      const loader = await loaderRegistry.getLoaderForFile(file);
-      if (!loader) {
-        throw new Error('No suitable loader found for this file type');
+      log(`Loading ${file.name}...`);
+      const result = await loader.load(file, { ...options, ...loadOptions });
+
+      if (['xyz', 'csv', 'txt'].includes(fileType) && options.simplificationTolerance && options.simplificationTolerance > 0) {
+        log(`Optimizing point cloud with tolerance ${options.simplificationTolerance}...`);
+        result.features = optimizePoints(result.features, options.simplificationTolerance);
+        log(`Point cloud optimization complete.`);
       }
 
-      // Load the file with the current options
-      const result = await loader.load(file, options);
-      addLog(`Import complete. Processed ${result.features.length} features`);
+      log(`File loaded successfully.`);
       return result;
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Failed to load file';
-      setError(errorMsg);
-      addLog(`Import error: ${errorMsg}`);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load file');
+      console.error(err);
       return null;
     } finally {
       setLoading(false);
     }
-  }, [options, validateFile, addLog]);
+  }, [options, log]);
 
   return {
     loading,
@@ -125,7 +113,5 @@ export function useGeoLoader(): UseGeoLoaderResult {
     setOptions,
     analyzeFile,
     loadFile,
-    validateFile,
-    supportedExtensions,
   };
 }

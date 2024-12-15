@@ -1,125 +1,31 @@
-import simplify from 'simplify-js';
+import { GeoFeature, Point } from '../../../types/geo';
 
-interface Point {
-  x: number;
-  y: number;
-  z?: number;
-  [key: string]: any;
-}
-
-export class PointCloudOptimizer {
-  /**
-   * Simplify a point cloud using the Ramer-Douglas-Peucker algorithm
-   */
-  static simplifyPoints(
-    points: Point[],
-    tolerance: number,
-    preserveProperties = true
-  ): Point[] {
-    if (tolerance <= 0) return points;
-
-    // Convert points to format expected by simplify-js
-    const simplifyPoints = points.map((p, i) => ({
-      x: p.x,
-      y: p.y,
-      originalIndex: i,
-    }));
-
-    // Perform simplification
-    const simplified = simplify(simplifyPoints, tolerance, true);
-
-    // If preserving properties, map back the original properties
-    if (preserveProperties) {
-      return simplified.map((p) => ({
-        ...points[(p as any).originalIndex],
-        x: p.x,
-        y: p.y,
-      }));
+/**
+ * Optimizes point features by reducing the number of points based on a tolerance value
+ * @param features Array of GeoJSON features to optimize
+ * @param tolerance Value between 0 and 100 determining how aggressively to reduce points
+ * @returns Optimized array of features
+ */
+export function optimizePoints(features: GeoFeature[], tolerance: number): GeoFeature[] {
+    if (tolerance <= 0) {
+        return features;
     }
 
-    return simplified as Point[];
-  }
+    // Only optimize Point features
+    const pointFeatures = features.filter(
+        (feature): feature is GeoFeature & { geometry: Point } => 
+        feature.geometry.type === 'Point'
+    );
+    const otherFeatures = features.filter(feature => feature.geometry.type !== 'Point');
 
-  /**
-   * Grid-based point cloud thinning
-   */
-  static gridThinning(
-    points: Point[],
-    cellSize: number,
-    aggregationType: 'first' | 'average' = 'first'
-  ): Point[] {
-    const grid: { [key: string]: Point[] } = {};
+    const skipFactor = Math.max(1, Math.ceil((tolerance / 100) * pointFeatures.length));
+    const simplifiedFeatures: GeoFeature[] = [];
 
-    // Assign points to grid cells
-    points.forEach((point) => {
-      const cellX = Math.floor(point.x / cellSize);
-      const cellY = Math.floor(point.y / cellSize);
-      const cellKey = `${cellX},${cellY}`;
-
-      if (!grid[cellKey]) {
-        grid[cellKey] = [];
-      }
-      grid[cellKey].push(point);
-    });
-
-    // Process each cell according to aggregation type
-    return Object.values(grid).map((cellPoints) => {
-      if (aggregationType === 'first') {
-        return cellPoints[0];
-      } else {
-        // Average points in cell
-        const sum = cellPoints.reduce(
-          (acc, p) => ({
-            x: acc.x + p.x,
-            y: acc.y + p.y,
-            z: acc.z + (p.z || 0),
-          }),
-          { x: 0, y: 0, z: 0 }
-        );
-
-        const count = cellPoints.length;
-        return {
-          x: sum.x / count,
-          y: sum.y / count,
-          z: sum.z / count,
-          // Preserve other properties from the first point
-          ...cellPoints[0],
-        };
-      }
-    });
-  }
-
-  /**
-   * Optimize point cloud based on distance
-   */
-  static distanceBasedThinning(
-    points: Point[],
-    minDistance: number
-  ): Point[] {
-    const result: Point[] = [];
-    const used = new Set<number>();
-
-    for (let i = 0; i < points.length; i++) {
-      if (used.has(i)) continue;
-
-      result.push(points[i]);
-      used.add(i);
-
-      // Mark nearby points as used
-      for (let j = i + 1; j < points.length; j++) {
-        if (used.has(j)) continue;
-
-        const distance = Math.sqrt(
-          Math.pow(points[i].x - points[j].x, 2) +
-          Math.pow(points[i].y - points[j].y, 2)
-        );
-
-        if (distance < minDistance) {
-          used.add(j);
-        }
-      }
+    // Keep every nth point feature
+    for (let i = 0; i < pointFeatures.length; i += skipFactor) {
+        simplifiedFeatures.push(pointFeatures[i]);
     }
 
-    return result;
-  }
+    // Add back all non-point features
+    return [...simplifiedFeatures, ...otherFeatures];
 }
