@@ -2,16 +2,24 @@
 
 import proj4 from 'proj4';
 
-// Define Swiss coordinate system (EPSG:2056)
+// Define Swiss coordinate systems
+// LV95 (EPSG:2056) - newer system with 7-digit coordinates
 proj4.defs(
   'EPSG:2056',
   '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs'
+);
+
+// LV03 (EPSG:21781) - older system with 6-digit coordinates
+proj4.defs(
+  'EPSG:21781',
+  '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs'
 );
 
 // Define common coordinate systems
 export const COORDINATE_SYSTEMS = {
   WGS84: 'EPSG:4326',
   SWISS_LV95: 'EPSG:2056',
+  SWISS_LV03: 'EPSG:21781',
 } as const;
 
 export type CoordinateSystem = typeof COORDINATE_SYSTEMS[keyof typeof COORDINATE_SYSTEMS];
@@ -72,8 +80,25 @@ export class CoordinateTransformer {
     };
   }
 
-  // Detect whether points are likely in Swiss coordinates (EPSG:2056)
-  static detectSwissCoordinates(points: Point[]): boolean {
+  // Convert between LV03 and LV95
+  static convertLV03ToLV95(point: Point): Point {
+    return {
+      x: point.x + 2000000,
+      y: point.y + 1000000,
+      z: point.z
+    };
+  }
+
+  static convertLV95ToLV03(point: Point): Point {
+    return {
+      x: point.x - 2000000,
+      y: point.y - 1000000,
+      z: point.z
+    };
+  }
+
+  // Detect whether points are likely in Swiss LV95 coordinates (7-digit)
+  static detectLV95Coordinates(points: Point[]): boolean {
     const sampleSize = Math.min(points.length, 10);
     const sample = points.slice(0, sampleSize);
 
@@ -84,10 +109,25 @@ export class CoordinateTransformer {
     });
   }
 
+  // Detect whether points are likely in Swiss LV03 coordinates (6-digit)
+  static detectLV03Coordinates(points: Point[]): boolean {
+    const sampleSize = Math.min(points.length, 10);
+    const sample = points.slice(0, sampleSize);
+
+    return sample.every(point => {
+      const isXInRange = point.x >= 485000 && point.x <= 835000;
+      const isYInRange = point.y >= 75000 && point.y <= 295000;
+      return isXInRange && isYInRange;
+    });
+  }
+
   // Suggest coordinate system based on input points
   static suggestCoordinateSystem(points: Point[]): CoordinateSystem {
-    if (this.detectSwissCoordinates(points)) {
+    if (this.detectLV95Coordinates(points)) {
       return COORDINATE_SYSTEMS.SWISS_LV95;
+    }
+    if (this.detectLV03Coordinates(points)) {
+      return COORDINATE_SYSTEMS.SWISS_LV03;
     }
     return COORDINATE_SYSTEMS.WGS84; // Default to WGS84 if no match
   }

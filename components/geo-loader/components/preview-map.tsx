@@ -18,7 +18,7 @@ interface PreviewMapProps {
 export function PreviewMap({ 
   preview, 
   bounds, 
-  coordinateSystem,
+  coordinateSystem = COORDINATE_SYSTEMS.WGS84,
   visibleLayers = []
 }: PreviewMapProps) {
   const [viewState, setViewState] = useState({
@@ -31,31 +31,41 @@ export function PreviewMap({
 
   // Transform coordinates if needed
   const transformCoordinates = (coordinates: number[], transformer: any): [number, number] => {
-    const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
-    return [transformed.x, transformed.y];
+    try {
+      const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
+      return [transformed.x, transformed.y];
+    } catch (error) {
+      console.error('Error transforming coordinates:', error);
+      return coordinates as [number, number];
+    }
   };
 
   const transformGeometry = (geometry: Point | LineString | Polygon, transformer: any): Point | LineString | Polygon => {
-    switch (geometry.type) {
-      case 'Point':
-        return {
-          type: 'Point',
-          coordinates: transformCoordinates(geometry.coordinates, transformer)
-        };
-      case 'LineString':
-        return {
-          type: 'LineString',
-          coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, transformer))
-        };
-      case 'Polygon':
-        return {
-          type: 'Polygon',
-          coordinates: geometry.coordinates.map(ring => 
-            ring.map(coord => transformCoordinates(coord, transformer))
-          )
-        };
-      default:
-        return geometry;
+    try {
+      switch (geometry.type) {
+        case 'Point':
+          return {
+            type: 'Point',
+            coordinates: transformCoordinates(geometry.coordinates, transformer)
+          };
+        case 'LineString':
+          return {
+            type: 'LineString',
+            coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, transformer))
+          };
+        case 'Polygon':
+          return {
+            type: 'Polygon',
+            coordinates: geometry.coordinates.map(ring => 
+              ring.map(coord => transformCoordinates(coord, transformer))
+            )
+          };
+        default:
+          return geometry;
+      }
+    } catch (error) {
+      console.error('Error transforming geometry:', error);
+      return geometry;
     }
   };
 
@@ -64,9 +74,10 @@ export function PreviewMap({
     if (!preview?.features) return [];
 
     let features = preview.features;
-    if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+    if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
       try {
-        const transformer = createTransformer(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84);
+        console.debug('Transforming coordinates from', coordinateSystem, 'to WGS84');
+        const transformer = createTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
         features = features.map(feature => ({
           ...feature,
           geometry: transformGeometry(feature.geometry, transformer)
@@ -80,10 +91,12 @@ export function PreviewMap({
 
   // Memoize filtered features by visibility
   const { pointFeatures, lineFeatures, polygonFeatures } = useMemo(() => {
-    // Filter features by visible layers - only show features from explicitly visible layers
-    const visibleFeatures = transformedFeatures.filter(f => 
-      f.properties?.layer && visibleLayers.includes(f.properties.layer)
-    );
+    // Filter features by visible layers if specified, otherwise show all features
+    const visibleFeatures = visibleLayers.length > 0
+      ? transformedFeatures.filter(f => 
+          f.properties?.layer && visibleLayers.includes(f.properties.layer)
+        )
+      : transformedFeatures;
 
     // Log visibility info for debugging
     console.debug('Feature visibility:', {
@@ -112,43 +125,42 @@ export function PreviewMap({
   useEffect(() => {
     if (bounds) {
       try {
-        // Convert bounds to center point if needed
-        if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
-          const transformer = createTransformer(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84);
-          const transformedBounds = transformer.transformBounds(bounds);
-          
-          // Calculate center and zoom
-          const center = {
-            lng: (transformedBounds.minX + transformedBounds.maxX) / 2,
-            lat: (transformedBounds.minY + transformedBounds.maxY) / 2
-          };
-
-          // Calculate zoom level based on bounds extent in meters
-          const width = bounds.maxX - bounds.minX;
-          const height = bounds.maxY - bounds.minY;
-          const maxDimension = Math.max(width, height);
-          const zoom = Math.floor(14 - Math.log2(maxDimension / 1000));
-
-          setViewState(prev => ({
-            ...prev,
-            longitude: center.lng,
-            latitude: center.lat,
-            zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
-          }));
-        } else {
-          // For WGS84 coordinates
-          const width = bounds.maxX - bounds.minX;
-          const height = bounds.maxY - bounds.minY;
-          const maxDimension = Math.max(width, height);
-          const zoom = Math.floor(14 - Math.log2(maxDimension));
-
-          setViewState(prev => ({
-            ...prev,
-            longitude: (bounds.minX + bounds.maxX) / 2,
-            latitude: (bounds.minY + bounds.maxY) / 2,
-            zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
-          }));
+        // Transform bounds if needed
+        let transformedBounds = bounds;
+        if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+          console.debug('Transforming bounds from', coordinateSystem, 'to WGS84');
+          const transformer = createTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
+          transformedBounds = transformer.transformBounds(bounds);
         }
+
+        // Calculate center
+        const center = {
+          lng: (transformedBounds.minX + transformedBounds.maxX) / 2,
+          lat: (transformedBounds.minY + transformedBounds.maxY) / 2
+        };
+
+        // Calculate zoom level based on bounds extent
+        const width = Math.abs(transformedBounds.maxX - transformedBounds.minX);
+        const height = Math.abs(transformedBounds.maxY - transformedBounds.minY);
+        const maxDimension = Math.max(width, height);
+        
+        // Adjust zoom calculation based on coordinate system
+        let zoom;
+        if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+          // For Swiss coordinates (in meters)
+          zoom = Math.floor(14 - Math.log2(maxDimension / 1000));
+        } else {
+          // For WGS84 coordinates (in degrees)
+          zoom = Math.floor(14 - Math.log2(maxDimension));
+        }
+
+        console.debug('Setting view state:', { center, zoom });
+        setViewState(prev => ({
+          ...prev,
+          longitude: center.lng,
+          latitude: center.lat,
+          zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
+        }));
       } catch (error) {
         console.error('Error setting map view state:', error);
       }

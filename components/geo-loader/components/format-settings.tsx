@@ -83,9 +83,18 @@ export function FormatSettings({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={COORDINATE_SYSTEMS.WGS84}>WGS84 (EPSG:4326)</SelectItem>
-              <SelectItem value={COORDINATE_SYSTEMS.SWISS_LV95}>Swiss LV95 (EPSG:2056)</SelectItem>
+              <SelectItem value={COORDINATE_SYSTEMS.SWISS_LV95}>Swiss LV95 (EPSG:2056) - New</SelectItem>
+              <SelectItem value={COORDINATE_SYSTEMS.SWISS_LV03}>Swiss LV03 (EPSG:21781) - Old</SelectItem>
             </SelectContent>
           </Select>
+          {(options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
+            options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) && (
+            <p className="text-sm text-muted-foreground">
+              {options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 
+                'Swiss LV95: 7-digit coordinates (E: 2,600,000m, N: 1,200,000m origin)' :
+                'Swiss LV03: 6-digit coordinates (E: 600,000m, N: 200,000m origin)'}
+            </p>
+          )}
         </div>
 
         {/* DXF-specific settings */}

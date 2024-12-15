@@ -1,6 +1,7 @@
 // components/geo-loader/loaders/shapefile.ts
 
 import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection, AnalyzeResult, Geometry } from '../../../types/geo';
+import { CoordinateTransformer, createTransformer, COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 
 const PREVIEW_CHUNK_SIZE = 100;
 const LOAD_CHUNK_SIZE = 1000;
@@ -21,6 +22,8 @@ interface ShapeFile extends File {
 }
 
 class ShapefileLoader implements GeoFileLoader {
+  private transformer: CoordinateTransformer | null = null;
+
   async canLoad(file: File): Promise<boolean> {
     return file.name.toLowerCase().endsWith('.shp');
   }
@@ -73,27 +76,51 @@ class ShapefileLoader implements GeoFileLoader {
     };
   }
 
+  private detectCoordinateSystem(bounds: { xMin: number; yMin: number; xMax: number; yMax: number }): string {
+    // Create sample points from bounds
+    const points = [
+      { x: bounds.xMin, y: bounds.yMin },
+      { x: bounds.xMax, y: bounds.yMax },
+      { x: (bounds.xMin + bounds.xMax) / 2, y: (bounds.yMin + bounds.yMax) / 2 }
+    ];
+
+    // Check for LV95 (7-digit coordinates)
+    if (CoordinateTransformer.detectLV95Coordinates(points)) {
+      console.debug('Detected Swiss LV95 coordinates');
+      return COORDINATE_SYSTEMS.SWISS_LV95;
+    }
+
+    // Check for LV03 (6-digit coordinates)
+    if (CoordinateTransformer.detectLV03Coordinates(points)) {
+      console.debug('Detected Swiss LV03 coordinates');
+      return COORDINATE_SYSTEMS.SWISS_LV03;
+    }
+
+    console.debug('Using default WGS84 coordinates');
+    return COORDINATE_SYSTEMS.WGS84;
+  }
+
   private validateAndTransformCoordinates(x: number, y: number, sourceEPSG?: string): [number, number] {
-    // If coordinates are in a different system, they need to be transformed to WGS84
-    if (sourceEPSG && sourceEPSG !== 'EPSG:4326') {
-      // TODO: Implement coordinate system transformation
-      // For now, we'll just swap coordinates if they appear to be reversed
+    if (!sourceEPSG || sourceEPSG === COORDINATE_SYSTEMS.WGS84) {
+      // If coordinates appear to be reversed, swap them
       if (Math.abs(x) <= 90 && Math.abs(y) > 90) {
         return [y, x];
       }
+      return [x, y];
     }
 
-    // Handle reversed coordinates (common issue)
-    if (Math.abs(x) <= 90 && Math.abs(y) > 90) {
-      return [y, x];
+    // Transform coordinates if a source coordinate system is specified
+    if (!this.transformer) {
+      this.transformer = createTransformer(sourceEPSG, COORDINATE_SYSTEMS.WGS84);
     }
 
-    // If coordinates are still invalid after attempted fixes, throw error
-    if (Math.abs(y) > 90) {
-      throw new Error(`Invalid latitude value: ${y}. Must be between -90 and 90 degrees. This might indicate the data is in a different coordinate system.`);
+    try {
+      const transformed = this.transformer.transform({ x, y });
+      return [transformed.x, transformed.y];
+    } catch (err) {
+      const error = err as Error;
+      throw new Error(`Failed to transform coordinates from ${sourceEPSG} to WGS84: ${error.message}`);
     }
-
-    return [x, y];
   }
 
   private readPoint(view: DataView, offset: number, sourceEPSG?: string): [number, number] {
@@ -214,7 +241,8 @@ class ShapefileLoader implements GeoFileLoader {
           geometry,
           properties: {}
         });
-      } catch (error) {
+      } catch (err) {
+        const error = err as Error;
         console.warn(`Error reading feature at offset ${offset}:`, error);
         // Skip this feature and continue with the next one
         offset += contentLength * 2 - 4;
@@ -241,8 +269,12 @@ class ShapefileLoader implements GeoFileLoader {
       const shpBuffer = await file.arrayBuffer();
       const header = await this.readShapefileHeader(shpBuffer);
       
-      // Read a preview chunk of features
-      const features = await this.parseShapefileRecords(shpBuffer, header);
+      // Detect coordinate system from bounds
+      const detectedSystem = this.detectCoordinateSystem(header.bounds);
+      console.debug('Detected coordinate system:', detectedSystem);
+      
+      // Read a preview chunk of features using the detected coordinate system
+      const features = await this.parseShapefileRecords(shpBuffer, header, detectedSystem);
       const previewFeatures = features.slice(0, PREVIEW_CHUNK_SIZE);
 
       // Generate preview
@@ -253,7 +285,7 @@ class ShapefileLoader implements GeoFileLoader {
 
       return {
         layers: ['default'],
-        coordinateSystem: 'EPSG:4326',
+        coordinateSystem: detectedSystem,
         bounds: {
           minX: header.bounds.xMin,
           minY: header.bounds.yMin,
@@ -262,14 +294,18 @@ class ShapefileLoader implements GeoFileLoader {
         },
         preview,
       };
-    } catch (error) {
+    } catch (err) {
+      const error = err as Error;
       console.error('Shapefile analysis error:', error);
-      throw new Error(error instanceof Error ? error.message : 'Failed to analyze shapefile');
+      throw new Error(error.message || 'Failed to analyze shapefile');
     }
   }
 
   async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
     try {
+      // Reset transformer instance
+      this.transformer = null;
+
       // Validate required components
       this.validateComponents(file);
 
@@ -277,11 +313,15 @@ class ShapefileLoader implements GeoFileLoader {
       const shpBuffer = await file.arrayBuffer();
       const header = await this.readShapefileHeader(shpBuffer);
       
+      // If no coordinate system is specified in options, detect it
+      const sourceSystem = options.coordinateSystem || this.detectCoordinateSystem(header.bounds);
+      console.debug('Using coordinate system:', sourceSystem);
+      
       // Parse all features with progress tracking
       const features = await this.parseShapefileRecords(
         shpBuffer, 
         header, 
-        options.coordinateSystem,
+        sourceSystem,
         count => this.emitProgress(count)
       );
 
@@ -298,25 +338,34 @@ class ShapefileLoader implements GeoFileLoader {
         featureTypes[type] = (featureTypes[type] || 0) + 1;
       });
 
+      // Transform bounds if needed
+      let bounds = {
+        minX: header.bounds.xMin,
+        minY: header.bounds.yMin,
+        maxX: header.bounds.xMax,
+        maxY: header.bounds.yMax
+      };
+
+      if (sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
+        const transformer = createTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
+        bounds = transformer.transformBounds(bounds);
+      }
+
       return {
         features,
-        bounds: {
-          minX: header.bounds.xMin,
-          minY: header.bounds.yMin,
-          maxX: header.bounds.xMax,
-          maxY: header.bounds.yMax
-        },
+        bounds,
         layers: ['default'],
-        coordinateSystem: options.coordinateSystem || 'EPSG:4326',
+        coordinateSystem: COORDINATE_SYSTEMS.WGS84, // Output is always in WGS84
         statistics: {
           pointCount: features.length,
           layerCount: 1,
           featureTypes,
         },
       };
-    } catch (error) {
+    } catch (err) {
+      const error = err as Error;
       console.error('Shapefile loading error:', error);
-      throw new Error(error instanceof Error ? error.message : 'Failed to load shapefile');
+      throw new Error(error.message || 'Failed to load shapefile');
     }
   }
 }
