@@ -67,7 +67,12 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
     }
   }
 
-  const handleUploadComplete = async (uploadedFile: { name: string; size: number; type: string }) => {
+  const handleUploadComplete = async (uploadedFile: { 
+    name: string; 
+    size: number; 
+    type: string;
+    relatedFiles?: { [key: string]: string }
+  }) => {
     try {
       const storagePath = `${projectId}/${uploadedFile.name}`
       
@@ -80,6 +85,9 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           size: uploadedFile.size,
           file_type: uploadedFile.type,
           storage_path: storagePath,
+          metadata: uploadedFile.relatedFiles ? {
+            relatedFiles: uploadedFile.relatedFiles
+          } : null
         })
         .select()
         .single()
@@ -87,12 +95,20 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       if (error) throw error
 
       // Update local state
-      setFiles(prevFiles => [newFile, ...prevFiles])
+      setFiles(prevFiles => [
+        {
+          ...newFile,
+          relatedFiles: uploadedFile.relatedFiles
+        } as any,
+        ...prevFiles
+      ])
       await refreshProjectStorage()
 
       toast({
         title: 'Success',
-        description: 'File uploaded and saved successfully',
+        description: uploadedFile.relatedFiles
+          ? 'Shapefile and related components uploaded successfully'
+          : 'File uploaded successfully',
       })
     } catch (error) {
       console.error('Error uploading file:', error)
@@ -134,13 +150,21 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         throw new Error('File not found in database')
       }
 
-      // Then delete from storage
-      const storagePath = fileToDelete.storage_path.replace(/^projects\//, '')
-      console.log('Deleting from storage:', storagePath)
+      // Delete main file and any related files from storage
+      const storagePaths = [fileToDelete.storage_path.replace(/^projects\//, '')]
+      
+      // Add related file paths if this is a shapefile
+      const metadata = fileToDelete.metadata as { relatedFiles?: { [key: string]: string } } | null
+      if (metadata?.relatedFiles) {
+        Object.values(metadata.relatedFiles).forEach(path => {
+          storagePaths.push(path.replace(/^projects\//, ''))
+        })
+      }
 
+      // Delete all files from storage
       const { error: storageError } = await supabase.storage
         .from('project-files')
-        .remove([storagePath])
+        .remove(storagePaths)
 
       if (storageError) {
         console.error('Storage deletion error:', storageError)
@@ -153,7 +177,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
       toast({
         title: 'Success',
-        description: 'File deleted successfully',
+        description: 'File and related components deleted successfully',
       })
     } catch (error) {
       console.error('Delete error:', error)
@@ -176,6 +200,15 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       })
     }
   }
+
+  // Process files to add relatedFiles from metadata
+  const processedFiles = files.map(file => {
+    const metadata = file.metadata as { relatedFiles?: { [key: string]: string } } | null
+    return {
+      ...file,
+      relatedFiles: metadata?.relatedFiles
+    }
+  })
 
   return (
     <Card>
@@ -216,7 +249,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           <div className="flex items-center justify-center h-64">
             <p className="text-muted-foreground">Loading files...</p>
           </div>
-        ) : files.length === 0 ? (
+        ) : processedFiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed rounded-lg">
             <p className="text-muted-foreground text-sm">
               No files uploaded yet. Click upload to add files.
@@ -224,7 +257,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           </div>
         ) : (
           <div className={viewMode === 'grid' ? 'grid grid-cols-4 gap-4' : 'space-y-2'}>
-            {files.map(file => (
+            {processedFiles.map(file => (
               <FileItem
                 key={file.id}
                 file={file}

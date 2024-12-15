@@ -1,57 +1,265 @@
 // components/geo-loader/loaders/shapefile.ts
 
-import * as shapefile from 'shapefile';
-import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
-import { CoordinateTransformer } from '../utils/coordinate-systems';
+import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection, AnalyzeResult, Geometry } from '../../../types/geo';
+
+const PREVIEW_CHUNK_SIZE = 100;
+const LOAD_CHUNK_SIZE = 1000;
+
+// Shapefile format specification constants
+const SHAPE_TYPE = {
+  NULL: 0,
+  POINT: 1,
+  POLYLINE: 3,
+  POLYGON: 5,
+  MULTIPOINT: 8,
+};
+
+interface ShapeFile extends File {
+  relatedFiles: {
+    [key: string]: File
+  }
+}
 
 class ShapefileLoader implements GeoFileLoader {
   async canLoad(file: File): Promise<boolean> {
     return file.name.toLowerCase().endsWith('.shp');
   }
 
-  private async readFeatures(shpBuffer: ArrayBuffer, dbfBuffer: ArrayBuffer) {
-    const features: GeoFeature[] = [];
-    const source = await shapefile.open(shpBuffer);
+  private validateComponents(file: File): { [key: string]: File } {
+    const shapeFile = file as ShapeFile;
+    const relatedFiles = shapeFile.relatedFiles || {};
+    const requiredComponents = ['.dbf', '.shx'];
+    const missingComponents = requiredComponents.filter(ext => !relatedFiles[ext]);
     
-    let feature;
-    while ((feature = await source.read())) {
-      features.push(feature.value as GeoFeature);
+    if (missingComponents.length > 0) {
+      throw new Error(`Missing required shapefile components: ${missingComponents.join(', ')}`);
     }
 
+    return relatedFiles;
+  }
+
+  private emitProgress(count: number) {
+    const progressEvent = new CustomEvent('shapefileLoadProgress', { 
+      detail: { count } 
+    });
+    window.dispatchEvent(progressEvent);
+  }
+
+  private async readShapefileHeader(buffer: ArrayBuffer) {
+    const view = new DataView(buffer);
+    
+    // Verify file code (should be 9994)
+    const fileCode = view.getInt32(0, false);
+    if (fileCode !== 9994) {
+      throw new Error('Invalid shapefile: incorrect file code');
+    }
+    
+    // Read header information
+    const fileLength = view.getInt32(24, false) * 2; // Length in 16-bit words
+    const version = view.getInt32(28, true);
+    const shapeType = view.getInt32(32, true);
+    
+    // Read bounding box
+    const xMin = view.getFloat64(36, true);
+    const yMin = view.getFloat64(44, true);
+    const xMax = view.getFloat64(52, true);
+    const yMax = view.getFloat64(60, true);
+    
+    return {
+      fileLength,
+      version,
+      shapeType,
+      bounds: { xMin, yMin, xMax, yMax }
+    };
+  }
+
+  private validateAndTransformCoordinates(x: number, y: number, sourceEPSG?: string): [number, number] {
+    // If coordinates are in a different system, they need to be transformed to WGS84
+    if (sourceEPSG && sourceEPSG !== 'EPSG:4326') {
+      // TODO: Implement coordinate system transformation
+      // For now, we'll just swap coordinates if they appear to be reversed
+      if (Math.abs(x) <= 90 && Math.abs(y) > 90) {
+        return [y, x];
+      }
+    }
+
+    // Handle reversed coordinates (common issue)
+    if (Math.abs(x) <= 90 && Math.abs(y) > 90) {
+      return [y, x];
+    }
+
+    // If coordinates are still invalid after attempted fixes, throw error
+    if (Math.abs(y) > 90) {
+      throw new Error(`Invalid latitude value: ${y}. Must be between -90 and 90 degrees. This might indicate the data is in a different coordinate system.`);
+    }
+
+    return [x, y];
+  }
+
+  private readPoint(view: DataView, offset: number, sourceEPSG?: string): [number, number] {
+    const x = view.getFloat64(offset, true);
+    const y = view.getFloat64(offset + 8, true);
+    return this.validateAndTransformCoordinates(x, y, sourceEPSG);
+  }
+
+  private readPoints(view: DataView, offset: number, numPoints: number, sourceEPSG?: string): Array<[number, number]> {
+    const points: Array<[number, number]> = [];
+    for (let i = 0; i < numPoints; i++) {
+      points.push(this.readPoint(view, offset + i * 16, sourceEPSG));
+    }
+    return points;
+  }
+
+  private readPolyline(view: DataView, offset: number, sourceEPSG?: string): Geometry {
+    const numParts = view.getInt32(offset + 36, true);
+    const numPoints = view.getInt32(offset + 40, true);
+    
+    // Read part indices
+    const parts: number[] = [];
+    for (let i = 0; i < numParts; i++) {
+      parts.push(view.getInt32(offset + 44 + i * 4, true));
+    }
+    parts.push(numPoints); // Add end index
+    
+    // Read points
+    const pointsOffset = offset + 44 + numParts * 4;
+    const coordinates: Array<[number, number]>[] = [];
+    
+    for (let i = 0; i < numParts; i++) {
+      const start = parts[i];
+      const end = parts[i + 1];
+      const partPoints = this.readPoints(view, pointsOffset + start * 16, end - start, sourceEPSG);
+      coordinates.push(partPoints);
+    }
+    
+    return {
+      type: numParts === 1 ? 'LineString' : 'MultiLineString',
+      coordinates: numParts === 1 ? coordinates[0] : coordinates
+    } as Geometry;
+  }
+
+  private readPolygon(view: DataView, offset: number, sourceEPSG?: string): Geometry {
+    const numParts = view.getInt32(offset + 36, true);
+    const numPoints = view.getInt32(offset + 40, true);
+    
+    // Read part indices
+    const parts: number[] = [];
+    for (let i = 0; i < numParts; i++) {
+      parts.push(view.getInt32(offset + 44 + i * 4, true));
+    }
+    parts.push(numPoints); // Add end index
+    
+    // Read points
+    const pointsOffset = offset + 44 + numParts * 4;
+    const coordinates: Array<Array<[number, number]>> = [];
+    
+    for (let i = 0; i < numParts; i++) {
+      const start = parts[i];
+      const end = parts[i + 1];
+      const ring = this.readPoints(view, pointsOffset + start * 16, end - start, sourceEPSG);
+      coordinates.push(ring);
+    }
+    
+    return {
+      type: 'Polygon',
+      coordinates
+    };
+  }
+
+  private async parseShapefileRecords(buffer: ArrayBuffer, header: any, sourceEPSG?: string, onProgress?: (count: number) => void): Promise<GeoFeature[]> {
+    const features: GeoFeature[] = [];
+    const view = new DataView(buffer);
+    let offset = 100; // Start after header
+    let count = 0;
+    
+    while (offset < header.fileLength) {
+      // Read record header
+      const recordNumber = view.getInt32(offset, false);
+      const contentLength = view.getInt32(offset + 4, false);
+      offset += 8;
+      
+      // Read shape type
+      const shapeType = view.getInt32(offset, true);
+      offset += 4;
+      
+      let geometry: Geometry;
+      
+      try {
+        switch (shapeType) {
+          case SHAPE_TYPE.POINT:
+            geometry = {
+              type: 'Point',
+              coordinates: this.readPoint(view, offset, sourceEPSG)
+            };
+            offset += 16;
+            break;
+            
+          case SHAPE_TYPE.POLYLINE:
+            geometry = this.readPolyline(view, offset - 4, sourceEPSG);
+            offset += contentLength * 2 - 4;
+            break;
+            
+          case SHAPE_TYPE.POLYGON:
+            geometry = this.readPolygon(view, offset - 4, sourceEPSG);
+            offset += contentLength * 2 - 4;
+            break;
+            
+          default:
+            offset += contentLength * 2 - 4;
+            continue; // Skip unsupported types
+        }
+        
+        features.push({
+          type: 'Feature',
+          geometry,
+          properties: {}
+        });
+      } catch (error) {
+        console.warn(`Error reading feature at offset ${offset}:`, error);
+        // Skip this feature and continue with the next one
+        offset += contentLength * 2 - 4;
+      }
+      
+      count++;
+      if (count % LOAD_CHUNK_SIZE === 0) {
+        onProgress?.(count);
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 0));
+      }
+    }
+    
+    onProgress?.(count);
     return features;
   }
 
-  async analyze(file: File) {
+  async analyze(file: File): Promise<AnalyzeResult> {
     try {
-      // Get related files from the custom property we set in FileItem
-      const relatedFiles = (file as any).relatedFiles || {};
-      if (!relatedFiles['.dbf']) {
-        throw new Error('Missing required .dbf file for shapefile');
-      }
+      // Validate required components
+      this.validateComponents(file);
 
-      // Create array buffers for both .shp and .dbf files
+      // Read the main shapefile
       const shpBuffer = await file.arrayBuffer();
-      const dbfBuffer = await relatedFiles['.dbf'].arrayBuffer();
+      const header = await this.readShapefileHeader(shpBuffer);
+      
+      // Read a preview chunk of features
+      const features = await this.parseShapefileRecords(shpBuffer, header);
+      const previewFeatures = features.slice(0, PREVIEW_CHUNK_SIZE);
 
-      // Read features
-      const features = await this.readFeatures(shpBuffer, dbfBuffer);
-
-      // Extract layers (in shapefiles, there's typically one layer)
-      const layers = ['default'];
-
-      // Calculate bounds from features
-      const bounds = this.calculateBounds(features);
-
-      // Generate preview with a sample of features
+      // Generate preview
       const preview: GeoFeatureCollection = {
         type: 'FeatureCollection',
-        features: features.slice(0, 100),
+        features: previewFeatures,
       };
 
       return {
-        layers,
-        coordinateSystem: 'EPSG:4326', // Shapefiles typically use WGS84
-        bounds,
+        layers: ['default'],
+        coordinateSystem: 'EPSG:4326',
+        bounds: {
+          minX: header.bounds.xMin,
+          minY: header.bounds.yMin,
+          maxX: header.bounds.xMax,
+          maxY: header.bounds.yMax
+        },
         preview,
       };
     } catch (error) {
@@ -62,18 +270,20 @@ class ShapefileLoader implements GeoFileLoader {
 
   async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
     try {
-      // Get related files from the custom property we set in FileItem
-      const relatedFiles = (file as any).relatedFiles || {};
-      if (!relatedFiles['.dbf']) {
-        throw new Error('Missing required .dbf file for shapefile');
-      }
+      // Validate required components
+      this.validateComponents(file);
 
-      // Create array buffers for both .shp and .dbf files
+      // Read the main shapefile
       const shpBuffer = await file.arrayBuffer();
-      const dbfBuffer = await relatedFiles['.dbf'].arrayBuffer();
-
-      // Read all features
-      const features = await this.readFeatures(shpBuffer, dbfBuffer);
+      const header = await this.readShapefileHeader(shpBuffer);
+      
+      // Parse all features with progress tracking
+      const features = await this.parseShapefileRecords(
+        shpBuffer, 
+        header, 
+        options.coordinateSystem,
+        count => this.emitProgress(count)
+      );
 
       // Process features
       const featureTypes: Record<string, number> = {};
@@ -88,12 +298,14 @@ class ShapefileLoader implements GeoFileLoader {
         featureTypes[type] = (featureTypes[type] || 0) + 1;
       });
 
-      // Calculate bounds from all features
-      const bounds = this.calculateBounds(features);
-
       return {
         features,
-        bounds,
+        bounds: {
+          minX: header.bounds.xMin,
+          minY: header.bounds.yMin,
+          maxX: header.bounds.xMax,
+          maxY: header.bounds.yMax
+        },
         layers: ['default'],
         coordinateSystem: options.coordinateSystem || 'EPSG:4326',
         statistics: {
@@ -106,66 +318,6 @@ class ShapefileLoader implements GeoFileLoader {
       console.error('Shapefile loading error:', error);
       throw new Error(error instanceof Error ? error.message : 'Failed to load shapefile');
     }
-  }
-
-  private getFeatureBounds(feature: GeoFeature): { minX: number; minY: number; maxX: number; maxY: number } {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    const coords = feature.geometry.coordinates;
-    if (feature.geometry.type === 'Point' && Array.isArray(coords) && coords.length >= 2) {
-      const x = coords[0] as number;
-      const y = coords[1] as number;
-      minX = maxX = x;
-      minY = maxY = y;
-    } else if (feature.geometry.type === 'LineString' && Array.isArray(coords)) {
-      coords.forEach((coord) => {
-        if (Array.isArray(coord) && coord.length >= 2) {
-          const x = coord[0] as number;
-          const y = coord[1] as number;
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
-        }
-      });
-    } else if (feature.geometry.type === 'Polygon' && Array.isArray(coords)) {
-      coords.forEach((ring) => {
-        if (Array.isArray(ring)) {
-          ring.forEach((coord) => {
-            if (Array.isArray(coord) && coord.length >= 2) {
-              const x = coord[0] as number;
-              const y = coord[1] as number;
-              minX = Math.min(minX, x);
-              minY = Math.min(minY, y);
-              maxX = Math.max(maxX, x);
-              maxY = Math.max(maxY, y);
-            }
-          });
-        }
-      });
-    }
-
-    return { minX, minY, maxX, maxY };
-  }
-
-  private calculateBounds(features: GeoFeature[]): { minX: number; minY: number; maxX: number; maxY: number } {
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-
-    features.forEach((feature) => {
-      const bounds = this.getFeatureBounds(feature);
-      minX = Math.min(minX, bounds.minX);
-      minY = Math.min(minY, bounds.minY);
-      maxX = Math.max(maxX, bounds.maxX);
-      maxY = Math.max(maxY, bounds.maxY);
-    });
-
-    return { minX, minY, maxX, maxY };
   }
 }
 

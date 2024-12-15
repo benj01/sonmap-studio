@@ -1,9 +1,15 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import dxfLoader from '../loaders/dxf';
 import shapefileLoader from '../loaders/shapefile';
 import csvXyzLoader from '../loaders/csv-zyz';
 import { optimizePoints } from '../utils/optimization';
-import type { GeoFileType, LoaderOptions, LoaderResult, GeoFeatureCollection, AnalyzeResult } from '../../../types/geo';
+import type { LoaderOptions, LoaderResult, GeoFeatureCollection, AnalyzeResult } from '../../../types/geo';
+
+interface ShapeFile extends File {
+  relatedFiles: {
+    [key: string]: File
+  }
+}
 
 const loaderMap = {
   dxf: dxfLoader,
@@ -26,13 +32,13 @@ export function useGeoLoader() {
     visibleLayers: []
   });
   const [logs, setLogs] = useState<string[]>([]);
-  const fileRef = useRef<File | null>(null);
+  const fileRef = useRef<File | ShapeFile | null>(null);
 
-  const log = (message: string) => {
+  const log = useCallback((message: string) => {
     setLogs((prevLogs) => [...prevLogs, message]);
-  };
+  }, []);
 
-  const analyzeFile = useCallback(async (file: File) => {
+  const analyzeFile = useCallback(async (file: File | ShapeFile) => {
     fileRef.current = file;
     setLoading(true);
     setError(null);
@@ -50,9 +56,22 @@ export function useGeoLoader() {
 
     try {
       log(`Analyzing ${file.name}...`);
-      const analysisResult = await loader.analyze(file) as AnalyzeResult;
+
+      // For shapefiles, verify components are present
+      if (fileType === 'shp') {
+        const shapeFile = file as ShapeFile;
+        if (!('relatedFiles' in shapeFile) || !shapeFile.relatedFiles['.dbf']) {
+          throw new Error('Missing required .dbf component for shapefile');
+        }
+        if (!shapeFile.relatedFiles['.shx']) {
+          throw new Error('Missing required .shx component for shapefile');
+        }
+        log('Verified shapefile components are present');
+      }
+
+      const analysisResult = await loader.analyze(file);
       
-      // Initialize both selected and visible layers with all available layers
+      // Initialize both selected and visible layers
       setOptions(prev => ({
         ...prev,
         selectedLayers: analysisResult.layers,
@@ -62,14 +81,16 @@ export function useGeoLoader() {
       setAnalysis(analysisResult);
       log(`Analysis complete.`);
     } catch (err: any) {
-        setError(err.message || 'Failed to analyze file');
-        console.error(err);
+      const errorMessage = err.message || 'Failed to analyze file';
+      setError(errorMessage);
+      log(`Error: ${errorMessage}`);
+      console.error(err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [log]);
 
-  const loadFile = useCallback(async (file: File, loadOptions?: LoaderOptions): Promise<LoaderResult | null> => {
+  const loadFile = useCallback(async (file: File | ShapeFile, loadOptions?: LoaderOptions): Promise<LoaderResult | null> => {
     setLoading(true);
     setError(null);
     setLogs([]);
@@ -85,6 +106,19 @@ export function useGeoLoader() {
 
     try {
       log(`Loading ${file.name}...`);
+
+      // For shapefiles, verify components are present
+      if (fileType === 'shp') {
+        const shapeFile = file as ShapeFile;
+        if (!('relatedFiles' in shapeFile) || !shapeFile.relatedFiles['.dbf']) {
+          throw new Error('Missing required .dbf component for shapefile');
+        }
+        if (!shapeFile.relatedFiles['.shx']) {
+          throw new Error('Missing required .shx component for shapefile');
+        }
+        log('Verified shapefile components are present');
+      }
+
       const result = await loader.load(file, { ...options, ...loadOptions });
 
       if (['xyz', 'csv', 'txt'].includes(fileType) && options.simplificationTolerance && options.simplificationTolerance > 0) {
@@ -96,7 +130,9 @@ export function useGeoLoader() {
       log(`File loaded successfully.`);
       return result;
     } catch (err: any) {
-      setError(err.message || 'Failed to load file');
+      const errorMessage = err.message || 'Failed to load file';
+      setError(errorMessage);
+      log(`Error: ${errorMessage}`);
       console.error(err);
       return null;
     } finally {

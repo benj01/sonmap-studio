@@ -1,7 +1,7 @@
 // components/geo-loader/loaders/csv-zyz.ts
 
 import Papa from 'papaparse';
-import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
+import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection, AnalyzeResult, Point2D, Point3D } from '../../../types/geo';
 import { CoordinateTransformer } from '../utils/coordinate-systems';
 import _ from 'lodash';
 
@@ -10,6 +10,12 @@ interface ColumnMapping {
   y: number;
   z?: number;
   [key: string]: number | undefined;
+}
+
+interface PointData {
+  x: number;
+  y: number;
+  z: number | undefined;
 }
 
 export class CsvXyzLoader implements GeoFileLoader {
@@ -57,7 +63,29 @@ export class CsvXyzLoader implements GeoFileLoader {
     return mapping;
   }
 
-  async analyze(file: File) {
+  private createPointFeature(point: PointData): GeoFeature {
+    if (point.z !== undefined) {
+      return {
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [point.x, point.y, point.z] as [number, number, number]
+        },
+        properties: { z: point.z }
+      };
+    } else {
+      return {
+        type: 'Feature',
+        geometry: {
+          type: 'Point',
+          coordinates: [point.x, point.y] as [number, number]
+        },
+        properties: {}
+      };
+    }
+  }
+
+  async analyze(file: File): Promise<AnalyzeResult> {
     try {
       const content = await this.readFileContent(file);
       const lines = content.split('\n');
@@ -78,7 +106,7 @@ export class CsvXyzLoader implements GeoFileLoader {
       const columnMapping = this.detectColumnMapping(headers);
 
       const samplePoints = parseResult.data
-        .map((row: any) => ({
+        .map((row: any): PointData => ({
           x: Number(row[headers[columnMapping.x]]),
           y: Number(row[headers[columnMapping.y]]),
           z: columnMapping.z !== undefined ? Number(row[headers[columnMapping.z]]) : undefined,
@@ -90,17 +118,11 @@ export class CsvXyzLoader implements GeoFileLoader {
 
       const preview: GeoFeatureCollection = {
         type: 'FeatureCollection',
-        features: samplePoints.map(point => ({
-          type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: point.z !== undefined ? [point.x, point.y, point.z] : [point.x, point.y],
-          },
-          properties: { z: point.z },
-        })),
+        features: samplePoints.map(point => this.createPointFeature(point)),
       };
 
       return {
+        layers: ['default'], // Point clouds have a single default layer
         coordinateSystem: suggestedCRS,
         bounds,
         preview,
@@ -129,22 +151,32 @@ export class CsvXyzLoader implements GeoFileLoader {
         ? new CoordinateTransformer(options.coordinateSystem, options.targetSystem)
         : undefined;
 
-      let features = this.convertToGeoFeatures(parseResult.data, headers, columnMapping, transformer);
+      let points = parseResult.data
+        .map((row: any): PointData => ({
+          x: Number(row[headers[columnMapping.x]]),
+          y: Number(row[headers[columnMapping.y]]),
+          z: columnMapping.z !== undefined ? Number(row[headers[columnMapping.z]]) : undefined,
+        }))
+        .filter(point => !isNaN(point.x) && !isNaN(point.y));
 
-      if (options.simplificationTolerance) {
-        features = this.simplifyFeatures(features, options.simplificationTolerance);
+      if (transformer) {
+        points = points.map(point => ({
+          ...transformer.transform(point),
+          z: point.z
+        }));
       }
 
-      const points = features.map(f => ({
-        x: f.geometry.coordinates[0],
-        y: f.geometry.coordinates[1],
-        z: f.geometry.coordinates[2],
-      }));
+      if (options.simplificationTolerance) {
+        points = this.simplifyPoints(points, options.simplificationTolerance);
+      }
+
+      const features = points.map(point => this.createPointFeature(point));
       const bounds = this.calculateBounds(points);
 
       return {
         features,
         bounds,
+        layers: ['default'], // Point clouds have a single default layer
         statistics: {
           pointCount: features.length,
           featureTypes: { Point: features.length },
@@ -157,7 +189,10 @@ export class CsvXyzLoader implements GeoFileLoader {
     }
   }
 
-  private calculateBounds(points: Array<{ x: number; y: number }>) {
+  private calculateBounds(points: PointData[]) {
+    if (points.length === 0) {
+      return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+    }
     return {
       minX: Math.min(...points.map(p => p.x)),
       minY: Math.min(...points.map(p => p.y)),
@@ -166,48 +201,8 @@ export class CsvXyzLoader implements GeoFileLoader {
     };
   }
 
-  private convertToGeoFeatures(
-    data: any[],
-    headers: string[],
-    columnMapping: ColumnMapping,
-    transformer?: CoordinateTransformer
-  ): GeoFeature[] {
-    return data.map(row => {
-      const x = Number(row[headers[columnMapping.x]]);
-      const y = Number(row[headers[columnMapping.y]]);
-      const z = columnMapping.z !== undefined ? Number(row[headers[columnMapping.z]]) : undefined;
-
-      let coordinates: number[] = [x, y];
-      if (z !== undefined && !isNaN(z)) {
-        coordinates.push(z);
-      }
-
-      if (transformer) {
-        const transformed = transformer.transform({ x, y, z });
-        coordinates = [transformed.x, transformed.y];
-        if (transformed.z !== undefined) coordinates.push(transformed.z);
-      }
-
-      const properties: { [key: string]: any } = {};
-      headers.forEach((header, index) => {
-        if (index !== columnMapping.x && index !== columnMapping.y && index !== columnMapping.z) {
-          properties[header] = row[header];
-        }
-      });
-
-      return {
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates,
-        },
-        properties,
-      };
-    });
-  }
-
-  private simplifyFeatures(features: GeoFeature[], tolerance: number): GeoFeature[] {
-    return _.sampleSize(features, Math.ceil(features.length * (1 - tolerance / 100)));
+  private simplifyPoints(points: PointData[], tolerance: number): PointData[] {
+    return _.sampleSize(points, Math.ceil(points.length * (1 - tolerance / 100)));
   }
 }
 

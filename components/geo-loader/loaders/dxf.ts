@@ -1,5 +1,5 @@
 import DxfParser from 'dxf-parser';
-import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection } from '../../../types/geo';
+import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection, AnalyzeResult } from '../../../types/geo';
 import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 
 class CustomDxfParser extends DxfParser {
@@ -259,12 +259,7 @@ export class DxfLoader implements GeoFileLoader {
     return null;
   }
 
-  async analyze(file: File): Promise<{
-    layers: string[];
-    coordinateSystem: string;
-    bounds: LoaderResult['bounds'];
-    preview: GeoFeatureCollection;
-  }> {
+  async analyze(file: File): Promise<AnalyzeResult> {
     const content = await this.readFileContent(file);
     const dxf = this.parseContent(content);
 

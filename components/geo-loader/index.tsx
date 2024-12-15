@@ -7,8 +7,14 @@ import { FormatSettings } from './components/format-settings';
 import { PreviewMap } from './components/preview-map';
 import { useGeoLoader } from './hooks/use-geo-loader';
 
+interface ShapeFile extends File {
+  relatedFiles: {
+    [key: string]: File
+  }
+}
+
 interface GeoLoaderProps {
-  file: File;
+  file: File | ShapeFile;
   onLoad: (result: LoaderResult) => void;
   onCancel: () => void;
   onLogsUpdate?: (logs: string[]) => void;
@@ -38,6 +44,17 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
   }, [logs, onLogsUpdate]);
 
   useEffect(() => {
+    const isShapefile = file.name.toLowerCase().endsWith('.shp');
+    const hasRelatedFiles = isShapefile && 'relatedFiles' in file;
+
+    if (isShapefile && !hasRelatedFiles) {
+      setError({
+        title: 'Missing Components',
+        message: 'Shapefile is missing required component files (.dbf, .shx)',
+      });
+      return;
+    }
+
     analyzeFile(file);
   }, [file, analyzeFile]);
 
@@ -51,8 +68,16 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
     if (err instanceof Error) {
       const message = err.message;
       
+      // Parse shapefile specific errors
+      if (message.toLowerCase().includes('.dbf')) {
+        setError({
+          title: 'Shapefile Error',
+          message: 'Failed to load shapefile component files.',
+          details: message
+        });
+      }
       // Parse DXF specific errors
-      if (message.includes('DXF')) {
+      else if (message.includes('DXF')) {
         if (message.includes('parsing')) {
           setError({
             title: 'DXF Parsing Error',
@@ -97,9 +122,13 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
   };
 
   const handleImport = async () => {
-    const result = await loadFile(file);
-    if (result) {
-      onLoad(result);
+    try {
+      const result = await loadFile(file);
+      if (result) {
+        onLoad(result);
+      }
+    } catch (err) {
+      handleError(err);
     }
   };
 
@@ -160,7 +189,7 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
             <Button variant="outline" onClick={onCancel} className="relative z-50">
               Cancel
             </Button>
-            <Button onClick={handleImport} disabled={loading} className="relative z-50">
+            <Button onClick={handleImport} disabled={loading || error !== null} className="relative z-50">
               {loading ? 'Importing...' : 'Import'}
             </Button>
           </CardFooter>

@@ -2,10 +2,17 @@
 
 export type GeoFileType = 'dxf' | 'shp' | 'xyz' | 'csv' | 'txt';
 
-export type Point = {
+export type Point2D = {
   type: 'Point';
   coordinates: [number, number];
 };
+
+export type Point3D = {
+  type: 'Point';
+  coordinates: [number, number, number];
+};
+
+export type Point = Point2D | Point3D;
 
 export type LineString = {
   type: 'LineString';
