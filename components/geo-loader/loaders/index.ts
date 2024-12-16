@@ -1,6 +1,6 @@
 import dxfLoader from './dxf';
 import shapefileLoader from './shapefile';
-import csvLoader from './csv-zyz';
+import csvLoader from './csv-xyz';
 
 class LoaderRegistry {
   private loaders = [dxfLoader, shapefileLoader, csvLoader];

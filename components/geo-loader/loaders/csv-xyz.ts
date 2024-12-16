@@ -1,8 +1,10 @@
-// components/geo-loader/loaders/csv-zyz.ts
+// components/geo-loader/loaders/csv-xyz.ts
 
 import Papa from 'papaparse';
-import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection, AnalyzeResult, Point2D, Point3D } from '../../../types/geo';
-import { CoordinateTransformer } from '../utils/coordinate-systems';
+import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, GeoFeatureCollection, AnalyzeResult } from '../../../types/geo';
+import { createTransformer, suggestCoordinateSystem } from '../utils/coordinate-utils';
+import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { createPointGeometry, createFeature } from '../utils/geometry-utils';
 import _ from 'lodash';
 
 interface ColumnMapping {
@@ -64,25 +66,12 @@ export class CsvXyzLoader implements GeoFileLoader {
   }
 
   private createPointFeature(point: PointData): GeoFeature {
-    if (point.z !== undefined) {
-      return {
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [point.x, point.y, point.z] as [number, number, number]
-        },
-        properties: { z: point.z }
-      };
-    } else {
-      return {
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [point.x, point.y] as [number, number]
-        },
-        properties: {}
-      };
+    const geometry = createPointGeometry(point.x, point.y, isNaN(point.z) ? undefined : point.z);
+    const properties = {};
+    if (point.z !== undefined && !isNaN(point.z)) {
+      properties['z'] = point.z;
     }
+    return createFeature(geometry, properties);
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
@@ -113,7 +102,7 @@ export class CsvXyzLoader implements GeoFileLoader {
         }))
         .filter(point => !isNaN(point.x) && !isNaN(point.y));
 
-      const suggestedCRS = CoordinateTransformer.suggestCoordinateSystem(samplePoints);
+      const suggestedCRS = suggestCoordinateSystem(samplePoints);
       const bounds = this.calculateBounds(samplePoints);
 
       const preview: GeoFeatureCollection = {
@@ -147,10 +136,7 @@ export class CsvXyzLoader implements GeoFileLoader {
       const headers = parseResult.meta.fields || [];
       const columnMapping = this.detectColumnMapping(headers);
 
-      const transformer = options.coordinateSystem && options.targetSystem
-        ? new CoordinateTransformer(options.coordinateSystem, options.targetSystem)
-        : undefined;
-
+      // Extract raw points
       let points = parseResult.data
         .map((row: any): PointData => ({
           x: Number(row[headers[columnMapping.x]]),
@@ -159,11 +145,22 @@ export class CsvXyzLoader implements GeoFileLoader {
         }))
         .filter(point => !isNaN(point.x) && !isNaN(point.y));
 
+      let sourceSystem = options.coordinateSystem;
+      if (!sourceSystem) {
+        // If no system specified, suggest from sample points
+        sourceSystem = suggestCoordinateSystem(points);
+      }
+
+      let transformer: ReturnType<typeof createTransformer> | undefined;
+      if (sourceSystem && options.targetSystem && sourceSystem !== options.targetSystem) {
+        transformer = createTransformer(sourceSystem, options.targetSystem);
+      }
+
       if (transformer) {
-        points = points.map(point => ({
-          ...transformer.transform(point),
-          z: point.z
-        }));
+        points = points.map(point => {
+          const transformed = transformer.transform({ x: point.x, y: point.y, z: point.z });
+          return { ...transformed };
+        });
       }
 
       if (options.simplificationTolerance) {
@@ -181,7 +178,7 @@ export class CsvXyzLoader implements GeoFileLoader {
           pointCount: features.length,
           featureTypes: { Point: features.length },
         },
-        coordinateSystem: options.coordinateSystem,
+        coordinateSystem: options.targetSystem || sourceSystem || COORDINATE_SYSTEMS.WGS84,
       };
     } catch (error) {
       console.error('CSV/XYZ Loading error:', error);

@@ -1,7 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import dxfLoader from '../loaders/dxf';
 import shapefileLoader from '../loaders/shapefile';
-import csvXyzLoader from '../loaders/csv-zyz';
+import csvXyzLoader from '../loaders/csv-xyz';
 import { optimizePoints } from '../utils/optimization';
 import type { LoaderOptions, LoaderResult, GeoFeatureCollection, AnalyzeResult } from '../../../types/geo';
 
