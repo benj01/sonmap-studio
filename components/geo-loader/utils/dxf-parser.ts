@@ -1,4 +1,252 @@
-// Previous imports and interfaces remain the same...
+import { GeoFeature, Geometry } from '../../../types/geo';
+import { createFeature, createLineStringGeometry, createPointGeometry, createPolygonGeometry } from './geometry-utils';
+import DxfParser from 'dxf-parser';
+
+// Type definitions
+type Matrix4 = number[][];
+
+interface Vector3 {
+  x: number;
+  y: number;
+  z?: number;
+}
+
+interface LayerInfo {
+  name: string;
+  color?: number;
+  colorRGB?: number;
+  lineType?: string;
+  lineWeight?: number;
+  frozen?: boolean;
+  locked?: boolean;
+  visible: boolean;
+}
+
+interface DxfBlock {
+  name: string;
+  position: Vector3;
+  entities: DxfEntity[];
+  layer: string;
+}
+
+interface DxfEntityBase {
+  type: string;
+  layer?: string;
+  handle?: string;
+  color?: number;
+  colorRGB?: number;
+  lineType?: string;
+  lineWeight?: number;
+  elevation?: number;
+  thickness?: number;
+  visible?: boolean;
+  extrusionDirection?: Vector3;
+}
+
+interface DxfPointEntity extends DxfEntityBase {
+  type: 'POINT';
+  position: Vector3;
+}
+
+interface DxfLineEntity extends DxfEntityBase {
+  type: 'LINE';
+  start: Vector3;
+  end: Vector3;
+}
+
+interface DxfPolylineEntity extends DxfEntityBase {
+  type: 'POLYLINE' | 'LWPOLYLINE';
+  vertices: Vector3[];
+  closed?: boolean;
+}
+
+interface DxfCircleEntity extends DxfEntityBase {
+  type: 'CIRCLE';
+  center: Vector3;
+  radius: number;
+}
+
+interface DxfArcEntity extends DxfEntityBase {
+  type: 'ARC';
+  center: Vector3;
+  radius: number;
+  startAngle: number;
+  endAngle: number;
+}
+
+interface DxfEllipseEntity extends DxfEntityBase {
+  type: 'ELLIPSE';
+  center: Vector3;
+  majorAxis: Vector3;
+  minorAxisRatio: number;
+  startAngle: number;
+  endAngle: number;
+}
+
+type DxfEntity = 
+  | DxfPointEntity 
+  | DxfLineEntity 
+  | DxfPolylineEntity 
+  | DxfCircleEntity 
+  | DxfArcEntity 
+  | DxfEllipseEntity;
+
+interface DxfData {
+  entities: DxfEntity[];
+  blocks?: Record<string, DxfBlock>;
+  tables?: {
+    layer?: {
+      layers: Record<string, any>;
+    };
+  };
+}
+
+// Interface for external DXF parser library
+interface CustomDxfParserLib {
+  parseSync(content: string): DxfData;
+}
+
+// Actual implementation using dxf-parser library
+class DxfParserLibImpl implements CustomDxfParserLib {
+  private parser: DxfParser;
+
+  constructor() {
+    this.parser = new DxfParser();
+  }
+
+  parseSync(content: string): DxfData {
+    try {
+      const parsed = this.parser.parseSync(content);
+      return this.convertParsedData(parsed);
+    } catch (error) {
+      console.error('DXF parsing error:', error);
+      throw new Error('Failed to parse DXF content');
+    }
+  }
+
+  private convertParsedData(parsed: any): DxfData {
+    const result: DxfData = {
+      entities: [],
+      blocks: {},
+      tables: {
+        layer: {
+          layers: {}
+        }
+      }
+    };
+
+    // Convert entities
+    if (Array.isArray(parsed.entities)) {
+      result.entities = parsed.entities.map(this.convertEntity).filter(Boolean) as DxfEntity[];
+    }
+
+    // Convert blocks
+    if (parsed.blocks) {
+      Object.entries(parsed.blocks).forEach(([name, block]: [string, any]) => {
+        if (block.entities) {
+          result.blocks![name] = {
+            name,
+            position: block.position || { x: 0, y: 0, z: 0 },
+            entities: block.entities.map(this.convertEntity).filter(Boolean),
+            layer: block.layer || '0'
+          };
+        }
+      });
+    }
+
+    // Convert layers
+    if (parsed.tables && parsed.tables.layer) {
+      result.tables!.layer!.layers = parsed.tables.layer.layers || {};
+    }
+
+    return result;
+  }
+
+  private convertEntity(entity: any): DxfEntity | null {
+    try {
+      switch (entity.type) {
+        case 'POINT':
+          return {
+            type: 'POINT',
+            position: entity.position,
+            ...this.extractCommonProperties(entity)
+          };
+
+        case 'LINE':
+          return {
+            type: 'LINE',
+            start: entity.start,
+            end: entity.end,
+            ...this.extractCommonProperties(entity)
+          };
+
+        case 'LWPOLYLINE':
+        case 'POLYLINE':
+          return {
+            type: entity.type,
+            vertices: entity.vertices.map((v: any) => ({
+              x: v.x,
+              y: v.y,
+              z: v.z || 0
+            })),
+            closed: entity.closed,
+            ...this.extractCommonProperties(entity)
+          };
+
+        case 'CIRCLE':
+          return {
+            type: 'CIRCLE',
+            center: entity.center,
+            radius: entity.radius,
+            ...this.extractCommonProperties(entity)
+          };
+
+        case 'ARC':
+          return {
+            type: 'ARC',
+            center: entity.center,
+            radius: entity.radius,
+            startAngle: entity.startAngle,
+            endAngle: entity.endAngle,
+            ...this.extractCommonProperties(entity)
+          };
+
+        case 'ELLIPSE':
+          return {
+            type: 'ELLIPSE',
+            center: entity.center,
+            majorAxis: entity.majorAxis,
+            minorAxisRatio: entity.minorAxisRatio,
+            startAngle: entity.startAngle,
+            endAngle: entity.endAngle,
+            ...this.extractCommonProperties(entity)
+          };
+
+        default:
+          console.warn('Unsupported entity type:', entity.type);
+          return null;
+      }
+    } catch (error) {
+      console.warn('Error converting entity:', error);
+      return null;
+    }
+  }
+
+  private extractCommonProperties(entity: any) {
+    return {
+      layer: entity.layer,
+      handle: entity.handle,
+      color: entity.color,
+      colorRGB: entity.colorRGB,
+      lineType: entity.lineType,
+      lineWeight: entity.lineWeight,
+      elevation: entity.elevation,
+      thickness: entity.thickness,
+      visible: entity.visible,
+      extrusionDirection: entity.extrusionDirection
+    };
+  }
+}
 
 export class DxfFileParser {
   private parser: CustomDxfParserLib;
@@ -6,12 +254,15 @@ export class DxfFileParser {
   private layers: Map<string, LayerInfo> = new Map();
 
   constructor() {
-    this.parser = new CustomDxfParserLib();
+    this.parser = new DxfParserLibImpl();
   }
 
-  parse(content: string): any {
+  parse(content: string): DxfData {
     try {
       const dxf = this.parser.parseSync(content);
+      if (!dxf || !dxf.entities) {
+        throw new Error('Invalid DXF file structure');
+      }
       this.blocks = this.extractBlocks(dxf);
       this.layers = this.extractLayers(dxf);
       return dxf;
@@ -21,7 +272,7 @@ export class DxfFileParser {
     }
   }
 
-  private extractBlocks(dxf: any): Record<string, DxfBlock> {
+  private extractBlocks(dxf: DxfData): Record<string, DxfBlock> {
     const blocks: Record<string, DxfBlock> = {};
     try {
       if (dxf.blocks) {
@@ -42,7 +293,7 @@ export class DxfFileParser {
     return blocks;
   }
 
-  private extractLayers(dxf: any): Map<string, LayerInfo> {
+  private extractLayers(dxf: DxfData): Map<string, LayerInfo> {
     const layers = new Map<string, LayerInfo>();
     
     try {
@@ -62,7 +313,7 @@ export class DxfFileParser {
       }
 
       if (Array.isArray(dxf.entities)) {
-        dxf.entities.forEach((entity: any) => {
+        dxf.entities.forEach((entity: DxfEntity) => {
           if (entity.layer && !layers.has(entity.layer)) {
             layers.set(entity.layer, {
               name: entity.layer,
@@ -175,7 +426,7 @@ export class DxfFileParser {
     }
   }
 
-  private entityToGeometry(entity: DxfEntity): GeoFeature['geometry'] | null {
+  private entityToGeometry(entity: DxfEntity): Geometry | null {
     try {
       switch (entity.type) {
         case 'POINT': {
@@ -341,7 +592,11 @@ export class DxfFileParser {
         }
 
         default:
-          console.warn('Unsupported entity type:', entity.type);
+          if ((entity as DxfEntity).type) {
+            console.warn('Unsupported entity type:', (entity as DxfEntity).type);
+          } else {
+            console.warn('Unsupported entity type');
+          }
           return null;
       }
     } catch (error) {
@@ -379,7 +634,7 @@ export class DxfFileParser {
     };
   }
 
-  expandBlockReferences(dxf: any): DxfEntity[] {
+  expandBlockReferences(dxf: DxfData): DxfEntity[] {
     const expandedEntities: DxfEntity[] = [];
 
     const processEntity = (entity: any, transformMatrix?: Matrix4): void => {
@@ -427,8 +682,9 @@ export class DxfFileParser {
 
   private calculateBlockTransform(insert: any): Matrix4 {
     let matrix = this.createIdentityMatrix();
+    const position = insert.position || { x: 0, y: 0, z: 0 };
     matrix = this.combineMatrices(matrix, 
-      this.createTranslationMatrix(insert.position.x, insert.position.y, insert.position.z));
+      this.createTranslationMatrix(position.x, position.y, position.z));
     
     if (insert.rotation) {
       matrix = this.combineMatrices(matrix, 
@@ -436,8 +692,13 @@ export class DxfFileParser {
     }
     
     if (insert.scale) {
+      const scale = insert.scale;
       matrix = this.combineMatrices(matrix, 
-        this.createScaleMatrix(insert.scale.x, insert.scale.y, insert.scale.z));
+        this.createScaleMatrix(
+          scale.x || 1,
+          scale.y || 1,
+          scale.z || 1
+        ));
     }
     
     return matrix;
