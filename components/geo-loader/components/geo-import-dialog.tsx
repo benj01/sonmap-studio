@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'components/ui/dialog'
+import { Button } from 'components/ui/button'
+import { ScrollArea } from 'components/ui/scroll-area'
+import { Alert, AlertDescription } from 'components/ui/alert'
 import GeoLoader from '../index'
 import { LoaderResult } from 'types/geo'
 import { Info, AlertTriangle } from 'lucide-react'
@@ -27,7 +27,6 @@ export function GeoImportDialog({
   file,
   onImportComplete,
 }: GeoImportDialogProps) {
-  const [showLogs, setShowLogs] = useState(false)
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [hasErrors, setHasErrors] = useState(false)
 
@@ -94,74 +93,66 @@ export function GeoImportDialog({
   if (!file) return null;
 
   return (
-    <>
-      <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader className="flex flex-row items-center justify-between">
-            <DialogTitle>Import Geometry File</DialogTitle>
-            <div className="flex items-center gap-2">
-              {hasErrors && (
-                <Alert variant="destructive" className="py-2">
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>
-                    Errors occurred during import. Check details for more information.
-                  </AlertDescription>
-                </Alert>
-              )}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowLogs(true)}
-                title="Show Import Details"
-                className="h-8 w-8"
-              >
-                <Info className="h-4 w-4" />
-              </Button>
-            </div>
-          </DialogHeader>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-4xl">
+        <DialogHeader className="flex flex-row items-center justify-between">
+          <DialogTitle>Import Geometry File</DialogTitle>
+          <div className="flex items-center gap-2">
+            {hasErrors && (
+              <Alert variant="destructive" className="py-2">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertDescription>
+                  Errors occurred during import. Check logs below for more information.
+                </AlertDescription>
+              </Alert>
+            )}
+          </div>
+        </DialogHeader>
+        
+        <div className="space-y-4">
           <GeoLoader
             file={file}
             onLoad={handleImportComplete}
             onCancel={onClose}
             onLogsUpdate={handleLogsUpdate}
           />
-        </DialogContent>
-      </Dialog>
 
-      <Dialog open={showLogs} onOpenChange={setShowLogs}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Import Details</DialogTitle>
-          </DialogHeader>
-          <ScrollArea className="h-[400px] w-full rounded-md border p-4">
-            <div className="pr-4">
-              {logs.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No logs available yet...</p>
-              ) : (
-                <div className="space-y-1">
-                  {logs.map((log, index) => (
-                    <div
-                      key={index}
-                      className={`py-1 text-sm ${
-                        log.type === 'error'
-                          ? 'text-destructive'
-                          : log.type === 'warning'
-                          ? 'text-yellow-600'
-                          : 'text-foreground'
-                      }`}
-                    >
-                      <span className="text-muted-foreground">
-                        {log.timestamp.toLocaleTimeString()}{' '}
-                      </span>
-                      {log.message}
-                    </div>
-                  ))}
-                </div>
-              )}
+          {/* Inline logs section instead of separate dialog */}
+          <div className="border rounded-lg p-4">
+            <div className="flex items-center justify-between mb-2">
+              <h4 className="font-medium">Import Logs</h4>
+              <Info className="h-4 w-4 text-muted-foreground" />
             </div>
-          </ScrollArea>
-        </DialogContent>
-      </Dialog>
-    </>
+            <ScrollArea className="h-[200px] w-full rounded-md">
+              <div className="pr-4">
+                {logs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No logs available yet...</p>
+                ) : (
+                  <div className="space-y-1">
+                    {logs.map((log, index) => (
+                      <div
+                        key={index}
+                        className={`py-1 text-sm ${
+                          log.type === 'error'
+                            ? 'text-destructive'
+                            : log.type === 'warning'
+                            ? 'text-yellow-600'
+                            : 'text-foreground'
+                        }`}
+                      >
+                        <span className="text-muted-foreground">
+                          {log.timestamp.toLocaleTimeString()}{' '}
+                        </span>
+                        {log.message}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </ScrollArea>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -19,6 +19,8 @@ export class CoordinateTransformer {
   private fromSystem: string;
   private toSystem: string;
   private transformer: proj4.Converter;
+  private transformationAttempts: Map<string, number> = new Map();
+  private readonly MAX_ATTEMPTS = 3;
 
   constructor(fromSystem: string, toSystem: string) {
     this.fromSystem = fromSystem;
@@ -36,39 +38,59 @@ export class CoordinateTransformer {
     this.transformer = proj4(this.fromSystem, this.toSystem);
   }
 
-  private validatePoint(point: Point): void {
-    if (typeof point.x !== 'number' || !isFinite(point.x)) {
-      throw new Error(`Invalid x coordinate: ${point.x}`);
+  private validatePoint(point: Point): boolean {
+    return typeof point.x === 'number' && 
+           typeof point.y === 'number' && 
+           isFinite(point.x) && 
+           isFinite(point.y) &&
+           (point.z === undefined || (typeof point.z === 'number' && isFinite(point.z)));
+  }
+
+  private getPointKey(point: Point): string {
+    return `${point.x},${point.y}${point.z !== undefined ? `,${point.z}` : ''}`;
+  }
+
+  private checkTransformationAttempts(point: Point): boolean {
+    const key = this.getPointKey(point);
+    const attempts = this.transformationAttempts.get(key) || 0;
+    if (attempts >= this.MAX_ATTEMPTS) {
+      console.warn(`Skipping point after ${attempts} failed transformation attempts:`, point);
+      return false;
     }
-    if (typeof point.y !== 'number' || !isFinite(point.y)) {
-      throw new Error(`Invalid y coordinate: ${point.y}`);
-    }
-    if (point.z !== undefined && (typeof point.z !== 'number' || !isFinite(point.z))) {
-      throw new Error(`Invalid z coordinate: ${point.z}`);
-    }
+    this.transformationAttempts.set(key, attempts + 1);
+    return true;
   }
 
   // Transform a single point from the source CRS to the target CRS
-  transform(point: Point): Point {
+  transform(point: Point): Point | null {
     if (this.fromSystem === this.toSystem) {
-      return point; // No transformation needed
+      return this.validatePoint(point) ? point : null;
     }
 
     try {
-      this.validatePoint(point);
+      if (!this.validatePoint(point)) {
+        console.warn('Invalid point coordinates:', point);
+        return null;
+      }
+
+      if (!this.checkTransformationAttempts(point)) {
+        return null;
+      }
 
       const [x, y] = this.transformer.forward([point.x, point.y]);
       
-      // Validate transformed coordinates
       if (!isFinite(x) || !isFinite(y)) {
-        throw new Error('Transformation resulted in invalid coordinates');
+        console.warn('Transformation resulted in invalid coordinates:', { x, y });
+        return null;
       }
 
-      return { x, y, z: point.z }; // Z-coordinate remains unchanged
+      // Clear transformation attempts for successful transformation
+      this.transformationAttempts.delete(this.getPointKey(point));
+
+      return { x, y, z: point.z };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
       console.error('Transformation error:', error);
-      throw new Error(`Failed to transform point from ${this.fromSystem} to ${this.toSystem}: ${message}`);
+      return null;
     }
   }
 
@@ -78,24 +100,29 @@ export class CoordinateTransformer {
     minY: number;
     maxX: number;
     maxY: number;
-  } {
+  } | null {
     try {
-      // Validate bounds
       if (!isFinite(bounds.minX) || !isFinite(bounds.minY) ||
           !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
-        throw new Error('Invalid bounds coordinates');
+        console.warn('Invalid bounds coordinates:', bounds);
+        return null;
       }
 
       if (bounds.minX > bounds.maxX || bounds.minY > bounds.maxY) {
-        throw new Error('Invalid bounds: min values greater than max values');
+        console.warn('Invalid bounds: min values greater than max values:', bounds);
+        return null;
       }
 
       const transformedMin = this.transform({ x: bounds.minX, y: bounds.minY });
       const transformedMax = this.transform({ x: bounds.maxX, y: bounds.maxY });
 
+      if (!transformedMin || !transformedMax) {
+        console.warn('Failed to transform bounds');
+        return null;
+      }
+
       // Handle coordinate system specific bounds adjustments
       if (this.toSystem === COORDINATE_SYSTEMS.WGS84) {
-        // Ensure WGS84 bounds are within valid ranges
         return {
           minX: Math.max(transformedMin.x, -180),
           minY: Math.max(transformedMin.y, -90),
@@ -111,14 +138,16 @@ export class CoordinateTransformer {
         maxY: transformedMax.y,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
       console.error('Bounds transformation error:', error);
-      throw new Error(`Failed to transform bounds from ${this.fromSystem} to ${this.toSystem}: ${message}`);
+      return null;
     }
   }
 
-  static convertLV03ToLV95(point: Point): Point {
+  static convertLV03ToLV95(point: Point): Point | null {
     try {
+      if (!this.prototype.validatePoint(point)) {
+        return null;
+      }
       return {
         x: point.x + 2000000,
         y: point.y + 1000000,
@@ -126,12 +155,15 @@ export class CoordinateTransformer {
       };
     } catch (error) {
       console.error('LV03 to LV95 conversion error:', error);
-      throw new Error('Failed to convert coordinates from LV03 to LV95');
+      return null;
     }
   }
 
-  static convertLV95ToLV03(point: Point): Point {
+  static convertLV95ToLV03(point: Point): Point | null {
     try {
+      if (!this.prototype.validatePoint(point)) {
+        return null;
+      }
       return {
         x: point.x - 2000000,
         y: point.y - 1000000,
@@ -139,7 +171,7 @@ export class CoordinateTransformer {
       };
     } catch (error) {
       console.error('LV95 to LV03 conversion error:', error);
-      throw new Error('Failed to convert coordinates from LV95 to LV03');
+      return null;
     }
   }
 
@@ -154,18 +186,28 @@ export class CoordinateTransformer {
  * These functions help detect if a given set of points is likely in LV95 or LV03.
  */
 
+function isValidPoint(point: any): point is Point {
+  return point && 
+         typeof point.x === 'number' && 
+         typeof point.y === 'number' && 
+         isFinite(point.x) && 
+         isFinite(point.y);
+}
+
 function detectLV95Coordinates(points: Point[]): boolean {
   if (!Array.isArray(points) || points.length === 0) {
     return false;
   }
 
-  const sampleSize = Math.min(points.length, 10);
-  const sample = points.slice(0, sampleSize);
+  const validPoints = points.filter(isValidPoint);
+  if (validPoints.length === 0) {
+    return false;
+  }
+
+  const sampleSize = Math.min(validPoints.length, 10);
+  const sample = validPoints.slice(0, sampleSize);
 
   return sample.every(point => {
-    if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') {
-      return false;
-    }
     const isXInRange = point.x >= 2485000 && point.x <= 2835000;
     const isYInRange = point.y >= 1075000 && point.y <= 1295000;
     return isXInRange && isYInRange;
@@ -177,13 +219,15 @@ function detectLV03Coordinates(points: Point[]): boolean {
     return false;
   }
 
-  const sampleSize = Math.min(points.length, 10);
-  const sample = points.slice(0, sampleSize);
+  const validPoints = points.filter(isValidPoint);
+  if (validPoints.length === 0) {
+    return false;
+  }
+
+  const sampleSize = Math.min(validPoints.length, 10);
+  const sample = validPoints.slice(0, sampleSize);
 
   return sample.every(point => {
-    if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') {
-      return false;
-    }
     const isXInRange = point.x >= 485000 && point.x <= 835000;
     const isYInRange = point.y >= 75000 && point.y <= 295000;
     return isXInRange && isYInRange;
@@ -201,18 +245,21 @@ function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
       return COORDINATE_SYSTEMS.WGS84;
     }
 
-    if (detectLV95Coordinates(points)) {
+    const validPoints = points.filter(isValidPoint);
+    if (validPoints.length === 0) {
+      console.warn('No valid points found for coordinate system detection');
+      return COORDINATE_SYSTEMS.WGS84;
+    }
+
+    if (detectLV95Coordinates(validPoints)) {
       return COORDINATE_SYSTEMS.SWISS_LV95;
     }
-    if (detectLV03Coordinates(points)) {
+    if (detectLV03Coordinates(validPoints)) {
       return COORDINATE_SYSTEMS.SWISS_LV03;
     }
 
     // Check if coordinates might be in WGS84 range
-    const isWGS84Range = points.every(point => 
-      point && 
-      typeof point.x === 'number' && 
-      typeof point.y === 'number' &&
+    const isWGS84Range = validPoints.every(point => 
       point.x >= -180 && point.x <= 180 &&
       point.y >= -90 && point.y <= 90
     );

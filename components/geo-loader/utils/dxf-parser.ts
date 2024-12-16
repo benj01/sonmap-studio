@@ -22,7 +22,7 @@ interface Vector2 {
 }
 
 interface Vector3 extends Vector2 {
-  z: number;
+  z?: number;
 }
 
 // Base entity interface
@@ -211,6 +211,83 @@ export class DxfFileParser {
     return layers;
   }
 
+  private transformPoint(point: Vector3, matrix: Matrix4): Vector3 | null {
+    if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') {
+      console.warn('Invalid point coordinates:', point);
+      return null;
+    }
+    const [px, py, pz] = this.applyMatrix(matrix, [point.x, point.y, point.z ?? 0, 1]);
+    if (!isFinite(px) || !isFinite(py) || !isFinite(pz)) {
+      console.warn('Invalid transformation result:', { px, py, pz });
+      return null;
+    }
+    return { x: px, y: py, z: pz };
+  }
+
+  private transformEntity(entity: DxfEntity, matrix: Matrix4): DxfEntity | null {
+    try {
+      switch (entity.type) {
+        case 'POINT': {
+          const position = this.transformPoint(entity.position, matrix);
+          if (!position) return null;
+          return { ...entity, position };
+        }
+        case 'LINE': {
+          const start = this.transformPoint(entity.start, matrix);
+          const end = this.transformPoint(entity.end, matrix);
+          if (!start || !end) return null;
+          return { ...entity, start, end };
+        }
+        case 'POLYLINE':
+        case 'LWPOLYLINE': {
+          const vertices = entity.vertices
+            .map(v => this.transformPoint(v, matrix))
+            .filter((v): v is Vector3 => v !== null);
+          if (vertices.length < 2) return null;
+          return { ...entity, vertices };
+        }
+        case 'CIRCLE': {
+          const center = this.transformPoint(entity.center, matrix);
+          if (!center) return null;
+          const radius = entity.radius * this.getScaleFactor(matrix);
+          if (!isFinite(radius) || radius <= 0) return null;
+          return { ...entity, center, radius };
+        }
+        case 'ARC': {
+          const center = this.transformPoint(entity.center, matrix);
+          if (!center) return null;
+          const radius = entity.radius * this.getScaleFactor(matrix);
+          if (!isFinite(radius) || radius <= 0) return null;
+          const startAngle = this.transformAngle(entity.startAngle, matrix);
+          const endAngle = this.transformAngle(entity.endAngle, matrix);
+          if (!isFinite(startAngle) || !isFinite(endAngle)) return null;
+          return { ...entity, center, radius, startAngle, endAngle };
+        }
+        case 'ELLIPSE': {
+          const center = this.transformPoint(entity.center, matrix);
+          const majorAxis = this.transformVector(entity.majorAxis, matrix);
+          if (!center || !majorAxis) return null;
+          const startAngle = this.transformAngle(entity.startAngle, matrix);
+          const endAngle = this.transformAngle(entity.endAngle, matrix);
+          if (!isFinite(startAngle) || !isFinite(endAngle)) return null;
+          return {
+            ...entity,
+            center,
+            majorAxis,
+            minorAxisRatio: entity.minorAxisRatio,
+            startAngle,
+            endAngle
+          };
+        }
+        default:
+          return null;
+      }
+    } catch (error) {
+      console.warn('Error transforming entity:', error);
+      return null;
+    }
+  }
+
   expandBlockReferences(dxf: any): DxfEntity[] {
     const expandedEntities: DxfEntity[] = [];
 
@@ -247,7 +324,9 @@ export class DxfFileParser {
         const transformedEntity = transformMatrix 
           ? this.transformEntity(entity, transformMatrix)
           : entity;
-        expandedEntities.push(transformedEntity);
+        if (transformedEntity) {
+          expandedEntities.push(transformedEntity);
+        }
       }
     };
 
@@ -255,15 +334,7 @@ export class DxfFileParser {
     return expandedEntities;
   }
 
-  private transformPoint(point: Vector3, matrix: Matrix4): Vector3 {
-    if (point == null || point.x == null || point.y == null) {
-      console.warn('Skipping point transformation due to missing coordinates:', point);
-      return { x: 0, y: 0, z: 0 };
-    }
-    const [px, py, pz] = this.applyMatrix(matrix, [point.x, point.y, point.z ?? 0, 1]);
-    return { x: px, y: py, z: pz };
-  }
-
+  // Rest of the class implementation remains unchanged...
   private calculateBlockTransform(insert: any): Matrix4 {
     let matrix = this.createIdentityMatrix();
     matrix = this.combineMatrices(matrix, 
@@ -331,53 +402,6 @@ export class DxfFileParser {
     return result;
   }
 
-  private transformEntity(entity: DxfEntity, matrix: Matrix4): DxfEntity {
-    switch (entity.type) {
-      case 'POINT':
-        return {
-          ...entity,
-          position: this.transformPoint(entity.position, matrix)
-        };
-      case 'LINE':
-        return {
-          ...entity,
-          start: this.transformPoint(entity.start, matrix),
-          end: this.transformPoint(entity.end, matrix)
-        };
-      case 'POLYLINE':
-      case 'LWPOLYLINE':
-        return {
-          ...entity,
-          vertices: entity.vertices.map(v => this.transformPoint(v, matrix))
-        };
-      case 'CIRCLE':
-        return {
-          ...entity,
-          center: this.transformPoint(entity.center, matrix),
-          radius: entity.radius * this.getScaleFactor(matrix)
-        };
-      case 'ARC':
-        return {
-          ...entity,
-          center: this.transformPoint(entity.center, matrix),
-          radius: entity.radius * this.getScaleFactor(matrix),
-          startAngle: this.transformAngle(entity.startAngle, matrix),
-          endAngle: this.transformAngle(entity.endAngle, matrix)
-        };
-      case 'ELLIPSE':
-        return {
-          ...entity,
-          center: this.transformPoint(entity.center, matrix),
-          majorAxis: this.transformVector(entity.majorAxis, matrix),
-          minorAxisRatio: entity.minorAxisRatio,
-          startAngle: this.transformAngle(entity.startAngle, matrix),
-          endAngle: this.transformAngle(entity.endAngle, matrix)
-        };
-      default:
-        return entity;
-    }
-  }
-
   private applyMatrix(matrix: Matrix4, point: [number, number, number, number]): [number, number, number] {
     const result: [number, number, number, number] = [0, 0, 0, 0];
     for (let i = 0; i < 4; i++) {
@@ -405,9 +429,8 @@ export class DxfFileParser {
     return (angle + rotationDeg) % 360;
   }
 
-  private transformVector(vector: Vector3, matrix: Matrix4): Vector3 {
-    const [x, y, z] = this.applyMatrix(matrix, [vector.x, vector.y, vector.z, 0]);
-    return { x, y, z };
+  private transformVector(vector: Vector3, matrix: Matrix4): Vector3 | null {
+    return this.transformPoint(vector, matrix);
   }
 
   entityToGeoFeature(entity: DxfEntity): GeoFeature | null {

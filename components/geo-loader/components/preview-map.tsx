@@ -16,6 +16,43 @@ interface PreviewMapProps {
   visibleLayers?: string[];
 }
 
+type Coordinate = [number, number];
+type Ring = Coordinate[];
+
+const isValidCoordinate = (coord: any): coord is Coordinate => {
+  return Array.isArray(coord) && 
+         coord.length >= 2 && 
+         typeof coord[0] === 'number' && 
+         typeof coord[1] === 'number' &&
+         isFinite(coord[0]) && 
+         isFinite(coord[1]);
+};
+
+const isValidRing = (ring: any): ring is Ring => {
+  return Array.isArray(ring) && 
+         ring.length >= 4 && 
+         ring.every(isValidCoordinate);
+};
+
+const isValidGeometry = (geometry: any): boolean => {
+  if (!geometry || !geometry.type || !geometry.coordinates) return false;
+
+  switch (geometry.type) {
+    case 'Point':
+      return isValidCoordinate(geometry.coordinates);
+    case 'LineString':
+      return Array.isArray(geometry.coordinates) && 
+             geometry.coordinates.length >= 2 &&
+             geometry.coordinates.every(isValidCoordinate);
+    case 'Polygon':
+      return Array.isArray(geometry.coordinates) && 
+             geometry.coordinates.length > 0 &&
+             geometry.coordinates.every(isValidRing);
+    default:
+      return false;
+  }
+};
+
 export function PreviewMap({ 
   preview, 
   bounds, 
@@ -31,57 +68,59 @@ export function PreviewMap({
   });
 
   // Transform coordinates if needed
-  const transformCoordinates = (coordinates: number[], transformer: any): [number, number] => {
+  const transformCoordinates = (coordinates: number[], transformer: any): Coordinate | null => {
     try {
-      if (!Array.isArray(coordinates) || coordinates.length < 2) {
-        console.warn('Invalid coordinates:', coordinates);
-        return [0, 0];
+      if (!isValidCoordinate(coordinates)) {
+        return null;
       }
 
       const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
-      if (!transformed || typeof transformed.x !== 'number' || typeof transformed.y !== 'number') {
-        console.warn('Invalid transformation result:', transformed);
-        return coordinates as [number, number];
+      if (!transformed || typeof transformed.x !== 'number' || typeof transformed.y !== 'number' ||
+          !isFinite(transformed.x) || !isFinite(transformed.y)) {
+        return null;
       }
 
       return [transformed.x, transformed.y];
     } catch (error) {
       console.error('Error transforming coordinates:', error);
-      return coordinates as [number, number];
+      return null;
     }
   };
 
-  const transformGeometry = (geometry: Point | LineString | Polygon, transformer: any): Point | LineString | Polygon => {
-    if (!geometry || !geometry.type || !geometry.coordinates) {
-      console.warn('Invalid geometry:', geometry);
-      return geometry;
+  const transformGeometry = (geometry: Point | LineString | Polygon, transformer: any): Point | LineString | Polygon | null => {
+    if (!isValidGeometry(geometry)) {
+      return null;
     }
 
     try {
       switch (geometry.type) {
-        case 'Point':
-          return {
-            type: 'Point',
-            coordinates: transformCoordinates(geometry.coordinates, transformer)
-          };
-        case 'LineString':
-          return {
-            type: 'LineString',
-            coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, transformer))
-          };
-        case 'Polygon':
-          return {
-            type: 'Polygon',
-            coordinates: geometry.coordinates.map(ring => 
-              ring.map(coord => transformCoordinates(coord, transformer))
-            )
-          };
+        case 'Point': {
+          const coords = transformCoordinates(geometry.coordinates, transformer);
+          return coords ? { type: 'Point', coordinates: coords } : null;
+        }
+        case 'LineString': {
+          const coords = geometry.coordinates
+            .map(coord => transformCoordinates(coord, transformer))
+            .filter((coord): coord is Coordinate => coord !== null);
+          return coords.length >= 2 ? { type: 'LineString', coordinates: coords } : null;
+        }
+        case 'Polygon': {
+          const rings = geometry.coordinates
+            .map(ring => {
+              const coords = ring
+                .map(coord => transformCoordinates(coord, transformer))
+                .filter((coord): coord is Coordinate => coord !== null);
+              return coords.length >= 4 ? coords : null;
+            })
+            .filter((ring): ring is Ring => ring !== null);
+          return rings.length > 0 ? { type: 'Polygon', coordinates: rings } : null;
+        }
         default:
-          return geometry;
+          return null;
       }
     } catch (error) {
       console.error('Error transforming geometry:', error);
-      return geometry;
+      return null;
     }
   };
 
@@ -89,17 +128,20 @@ export function PreviewMap({
   const transformedFeatures = useMemo(() => {
     if (!preview?.features) return [];
 
-    let features = preview.features;
+    let features = preview.features.filter(f => isValidGeometry(f.geometry));
+    
     if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
       try {
-        console.debug('Transforming coordinates from', coordinateSystem, 'to WGS84');
         const transformer = createTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-        features = features.map(feature => ({
-          ...feature,
-          geometry: transformGeometry(feature.geometry, transformer)
-        }));
+        features = features
+          .map(feature => {
+            const transformedGeometry = transformGeometry(feature.geometry, transformer);
+            return transformedGeometry ? { ...feature, geometry: transformedGeometry } : null;
+          })
+          .filter((f): f is GeoFeature => f !== null);
       } catch (error) {
-        console.error('Error transforming coordinates:', error);
+        console.error('Error transforming features:', error);
+        return [];
       }
     }
     return features;
@@ -107,21 +149,12 @@ export function PreviewMap({
 
   // Memoize filtered features by visibility
   const { pointFeatures, lineFeatures, polygonFeatures } = useMemo(() => {
-    // Filter features by visible layers if specified, otherwise show all features
     const visibleFeatures = visibleLayers.length > 0
       ? transformedFeatures.filter(f => 
           f.properties?.layer && visibleLayers.includes(f.properties.layer)
         )
       : transformedFeatures;
 
-    // Log visibility info for debugging
-    console.debug('Feature visibility:', {
-      totalFeatures: transformedFeatures.length,
-      visibleFeatures: visibleFeatures.length,
-      visibleLayers
-    });
-
-    // Group features by geometry type
     return {
       pointFeatures: {
         type: 'FeatureCollection' as const,
@@ -139,68 +172,60 @@ export function PreviewMap({
   }, [transformedFeatures, visibleLayers]);
 
   useEffect(() => {
-    if (bounds) {
-      try {
-        // Transform bounds if needed
-        let transformedBounds = bounds;
-        if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-          console.debug('Transforming bounds from', coordinateSystem, 'to WGS84');
-          const transformer = createTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-          
-          try {
-            transformedBounds = transformer.transformBounds(bounds);
-          } catch (error) {
-            console.error('Error transforming bounds:', error);
-            // Use original bounds if transformation fails
-            transformedBounds = bounds;
+    if (!bounds) return;
+
+    try {
+      let transformedBounds = bounds;
+      if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        const transformer = createTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
+        try {
+          const result = transformer.transformBounds(bounds);
+          if (!result) {
+            console.warn('Failed to transform bounds');
+            return;
           }
-        }
-
-        // Validate bounds
-        if (!isFinite(transformedBounds.minX) || !isFinite(transformedBounds.minY) ||
-            !isFinite(transformedBounds.maxX) || !isFinite(transformedBounds.maxY)) {
-          console.warn('Invalid bounds:', transformedBounds);
+          transformedBounds = result;
+        } catch (error) {
+          console.error('Error transforming bounds:', error);
           return;
         }
-
-        // Calculate center
-        const center = {
-          lng: (transformedBounds.minX + transformedBounds.maxX) / 2,
-          lat: (transformedBounds.minY + transformedBounds.maxY) / 2
-        };
-
-        // Calculate zoom level based on bounds extent
-        const width = Math.abs(transformedBounds.maxX - transformedBounds.minX);
-        const height = Math.abs(transformedBounds.maxY - transformedBounds.minY);
-        const maxDimension = Math.max(width, height);
-        
-        // Adjust zoom calculation based on coordinate system
-        let zoom;
-        if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
-            coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
-          // For Swiss coordinates (in meters)
-          zoom = Math.floor(14 - Math.log2(maxDimension / 1000));
-        } else {
-          // For WGS84 coordinates (in degrees)
-          zoom = Math.floor(14 - Math.log2(maxDimension));
-        }
-
-        // Validate center coordinates
-        if (!isFinite(center.lng) || !isFinite(center.lat)) {
-          console.warn('Invalid center coordinates:', center);
-          return;
-        }
-
-        console.debug('Setting view state:', { center, zoom });
-        setViewState(prev => ({
-          ...prev,
-          longitude: center.lng,
-          latitude: center.lat,
-          zoom: Math.min(Math.max(zoom, 1), 20) // Clamp zoom between 1 and 20
-        }));
-      } catch (error) {
-        console.error('Error setting map view state:', error);
       }
+
+      if (!isFinite(transformedBounds.minX) || !isFinite(transformedBounds.minY) ||
+          !isFinite(transformedBounds.maxX) || !isFinite(transformedBounds.maxY)) {
+        console.warn('Invalid bounds:', transformedBounds);
+        return;
+      }
+
+      const center = {
+        lng: (transformedBounds.minX + transformedBounds.maxX) / 2,
+        lat: (transformedBounds.minY + transformedBounds.maxY) / 2
+      };
+
+      if (!isFinite(center.lng) || !isFinite(center.lat)) {
+        console.warn('Invalid center coordinates:', center);
+        return;
+      }
+
+      const width = Math.abs(transformedBounds.maxX - transformedBounds.minX);
+      const height = Math.abs(transformedBounds.maxY - transformedBounds.minY);
+      const maxDimension = Math.max(width, height);
+      
+      let zoom = coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
+                coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03
+        ? Math.floor(14 - Math.log2(maxDimension / 1000))
+        : Math.floor(14 - Math.log2(maxDimension));
+
+      zoom = Math.min(Math.max(zoom, 1), 20);
+
+      setViewState(prev => ({
+        ...prev,
+        longitude: center.lng,
+        latitude: center.lat,
+        zoom
+      }));
+    } catch (error) {
+      console.error('Error setting map view state:', error);
     }
   }, [bounds, coordinateSystem]);
 
@@ -208,7 +233,6 @@ export function PreviewMap({
     setViewState(evt.viewState);
   };
 
-  // Enhanced style configuration for different geometry types
   const layerStyles = {
     point: {
       type: 'circle',
@@ -248,7 +272,6 @@ export function PreviewMap({
 
   return (
     <div className="h-full w-full relative">
-      {/* Map container with lower z-index */}
       <div className="absolute inset-0 z-0">
         <Map
           {...viewState}
@@ -277,7 +300,6 @@ export function PreviewMap({
             </Source>
           )}
 
-          {/* Attribution with lower z-index */}
           <div className="absolute bottom-0 right-0 z-10">
             <AttributionControl
               compact={true}
