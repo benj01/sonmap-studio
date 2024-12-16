@@ -27,6 +27,11 @@ class DxfLoader implements GeoFileLoader {
       if (!entity) return;
 
       switch (entity.type) {
+        case '3DFACE':
+          if (Array.isArray(entity.vertices)) {
+            points.push(...entity.vertices);
+          }
+          break;
         case 'POINT':
           if (entity.position) {
             points.push(entity.position);
@@ -51,7 +56,13 @@ class DxfLoader implements GeoFileLoader {
           break;
       }
     });
-    return points;
+    return points.filter(point => 
+      point && 
+      typeof point.x === 'number' && 
+      typeof point.y === 'number' && 
+      isFinite(point.x) && 
+      isFinite(point.y)
+    );
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
@@ -164,6 +175,7 @@ class DxfLoader implements GeoFileLoader {
       const features = [];
       const featureTypes: Record<string, number> = {};
       const failedTransformations = new Set<string>();
+      const errors: Array<{type: string; message?: string; count: number}> = [];
 
       for (const entity of expandedEntities) {
         // Skip entities not in selected layers
@@ -203,6 +215,19 @@ class DxfLoader implements GeoFileLoader {
           // Count feature types
           const type = feature.geometry.type;
           featureTypes[type] = (featureTypes[type] || 0) + 1;
+        } else if (entity.type === '3DFACE') {
+          // Track 3DFACE conversion errors
+          const errorType = '3DFACE_CONVERSION';
+          const existingError = errors.find(e => e.type === errorType);
+          if (existingError) {
+            existingError.count++;
+          } else {
+            errors.push({
+              type: errorType,
+              message: 'Failed to convert 3DFACE entity to feature',
+              count: 1
+            });
+          }
         }
       }
 
@@ -224,7 +249,8 @@ class DxfLoader implements GeoFileLoader {
           pointCount: features.length,
           layerCount: layers.length,
           featureTypes,
-          failedTransformations: failedTransformations.size
+          failedTransformations: failedTransformations.size,
+          errors
         }
       };
     } catch (err) {

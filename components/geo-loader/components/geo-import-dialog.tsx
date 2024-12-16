@@ -30,59 +30,79 @@ export function GeoImportDialog({
   const [logs, setLogs] = useState<LogEntry[]>([])
   const [hasErrors, setHasErrors] = useState(false)
 
-  const addLog = (message: string, type: LogEntry['type'] = 'info') => {
-    setLogs(prev => [...prev, {
-      message,
-      type,
-      timestamp: new Date()
-    }]);
-    if (type === 'error') {
+  const addLogs = (newLogs: { message: string; type: LogEntry['type'] }[]) => {
+    const timestamp = new Date();
+    setLogs(prev => [
+      ...prev,
+      ...newLogs.map(log => ({
+        ...log,
+        timestamp
+      }))
+    ]);
+    
+    // Only set hasErrors if there are error type logs
+    if (newLogs.some(log => log.type === 'error')) {
       setHasErrors(true);
     }
   };
 
   const handleLogsUpdate = (messages: string[]) => {
-    messages.forEach(message => {
-      // Detect message type based on content
-      if (message.toLowerCase().includes('error')) {
-        addLog(message, 'error');
-      } else if (message.toLowerCase().includes('warn')) {
-        addLog(message, 'warning');
-      } else {
-        addLog(message, 'info');
-      }
-    });
+    const newLogs = messages.map(message => ({
+      message,
+      type: message.toLowerCase().includes('error') ? 'error' as const :
+            message.toLowerCase().includes('warn') ? 'warning' as const : 
+            'info' as const
+    }));
+    addLogs(newLogs);
   };
 
   const handleImportComplete = (result: LoaderResult) => {
+    const importLogs = [];
+
     // Log coordinate system information
     if (result.coordinateSystem) {
       if (result.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        addLog(`Transformed coordinates from ${result.coordinateSystem} to ${COORDINATE_SYSTEMS.WGS84}`, 'info');
+        importLogs.push({
+          message: `Transformed coordinates from ${result.coordinateSystem} to ${COORDINATE_SYSTEMS.WGS84}`,
+          type: 'info' as const
+        });
       } else {
-        addLog(`Using coordinate system: ${result.coordinateSystem}`, 'info');
+        importLogs.push({
+          message: `Using coordinate system: ${result.coordinateSystem}`,
+          type: 'info' as const
+        });
       }
     }
 
     // Log feature statistics
     if (result.statistics) {
-      addLog(`Imported ${result.statistics.pointCount} features`, 'info');
+      importLogs.push({
+        message: `Imported ${result.statistics.pointCount} features`,
+        type: 'info' as const
+      });
+      
       if (result.statistics.layerCount) {
-        addLog(`Found ${result.statistics.layerCount} layers`, 'info');
+        importLogs.push({
+          message: `Found ${result.statistics.layerCount} layers`,
+          type: 'info' as const
+        });
       }
       
       // Log feature types
       Object.entries(result.statistics.featureTypes).forEach(([type, count]) => {
-        addLog(`- ${count} ${type} features`, 'info');
+        importLogs.push({
+          message: `- ${count} ${type} features`,
+          type: 'info' as const
+        });
       });
 
       // Log transformation failures if any
       if (result.statistics.failedTransformations) {
         const failureCount = result.statistics.failedTransformations;
-        addLog(
-          `Warning: ${failureCount} feature${failureCount > 1 ? 's' : ''} failed coordinate transformation`,
-          'warning'
-        );
+        importLogs.push({
+          message: `Warning: ${failureCount} feature${failureCount > 1 ? 's' : ''} failed coordinate transformation`,
+          type: 'warning' as const
+        });
       }
 
       // Log detailed errors if available
@@ -91,7 +111,10 @@ export function GeoImportDialog({
           const message = error.message ? 
             `${error.type}: ${error.message} (${error.count} occurrence${error.count > 1 ? 's' : ''})` :
             `${error.type}: ${error.count} occurrence${error.count > 1 ? 's' : ''}`;
-          addLog(message, 'error');
+          importLogs.push({
+            message,
+            type: 'error' as const
+          });
         });
       }
     }
@@ -102,7 +125,10 @@ export function GeoImportDialog({
       const uniqueErrors = new Set(transformErrors.map(f => f.properties._transformError));
       uniqueErrors.forEach(error => {
         const count = transformErrors.filter(f => f.properties._transformError === error).length;
-        addLog(`Warning: ${error} (${count} features affected)`, 'warning');
+        importLogs.push({
+          message: `Warning: ${error} (${count} features affected)`,
+          type: 'warning' as const
+        });
       });
     }
 
@@ -112,8 +138,14 @@ export function GeoImportDialog({
       const errorCount = parserErrors.reduce((sum, f) => 
         sum + (Array.isArray(f.properties._errors) ? f.properties._errors.length : 1), 0
       );
-      addLog(`Warning: ${errorCount} parsing errors occurred in ${parserErrors.length} features`, 'warning');
+      importLogs.push({
+        message: `Warning: ${errorCount} parsing errors occurred in ${parserErrors.length} features`,
+        type: 'warning' as const
+      });
     }
+
+    // Batch update all logs at once
+    addLogs(importLogs);
 
     onImportComplete(result);
     // Don't close dialog if there are errors or warnings that need attention
