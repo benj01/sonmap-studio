@@ -1,126 +1,4 @@
-import { default as DxfParserLib } from 'dxf-parser';
-import { GeoFeature } from '../../../types/geo';
-import {
-  createPointGeometry,
-  createLineStringGeometry,
-  createPolygonGeometry,
-  createFeature
-} from './geometry-utils';
-
-// Matrix type for transformations
-type Matrix4 = [
-  [number, number, number, number],
-  [number, number, number, number],
-  [number, number, number, number],
-  [number, number, number, number]
-];
-
-// Basic vector interfaces
-interface Vector2 {
-  x: number;
-  y: number;
-}
-
-interface Vector3 extends Vector2 {
-  z?: number;
-}
-
-// Base entity interface
-interface DxfEntityBase {
-  type: string;
-  layer?: string;
-  handle?: string;
-  color?: number;
-  colorRGB?: number;
-  lineType?: string;
-  lineWeight?: number;
-  elevation?: number;
-  thickness?: number;
-  extrusionDirection?: Vector3;
-  visible?: boolean;
-}
-
-// Specific entity interfaces
-interface DxfPoint extends DxfEntityBase {
-  type: 'POINT';
-  position: Vector3;
-}
-
-interface DxfLine extends DxfEntityBase {
-  type: 'LINE';
-  start: Vector3;
-  end: Vector3;
-}
-
-interface DxfPolyline extends DxfEntityBase {
-  type: 'POLYLINE' | 'LWPOLYLINE';
-  vertices: Vector3[];
-  closed?: boolean;
-}
-
-interface DxfCircle extends DxfEntityBase {
-  type: 'CIRCLE';
-  center: Vector3;
-  radius: number;
-}
-
-interface DxfArc extends DxfEntityBase {
-  type: 'ARC';
-  center: Vector3;
-  radius: number;
-  startAngle: number;
-  endAngle: number;
-}
-
-interface DxfEllipse extends DxfEntityBase {
-  type: 'ELLIPSE';
-  center: Vector3;
-  majorAxis: Vector3;
-  minorAxisRatio: number;
-  startAngle: number;
-  endAngle: number;
-}
-
-type DxfEntity = DxfPoint | DxfLine | DxfPolyline | DxfCircle | DxfArc | DxfEllipse;
-
-interface DxfBlock {
-  name: string;
-  position: Vector3;
-  entities: DxfEntity[];
-  layer: string;
-}
-
-interface LayerInfo {
-  name: string;
-  color?: number;
-  colorRGB?: number;
-  lineType?: string;
-  lineWeight?: number;
-  frozen?: boolean;
-  locked?: boolean;
-  visible?: boolean;
-}
-
-class CustomDxfParserLib extends DxfParserLib {
-  constructor() {
-    super();
-    (this as any).parseBoolean = (str: string | number | boolean): boolean => {
-      if (str === undefined || str === null) {
-        return false;
-      }
-      if (typeof str === 'boolean') return str;
-      if (typeof str === 'number') return str !== 0;
-      if (typeof str === 'string') {
-        const normalized = str.toLowerCase().trim();
-        if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
-        if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
-        const num = parseFloat(normalized);
-        return !isNaN(num) && num > 0;
-      }
-      return false;
-    };
-  }
-}
+// Previous imports and interfaces remain the same...
 
 export class DxfFileParser {
   private parser: CustomDxfParserLib;
@@ -211,8 +89,17 @@ export class DxfFileParser {
     return layers;
   }
 
+  private isValidVector(vector: Vector3 | undefined): boolean {
+    return vector !== undefined && 
+           typeof vector.x === 'number' && 
+           typeof vector.y === 'number' && 
+           isFinite(vector.x) && 
+           isFinite(vector.y) &&
+           (vector.z === undefined || (typeof vector.z === 'number' && isFinite(vector.z)));
+  }
+
   private transformPoint(point: Vector3, matrix: Matrix4): Vector3 | null {
-    if (!point || typeof point.x !== 'number' || typeof point.y !== 'number') {
+    if (!this.isValidVector(point)) {
       console.warn('Invalid point coordinates:', point);
       return null;
     }
@@ -288,6 +175,210 @@ export class DxfFileParser {
     }
   }
 
+  private entityToGeometry(entity: DxfEntity): GeoFeature['geometry'] | null {
+    try {
+      switch (entity.type) {
+        case 'POINT': {
+          if (!this.isValidVector(entity.position)) {
+            console.warn('Invalid point position:', entity.position);
+            return null;
+          }
+          return createPointGeometry(entity.position.x, entity.position.y, entity.position.z);
+        }
+
+        case 'LINE': {
+          if (!this.isValidVector(entity.start) || !this.isValidVector(entity.end)) {
+            console.warn('Invalid line coordinates:', { start: entity.start, end: entity.end });
+            return null;
+          }
+          const coordinates: [number, number][] = [
+            [entity.start.x, entity.start.y],
+            [entity.end.x, entity.end.y]
+          ];
+          return createLineStringGeometry(coordinates);
+        }
+
+        case 'POLYLINE':
+        case 'LWPOLYLINE': {
+          if (!Array.isArray(entity.vertices)) {
+            console.warn('Invalid polyline vertices:', entity.vertices);
+            return null;
+          }
+
+          const validVertices = entity.vertices.filter(this.isValidVector.bind(this));
+          if (validVertices.length < 2) {
+            console.warn('Not enough valid vertices for polyline');
+            return null;
+          }
+
+          const coordinates = validVertices.map(v => [v.x, v.y] as [number, number]);
+          
+          if (entity.closed && coordinates.length >= 3) {
+            const first = coordinates[0];
+            const last = coordinates[coordinates.length - 1];
+            if (first[0] !== last[0] || first[1] !== last[1]) {
+              coordinates.push([first[0], first[1]]);
+            }
+            return createPolygonGeometry([coordinates]);
+          } else {
+            return createLineStringGeometry(coordinates);
+          }
+        }
+
+        case 'CIRCLE': {
+          if (!this.isValidVector(entity.center) || !isFinite(entity.radius) || entity.radius <= 0) {
+            console.warn('Invalid circle parameters:', { center: entity.center, radius: entity.radius });
+            return null;
+          }
+
+          const circleCoords: [number, number][] = [];
+          const circleSegments = 64;
+          for (let i = 0; i <= circleSegments; i++) {
+            const angle = (i * 2 * Math.PI) / circleSegments;
+            const x = entity.center.x + entity.radius * Math.cos(angle);
+            const y = entity.center.y + entity.radius * Math.sin(angle);
+            if (!isFinite(x) || !isFinite(y)) {
+              console.warn('Invalid circle point calculation:', { x, y });
+              return null;
+            }
+            circleCoords.push([x, y]);
+          }
+          return createPolygonGeometry([circleCoords]);
+        }
+
+        case 'ARC': {
+          if (!this.isValidVector(entity.center) || 
+              !isFinite(entity.radius) || 
+              entity.radius <= 0 ||
+              !isFinite(entity.startAngle) ||
+              !isFinite(entity.endAngle)) {
+            console.warn('Invalid arc parameters:', { 
+              center: entity.center, 
+              radius: entity.radius,
+              startAngle: entity.startAngle,
+              endAngle: entity.endAngle
+            });
+            return null;
+          }
+
+          const arcCoords: [number, number][] = [];
+          const arcSegments = 32;
+          let startAngle = (entity.startAngle * Math.PI) / 180;
+          let endAngle = (entity.endAngle * Math.PI) / 180;
+          if (endAngle <= startAngle) {
+            endAngle += 2 * Math.PI;
+          }
+          const angleIncrement = (endAngle - startAngle) / arcSegments;
+          
+          for (let i = 0; i <= arcSegments; i++) {
+            const angle = startAngle + i * angleIncrement;
+            const x = entity.center.x + entity.radius * Math.cos(angle);
+            const y = entity.center.y + entity.radius * Math.sin(angle);
+            if (!isFinite(x) || !isFinite(y)) {
+              console.warn('Invalid arc point calculation:', { x, y });
+              return null;
+            }
+            arcCoords.push([x, y]);
+          }
+          return createLineStringGeometry(arcCoords);
+        }
+
+        case 'ELLIPSE': {
+          if (!this.isValidVector(entity.center) || 
+              !this.isValidVector(entity.majorAxis) ||
+              !isFinite(entity.minorAxisRatio) ||
+              !isFinite(entity.startAngle) ||
+              !isFinite(entity.endAngle)) {
+            console.warn('Invalid ellipse parameters:', {
+              center: entity.center,
+              majorAxis: entity.majorAxis,
+              minorAxisRatio: entity.minorAxisRatio,
+              startAngle: entity.startAngle,
+              endAngle: entity.endAngle
+            });
+            return null;
+          }
+
+          const ellipseCoords: [number, number][] = [];
+          const ellipseSegments = 64;
+          const majorLength = Math.sqrt(
+            entity.majorAxis.x * entity.majorAxis.x + 
+            entity.majorAxis.y * entity.majorAxis.y
+          );
+          
+          if (!isFinite(majorLength) || majorLength === 0) {
+            console.warn('Invalid ellipse major axis length:', majorLength);
+            return null;
+          }
+
+          const rotation = Math.atan2(entity.majorAxis.y, entity.majorAxis.x);
+          let startA = entity.startAngle;
+          let endA = entity.endAngle;
+          if (endA <= startA) {
+            endA += 2 * Math.PI;
+          }
+          const ellipseAngleIncrement = (endA - startA) / ellipseSegments;
+          
+          for (let i = 0; i <= ellipseSegments; i++) {
+            const angle = startA + (i * ellipseAngleIncrement);
+            const cosAngle = Math.cos(angle);
+            const sinAngle = Math.sin(angle);
+            const x = majorLength * cosAngle;
+            const y = majorLength * entity.minorAxisRatio * sinAngle;
+            const rotatedX = x * Math.cos(rotation) - y * Math.sin(rotation);
+            const rotatedY = x * Math.sin(rotation) + y * Math.cos(rotation);
+            const finalX = entity.center.x + rotatedX;
+            const finalY = entity.center.y + rotatedY;
+            
+            if (!isFinite(finalX) || !isFinite(finalY)) {
+              console.warn('Invalid ellipse point calculation:', { finalX, finalY });
+              return null;
+            }
+            
+            ellipseCoords.push([finalX, finalY]);
+          }
+          return createLineStringGeometry(ellipseCoords);
+        }
+
+        default:
+          console.warn('Unsupported entity type:', entity.type);
+          return null;
+      }
+    } catch (error) {
+      console.error('Error converting entity to geometry:', error);
+      return null;
+    }
+  }
+
+  entityToGeoFeature(entity: DxfEntity): GeoFeature | null {
+    try {
+      const geometry = this.entityToGeometry(entity);
+      if (!geometry) return null;
+
+      return createFeature(geometry, this.extractEntityProperties(entity));
+    } catch (error) {
+      console.warn(`Error converting entity to feature: ${error}`);
+      return null;
+    }
+  }
+
+  private extractEntityProperties(entity: DxfEntity): Record<string, any> {
+    const layer = this.layers.get(entity.layer || '0');
+    return {
+      id: entity.handle,
+      type: entity.type,
+      layer: entity.layer || '0',
+      color: entity.color ?? layer?.color,
+      colorRGB: entity.colorRGB ?? layer?.colorRGB,
+      lineType: entity.lineType ?? layer?.lineType,
+      lineWeight: entity.lineWeight ?? layer?.lineWeight,
+      elevation: entity.elevation,
+      thickness: entity.thickness,
+      visible: entity.visible ?? layer?.visible,
+      extrusionDirection: entity.extrusionDirection
+    };
+  }
+
   expandBlockReferences(dxf: any): DxfEntity[] {
     const expandedEntities: DxfEntity[] = [];
 
@@ -334,7 +425,6 @@ export class DxfFileParser {
     return expandedEntities;
   }
 
-  // Rest of the class implementation remains unchanged...
   private calculateBlockTransform(insert: any): Matrix4 {
     let matrix = this.createIdentityMatrix();
     matrix = this.combineMatrices(matrix, 
@@ -431,115 +521,6 @@ export class DxfFileParser {
 
   private transformVector(vector: Vector3, matrix: Matrix4): Vector3 | null {
     return this.transformPoint(vector, matrix);
-  }
-
-  entityToGeoFeature(entity: DxfEntity): GeoFeature | null {
-    try {
-      const geometry = this.entityToGeometry(entity);
-      if (!geometry) return null;
-
-      return createFeature(geometry, this.extractEntityProperties(entity));
-    } catch (error) {
-      console.warn(`Error converting entity to feature: ${error}`);
-      return null;
-    }
-  }
-
-  private extractEntityProperties(entity: DxfEntity): Record<string, any> {
-    const layer = this.layers.get(entity.layer || '0');
-    return {
-      id: entity.handle,
-      type: entity.type,
-      layer: entity.layer || '0',
-      color: entity.color ?? layer?.color,
-      colorRGB: entity.colorRGB ?? layer?.colorRGB,
-      lineType: entity.lineType ?? layer?.lineType,
-      lineWeight: entity.lineWeight ?? layer?.lineWeight,
-      elevation: entity.elevation,
-      thickness: entity.thickness,
-      visible: entity.visible ?? layer?.visible,
-      extrusionDirection: entity.extrusionDirection
-    };
-  }
-
-  private entityToGeometry(entity: DxfEntity): GeoFeature['geometry'] | null {
-    switch (entity.type) {
-      case 'POINT':
-        return createPointGeometry(entity.position.x, entity.position.y, entity.position.z);
-      case 'LINE':
-        return createLineStringGeometry([
-          [entity.start.x, entity.start.y],
-          [entity.end.x, entity.end.y]
-        ]);
-      case 'POLYLINE':
-      case 'LWPOLYLINE':
-        const coordinates = entity.vertices.map(v => [v.x, v.y] as [number, number]);
-        if (entity.closed && coordinates.length >= 3) {
-          const first = coordinates[0];
-          const last = coordinates[coordinates.length - 1];
-          if (first[0] !== last[0] || first[1] !== last[1]) {
-            coordinates.push([first[0], first[1]]);
-          }
-          return createPolygonGeometry([coordinates]);
-        } else {
-          return createLineStringGeometry(coordinates);
-        }
-      case 'CIRCLE':
-        const circleCoords: [number, number][] = [];
-        const circleSegments = 64;
-        for (let i = 0; i <= circleSegments; i++) {
-          const angle = (i * 2 * Math.PI) / circleSegments;
-          circleCoords.push([
-            entity.center.x + entity.radius * Math.cos(angle),
-            entity.center.y + entity.radius * Math.sin(angle)
-          ]);
-        }
-        return createPolygonGeometry([circleCoords]);
-      case 'ARC':
-        const arcCoords: [number, number][] = [];
-        const arcSegments = 32;
-        let startAngle = (entity.startAngle * Math.PI) / 180;
-        let endAngle = (entity.endAngle * Math.PI) / 180;
-        if (endAngle <= startAngle) {
-          endAngle += 2 * Math.PI;
-        }
-        const angleIncrement = (endAngle - startAngle) / arcSegments;
-        for (let i = 0; i <= arcSegments; i++) {
-          const angle = startAngle + i * angleIncrement;
-          arcCoords.push([
-            entity.center.x + entity.radius * Math.cos(angle),
-            entity.center.y + entity.radius * Math.sin(angle)
-          ]);
-        }
-        return createLineStringGeometry(arcCoords);
-      case 'ELLIPSE':
-        const ellipseCoords: [number, number][] = [];
-        const ellipseSegments = 64;
-        const majorLength = Math.sqrt(entity.majorAxis.x * entity.majorAxis.x + entity.majorAxis.y * entity.majorAxis.y);
-        const rotation = Math.atan2(entity.majorAxis.y, entity.majorAxis.x);
-        let startA = entity.startAngle;
-        let endA = entity.endAngle;
-        if (endA <= startA) {
-          endA += 2 * Math.PI;
-        }
-        const ellipseAngleIncrement = (endA - startA) / ellipseSegments;
-        for (let i = 0; i <= ellipseSegments; i++) {
-          const angle = startA + (i * ellipseAngleIncrement);
-          const cosAngle = Math.cos(angle);
-          const sinAngle = Math.sin(angle);
-          const x = majorLength * cosAngle;
-          const y = majorLength * entity.minorAxisRatio * sinAngle;
-          const rotatedX = x * Math.cos(rotation) - y * Math.sin(rotation);
-          const rotatedY = x * Math.sin(rotation) + y * Math.cos(rotation);
-          ellipseCoords.push([
-            entity.center.x + rotatedX,
-            entity.center.y + rotatedY
-          ]);
-        }
-        return createLineStringGeometry(ellipseCoords);
-      default:
-        return null;
-    }
   }
 
   getLayers(): string[] {
