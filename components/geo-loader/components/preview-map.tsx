@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import Map, { Source, Layer, ViewStateChangeEvent, AttributionControl } from 'react-map-gl';
 import { COORDINATE_SYSTEMS, createTransformer } from '../utils/coordinate-systems';
 import { GeoFeatureCollection, GeoFeature, Point, LineString, Polygon } from '../../../types/geo';
+import 'mapbox-gl/dist/mapbox-gl.css';
 
 interface PreviewMapProps {
   preview: GeoFeatureCollection;
@@ -32,7 +33,17 @@ export function PreviewMap({
   // Transform coordinates if needed
   const transformCoordinates = (coordinates: number[], transformer: any): [number, number] => {
     try {
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        console.warn('Invalid coordinates:', coordinates);
+        return [0, 0];
+      }
+
       const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
+      if (!transformed || typeof transformed.x !== 'number' || typeof transformed.y !== 'number') {
+        console.warn('Invalid transformation result:', transformed);
+        return coordinates as [number, number];
+      }
+
       return [transformed.x, transformed.y];
     } catch (error) {
       console.error('Error transforming coordinates:', error);
@@ -41,6 +52,11 @@ export function PreviewMap({
   };
 
   const transformGeometry = (geometry: Point | LineString | Polygon, transformer: any): Point | LineString | Polygon => {
+    if (!geometry || !geometry.type || !geometry.coordinates) {
+      console.warn('Invalid geometry:', geometry);
+      return geometry;
+    }
+
     try {
       switch (geometry.type) {
         case 'Point':
@@ -130,7 +146,21 @@ export function PreviewMap({
         if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
           console.debug('Transforming bounds from', coordinateSystem, 'to WGS84');
           const transformer = createTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-          transformedBounds = transformer.transformBounds(bounds);
+          
+          try {
+            transformedBounds = transformer.transformBounds(bounds);
+          } catch (error) {
+            console.error('Error transforming bounds:', error);
+            // Use original bounds if transformation fails
+            transformedBounds = bounds;
+          }
+        }
+
+        // Validate bounds
+        if (!isFinite(transformedBounds.minX) || !isFinite(transformedBounds.minY) ||
+            !isFinite(transformedBounds.maxX) || !isFinite(transformedBounds.maxY)) {
+          console.warn('Invalid bounds:', transformedBounds);
+          return;
         }
 
         // Calculate center
@@ -146,12 +176,19 @@ export function PreviewMap({
         
         // Adjust zoom calculation based on coordinate system
         let zoom;
-        if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+        if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
+            coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
           // For Swiss coordinates (in meters)
           zoom = Math.floor(14 - Math.log2(maxDimension / 1000));
         } else {
           // For WGS84 coordinates (in degrees)
           zoom = Math.floor(14 - Math.log2(maxDimension));
+        }
+
+        // Validate center coordinates
+        if (!isFinite(center.lng) || !isFinite(center.lat)) {
+          console.warn('Invalid center coordinates:', center);
+          return;
         }
 
         console.debug('Setting view state:', { center, zoom });

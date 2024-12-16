@@ -2,6 +2,7 @@ import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, AnalyzeResult }
 import { CoordinateTransformer } from '../utils/coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 import { createShapefileParser } from '../utils/shapefile-parser';
+import { suggestCoordinateSystem } from '../utils/coordinate-utils';
 
 const PREVIEW_CHUNK_SIZE = 100;
 const LOAD_CHUNK_SIZE = 1000;
@@ -35,13 +36,25 @@ class ShapefileLoader implements GeoFileLoader {
   private async readPRJFile(prjFile: File): Promise<string | undefined> {
     try {
       const text = await prjFile.text();
-      // TODO: Add proper WKT projection parsing
-      // For now, just check for common projection strings
-      if (text.includes('CH1903+')) {
-        return COORDINATE_SYSTEMS.SWISS_LV95;
-      } else if (text.includes('CH1903')) {
-        return COORDINATE_SYSTEMS.SWISS_LV03;
+      // Common Swiss projection identifiers
+      const projectionMap: Record<string, string> = {
+        'CH1903+': COORDINATE_SYSTEMS.SWISS_LV95,
+        'CH1903': COORDINATE_SYSTEMS.SWISS_LV03,
+        'EPSG:2056': COORDINATE_SYSTEMS.SWISS_LV95,
+        'EPSG:21781': COORDINATE_SYSTEMS.SWISS_LV03,
+        'PROJCS["CH1903+': COORDINATE_SYSTEMS.SWISS_LV95,
+        'PROJCS["CH1903': COORDINATE_SYSTEMS.SWISS_LV03
+      };
+
+      // Check for known projection strings
+      for (const [key, value] of Object.entries(projectionMap)) {
+        if (text.includes(key)) {
+          console.debug('Detected coordinate system from PRJ:', value);
+          return value;
+        }
       }
+
+      console.debug('Unknown projection in PRJ file:', text);
       return undefined;
     } catch (err) {
       console.warn('Failed to parse PRJ file:', err);
@@ -70,7 +83,7 @@ class ShapefileLoader implements GeoFileLoader {
       const shpBuffer = await file.arrayBuffer();
       const header = await this.parser.readShapefileHeader(shpBuffer);
       
-      // If no coordinate system was found in PRJ, detect it from some sample features
+      // If no coordinate system was found in PRJ, detect it from sample features
       if (!coordinateSystem) {
         const sampleFeatures: GeoFeature[] = [];
         for await (const feature of this.parser.streamFeatures(shpBuffer, header)) {
@@ -84,7 +97,9 @@ class ShapefileLoader implements GeoFileLoader {
             const coords = f.geometry.coordinates as [number, number];
             return { x: coords[0], y: coords[1] };
           });
-        coordinateSystem = COORDINATE_SYSTEMS.WGS84;
+
+        coordinateSystem = suggestCoordinateSystem(samplePoints);
+        console.debug('Detected coordinate system from sample points:', coordinateSystem);
       }
       
       // Read DBF header for attribute information
@@ -100,15 +115,27 @@ class ShapefileLoader implements GeoFileLoader {
         if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
       }
 
+      // Transform bounds if needed
+      let bounds = {
+        minX: header.bounds.xMin,
+        minY: header.bounds.yMin,
+        maxX: header.bounds.xMax,
+        maxY: header.bounds.yMax
+      };
+
+      if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        try {
+          const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
+          bounds = transformer.transformBounds(bounds);
+        } catch (error) {
+          console.warn('Failed to transform bounds:', error);
+        }
+      }
+
       return {
         layers: ['default'],
         coordinateSystem: coordinateSystem || COORDINATE_SYSTEMS.WGS84,
-        bounds: {
-          minX: header.bounds.xMin,
-          minY: header.bounds.yMin,
-          maxX: header.bounds.xMax,
-          maxY: header.bounds.yMax
-        },
+        bounds,
         preview: {
           type: 'FeatureCollection',
           features: previewFeatures
@@ -117,7 +144,7 @@ class ShapefileLoader implements GeoFileLoader {
     } catch (err) {
       const error = err as Error;
       console.error('Shapefile analysis error:', error);
-      throw new Error(error.message || 'Failed to analyze shapefile');
+      throw new Error(`Failed to analyze shapefile: ${error.message}`);
     }
   }
 
@@ -147,24 +174,54 @@ class ShapefileLoader implements GeoFileLoader {
       const features: GeoFeature[] = [];
       const featureTypes: Record<string, number> = {};
       let count = 0;
+      let errorCount = 0;
       
-      for await (const feature of this.parser.streamFeatures(shpBuffer, header)) {
-        // Add attributes if available
-        if (attributeData[count + 1]) {
-          feature.properties = { ...feature.properties, ...attributeData[count + 1] };
+      let transformer: CoordinateTransformer | null = null;
+      if (sourceSystem && sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
+        try {
+          transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
+        } catch (error) {
+          console.warn('Failed to create coordinate transformer:', error);
         }
-        
-        features.push(feature);
-        
-        // Count feature types
-        const type = feature.geometry.type;
-        featureTypes[type] = (featureTypes[type] || 0) + 1;
-        
-        count++;
-        if (count % LOAD_CHUNK_SIZE === 0) {
-          this.emitProgress(count);
-          // Allow UI to update
-          await new Promise(resolve => setTimeout(resolve, 0));
+      }
+
+      for await (const feature of this.parser.streamFeatures(shpBuffer, header)) {
+        try {
+          // Add attributes if available
+          if (attributeData[count + 1]) {
+            feature.properties = { ...feature.properties, ...attributeData[count + 1] };
+          }
+
+          // Transform coordinates if needed
+          if (transformer) {
+            try {
+              const coords = feature.geometry.coordinates;
+              if (Array.isArray(coords)) {
+                feature.geometry.coordinates = this.transformCoordinates(coords, transformer);
+              }
+            } catch (transformError) {
+              console.warn(`Failed to transform feature ${count + 1}:`, transformError);
+              feature.properties._transformError = transformError instanceof Error ? 
+                transformError.message : 'Unknown transformation error';
+              errorCount++;
+            }
+          }
+          
+          features.push(feature);
+          
+          // Count feature types
+          const type = feature.geometry.type;
+          featureTypes[type] = (featureTypes[type] || 0) + 1;
+          
+          count++;
+          if (count % LOAD_CHUNK_SIZE === 0) {
+            this.emitProgress(count);
+            // Allow UI to update
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
+        } catch (error) {
+          console.warn(`Failed to process feature ${count + 1}:`, error);
+          errorCount++;
         }
       }
       
@@ -178,9 +235,12 @@ class ShapefileLoader implements GeoFileLoader {
         maxY: header.bounds.yMax
       };
 
-      if (sourceSystem && sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
-        const transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
-        bounds = transformer.transformBounds(bounds);
+      if (transformer) {
+        try {
+          bounds = transformer.transformBounds(bounds);
+        } catch (error) {
+          console.warn('Failed to transform bounds:', error);
+        }
       }
 
       // Store errors in feature properties for debugging
@@ -202,14 +262,30 @@ class ShapefileLoader implements GeoFileLoader {
         statistics: {
           pointCount: features.length,
           layerCount: 1,
-          featureTypes,
+          featureTypes
         }
       };
     } catch (err) {
       const error = err as Error;
       console.error('Shapefile loading error:', error);
-      throw new Error(error.message || 'Failed to load shapefile');
+      throw new Error(`Failed to load shapefile: ${error.message}`);
     }
+  }
+
+  private transformCoordinates(coordinates: any[], transformer: CoordinateTransformer): any[] {
+    if (coordinates.length === 0) return coordinates;
+
+    // Handle different coordinate structures
+    if (typeof coordinates[0] === 'number') {
+      // Single coordinate pair [x, y]
+      const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
+      return [transformed.x, transformed.y];
+    } else if (Array.isArray(coordinates[0])) {
+      // Array of coordinates or nested arrays
+      return coordinates.map(coords => this.transformCoordinates(coords, transformer));
+    }
+
+    return coordinates;
   }
 }
 

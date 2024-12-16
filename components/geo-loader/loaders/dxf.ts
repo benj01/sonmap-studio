@@ -5,6 +5,74 @@ import { createDxfParser } from '../utils/dxf-parser';
 
 const PREVIEW_CHUNK_SIZE = 1000;
 
+interface Vector2 {
+  x: number;
+  y: number;
+}
+
+interface Vector3 extends Vector2 {
+  z?: number;
+}
+
+interface DxfEntityBase {
+  type: string;
+  layer?: string;
+  handle?: string;
+}
+
+type DxfPointEntity = DxfEntityBase & {
+  type: 'POINT';
+  position: Vector3;
+};
+
+type DxfLineEntity = DxfEntityBase & {
+  type: 'LINE';
+  start: Vector3;
+  end: Vector3;
+};
+
+type DxfPolylineEntity = DxfEntityBase & {
+  type: 'POLYLINE' | 'LWPOLYLINE';
+  vertices: Vector3[];
+  closed?: boolean;
+};
+
+type DxfCircleEntity = DxfEntityBase & {
+  type: 'CIRCLE' | 'ARC';
+  center: Vector3;
+  radius: number;
+  startAngle?: number;
+  endAngle?: number;
+};
+
+type DxfEllipseEntity = DxfEntityBase & {
+  type: 'ELLIPSE';
+  center: Vector3;
+  majorAxis: Vector3;
+  minorAxisRatio: number;
+  startAngle: number;
+  endAngle: number;
+};
+
+type DxfEntity = DxfPointEntity | DxfLineEntity | DxfPolylineEntity | DxfCircleEntity | DxfEllipseEntity;
+
+interface Point2D {
+  x: number;
+  y: number;
+}
+
+function isPoint2D(value: unknown): value is Point2D {
+  if (!value || typeof value !== 'object') return false;
+  const point = value as any;
+  return typeof point.x === 'number' && typeof point.y === 'number';
+}
+
+function isDxfPointEntity(entity: unknown): entity is DxfPointEntity {
+  if (!entity || typeof entity !== 'object') return false;
+  const e = entity as any;
+  return e.type === 'POINT' && e.position && isPoint2D(e.position);
+}
+
 class DxfLoader implements GeoFileLoader {
   private parser = createDxfParser();
 
@@ -25,16 +93,24 @@ class DxfLoader implements GeoFileLoader {
     try {
       const content = await this.readFileContent(file);
       const dxf = this.parser.parse(content);
+      
+      if (!dxf || !dxf.entities) {
+        throw new Error('Invalid DXF file structure');
+      }
+
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
-      // Collect sample points for coordinate system detection
-      const samplePoints = expandedEntities
-        .filter(entity => entity.type === 'POINT')
-        .slice(0, 5)
-        .map(entity => ({
-          x: (entity as any).position.x,
-          y: (entity as any).position.y
-        }));
+      // Extract points for coordinate system detection
+      const points: Point2D[] = [];
+      for (const entity of expandedEntities) {
+        if (isDxfPointEntity(entity)) {
+          points.push({
+            x: entity.position.x,
+            y: entity.position.y
+          });
+          if (points.length >= 5) break;
+        }
+      }
 
       // Default to WGS84 if no clear pattern is detected
       const coordinateSystem = COORDINATE_SYSTEMS.WGS84;
@@ -45,10 +121,12 @@ class DxfLoader implements GeoFileLoader {
       // Generate preview features
       const previewFeatures: GeoFeature[] = [];
       for (const entity of expandedEntities) {
-        const feature = this.parser.entityToGeoFeature(entity);
-        if (feature) {
-          previewFeatures.push(feature);
-          if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
+        if (this.isValidEntity(entity)) {
+          const feature = this.parser.entityToGeoFeature(entity);
+          if (feature) {
+            previewFeatures.push(feature);
+            if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
+          }
         }
       }
 
@@ -64,16 +142,40 @@ class DxfLoader implements GeoFileLoader {
     } catch (err) {
       const error = err as Error;
       console.error('DXF analysis error:', error);
-      throw new Error(error.message || 'Failed to analyze DXF file');
+      throw new Error(`Failed to analyze DXF file: ${error.message}`);
     }
   }
 
-  private calculateBounds(entities: any[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  private isValidEntity(entity: unknown): entity is DxfEntity {
+    if (!entity || typeof entity !== 'object') return false;
+    const e = entity as any;
+    
+    switch (e.type) {
+      case 'POINT':
+        return isDxfPointEntity(e);
+      case 'LINE':
+        return e.start && e.end && isPoint2D(e.start) && isPoint2D(e.end);
+      case 'POLYLINE':
+      case 'LWPOLYLINE':
+        return Array.isArray(e.vertices) && e.vertices.every((v: unknown) => isPoint2D(v));
+      case 'CIRCLE':
+      case 'ARC':
+        return e.center && isPoint2D(e.center) && typeof e.radius === 'number';
+      case 'ELLIPSE':
+        return e.center && e.majorAxis && 
+               isPoint2D(e.center) && isPoint2D(e.majorAxis) &&
+               typeof e.minorAxisRatio === 'number';
+      default:
+        return false;
+    }
+  }
+
+  private calculateBounds(entities: unknown[]): { minX: number; minY: number; maxX: number; maxY: number } {
     let minX = Infinity, minY = Infinity;
     let maxX = -Infinity, maxY = -Infinity;
 
     const updateBounds = (x: number, y: number) => {
-      if (isFinite(x) && isFinite(y)) {
+      if (typeof x === 'number' && typeof y === 'number' && isFinite(x) && isFinite(y)) {
         minX = Math.min(minX, x);
         minY = Math.min(minY, y);
         maxX = Math.max(maxX, x);
@@ -82,6 +184,8 @@ class DxfLoader implements GeoFileLoader {
     };
 
     entities.forEach(entity => {
+      if (!this.isValidEntity(entity)) return;
+
       switch (entity.type) {
         case 'POINT':
           updateBounds(entity.position.x, entity.position.y);
@@ -92,7 +196,7 @@ class DxfLoader implements GeoFileLoader {
           break;
         case 'POLYLINE':
         case 'LWPOLYLINE':
-          entity.vertices.forEach((v: any) => updateBounds(v.x, v.y));
+          entity.vertices.forEach(v => updateBounds(v.x, v.y));
           break;
         case 'CIRCLE':
         case 'ARC':
@@ -100,7 +204,6 @@ class DxfLoader implements GeoFileLoader {
           updateBounds(entity.center.x + entity.radius, entity.center.y + entity.radius);
           break;
         case 'ELLIPSE':
-          // Approximate bounds with center and major axis
           const majorLength = Math.sqrt(
             entity.majorAxis.x * entity.majorAxis.x + 
             entity.majorAxis.y * entity.majorAxis.y
@@ -128,6 +231,11 @@ class DxfLoader implements GeoFileLoader {
     try {
       const content = await this.readFileContent(file);
       const dxf = this.parser.parse(content);
+      
+      if (!dxf || !dxf.entities) {
+        throw new Error('Invalid DXF file structure');
+      }
+
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
       const selectedLayers = options.selectedLayers || [];
@@ -142,6 +250,8 @@ class DxfLoader implements GeoFileLoader {
       const featureTypes: Record<string, number> = {};
 
       for (const entity of expandedEntities) {
+        if (!this.isValidEntity(entity)) continue;
+
         // Skip entities not in selected layers
         if (selectedLayers.length > 0 && !selectedLayers.includes(entity.layer || '0')) {
           continue;
@@ -149,6 +259,19 @@ class DxfLoader implements GeoFileLoader {
 
         const feature = this.parser.entityToGeoFeature(entity);
         if (feature) {
+          if (transformer) {
+            // Transform coordinates if needed
+            try {
+              feature.geometry.coordinates = this.transformCoordinates(
+                feature.geometry.coordinates,
+                transformer
+              );
+            } catch (error) {
+              console.warn('Failed to transform coordinates:', error);
+              continue;
+            }
+          }
+
           features.push(feature);
           
           // Count feature types
@@ -162,7 +285,11 @@ class DxfLoader implements GeoFileLoader {
 
       // Transform bounds if needed
       if (transformer) {
-        bounds = transformer.transformBounds(bounds);
+        try {
+          bounds = transformer.transformBounds(bounds);
+        } catch (error) {
+          console.warn('Failed to transform bounds:', error);
+        }
       }
 
       const layers = this.parser.getLayers();
@@ -181,8 +308,19 @@ class DxfLoader implements GeoFileLoader {
     } catch (err) {
       const error = err as Error;
       console.error('DXF loading error:', error);
-      throw new Error(error.message || 'Failed to load DXF file');
+      throw new Error(`Failed to load DXF file: ${error.message}`);
     }
+  }
+
+  private transformCoordinates(coordinates: any, transformer: CoordinateTransformer): any {
+    if (Array.isArray(coordinates)) {
+      if (coordinates.length === 2 && typeof coordinates[0] === 'number') {
+        const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
+        return [transformed.x, transformed.y];
+      }
+      return coordinates.map(coord => this.transformCoordinates(coord, transformer));
+    }
+    return coordinates;
   }
 }
 

@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardHeader, CardContent, CardFooter } from 'components/ui/card';
-import { Button } from 'components/ui/button';
-import { Alert, AlertDescription, AlertTitle } from 'components/ui/alert';
+import { Card, CardHeader, CardContent, CardFooter } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
 import type { LoaderResult } from '../../types/geo';
 import { FormatSettings } from './components/format-settings';
 import { PreviewMap } from './components/preview-map';
 import { useGeoLoader } from './hooks/use-geo-loader';
+import { COORDINATE_SYSTEMS } from './utils/coordinate-systems';
 
 interface ShapeFile extends File {
   relatedFiles: {
@@ -20,6 +22,13 @@ interface GeoLoaderProps {
   onLogsUpdate?: (logs: string[]) => void;
 }
 
+interface ErrorState {
+  title?: string;
+  message: string;
+  details?: string;
+  severity: 'error' | 'warning';
+}
+
 export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoLoaderProps) {
   const {
     loading,
@@ -32,11 +41,7 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
     loadFile,
   } = useGeoLoader();
 
-  const [error, setError] = useState<{
-    title?: string;
-    message: string;
-    details?: string;
-  } | null>(null);
+  const [error, setError] = useState<ErrorState | null>(null);
 
   // Update logs whenever they change
   useEffect(() => {
@@ -51,11 +56,12 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
       setError({
         title: 'Missing Components',
         message: 'Shapefile is missing required component files (.dbf, .shx)',
+        severity: 'error'
       });
       return;
     }
 
-    analyzeFile(file);
+    analyzeFile(file).catch(err => handleError(err));
   }, [file, analyzeFile]);
 
   useEffect(() => {
@@ -66,58 +72,91 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
 
   const handleError = (err: unknown) => {
     if (err instanceof Error) {
-      const message = err.message;
-      
-      // Parse shapefile specific errors
-      if (message.toLowerCase().includes('.dbf')) {
-        setError({
+      const message = err.message.toLowerCase();
+      let errorState: ErrorState;
+
+      // Handle coordinate system errors
+      if (message.includes('coordinate system') || message.includes('projection')) {
+        errorState = {
+          title: 'Coordinate System Error',
+          message: 'Failed to detect or transform coordinate system.',
+          details: err.message,
+          severity: 'error'
+        };
+      }
+      // Handle transformation errors
+      else if (message.includes('transform')) {
+        errorState = {
+          title: 'Transformation Error',
+          message: 'Failed to transform coordinates.',
+          details: err.message,
+          severity: 'error'
+        };
+      }
+      // Handle shapefile errors
+      else if (message.includes('.dbf') || message.includes('.shx') || message.includes('.shp')) {
+        errorState = {
           title: 'Shapefile Error',
           message: 'Failed to load shapefile component files.',
-          details: message
-        });
+          details: err.message,
+          severity: 'error'
+        };
       }
-      // Parse DXF specific errors
-      else if (message.includes('DXF')) {
+      // Handle DXF errors
+      else if (message.includes('dxf')) {
         if (message.includes('parsing')) {
-          setError({
+          errorState = {
             title: 'DXF Parsing Error',
             message: 'The DXF file could not be parsed correctly.',
-            details: message
-          });
+            details: err.message,
+            severity: 'error'
+          };
         } else if (message.includes('analyze')) {
-          setError({
+          errorState = {
             title: 'DXF Analysis Error',
             message: 'Failed to analyze the DXF file structure.',
-            details: message
-          });
+            details: err.message,
+            severity: 'error'
+          };
         } else if (message.includes('coordinate')) {
-          setError({
+          errorState = {
             title: 'Invalid Coordinates',
             message: 'The DXF file contains invalid coordinate values.',
-            details: message
-          });
+            details: err.message,
+            severity: 'error'
+          };
         } else if (message.includes('bounds')) {
-          setError({
+          errorState = {
             title: 'Invalid Bounds',
             message: 'Could not calculate valid bounds from the DXF file.',
-            details: message
-          });
+            details: err.message,
+            severity: 'error'
+          };
         } else {
-          setError({
+          errorState = {
             title: 'DXF Error',
             message: 'An error occurred while processing the DXF file.',
-            details: message
-          });
+            details: err.message,
+            severity: 'error'
+          };
         }
-      } else {
-        setError({
-          message: message
-        });
       }
+      // Handle general errors
+      else {
+        errorState = {
+          message: err.message,
+          severity: 'error'
+        };
+      }
+
+      setError(errorState);
+      onLogsUpdate?.([`Error: ${errorState.title || ''} - ${errorState.message}`]);
     } else {
       setError({
-        message: 'An unexpected error occurred'
+        message: 'An unexpected error occurred',
+        severity: 'error'
       });
+      onLogsUpdate?.(['Error: An unexpected error occurred']);
     }
   };
 
@@ -125,11 +164,35 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
     try {
       const result = await loadFile(file);
       if (result) {
+        // Log coordinate system information
+        if (result.coordinateSystem) {
+          if (result.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+            onLogsUpdate?.([`Transformed coordinates from ${result.coordinateSystem} to ${COORDINATE_SYSTEMS.WGS84}`]);
+          }
+        }
+
+        // Check for any transformation warnings
+        const transformErrors = result.features.filter(f => f.properties?._transformError);
+        if (transformErrors.length > 0) {
+          setError({
+            title: 'Transformation Warning',
+            message: `${transformErrors.length} features had transformation errors`,
+            details: 'Some features may not display correctly.',
+            severity: 'warning'
+          });
+          onLogsUpdate?.([`Warning: ${transformErrors.length} features had transformation errors`]);
+        }
+
         onLoad(result);
       }
     } catch (err) {
       handleError(err);
     }
+  };
+
+  // Map our severity levels to Alert variants
+  const getAlertVariant = (severity: ErrorState['severity']) => {
+    return severity === 'error' ? 'destructive' : 'default';
   };
 
   return (
@@ -169,7 +232,8 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
           </div>
 
           {error && (
-            <Alert variant="destructive">
+            <Alert variant={getAlertVariant(error.severity)}>
+              <AlertCircle className="h-4 w-4" />
               {error.title && <AlertTitle>{error.title}</AlertTitle>}
               <AlertDescription>
                 {error.message}
@@ -189,7 +253,11 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
             <Button variant="outline" onClick={onCancel} className="relative z-50">
               Cancel
             </Button>
-            <Button onClick={handleImport} disabled={loading || error !== null} className="relative z-50">
+            <Button 
+              onClick={handleImport} 
+              disabled={loading || (error?.severity === 'error')} 
+              className="relative z-50"
+            >
               {loading ? 'Importing...' : 'Import'}
             </Button>
           </CardFooter>

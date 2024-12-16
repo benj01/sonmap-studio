@@ -3,6 +3,7 @@ import dxfLoader from '../loaders/dxf';
 import shapefileLoader from '../loaders/shapefile';
 import csvXyzLoader from '../loaders/csv-xyz';
 import { optimizePoints } from '../utils/optimization';
+import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 import type { LoaderOptions, LoaderResult, GeoFeatureCollection, AnalyzeResult } from '../../../types/geo';
 
 interface ShapeFile extends File {
@@ -34,9 +35,29 @@ export function useGeoLoader() {
   const [logs, setLogs] = useState<string[]>([]);
   const fileRef = useRef<File | ShapeFile | null>(null);
 
-  const log = useCallback((message: string) => {
-    setLogs((prevLogs) => [...prevLogs, message]);
+  const log = useCallback((message: string, type: 'info' | 'warning' | 'error' = 'info') => {
+    const prefix = type === 'error' ? '❌ Error: ' : 
+                  type === 'warning' ? '⚠️ Warning: ' : 
+                  '📝 ';
+    setLogs((prevLogs) => [...prevLogs, `${prefix}${message}`]);
   }, []);
+
+  const verifyShapefileComponents = useCallback((file: ShapeFile) => {
+    const missingComponents: string[] = [];
+    
+    if (!file.relatedFiles['.dbf']) {
+      missingComponents.push('.dbf');
+    }
+    if (!file.relatedFiles['.shx']) {
+      missingComponents.push('.shx');
+    }
+
+    if (missingComponents.length > 0) {
+      throw new Error(`Missing required shapefile components: ${missingComponents.join(', ')}`);
+    }
+
+    log('Verified shapefile components are present');
+  }, [log]);
 
   const analyzeFile = useCallback(async (file: File | ShapeFile) => {
     fileRef.current = file;
@@ -49,7 +70,9 @@ export function useGeoLoader() {
     const loader = loaderMap[fileType];
 
     if (!loader) {
-      setError(`Unsupported file type: ${fileType}`);
+      const error = `Unsupported file type: ${fileType}`;
+      setError(error);
+      log(error, 'error');
       setLoading(false);
       return;
     }
@@ -59,36 +82,40 @@ export function useGeoLoader() {
 
       // For shapefiles, verify components are present
       if (fileType === 'shp') {
-        const shapeFile = file as ShapeFile;
-        if (!('relatedFiles' in shapeFile) || !shapeFile.relatedFiles['.dbf']) {
-          throw new Error('Missing required .dbf component for shapefile');
-        }
-        if (!shapeFile.relatedFiles['.shx']) {
-          throw new Error('Missing required .shx component for shapefile');
-        }
-        log('Verified shapefile components are present');
+        verifyShapefileComponents(file as ShapeFile);
       }
 
       const analysisResult = await loader.analyze(file);
       
+      // Log coordinate system information
+      if (analysisResult.coordinateSystem) {
+        if (analysisResult.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+          log(`Detected coordinate system: ${analysisResult.coordinateSystem}`);
+          log(`Coordinates will be transformed to ${COORDINATE_SYSTEMS.WGS84}`);
+        } else {
+          log(`Using coordinate system: ${COORDINATE_SYSTEMS.WGS84}`);
+        }
+      }
+
       // Initialize both selected and visible layers
       setOptions(prev => ({
         ...prev,
         selectedLayers: analysisResult.layers,
-        visibleLayers: analysisResult.layers
+        visibleLayers: analysisResult.layers,
+        coordinateSystem: analysisResult.coordinateSystem
       }));
       
       setAnalysis(analysisResult);
-      log(`Analysis complete.`);
-    } catch (err: any) {
-      const errorMessage = err.message || 'Failed to analyze file';
+      log(`Analysis complete - Found ${analysisResult.layers.length} layers`);
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to analyze file';
       setError(errorMessage);
-      log(`Error: ${errorMessage}`);
-      console.error(err);
+      log(errorMessage, 'error');
+      console.error('Analysis error:', err);
     } finally {
       setLoading(false);
     }
-  }, [log]);
+  }, [log, verifyShapefileComponents]);
 
   const loadFile = useCallback(async (file: File | ShapeFile, loadOptions?: LoaderOptions): Promise<LoaderResult | null> => {
     setLoading(true);
@@ -99,7 +126,9 @@ export function useGeoLoader() {
     const loader = loaderMap[fileType];
 
     if (!loader) {
-      setError(`Unsupported file type: ${fileType}`);
+      const error = `Unsupported file type: ${fileType}`;
+      setError(error);
+      log(error, 'error');
       setLoading(false);
       return null;
     }
@@ -109,36 +138,53 @@ export function useGeoLoader() {
 
       // For shapefiles, verify components are present
       if (fileType === 'shp') {
-        const shapeFile = file as ShapeFile;
-        if (!('relatedFiles' in shapeFile) || !shapeFile.relatedFiles['.dbf']) {
-          throw new Error('Missing required .dbf component for shapefile');
-        }
-        if (!shapeFile.relatedFiles['.shx']) {
-          throw new Error('Missing required .shx component for shapefile');
-        }
-        log('Verified shapefile components are present');
+        verifyShapefileComponents(file as ShapeFile);
       }
 
-      const result = await loader.load(file, { ...options, ...loadOptions });
-
-      if (['xyz', 'csv', 'txt'].includes(fileType) && options.simplificationTolerance && options.simplificationTolerance > 0) {
-        log(`Optimizing point cloud with tolerance ${options.simplificationTolerance}...`);
-        result.features = optimizePoints(result.features, options.simplificationTolerance);
-        log(`Point cloud optimization complete.`);
+      const mergedOptions = { ...options, ...loadOptions };
+      
+      // Log coordinate system information
+      if (mergedOptions.coordinateSystem) {
+        log(`Using specified coordinate system: ${mergedOptions.coordinateSystem}`);
       }
 
-      log(`File loaded successfully.`);
+      const result = await loader.load(file, mergedOptions);
+
+      // Log transformation results
+      const transformErrors = result.features.filter(f => f.properties?._transformError);
+      if (transformErrors.length > 0) {
+        log(`${transformErrors.length} features had transformation errors`, 'warning');
+      }
+
+      // Handle point cloud optimization
+      if (['xyz', 'csv', 'txt'].includes(fileType) && 
+          mergedOptions.simplificationTolerance && 
+          mergedOptions.simplificationTolerance > 0) {
+        log(`Optimizing point cloud with tolerance ${mergedOptions.simplificationTolerance}...`);
+        result.features = optimizePoints(result.features, mergedOptions.simplificationTolerance);
+        log(`Point cloud optimization complete - ${result.features.length} points remaining`);
+      }
+
+      // Log final statistics
+      log(`File loaded successfully:`);
+      log(`- ${result.features.length} total features`);
+      if (result.statistics?.featureTypes) {
+        Object.entries(result.statistics.featureTypes).forEach(([type, count]) => {
+          log(`- ${count} ${type} features`);
+        });
+      }
+
       return result;
-    } catch (err: any) {
-      const errorMessage = err.message || 'Failed to load file';
+    } catch (err: unknown) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to load file';
       setError(errorMessage);
-      log(`Error: ${errorMessage}`);
-      console.error(err);
+      log(errorMessage, 'error');
+      console.error('Load error:', err);
       return null;
     } finally {
       setLoading(false);
     }
-  }, [options, log]);
+  }, [options, log, verifyShapefileComponents]);
 
   const toggleLayerVisibility = useCallback((layer: string) => {
     setOptions(prev => ({
