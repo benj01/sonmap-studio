@@ -126,7 +126,10 @@ class ShapefileLoader implements GeoFileLoader {
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
         try {
           const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-          bounds = transformer.transformBounds(bounds);
+          const transformedBounds = transformer.transformBounds(bounds);
+          if (transformedBounds) {
+            bounds = transformedBounds;
+          }
         } catch (error) {
           console.warn('Failed to transform bounds:', error);
         }
@@ -174,14 +177,20 @@ class ShapefileLoader implements GeoFileLoader {
       const features: GeoFeature[] = [];
       const featureTypes: Record<string, number> = {};
       let count = 0;
-      let errorCount = 0;
+      let failedTransformations = 0;
+      const errors: { type: string; count: number; message?: string }[] = [];
       
       let transformer: CoordinateTransformer | null = null;
       if (sourceSystem && sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
         try {
           transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
         } catch (error) {
-          console.warn('Failed to create coordinate transformer:', error);
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          errors.push({
+            type: 'transformation_setup',
+            count: 1,
+            message: `Failed to create coordinate transformer: ${message}`
+          });
         }
       }
 
@@ -197,13 +206,18 @@ class ShapefileLoader implements GeoFileLoader {
             try {
               const coords = feature.geometry.coordinates;
               if (Array.isArray(coords)) {
-                feature.geometry.coordinates = this.transformCoordinates(coords, transformer);
+                const transformedCoords = this.transformCoordinates(coords, transformer);
+                if (transformedCoords) {
+                  feature.geometry.coordinates = transformedCoords;
+                } else {
+                  failedTransformations++;
+                  feature.properties._transformError = 'Coordinate transformation failed';
+                }
               }
             } catch (transformError) {
-              console.warn(`Failed to transform feature ${count + 1}:`, transformError);
+              failedTransformations++;
               feature.properties._transformError = transformError instanceof Error ? 
                 transformError.message : 'Unknown transformation error';
-              errorCount++;
             }
           }
           
@@ -220,8 +234,14 @@ class ShapefileLoader implements GeoFileLoader {
             await new Promise(resolve => setTimeout(resolve, 0));
           }
         } catch (error) {
-          console.warn(`Failed to process feature ${count + 1}:`, error);
-          errorCount++;
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          const errorType = 'feature_processing';
+          const existingError = errors.find(e => e.type === errorType);
+          if (existingError) {
+            existingError.count++;
+          } else {
+            errors.push({ type: errorType, count: 1, message });
+          }
         }
       }
       
@@ -237,17 +257,32 @@ class ShapefileLoader implements GeoFileLoader {
 
       if (transformer) {
         try {
-          bounds = transformer.transformBounds(bounds);
+          const transformedBounds = transformer.transformBounds(bounds);
+          if (transformedBounds) {
+            bounds = transformedBounds;
+          }
         } catch (error) {
-          console.warn('Failed to transform bounds:', error);
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          errors.push({
+            type: 'bounds_transformation',
+            count: 1,
+            message: `Failed to transform bounds: ${message}`
+          });
         }
       }
 
-      // Store errors in feature properties for debugging
-      const errors = this.parser.getErrors();
-      if (errors.length > 0) {
+      // Store parser errors in statistics
+      const parserErrors = this.parser.getErrors();
+      if (parserErrors.length > 0) {
+        errors.push({
+          type: 'parser',
+          count: parserErrors.length,
+          message: 'Parser errors occurred during feature processing'
+        });
+        
+        // Add error details to features
         features.forEach((feature, index) => {
-          const featureErrors = errors.filter(e => e.featureIndex === index);
+          const featureErrors = parserErrors.filter(e => e.featureIndex === index);
           if (featureErrors.length > 0) {
             feature.properties._errors = featureErrors.map(e => e.error);
           }
@@ -262,7 +297,9 @@ class ShapefileLoader implements GeoFileLoader {
         statistics: {
           pointCount: features.length,
           layerCount: 1,
-          featureTypes
+          featureTypes,
+          failedTransformations,
+          errors: errors.length > 0 ? errors : undefined
         }
       };
     } catch (err) {
@@ -272,20 +309,27 @@ class ShapefileLoader implements GeoFileLoader {
     }
   }
 
-  private transformCoordinates(coordinates: any[], transformer: CoordinateTransformer): any[] {
+  private transformCoordinates(coordinates: any[], transformer: CoordinateTransformer): any[] | null {
     if (coordinates.length === 0) return coordinates;
 
-    // Handle different coordinate structures
-    if (typeof coordinates[0] === 'number') {
-      // Single coordinate pair [x, y]
-      const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
-      return [transformed.x, transformed.y];
-    } else if (Array.isArray(coordinates[0])) {
-      // Array of coordinates or nested arrays
-      return coordinates.map(coords => this.transformCoordinates(coords, transformer));
-    }
+    try {
+      // Handle different coordinate structures
+      if (typeof coordinates[0] === 'number') {
+        // Single coordinate pair [x, y]
+        const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
+        if (!transformed) return null;
+        return [transformed.x, transformed.y];
+      } else if (Array.isArray(coordinates[0])) {
+        // Array of coordinates or nested arrays
+        const transformedArray = coordinates.map(coords => this.transformCoordinates(coords, transformer));
+        return transformedArray.every(item => item !== null) ? transformedArray : null;
+      }
 
-    return coordinates;
+      return coordinates;
+    } catch (error) {
+      console.warn('Coordinate transformation error:', error);
+      return null;
+    }
   }
 }
 

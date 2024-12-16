@@ -75,17 +75,49 @@ export function GeoImportDialog({
       Object.entries(result.statistics.featureTypes).forEach(([type, count]) => {
         addLog(`- ${count} ${type} features`, 'info');
       });
+
+      // Log transformation failures if any
+      if (result.statistics.failedTransformations) {
+        const failureCount = result.statistics.failedTransformations;
+        addLog(
+          `Warning: ${failureCount} feature${failureCount > 1 ? 's' : ''} failed coordinate transformation`,
+          'warning'
+        );
+      }
+
+      // Log detailed errors if available
+      if (result.statistics.errors) {
+        result.statistics.errors.forEach(error => {
+          const message = error.message ? 
+            `${error.type}: ${error.message} (${error.count} occurrence${error.count > 1 ? 's' : ''})` :
+            `${error.type}: ${error.count} occurrence${error.count > 1 ? 's' : ''}`;
+          addLog(message, 'error');
+        });
+      }
     }
 
     // Check for transformation errors in feature properties
     const transformErrors = result.features.filter(f => f.properties?._transformError);
     if (transformErrors.length > 0) {
-      addLog(`Warning: ${transformErrors.length} features had transformation errors`, 'warning');
+      const uniqueErrors = new Set(transformErrors.map(f => f.properties._transformError));
+      uniqueErrors.forEach(error => {
+        const count = transformErrors.filter(f => f.properties._transformError === error).length;
+        addLog(`Warning: ${error} (${count} features affected)`, 'warning');
+      });
+    }
+
+    // Check for parser errors in feature properties
+    const parserErrors = result.features.filter(f => f.properties?._errors);
+    if (parserErrors.length > 0) {
+      const errorCount = parserErrors.reduce((sum, f) => 
+        sum + (Array.isArray(f.properties._errors) ? f.properties._errors.length : 1), 0
+      );
+      addLog(`Warning: ${errorCount} parsing errors occurred in ${parserErrors.length} features`, 'warning');
     }
 
     onImportComplete(result);
-    // Don't close dialog if there are errors
-    if (!hasErrors) {
+    // Don't close dialog if there are errors or warnings that need attention
+    if (!hasErrors && !result.statistics?.failedTransformations) {
       onClose();
     }
   };
@@ -117,11 +149,26 @@ export function GeoImportDialog({
             onLogsUpdate={handleLogsUpdate}
           />
 
-          {/* Inline logs section instead of separate dialog */}
+          {/* Logs section */}
           <div className="border rounded-lg p-4">
             <div className="flex items-center justify-between mb-2">
               <h4 className="font-medium">Import Logs</h4>
-              <Info className="h-4 w-4 text-muted-foreground" />
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-muted-foreground" />
+                {hasErrors && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setLogs([]);
+                      setHasErrors(false);
+                      onClose();
+                    }}
+                  >
+                    Clear & Close
+                  </Button>
+                )}
+              </div>
             </div>
             <ScrollArea className="h-[200px] w-full rounded-md">
               <div className="pr-4">

@@ -43,6 +43,11 @@ interface DxfEntityBase {
   extrusionDirection?: Vector3;
 }
 
+interface Dxf3DFaceEntity extends DxfEntityBase {
+  type: '3DFACE';
+  vertices: [Vector3, Vector3, Vector3, Vector3];
+}
+
 interface DxfPointEntity extends DxfEntityBase {
   type: 'POINT';
   position: Vector3;
@@ -84,12 +89,13 @@ interface DxfEllipseEntity extends DxfEntityBase {
 }
 
 type DxfEntity = 
-  | DxfPointEntity 
-  | DxfLineEntity 
-  | DxfPolylineEntity 
-  | DxfCircleEntity 
-  | DxfArcEntity 
-  | DxfEllipseEntity;
+  | DxfPointEntity
+  | DxfLineEntity
+  | DxfPolylineEntity
+  | DxfCircleEntity
+  | DxfArcEntity
+  | DxfEllipseEntity
+  | Dxf3DFaceEntity;
 
 interface DxfData {
   entities: DxfEntity[];
@@ -101,12 +107,10 @@ interface DxfData {
   };
 }
 
-// Interface for external DXF parser library
 interface CustomDxfParserLib {
   parseSync(content: string): DxfData;
 }
 
-// Actual implementation using dxf-parser library
 class DxfParserLibImpl implements CustomDxfParserLib {
   private parser: DxfParser;
 
@@ -117,9 +121,15 @@ class DxfParserLibImpl implements CustomDxfParserLib {
   parseSync(content: string): DxfData {
     try {
       const parsed = this.parser.parseSync(content);
+      if (!parsed || typeof parsed !== 'object') {
+        throw new Error('Parsed DXF data is not an object');
+      }
+      if (!Array.isArray(parsed.entities)) {
+        throw new Error('DXF data has no valid entities array');
+      }
       return this.convertParsedData(parsed);
-    } catch (error) {
-      console.error('DXF parsing error:', error);
+    } catch (error: any) {
+      console.error('DXF parsing error:', error?.message || error);
       throw new Error('Failed to parse DXF content');
     }
   }
@@ -137,17 +147,23 @@ class DxfParserLibImpl implements CustomDxfParserLib {
 
     // Convert entities
     if (Array.isArray(parsed.entities)) {
-      result.entities = parsed.entities.map(this.convertEntity).filter(Boolean) as DxfEntity[];
+      result.entities = parsed.entities.map((entity: any) => {
+        const converted = this.convertEntity(entity);
+        if (!converted && entity?.type) {
+          console.warn(`Failed to convert entity of type "${entity.type}" with handle "${entity.handle || 'unknown'}"`);
+        }
+        return converted;
+      }).filter(Boolean) as DxfEntity[];
     }
 
     // Convert blocks
-    if (parsed.blocks) {
+    if (parsed.blocks && typeof parsed.blocks === 'object') {
       Object.entries(parsed.blocks).forEach(([name, block]: [string, any]) => {
         if (block.entities) {
           result.blocks![name] = {
             name,
             position: block.position || { x: 0, y: 0, z: 0 },
-            entities: block.entities.map(this.convertEntity).filter(Boolean),
+            entities: block.entities.map((bEnt: any) => this.convertEntity(bEnt)).filter(Boolean) as DxfEntity[],
             layer: block.layer || '0'
           };
         }
@@ -163,9 +179,35 @@ class DxfParserLibImpl implements CustomDxfParserLib {
   }
 
   private convertEntity(entity: any): DxfEntity | null {
+    // Validate that entity has a type
+    if (!entity || typeof entity !== 'object' || typeof entity.type !== 'string') {
+      console.warn('Invalid entity structure:', entity);
+      return null;
+    }
+
     try {
       switch (entity.type) {
+        case '3DFACE':
+          if (!Array.isArray(entity.vertices) || entity.vertices.length < 3) {
+            console.warn(`3DFACE entity with handle "${entity.handle || 'unknown'}" has invalid vertices.`);
+            return null;
+          }
+          return {
+            type: '3DFACE',
+            vertices: [
+              entity.vertices[0] || { x: 0, y: 0, z: 0 },
+              entity.vertices[1] || { x: 0, y: 0, z: 0 },
+              entity.vertices[2] || { x: 0, y: 0, z: 0 },
+              entity.vertices[3] || entity.vertices[2] || { x: 0, y: 0, z: 0 }
+            ],
+            ...this.extractCommonProperties(entity)
+          };
+
         case 'POINT':
+          if (!entity.position || typeof entity.position.x !== 'number' || typeof entity.position.y !== 'number') {
+            console.warn(`POINT entity with handle "${entity.handle || 'unknown'}" has invalid position.`);
+            return null;
+          }
           return {
             type: 'POINT',
             position: entity.position,
@@ -173,6 +215,10 @@ class DxfParserLibImpl implements CustomDxfParserLib {
           };
 
         case 'LINE':
+          if (!entity.start || !entity.end || typeof entity.start.x !== 'number' || typeof entity.end.x !== 'number') {
+            console.warn(`LINE entity with handle "${entity.handle || 'unknown'}" has invalid start/end points.`);
+            return null;
+          }
           return {
             type: 'LINE',
             start: entity.start,
@@ -182,18 +228,26 @@ class DxfParserLibImpl implements CustomDxfParserLib {
 
         case 'LWPOLYLINE':
         case 'POLYLINE':
+          if (!Array.isArray(entity.vertices)) {
+            console.warn(`POLYLINE entity with handle "${entity.handle || 'unknown'}" is missing vertices array.`);
+            return null;
+          }
           return {
             type: entity.type,
             vertices: entity.vertices.map((v: any) => ({
-              x: v.x,
-              y: v.y,
-              z: v.z || 0
+              x: v.x ?? 0,
+              y: v.y ?? 0,
+              z: v.z ?? 0
             })),
             closed: entity.closed,
             ...this.extractCommonProperties(entity)
           };
 
         case 'CIRCLE':
+          if (!entity.center || typeof entity.radius !== 'number') {
+            console.warn(`CIRCLE entity with handle "${entity.handle || 'unknown'}" missing center or radius.`);
+            return null;
+          }
           return {
             type: 'CIRCLE',
             center: entity.center,
@@ -202,6 +256,11 @@ class DxfParserLibImpl implements CustomDxfParserLib {
           };
 
         case 'ARC':
+          if (!entity.center || typeof entity.radius !== 'number' ||
+              typeof entity.startAngle !== 'number' || typeof entity.endAngle !== 'number') {
+            console.warn(`ARC entity with handle "${entity.handle || 'unknown'}" missing parameters.`);
+            return null;
+          }
           return {
             type: 'ARC',
             center: entity.center,
@@ -212,6 +271,13 @@ class DxfParserLibImpl implements CustomDxfParserLib {
           };
 
         case 'ELLIPSE':
+          if (!entity.center || !entity.majorAxis ||
+              typeof entity.minorAxisRatio !== 'number' ||
+              typeof entity.startAngle !== 'number' ||
+              typeof entity.endAngle !== 'number') {
+            console.warn(`ELLIPSE entity with handle "${entity.handle || 'unknown'}" missing parameters.`);
+            return null;
+          }
           return {
             type: 'ELLIPSE',
             center: entity.center,
@@ -223,11 +289,12 @@ class DxfParserLibImpl implements CustomDxfParserLib {
           };
 
         default:
-          console.warn('Unsupported entity type:', entity.type);
+          // Unsupported entity type
+          console.warn(`Unsupported entity type "${entity.type}" with handle "${entity.handle || 'unknown'}".`);
           return null;
       }
-    } catch (error) {
-      console.warn('Error converting entity:', error);
+    } catch (error: any) {
+      console.warn(`Error converting entity type "${entity.type}" handle "${entity.handle || 'unknown'}":`, error?.message || error);
       return null;
     }
   }
@@ -260,14 +327,14 @@ export class DxfFileParser {
   parse(content: string): DxfData {
     try {
       const dxf = this.parser.parseSync(content);
-      if (!dxf || !dxf.entities) {
-        throw new Error('Invalid DXF file structure');
+      if (!dxf || !Array.isArray(dxf.entities)) {
+        throw new Error('Invalid DXF data structure after parsing.');
       }
       this.blocks = this.extractBlocks(dxf);
       this.layers = this.extractLayers(dxf);
       return dxf;
-    } catch (error) {
-      console.error('Error parsing DXF content:', error);
+    } catch (error: any) {
+      console.error('Error parsing DXF content:', error?.message || error);
       throw new Error('Error parsing DXF content');
     }
   }
@@ -276,7 +343,7 @@ export class DxfFileParser {
     const blocks: Record<string, DxfBlock> = {};
     try {
       if (dxf.blocks) {
-        Object.entries(dxf.blocks).forEach(([name, block]: [string, any]) => {
+        Object.entries(dxf.blocks).forEach(([name, block]: [string, DxfBlock]) => {
           if (block.entities) {
             blocks[name] = {
               name,
@@ -287,15 +354,14 @@ export class DxfFileParser {
           }
         });
       }
-    } catch (error) {
-      console.warn('Error extracting blocks:', error);
+    } catch (error: any) {
+      console.warn('Error extracting blocks:', error?.message || error);
     }
     return blocks;
   }
 
   private extractLayers(dxf: DxfData): Map<string, LayerInfo> {
     const layers = new Map<string, LayerInfo>();
-    
     try {
       if (dxf.tables?.layer?.layers) {
         Object.entries(dxf.tables.layer.layers).forEach(([name, layer]: [string, any]) => {
@@ -330,8 +396,8 @@ export class DxfFileParser {
           visible: true
         });
       }
-    } catch (error) {
-      console.warn('Error extracting layers:', error);
+    } catch (error: any) {
+      console.warn('Error extracting layers:', error?.message || error);
       if (!layers.has('0')) {
         layers.set('0', { name: '0', visible: true });
       }
@@ -365,15 +431,32 @@ export class DxfFileParser {
   private transformEntity(entity: DxfEntity, matrix: Matrix4): DxfEntity | null {
     try {
       switch (entity.type) {
+        case '3DFACE': {
+          const transformedVertices = entity.vertices.map(v => this.transformPoint(v, matrix));
+          if (transformedVertices.some(v => v === null)) {
+            console.warn(`Failed to transform 3DFACE entity handle "${entity.handle || 'unknown'}" due to invalid vertices.`);
+            return null;
+          }
+          return {
+            ...entity,
+            vertices: transformedVertices as [Vector3, Vector3, Vector3, Vector3]
+          };
+        }
         case 'POINT': {
           const position = this.transformPoint(entity.position, matrix);
-          if (!position) return null;
+          if (!position) {
+            console.warn(`Failed to transform POINT entity handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           return { ...entity, position };
         }
         case 'LINE': {
           const start = this.transformPoint(entity.start, matrix);
           const end = this.transformPoint(entity.end, matrix);
-          if (!start || !end) return null;
+          if (!start || !end) {
+            console.warn(`Failed to transform LINE entity handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           return { ...entity, start, end };
         }
         case 'POLYLINE':
@@ -381,33 +464,57 @@ export class DxfFileParser {
           const vertices = entity.vertices
             .map(v => this.transformPoint(v, matrix))
             .filter((v): v is Vector3 => v !== null);
-          if (vertices.length < 2) return null;
+          if (vertices.length < 2) {
+            console.warn(`Failed to transform POLYLINE entity handle "${entity.handle || 'unknown'}" - insufficient valid vertices.`);
+            return null;
+          }
           return { ...entity, vertices };
         }
         case 'CIRCLE': {
           const center = this.transformPoint(entity.center, matrix);
-          if (!center) return null;
+          if (!center) {
+            console.warn(`Failed to transform CIRCLE center handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           const radius = entity.radius * this.getScaleFactor(matrix);
-          if (!isFinite(radius) || radius <= 0) return null;
+          if (!isFinite(radius) || radius <= 0) {
+            console.warn(`Invalid transformed radius for CIRCLE entity handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           return { ...entity, center, radius };
         }
         case 'ARC': {
           const center = this.transformPoint(entity.center, matrix);
-          if (!center) return null;
+          if (!center) {
+            console.warn(`Failed to transform ARC center handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           const radius = entity.radius * this.getScaleFactor(matrix);
-          if (!isFinite(radius) || radius <= 0) return null;
+          if (!isFinite(radius) || radius <= 0) {
+            console.warn(`Invalid transformed radius for ARC entity handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           const startAngle = this.transformAngle(entity.startAngle, matrix);
           const endAngle = this.transformAngle(entity.endAngle, matrix);
-          if (!isFinite(startAngle) || !isFinite(endAngle)) return null;
+          if (!isFinite(startAngle) || !isFinite(endAngle)) {
+            console.warn(`Invalid transformed angles for ARC entity handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           return { ...entity, center, radius, startAngle, endAngle };
         }
         case 'ELLIPSE': {
           const center = this.transformPoint(entity.center, matrix);
           const majorAxis = this.transformVector(entity.majorAxis, matrix);
-          if (!center || !majorAxis) return null;
+          if (!center || !majorAxis) {
+            console.warn(`Failed to transform ELLIPSE handle "${entity.handle || 'unknown'}" - invalid center or majorAxis.`);
+            return null;
+          }
           const startAngle = this.transformAngle(entity.startAngle, matrix);
           const endAngle = this.transformAngle(entity.endAngle, matrix);
-          if (!isFinite(startAngle) || !isFinite(endAngle)) return null;
+          if (!isFinite(startAngle) || !isFinite(endAngle)) {
+            console.warn(`Invalid transformed angles for ELLIPSE entity handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
           return {
             ...entity,
             center,
@@ -418,10 +525,11 @@ export class DxfFileParser {
           };
         }
         default:
+          console.warn(`Transform not supported for entity type "${entity.type}" handle "${entity.handle || 'unknown'}".`);
           return null;
       }
-    } catch (error) {
-      console.warn('Error transforming entity:', error);
+    } catch (error: any) {
+      console.warn(`Error transforming entity type "${entity.type}" handle "${entity.handle || 'unknown'}":`, error?.message || error);
       return null;
     }
   }
@@ -429,9 +537,24 @@ export class DxfFileParser {
   private entityToGeometry(entity: DxfEntity): Geometry | null {
     try {
       switch (entity.type) {
+        case '3DFACE': {
+          if (!entity.vertices.every(this.isValidVector.bind(this))) {
+            console.warn(`Invalid 3DFACE vertices for entity handle "${entity.handle || 'unknown'}".`);
+            return null;
+          }
+          const coordinates = entity.vertices.map(v => [v.x, v.y] as [number, number]);
+          if (
+            coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
+            coordinates[0][1] !== coordinates[coordinates.length - 1][1]
+          ) {
+            coordinates.push([coordinates[0][0], coordinates[0][1]]);
+          }
+          return createPolygonGeometry([coordinates]);
+        }
+
         case 'POINT': {
           if (!this.isValidVector(entity.position)) {
-            console.warn('Invalid point position:', entity.position);
+            console.warn(`Invalid POINT position for entity handle "${entity.handle || 'unknown'}".`);
             return null;
           }
           return createPointGeometry(entity.position.x, entity.position.y, entity.position.z);
@@ -439,7 +562,7 @@ export class DxfFileParser {
 
         case 'LINE': {
           if (!this.isValidVector(entity.start) || !this.isValidVector(entity.end)) {
-            console.warn('Invalid line coordinates:', { start: entity.start, end: entity.end });
+            console.warn(`Invalid LINE coordinates for entity handle "${entity.handle || 'unknown'}".`);
             return null;
           }
           const coordinates: [number, number][] = [
@@ -452,18 +575,15 @@ export class DxfFileParser {
         case 'POLYLINE':
         case 'LWPOLYLINE': {
           if (!Array.isArray(entity.vertices)) {
-            console.warn('Invalid polyline vertices:', entity.vertices);
+            console.warn(`No vertices in POLYLINE for entity handle "${entity.handle || 'unknown'}".`);
             return null;
           }
-
           const validVertices = entity.vertices.filter(this.isValidVector.bind(this));
           if (validVertices.length < 2) {
-            console.warn('Not enough valid vertices for polyline');
+            console.warn(`Not enough valid vertices for POLYLINE handle "${entity.handle || 'unknown'}".`);
             return null;
           }
-
           const coordinates = validVertices.map(v => [v.x, v.y] as [number, number]);
-          
           if (entity.closed && coordinates.length >= 3) {
             const first = coordinates[0];
             const last = coordinates[coordinates.length - 1];
@@ -478,10 +598,9 @@ export class DxfFileParser {
 
         case 'CIRCLE': {
           if (!this.isValidVector(entity.center) || !isFinite(entity.radius) || entity.radius <= 0) {
-            console.warn('Invalid circle parameters:', { center: entity.center, radius: entity.radius });
+            console.warn(`Invalid CIRCLE parameters for entity handle "${entity.handle || 'unknown'}".`);
             return null;
           }
-
           const circleCoords: [number, number][] = [];
           const circleSegments = 64;
           for (let i = 0; i <= circleSegments; i++) {
@@ -489,7 +608,7 @@ export class DxfFileParser {
             const x = entity.center.x + entity.radius * Math.cos(angle);
             const y = entity.center.y + entity.radius * Math.sin(angle);
             if (!isFinite(x) || !isFinite(y)) {
-              console.warn('Invalid circle point calculation:', { x, y });
+              console.warn('Invalid circle point calculation.');
               return null;
             }
             circleCoords.push([x, y]);
@@ -498,20 +617,12 @@ export class DxfFileParser {
         }
 
         case 'ARC': {
-          if (!this.isValidVector(entity.center) || 
-              !isFinite(entity.radius) || 
-              entity.radius <= 0 ||
-              !isFinite(entity.startAngle) ||
-              !isFinite(entity.endAngle)) {
-            console.warn('Invalid arc parameters:', { 
-              center: entity.center, 
-              radius: entity.radius,
-              startAngle: entity.startAngle,
-              endAngle: entity.endAngle
-            });
+          if (!this.isValidVector(entity.center) ||
+              !isFinite(entity.radius) || entity.radius <= 0 ||
+              !isFinite(entity.startAngle) || !isFinite(entity.endAngle)) {
+            console.warn(`Invalid ARC parameters for entity handle "${entity.handle || 'unknown'}".`);
             return null;
           }
-
           const arcCoords: [number, number][] = [];
           const arcSegments = 32;
           let startAngle = (entity.startAngle * Math.PI) / 180;
@@ -520,13 +631,13 @@ export class DxfFileParser {
             endAngle += 2 * Math.PI;
           }
           const angleIncrement = (endAngle - startAngle) / arcSegments;
-          
+
           for (let i = 0; i <= arcSegments; i++) {
             const angle = startAngle + i * angleIncrement;
             const x = entity.center.x + entity.radius * Math.cos(angle);
             const y = entity.center.y + entity.radius * Math.sin(angle);
             if (!isFinite(x) || !isFinite(y)) {
-              console.warn('Invalid arc point calculation:', { x, y });
+              console.warn('Invalid arc point calculation.');
               return null;
             }
             arcCoords.push([x, y]);
@@ -535,30 +646,24 @@ export class DxfFileParser {
         }
 
         case 'ELLIPSE': {
-          if (!this.isValidVector(entity.center) || 
+          if (!this.isValidVector(entity.center) ||
               !this.isValidVector(entity.majorAxis) ||
               !isFinite(entity.minorAxisRatio) ||
               !isFinite(entity.startAngle) ||
               !isFinite(entity.endAngle)) {
-            console.warn('Invalid ellipse parameters:', {
-              center: entity.center,
-              majorAxis: entity.majorAxis,
-              minorAxisRatio: entity.minorAxisRatio,
-              startAngle: entity.startAngle,
-              endAngle: entity.endAngle
-            });
+            console.warn(`Invalid ELLIPSE parameters for entity handle "${entity.handle || 'unknown'}".`);
             return null;
           }
 
           const ellipseCoords: [number, number][] = [];
           const ellipseSegments = 64;
           const majorLength = Math.sqrt(
-            entity.majorAxis.x * entity.majorAxis.x + 
+            entity.majorAxis.x * entity.majorAxis.x +
             entity.majorAxis.y * entity.majorAxis.y
           );
-          
+
           if (!isFinite(majorLength) || majorLength === 0) {
-            console.warn('Invalid ellipse major axis length:', majorLength);
+            console.warn(`Invalid major axis length for ELLIPSE handle "${entity.handle || 'unknown'}".`);
             return null;
           }
 
@@ -569,7 +674,7 @@ export class DxfFileParser {
             endA += 2 * Math.PI;
           }
           const ellipseAngleIncrement = (endA - startA) / ellipseSegments;
-          
+
           for (let i = 0; i <= ellipseSegments; i++) {
             const angle = startA + (i * ellipseAngleIncrement);
             const cosAngle = Math.cos(angle);
@@ -580,27 +685,22 @@ export class DxfFileParser {
             const rotatedY = x * Math.sin(rotation) + y * Math.cos(rotation);
             const finalX = entity.center.x + rotatedX;
             const finalY = entity.center.y + rotatedY;
-            
+
             if (!isFinite(finalX) || !isFinite(finalY)) {
-              console.warn('Invalid ellipse point calculation:', { finalX, finalY });
+              console.warn('Invalid ellipse point calculation.');
               return null;
             }
-            
             ellipseCoords.push([finalX, finalY]);
           }
           return createLineStringGeometry(ellipseCoords);
         }
 
         default:
-          if ((entity as DxfEntity).type) {
-            console.warn('Unsupported entity type:', (entity as DxfEntity).type);
-          } else {
-            console.warn('Unsupported entity type');
-          }
+          console.warn(`Unsupported entity type during geometry conversion: "${entity.type}" handle "${entity.handle || 'unknown'}".`);
           return null;
       }
-    } catch (error) {
-      console.error('Error converting entity to geometry:', error);
+    } catch (error: any) {
+      console.error('Error converting entity to geometry:', error?.message || error);
       return null;
     }
   }
@@ -611,8 +711,8 @@ export class DxfFileParser {
       if (!geometry) return null;
 
       return createFeature(geometry, this.extractEntityProperties(entity));
-    } catch (error) {
-      console.warn(`Error converting entity to feature: ${error}`);
+    } catch (error: any) {
+      console.warn(`Error converting entity to feature (type: "${entity.type}", handle: "${entity.handle || 'unknown'}"):`, error?.message || error);
       return null;
     }
   }
@@ -638,6 +738,7 @@ export class DxfFileParser {
     const expandedEntities: DxfEntity[] = [];
 
     const processEntity = (entity: any, transformMatrix?: Matrix4): void => {
+      // INSERT is not explicitly handled in the original code, but we keep logic here.
       if (entity.type === 'INSERT') {
         const block = this.blocks[entity.name];
         if (block) {
@@ -665,6 +766,8 @@ export class DxfFileParser {
               });
             }
           }
+        } else {
+          console.warn(`INSERT references unknown block "${entity.name}"`);
         }
       } else {
         const transformedEntity = transformMatrix 
@@ -676,7 +779,12 @@ export class DxfFileParser {
       }
     };
 
-    dxf.entities.forEach((entity: any) => processEntity(entity));
+    if (Array.isArray(dxf.entities)) {
+      dxf.entities.forEach((entity: any) => processEntity(entity));
+    } else {
+      console.warn('DXF data has no valid entities array during block expansion.');
+    }
+
     return expandedEntities;
   }
 
@@ -760,6 +868,10 @@ export class DxfFileParser {
                   matrix[i][1] * point[1] +
                   matrix[i][2] * point[2] +
                   matrix[i][3] * point[3];
+    }
+    if (result[3] === 0) {
+      // Avoid division by zero
+      return [result[0], result[1], result[2]];
     }
     return [
       result[0] / result[3],

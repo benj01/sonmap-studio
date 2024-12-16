@@ -1,77 +1,9 @@
-import { GeoFileLoader, LoaderOptions, LoaderResult, GeoFeature, AnalyzeResult } from '../../../types/geo';
-import { CoordinateTransformer } from '../utils/coordinate-utils';
+import { GeoFileLoader, LoaderOptions, LoaderResult, AnalyzeResult } from '../../../types/geo';
+import { CoordinateTransformer, Point, suggestCoordinateSystem } from '../utils/coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
-import { createDxfParser } from '../utils/dxf-parser';
+import { createDxfParser } from '../utils/dxf';
 
 const PREVIEW_CHUNK_SIZE = 1000;
-
-interface Vector2 {
-  x: number;
-  y: number;
-}
-
-interface Vector3 extends Vector2 {
-  z?: number;
-}
-
-interface DxfEntityBase {
-  type: string;
-  layer?: string;
-  handle?: string;
-}
-
-type DxfPointEntity = DxfEntityBase & {
-  type: 'POINT';
-  position: Vector3;
-};
-
-type DxfLineEntity = DxfEntityBase & {
-  type: 'LINE';
-  start: Vector3;
-  end: Vector3;
-};
-
-type DxfPolylineEntity = DxfEntityBase & {
-  type: 'POLYLINE' | 'LWPOLYLINE';
-  vertices: Vector3[];
-  closed?: boolean;
-};
-
-type DxfCircleEntity = DxfEntityBase & {
-  type: 'CIRCLE' | 'ARC';
-  center: Vector3;
-  radius: number;
-  startAngle?: number;
-  endAngle?: number;
-};
-
-type DxfEllipseEntity = DxfEntityBase & {
-  type: 'ELLIPSE';
-  center: Vector3;
-  majorAxis: Vector3;
-  minorAxisRatio: number;
-  startAngle: number;
-  endAngle: number;
-};
-
-type DxfEntity = DxfPointEntity | DxfLineEntity | DxfPolylineEntity | DxfCircleEntity | DxfEllipseEntity;
-
-interface Point2D {
-  x: number;
-  y: number;
-}
-
-function isPoint2D(value: unknown): value is Point2D {
-  if (!value || typeof value !== 'object') return false;
-  const point = value as any;
-  return typeof point.x === 'number' && typeof point.y === 'number';
-}
-
-function isDxfPointEntity(entity: unknown): entity is DxfPointEntity {
-  if (!entity || typeof entity !== 'object') return false;
-  const e = entity as any;
-  return e.type === 'POINT' && e.position && isPoint2D(e.position);
-}
 
 class DxfLoader implements GeoFileLoader {
   private parser = createDxfParser();
@@ -89,6 +21,39 @@ class DxfLoader implements GeoFileLoader {
     });
   }
 
+  private extractPoints(entities: any[]): Point[] {
+    const points: Point[] = [];
+    entities.forEach(entity => {
+      if (!entity) return;
+
+      switch (entity.type) {
+        case 'POINT':
+          if (entity.position) {
+            points.push(entity.position);
+          }
+          break;
+        case 'LINE':
+          if (entity.start) points.push(entity.start);
+          if (entity.end) points.push(entity.end);
+          break;
+        case 'POLYLINE':
+        case 'LWPOLYLINE':
+          if (Array.isArray(entity.vertices)) {
+            points.push(...entity.vertices);
+          }
+          break;
+        case 'CIRCLE':
+        case 'ARC':
+        case 'ELLIPSE':
+          if (entity.center) {
+            points.push(entity.center);
+          }
+          break;
+      }
+    });
+    return points;
+  }
+
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
       const content = await this.readFileContent(file);
@@ -101,34 +66,21 @@ class DxfLoader implements GeoFileLoader {
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
       // Extract points for coordinate system detection
-      const points: Point2D[] = [];
-      for (const entity of expandedEntities) {
-        if (isDxfPointEntity(entity)) {
-          points.push({
-            x: entity.position.x,
-            y: entity.position.y
-          });
-          if (points.length >= 5) break;
-        }
-      }
-
-      // Default to WGS84 if no clear pattern is detected
-      const coordinateSystem = COORDINATE_SYSTEMS.WGS84;
-
-      // Calculate bounds from all entities
-      const bounds = this.calculateBounds(expandedEntities);
+      const points = this.extractPoints(expandedEntities);
+      const coordinateSystem = suggestCoordinateSystem(points);
 
       // Generate preview features
-      const previewFeatures: GeoFeature[] = [];
+      const previewFeatures = [];
       for (const entity of expandedEntities) {
-        if (this.isValidEntity(entity)) {
-          const feature = this.parser.entityToGeoFeature(entity);
-          if (feature) {
-            previewFeatures.push(feature);
-            if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
-          }
+        const feature = this.parser.entityToGeoFeature(entity);
+        if (feature) {
+          previewFeatures.push(feature);
+          if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
         }
       }
+
+      // Calculate bounds from preview features
+      const bounds = this.calculateBoundsFromFeatures(previewFeatures);
 
       return {
         layers: this.parser.getLayers(),
@@ -146,77 +98,35 @@ class DxfLoader implements GeoFileLoader {
     }
   }
 
-  private isValidEntity(entity: unknown): entity is DxfEntity {
-    if (!entity || typeof entity !== 'object') return false;
-    const e = entity as any;
-    
-    switch (e.type) {
-      case 'POINT':
-        return isDxfPointEntity(e);
-      case 'LINE':
-        return e.start && e.end && isPoint2D(e.start) && isPoint2D(e.end);
-      case 'POLYLINE':
-      case 'LWPOLYLINE':
-        return Array.isArray(e.vertices) && e.vertices.every((v: unknown) => isPoint2D(v));
-      case 'CIRCLE':
-      case 'ARC':
-        return e.center && isPoint2D(e.center) && typeof e.radius === 'number';
-      case 'ELLIPSE':
-        return e.center && e.majorAxis && 
-               isPoint2D(e.center) && isPoint2D(e.majorAxis) &&
-               typeof e.minorAxisRatio === 'number';
-      default:
-        return false;
-    }
-  }
-
-  private calculateBounds(entities: unknown[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  private calculateBoundsFromFeatures(features: any[]): { minX: number; minY: number; maxX: number; maxY: number } {
     let minX = Infinity, minY = Infinity;
     let maxX = -Infinity, maxY = -Infinity;
 
-    const updateBounds = (x: number, y: number) => {
-      if (typeof x === 'number' && typeof y === 'number' && isFinite(x) && isFinite(y)) {
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
+    const updateBounds = (coords: number[]) => {
+      if (coords.length >= 2) {
+        const [x, y] = coords;
+        if (isFinite(x) && isFinite(y)) {
+          minX = Math.min(minX, x);
+          minY = Math.min(minY, y);
+          maxX = Math.max(maxX, x);
+          maxY = Math.max(maxY, y);
+        }
       }
     };
 
-    entities.forEach(entity => {
-      if (!this.isValidEntity(entity)) return;
+    const processCoordinates = (coords: any) => {
+      if (Array.isArray(coords)) {
+        if (coords.length === 2 && typeof coords[0] === 'number') {
+          updateBounds(coords);
+        } else {
+          coords.forEach(processCoordinates);
+        }
+      }
+    };
 
-      switch (entity.type) {
-        case 'POINT':
-          updateBounds(entity.position.x, entity.position.y);
-          break;
-        case 'LINE':
-          updateBounds(entity.start.x, entity.start.y);
-          updateBounds(entity.end.x, entity.end.y);
-          break;
-        case 'POLYLINE':
-        case 'LWPOLYLINE':
-          entity.vertices.forEach(v => updateBounds(v.x, v.y));
-          break;
-        case 'CIRCLE':
-        case 'ARC':
-          updateBounds(entity.center.x - entity.radius, entity.center.y - entity.radius);
-          updateBounds(entity.center.x + entity.radius, entity.center.y + entity.radius);
-          break;
-        case 'ELLIPSE':
-          const majorLength = Math.sqrt(
-            entity.majorAxis.x * entity.majorAxis.x + 
-            entity.majorAxis.y * entity.majorAxis.y
-          );
-          updateBounds(
-            entity.center.x - majorLength,
-            entity.center.y - majorLength * entity.minorAxisRatio
-          );
-          updateBounds(
-            entity.center.x + majorLength,
-            entity.center.y + majorLength * entity.minorAxisRatio
-          );
-          break;
+    features.forEach(feature => {
+      if (feature?.geometry?.coordinates) {
+        processCoordinates(feature.geometry.coordinates);
       }
     });
 
@@ -243,15 +153,19 @@ class DxfLoader implements GeoFileLoader {
       
       let transformer: CoordinateTransformer | null = null;
       if (sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
-        transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
+        try {
+          transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
+        } catch (error) {
+          console.error('Failed to create coordinate transformer:', error);
+          throw new Error(`Unsupported coordinate system: ${sourceSystem}`);
+        }
       }
 
-      const features: GeoFeature[] = [];
+      const features = [];
       const featureTypes: Record<string, number> = {};
+      const failedTransformations = new Set<string>();
 
       for (const entity of expandedEntities) {
-        if (!this.isValidEntity(entity)) continue;
-
         // Skip entities not in selected layers
         if (selectedLayers.length > 0 && !selectedLayers.includes(entity.layer || '0')) {
           continue;
@@ -262,17 +176,29 @@ class DxfLoader implements GeoFileLoader {
           if (transformer) {
             // Transform coordinates if needed
             try {
-              feature.geometry.coordinates = this.transformCoordinates(
+              const transformedCoords = this.transformCoordinates(
                 feature.geometry.coordinates,
                 transformer
               );
+              
+              if (transformedCoords) {
+                feature.geometry.coordinates = transformedCoords;
+                features.push(feature);
+              } else {
+                const entityId = entity.handle || 'unknown';
+                if (!failedTransformations.has(entityId)) {
+                  console.warn(`Failed to transform coordinates for entity ${entityId}`);
+                  failedTransformations.add(entityId);
+                }
+                continue;
+              }
             } catch (error) {
               console.warn('Failed to transform coordinates:', error);
               continue;
             }
+          } else {
+            features.push(feature);
           }
-
-          features.push(feature);
           
           // Count feature types
           const type = feature.geometry.type;
@@ -280,17 +206,12 @@ class DxfLoader implements GeoFileLoader {
         }
       }
 
-      // Calculate bounds
-      let bounds = this.calculateBounds(expandedEntities);
-
-      // Transform bounds if needed
-      if (transformer) {
-        try {
-          bounds = transformer.transformBounds(bounds);
-        } catch (error) {
-          console.warn('Failed to transform bounds:', error);
-        }
+      if (failedTransformations.size > 0) {
+        console.warn(`Failed to transform ${failedTransformations.size} entities`);
       }
+
+      // Calculate bounds from transformed features
+      const bounds = this.calculateBoundsFromFeatures(features);
 
       const layers = this.parser.getLayers();
 
@@ -302,7 +223,8 @@ class DxfLoader implements GeoFileLoader {
         statistics: {
           pointCount: features.length,
           layerCount: layers.length,
-          featureTypes
+          featureTypes,
+          failedTransformations: failedTransformations.size
         }
       };
     } catch (err) {
@@ -316,9 +238,11 @@ class DxfLoader implements GeoFileLoader {
     if (Array.isArray(coordinates)) {
       if (coordinates.length === 2 && typeof coordinates[0] === 'number') {
         const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
+        if (!transformed) return null;
         return [transformed.x, transformed.y];
       }
-      return coordinates.map(coord => this.transformCoordinates(coord, transformer));
+      const transformedArray = coordinates.map(coord => this.transformCoordinates(coord, transformer));
+      return transformedArray.every(item => item !== null) ? transformedArray : null;
     }
     return coordinates;
   }

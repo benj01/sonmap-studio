@@ -73,6 +73,12 @@ export interface LoaderResult {
     pointCount: number;
     layerCount?: number;
     featureTypes: Record<string, number>;
+    failedTransformations?: number;  // Count of entities that failed coordinate transformation
+    errors?: {                       // Optional error statistics
+      type: string;
+      count: number;
+      message?: string;
+    }[];
   };
 }
 
