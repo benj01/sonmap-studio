@@ -8,7 +8,7 @@ import { Checkbox } from 'components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'components/ui/select';
 import { Switch } from 'components/ui/switch';
 import type { LoaderOptions } from '../../../types/geo';
-import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 
 interface FormatSettingsProps {
   fileType: string;
@@ -69,8 +69,8 @@ export function FormatSettings({
         <div className="space-y-2">
           <Label>Coordinate System</Label>
           <Select
-            value={options.coordinateSystem || analysis?.coordinateSystem || ''}
-            onValueChange={(value) => {
+            value={options.coordinateSystem || analysis?.coordinateSystem || COORDINATE_SYSTEMS.WGS84}
+            onValueChange={(value: CoordinateSystem) => {
               console.debug('Changing coordinate system:', {
                 from: options.coordinateSystem || analysis?.coordinateSystem,
                 to: value

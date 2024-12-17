@@ -62,6 +62,14 @@ export interface LoaderOptions {
   visibleLayers?: string[];
   selectedTemplate?: string;
   coordinateSystem?: CoordinateSystem;
+  // CSV/XYZ/TXT file options
+  delimiter?: string;
+  skipRows?: number;
+  skipColumns?: number;
+  // Point cloud optimization
+  simplificationTolerance?: number;
+  // Shapefile options
+  importAttributes?: boolean;
 }
 
 export interface GeoFileLoader {
