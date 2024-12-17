@@ -1,9 +1,10 @@
 import DxfParser from 'dxf-parser';
-import { DxfData, LayerInfo, DxfBlock, CustomDxfParserLib, ParserContext, ParserResult, DxfEntity } from './types';
-import { validateDxfData } from './validation';
+import { DxfData, LayerInfo, DxfBlock, CustomDxfParserLib, ParserContext, ParserResult, DxfEntity, DxfEntityBase } from './types';
 import { DxfEntityParser } from './entity-parser';
 import { TransformUtils } from './transform';
 import { GeoFeature } from '../../../../types/geo';
+import { DxfValidator } from './validator';
+import { ErrorCollector } from './error-collector';
 
 type ParsedEntity = ReturnType<DxfEntityParser['parseEntity']>;
 
@@ -78,12 +79,16 @@ class DxfParserLibImpl implements CustomDxfParserLib {
 export class DxfCoreParser {
   private parser: CustomDxfParserLib;
   private entityParser: DxfEntityParser;
+  private validator: DxfValidator;
+  private errorCollector: ErrorCollector;
   private blocks: Record<string, DxfBlock> = {};
   private layers: Map<string, LayerInfo> = new Map();
 
   constructor() {
     this.parser = new DxfParserLibImpl();
     this.entityParser = new DxfEntityParser();
+    this.validator = new DxfValidator();
+    this.errorCollector = new ErrorCollector();
   }
 
   async parse(content: string, context: ParserContext): Promise<DxfData> {
@@ -96,8 +101,22 @@ export class DxfCoreParser {
       this.blocks = this.extractBlocks(dxf);
       this.layers = this.extractLayers(dxf);
 
-      // Validate the parsed data
-      const errors = validateDxfData(dxf);
+      // Validate each entity
+      dxf.entities.forEach((entity: DxfEntityBase, index: number) => {
+        if (!this.validator.validateEntity(entity as DxfEntity)) {
+          const errors = this.validator.getErrors();
+          errors.forEach(error => {
+            this.errorCollector.addError(
+              entity.type || 'UNKNOWN',
+              entity.handle,
+              `Entity ${index}: ${error}`
+            );
+          });
+        }
+      });
+
+      // Log validation errors if any
+      const errors = this.errorCollector.getErrors();
       if (errors.length > 0) {
         console.warn('DXF validation errors:', errors);
       }
@@ -120,10 +139,14 @@ export class DxfCoreParser {
 
     const processEntity = (entity: DxfEntity, transformMatrix?: number[][], blockPath: string[] = []): void => {
       // Handle INSERT entities (block references)
-      if (entity.type === 'INSERT' && entity.block) {
+      if (entity.type === 'INSERT' && 'block' in entity) {
         // Check for circular references
         if (blockPath.includes(entity.block)) {
-          console.warn(`Circular block reference detected: ${blockPath.join(' -> ')} -> ${entity.block}`);
+          this.errorCollector.addWarning(
+            'INSERT',
+            entity.handle,
+            `Circular block reference detected: ${blockPath.join(' -> ')} -> ${entity.block}`
+          );
           return;
         }
 
@@ -156,7 +179,11 @@ export class DxfCoreParser {
     if (Array.isArray(dxf.entities)) {
       dxf.entities.forEach(entity => processEntity(entity));
     } else {
-      console.warn('DXF data has no valid entities array during block expansion.');
+      this.errorCollector.addError(
+        'DXF',
+        undefined,
+        'DXF data has no valid entities array during block expansion'
+      );
     }
 
     return expandedEntities;
@@ -185,7 +212,7 @@ export class DxfCoreParser {
         });
       }
     } catch (error: any) {
-      console.warn('Error extracting blocks:', error?.message || error);
+      this.errorCollector.addWarning('BLOCK', undefined, `Error extracting blocks: ${error?.message || error}`);
     }
     return blocks;
   }
@@ -227,7 +254,7 @@ export class DxfCoreParser {
         });
       }
     } catch (error: any) {
-      console.warn('Error extracting layers:', error?.message || error);
+      this.errorCollector.addWarning('LAYER', undefined, `Error extracting layers: ${error?.message || error}`);
       if (!layers.has('0')) {
         layers.set('0', { name: '0', visible: true });
       }
@@ -238,6 +265,20 @@ export class DxfCoreParser {
 
   getLayers(): string[] {
     return Array.from(this.layers.keys());
+  }
+
+  getErrors(): string[] {
+    return this.errorCollector.getErrors();
+  }
+
+  getWarnings(): string[] {
+    return this.errorCollector.getWarnings();
+  }
+
+  clear() {
+    this.errorCollector.clear();
+    this.validator.clear();
+    this.entityParser.clear();
   }
 }
 

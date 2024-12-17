@@ -1,23 +1,40 @@
 import { DxfEntity, DxfEntityBase, Vector3, ParserResult, ParserContext } from './types';
-import { validateEntity } from './validation';
+import { DxfValidator } from './validator';
 import { createFeature } from '../geometry-utils';
 import { GeoFeature } from '../../../../types/geo';
+import { ErrorCollector } from './error-collector';
 
 export class DxfEntityParser {
+  private validator: DxfValidator;
+  private errorCollector: ErrorCollector;
+
+  constructor() {
+    this.validator = new DxfValidator();
+    this.errorCollector = new ErrorCollector();
+  }
+
   parseEntity(rawEntity: any): DxfEntity | null {
     if (!rawEntity || typeof rawEntity !== 'object' || typeof rawEntity.type !== 'string') {
-      console.warn('Invalid entity structure:', rawEntity);
+      this.errorCollector.addGeneralError('Invalid entity structure');
       return null;
     }
 
     try {
       const entity = this.convertEntity(rawEntity);
       if (!entity && rawEntity?.type) {
-        console.warn(`Failed to convert entity of type "${rawEntity.type}" with handle "${rawEntity.handle || 'unknown'}"`);
+        this.errorCollector.addWarning(
+          rawEntity.type,
+          rawEntity.handle,
+          'Failed to convert entity'
+        );
       }
       return entity;
     } catch (error: any) {
-      console.error('Error parsing entity:', error?.message || error);
+      this.errorCollector.addError(
+        rawEntity.type || 'UNKNOWN',
+        rawEntity.handle,
+        `Error parsing entity: ${error?.message || error}`
+      );
       return null;
     }
   }
@@ -40,128 +57,293 @@ export class DxfEntityParser {
   private convertEntity(entity: any): DxfEntity | null {
     try {
       switch (entity.type) {
-        case '3DFACE': {
-          if (!Array.isArray(entity.vertices) || entity.vertices.length < 3) {
-            console.warn(`3DFACE entity with handle "${entity.handle || 'unknown'}" has invalid vertices.`);
-            return null;
-          }
-          return {
-            ...this.extractCommonProperties(entity),
-            type: '3DFACE',
-            vertices: [
-              entity.vertices[0] || { x: 0, y: 0, z: 0 },
-              entity.vertices[1] || { x: 0, y: 0, z: 0 },
-              entity.vertices[2] || { x: 0, y: 0, z: 0 },
-              entity.vertices[3] || entity.vertices[2] || { x: 0, y: 0, z: 0 }
-            ]
-          };
-        }
-
-        case 'POINT': {
-          if (!entity.position || typeof entity.position.x !== 'number' || typeof entity.position.y !== 'number') {
-            console.warn(`POINT entity with handle "${entity.handle || 'unknown'}" has invalid position.`);
-            return null;
-          }
-          return {
-            ...this.extractCommonProperties(entity),
-            type: 'POINT',
-            position: entity.position
-          };
-        }
-
-        case 'LINE': {
-          if (!entity.start || !entity.end || typeof entity.start.x !== 'number' || typeof entity.end.x !== 'number') {
-            console.warn(`LINE entity with handle "${entity.handle || 'unknown'}" has invalid start/end points.`);
-            return null;
-          }
-          return {
-            ...this.extractCommonProperties(entity),
-            type: 'LINE',
-            start: entity.start,
-            end: entity.end
-          };
-        }
-
+        case '3DFACE':
+          return this.parse3DFace(entity);
+        case 'POINT':
+          return this.parsePoint(entity);
+        case 'LINE':
+          return this.parseLine(entity);
+        case 'POLYLINE':
         case 'LWPOLYLINE':
-        case 'POLYLINE': {
-          if (!Array.isArray(entity.vertices)) {
-            console.warn(`POLYLINE entity with handle "${entity.handle || 'unknown'}" is missing vertices array.`);
-            return null;
-          }
-          return {
-            ...this.extractCommonProperties(entity),
-            type: entity.type,
-            vertices: entity.vertices.map((v: any) => ({
-              x: v.x ?? 0,
-              y: v.y ?? 0,
-              z: v.z ?? 0
-            })),
-            closed: entity.closed
-          };
-        }
-
-        case 'CIRCLE': {
-          if (!entity.center || typeof entity.radius !== 'number') {
-            console.warn(`CIRCLE entity with handle "${entity.handle || 'unknown'}" missing center or radius.`);
-            return null;
-          }
-          return {
-            ...this.extractCommonProperties(entity),
-            type: 'CIRCLE',
-            center: entity.center,
-            radius: entity.radius
-          };
-        }
-
-        case 'ARC': {
-          if (!entity.center || typeof entity.radius !== 'number' ||
-              typeof entity.startAngle !== 'number' || typeof entity.endAngle !== 'number') {
-            console.warn(`ARC entity with handle "${entity.handle || 'unknown'}" missing parameters.`);
-            return null;
-          }
-          return {
-            ...this.extractCommonProperties(entity),
-            type: 'ARC',
-            center: entity.center,
-            radius: entity.radius,
-            startAngle: entity.startAngle,
-            endAngle: entity.endAngle
-          };
-        }
-
-        case 'ELLIPSE': {
-          if (!entity.center || !entity.majorAxis ||
-              typeof entity.minorAxisRatio !== 'number' ||
-              typeof entity.startAngle !== 'number' ||
-              typeof entity.endAngle !== 'number') {
-            console.warn(`ELLIPSE entity with handle "${entity.handle || 'unknown'}" missing parameters.`);
-            return null;
-          }
-          return {
-            ...this.extractCommonProperties(entity),
-            type: 'ELLIPSE',
-            center: entity.center,
-            majorAxis: entity.majorAxis,
-            minorAxisRatio: entity.minorAxisRatio,
-            startAngle: entity.startAngle,
-            endAngle: entity.endAngle
-          };
-        }
-
+          return this.parsePolyline(entity);
+        case 'CIRCLE':
+          return this.parseCircle(entity);
+        case 'ARC':
+          return this.parseArc(entity);
+        case 'ELLIPSE':
+          return this.parseEllipse(entity);
+        case 'INSERT':
+          return this.parseInsert(entity);
+        case 'TEXT':
+        case 'MTEXT':
+          return this.parseText(entity);
+        case 'SPLINE':
+          return this.parseSpline(entity);
+        case 'HATCH':
+          return this.parseHatch(entity);
+        case 'SOLID':
+        case '3DSOLID':
+          return this.parseSolid(entity);
+        case 'DIMENSION':
+          return this.parseDimension(entity);
+        case 'LEADER':
+        case 'MLEADER':
+          return this.parseLeader(entity);
+        case 'RAY':
+        case 'XLINE':
+          return this.parseRay(entity);
         default:
-          console.warn(`Unsupported entity type "${entity.type}" with handle "${entity.handle || 'unknown'}".`);
+          this.errorCollector.addWarning(
+            entity.type,
+            entity.handle,
+            'Unsupported entity type'
+          );
           return null;
       }
     } catch (error: any) {
-      console.warn(`Error converting entity type "${entity.type}" handle "${entity.handle || 'unknown'}":`, error?.message || error);
+      this.errorCollector.addError(
+        entity.type || 'UNKNOWN',
+        entity.handle,
+        `Error converting entity: ${error?.message || error}`
+      );
       return null;
     }
   }
 
+  private parse3DFace(entity: any): DxfEntity | null {
+    if (!Array.isArray(entity.vertices) || entity.vertices.length < 3) {
+      this.errorCollector.addError('3DFACE', entity.handle, 'Invalid vertices');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: '3DFACE',
+      vertices: [
+        entity.vertices[0] || { x: 0, y: 0, z: 0 },
+        entity.vertices[1] || { x: 0, y: 0, z: 0 },
+        entity.vertices[2] || { x: 0, y: 0, z: 0 },
+        entity.vertices[3] || entity.vertices[2] || { x: 0, y: 0, z: 0 }
+      ]
+    };
+  }
+
+  private parsePoint(entity: any): DxfEntity | null {
+    if (!entity.position || typeof entity.position.x !== 'number' || typeof entity.position.y !== 'number') {
+      this.errorCollector.addError('POINT', entity.handle, 'Invalid position');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'POINT',
+      position: entity.position
+    };
+  }
+
+  private parseLine(entity: any): DxfEntity | null {
+    if (!entity.start || !entity.end || typeof entity.start.x !== 'number' || typeof entity.end.x !== 'number') {
+      this.errorCollector.addError('LINE', entity.handle, 'Invalid start/end points');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'LINE',
+      start: entity.start,
+      end: entity.end
+    };
+  }
+
+  private parsePolyline(entity: any): DxfEntity | null {
+    if (!Array.isArray(entity.vertices)) {
+      this.errorCollector.addError(entity.type, entity.handle, 'Missing vertices array');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: entity.type,
+      vertices: entity.vertices.map((v: any) => ({
+        x: v.x ?? 0,
+        y: v.y ?? 0,
+        z: v.z ?? 0
+      })),
+      closed: entity.closed
+    };
+  }
+
+  private parseCircle(entity: any): DxfEntity | null {
+    if (!entity.center || typeof entity.radius !== 'number') {
+      this.errorCollector.addError('CIRCLE', entity.handle, 'Missing center or radius');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'CIRCLE',
+      center: entity.center,
+      radius: entity.radius
+    };
+  }
+
+  private parseArc(entity: any): DxfEntity | null {
+    if (!entity.center || typeof entity.radius !== 'number' ||
+        typeof entity.startAngle !== 'number' || typeof entity.endAngle !== 'number') {
+      this.errorCollector.addError('ARC', entity.handle, 'Missing parameters');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'ARC',
+      center: entity.center,
+      radius: entity.radius,
+      startAngle: entity.startAngle,
+      endAngle: entity.endAngle
+    };
+  }
+
+  private parseEllipse(entity: any): DxfEntity | null {
+    if (!entity.center || !entity.majorAxis ||
+        typeof entity.minorAxisRatio !== 'number' ||
+        typeof entity.startAngle !== 'number' ||
+        typeof entity.endAngle !== 'number') {
+      this.errorCollector.addError('ELLIPSE', entity.handle, 'Missing parameters');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'ELLIPSE',
+      center: entity.center,
+      majorAxis: entity.majorAxis,
+      minorAxisRatio: entity.minorAxisRatio,
+      startAngle: entity.startAngle,
+      endAngle: entity.endAngle
+    };
+  }
+
+  private parseInsert(entity: any): DxfEntity | null {
+    if (!entity.position || !entity.block) {
+      this.errorCollector.addError('INSERT', entity.handle, 'Missing position or block reference');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'INSERT',
+      position: entity.position,
+      block: entity.block,
+      scale: entity.scale,
+      rotation: entity.rotation
+    };
+  }
+
+  private parseText(entity: any): DxfEntity | null {
+    if (!entity.position || typeof entity.text !== 'string') {
+      this.errorCollector.addError(entity.type, entity.handle, 'Missing position or text content');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: entity.type,
+      position: entity.position,
+      text: entity.text,
+      height: entity.height,
+      rotation: entity.rotation,
+      width: entity.width,
+      style: entity.style,
+      horizontalAlignment: entity.horizontalAlignment,
+      verticalAlignment: entity.verticalAlignment
+    };
+  }
+
+  private parseSpline(entity: any): DxfEntity | null {
+    if (!Array.isArray(entity.controlPoints) || typeof entity.degree !== 'number') {
+      this.errorCollector.addError('SPLINE', entity.handle, 'Missing control points or degree');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'SPLINE',
+      controlPoints: entity.controlPoints,
+      degree: entity.degree,
+      knots: entity.knots,
+      weights: entity.weights,
+      closed: entity.closed
+    };
+  }
+
+  private parseHatch(entity: any): DxfEntity | null {
+    if (!Array.isArray(entity.boundaries) || typeof entity.pattern !== 'string') {
+      this.errorCollector.addError('HATCH', entity.handle, 'Missing boundaries or pattern');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'HATCH',
+      boundaries: entity.boundaries,
+      pattern: entity.pattern,
+      solid: entity.solid ?? false,
+      scale: entity.scale,
+      angle: entity.angle
+    };
+  }
+
+  private parseSolid(entity: any): DxfEntity | null {
+    if (!Array.isArray(entity.vertices)) {
+      this.errorCollector.addError(entity.type, entity.handle, 'Missing vertices');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: entity.type,
+      vertices: entity.vertices
+    };
+  }
+
+  private parseDimension(entity: any): DxfEntity | null {
+    if (!entity.definitionPoint || !entity.textMidPoint || !entity.insertionPoint || 
+        typeof entity.dimensionType !== 'number') {
+      this.errorCollector.addError('DIMENSION', entity.handle, 'Missing required parameters');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: 'DIMENSION',
+      definitionPoint: entity.definitionPoint,
+      textMidPoint: entity.textMidPoint,
+      insertionPoint: entity.insertionPoint,
+      dimensionType: entity.dimensionType,
+      text: entity.text,
+      rotation: entity.rotation
+    };
+  }
+
+  private parseLeader(entity: any): DxfEntity | null {
+    if (!Array.isArray(entity.vertices)) {
+      this.errorCollector.addError(entity.type, entity.handle, 'Missing vertices');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: entity.type,
+      vertices: entity.vertices,
+      annotation: entity.annotation,
+      arrowhead: entity.arrowhead
+    };
+  }
+
+  private parseRay(entity: any): DxfEntity | null {
+    if (!entity.basePoint || !entity.direction) {
+      this.errorCollector.addError(entity.type, entity.handle, 'Missing base point or direction');
+      return null;
+    }
+    return {
+      ...this.extractCommonProperties(entity),
+      type: entity.type,
+      basePoint: entity.basePoint,
+      direction: entity.direction
+    };
+  }
+
   entityToGeoFeature(entity: DxfEntity, layerInfo?: Record<string, any>): GeoFeature | null {
-    const errors = validateEntity(entity);
-    if (errors.length > 0) {
-      console.warn(`Entity validation failed:`, errors);
+    if (!this.validator.validateEntity(entity)) {
+      const errors = this.validator.getErrors();
+      errors.forEach(error => this.errorCollector.addGeneralError(error));
       return null;
     }
 
@@ -180,6 +362,19 @@ export class DxfEntityParser {
     };
 
     return createFeature(entity, properties);
+  }
+
+  getErrors(): string[] {
+    return this.errorCollector.getErrors();
+  }
+
+  getWarnings(): string[] {
+    return this.errorCollector.getWarnings();
+  }
+
+  clear() {
+    this.errorCollector.clear();
+    this.validator.clear();
   }
 }
 

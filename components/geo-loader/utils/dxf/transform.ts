@@ -1,5 +1,4 @@
-import { Matrix4, Vector3, DxfEntity, DxfInsertEntity } from './types';
-import { isValidVector } from './validation';
+import { Matrix4, Vector3, DxfEntity, DxfInsertEntity, isVector3 } from './types';
 
 export class TransformUtils {
   static createIdentityMatrix(): Matrix4 {
@@ -82,7 +81,7 @@ export class TransformUtils {
   }
 
   static transformPoint(point: Vector3, matrix: Matrix4): Vector3 | null {
-    if (!isValidVector(point)) {
+    if (!isVector3(point)) {
       console.warn('Invalid point coordinates:', point);
       return null;
     }
@@ -245,6 +244,11 @@ export class TransformUtils {
               z: (entity.scale.z || 1) * scaleFactor
             } : undefined
           };
+        }
+
+        default: {
+          console.warn(`Unsupported entity type for transformation: ${entity.type}`);
+          return null;
         }
       }
     } catch (error: any) {
