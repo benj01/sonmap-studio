@@ -43,6 +43,7 @@ export function GeoImportDialog({
     setOptions,
     analyzeFile,
     loadFile,
+    clearLogs,
   } = useGeoLoader();
 
   const [state, setState] = useState<{
@@ -50,17 +51,18 @@ export function GeoImportDialog({
     hasErrors: boolean
     selectedLayers: string[]
     visibleLayers: string[]
-    selectedTemplate: string
+    selectedTemplates: string[]
   }>({
     logs: [],
     hasErrors: false,
     selectedLayers: [],
     visibleLayers: [],
-    selectedTemplate: '',
+    selectedTemplates: [],
   });
 
-  // Use a ref to track if initial analysis is complete
-  const initialAnalysisComplete = useRef(false);
+  // Use a ref to track the current file being analyzed
+  const currentFileRef = useRef<File | null>(null);
+  const processedLogsRef = useRef(new Set<string>());
 
   // Initialize visibleLayers with all available layers when dxfData changes
   useEffect(() => {
@@ -80,15 +82,29 @@ export function GeoImportDialog({
   const addLogs = useCallback((newLogs: { message: string; type: LogType }[]) => {
     const timestamp = new Date();
     setState(prevState => {
+      // Filter out logs we've already processed
+      const uniqueLogs = newLogs.filter(log => {
+        const logId = `${log.type}:${log.message}`;
+        if (processedLogsRef.current.has(logId)) {
+          return false;
+        }
+        processedLogsRef.current.add(logId);
+        return true;
+      });
+
+      if (uniqueLogs.length === 0) {
+        return prevState;
+      }
+
       const updatedLogs = [
         ...prevState.logs,
-        ...newLogs.map(log => ({
+        ...uniqueLogs.map(log => ({
           ...log,
           timestamp
         }))
       ];
       
-      const hasErrors = prevState.hasErrors || newLogs.some(log => log.type === 'error');
+      const hasErrors = prevState.hasErrors || uniqueLogs.some(log => log.type === 'error');
       
       return {
         ...prevState,
@@ -96,7 +112,7 @@ export function GeoImportDialog({
         hasErrors
       };
     });
-  }, []); // No dependencies needed since we use the function form of setState
+  }, []);
 
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
     setState(prev => {
@@ -134,12 +150,23 @@ export function GeoImportDialog({
     });
   }, [setOptions]);
 
-  const handleTemplateSelect = useCallback((template: string) => {
-    setState(prev => ({
-      ...prev,
-      selectedTemplate: template
-    }));
-  }, []);
+  const handleTemplateSelect = useCallback((template: string, enabled: boolean) => {
+    setState(prev => {
+      const newTemplates = enabled
+        ? [...prev.selectedTemplates, template]
+        : prev.selectedTemplates.filter(t => t !== template);
+
+      setOptions(opts => ({
+        ...opts,
+        selectedTemplates: newTemplates
+      }));
+
+      return {
+        ...prev,
+        selectedTemplates: newTemplates
+      };
+    });
+  }, [setOptions]);
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
     // Ensure the value is a valid CoordinateSystem
@@ -152,16 +179,6 @@ export function GeoImportDialog({
       coordinateSystem
     }));
   }, [setOptions]);
-
-  // Handle loader errors
-  useEffect(() => {
-    if (loaderError) {
-      addLogs([{
-        message: `Error: ${loaderError}`,
-        type: 'error'
-      }]);
-    }
-  }, [loaderError, addLogs]);
 
   // Handle loader logs
   useEffect(() => {
@@ -176,50 +193,36 @@ export function GeoImportDialog({
     }
   }, [loaderLogs, addLogs]);
 
-  // Initialize file analysis when dialog opens
-  useEffect(() => {
-    if (isOpen && file && !initialAnalysisComplete.current) {
-      analyzeFile(file).catch(error => {
-        addLogs([{
-          message: `Analysis error: ${error.message}`,
-          type: 'error'
-        }]);
-      });
-      initialAnalysisComplete.current = true;
-    }
-  }, [isOpen, file, analyzeFile, addLogs]);
-
-  // Reset state when dialog opens
+  // Handle dialog open/close and file analysis
   useEffect(() => {
     if (isOpen) {
-      setState({
-        logs: [],
-        hasErrors: false,
-        selectedLayers: [],
-        visibleLayers: [],
-        selectedTemplate: ''
-      });
-      initialAnalysisComplete.current = false;
-    }
-  }, [isOpen]);
-
-  // Handle coordinate system warning
-  useEffect(() => {
-    if (analysis?.coordinateSystem === COORDINATE_SYSTEMS.WGS84) {
-      const bounds = analysis?.bounds;
-      if (bounds && (
-          Math.abs(bounds.maxX) > 180 || 
-          Math.abs(bounds.minX) > 180 || 
-          Math.abs(bounds.maxY) > 90 || 
-          Math.abs(bounds.minY) > 90
-      )) {
-        addLogs([{
-          message: 'Warning: Coordinates appear to be in a local/projected system. Please select the correct coordinate system.',
-          type: 'warning'
-        }]);
+      // Only reset state and analyze if it's a new file
+      if (file !== currentFileRef.current) {
+        setState(prev => ({
+          ...prev,
+          logs: [],
+          hasErrors: false,
+          selectedLayers: [],
+          visibleLayers: [],
+          selectedTemplates: []
+        }));
+        processedLogsRef.current.clear();
+        clearLogs();
+        
+        currentFileRef.current = file;
+        if (file) {
+          analyzeFile(file).catch(error => {
+            addLogs([{
+              message: `Analysis error: ${error.message}`,
+              type: 'error'
+            }]);
+          });
+        }
       }
+    } else {
+      currentFileRef.current = null;
     }
-  }, [analysis, addLogs]);
+  }, [isOpen, file, clearLogs, analyzeFile, addLogs]);
 
   const handleImport = async () => {
     if (!file) return;
@@ -351,7 +354,7 @@ export function GeoImportDialog({
                   onLayerToggle={handleLayerToggle}
                   visibleLayers={state.visibleLayers}
                   onLayerVisibilityToggle={handleLayerVisibilityToggle}
-                  selectedTemplate={state.selectedTemplate}
+                  selectedTemplates={state.selectedTemplates}
                   onTemplateSelect={handleTemplateSelect}
                 />
               </div>
@@ -401,13 +404,17 @@ export function GeoImportDialog({
               </div>
               <ScrollArea className="h-[200px] w-full rounded-md">
                 <div className="pr-4">
-                  {state.logs.length === 0 ? (
+                  {loading && state.logs.length === 0 && (
+                    <p className="text-sm text-muted-foreground">Loading...</p>
+                  )}
+                  {!loading && state.logs.length === 0 && (
                     <p className="text-sm text-muted-foreground">No logs available yet...</p>
-                  ) : (
+                  )}
+                  {state.logs.length > 0 && (
                     <div className="space-y-1">
                       {state.logs.map((log, index) => (
                         <div
-                          key={index}
+                          key={`${log.timestamp.getTime()}-${index}`}
                           className={`py-1 text-sm ${
                             log.type === 'error'
                               ? 'text-destructive'

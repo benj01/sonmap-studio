@@ -29,8 +29,8 @@ interface DxfStructureViewProps {
   onLayerToggle: (layer: string, enabled: boolean) => void;
   visibleLayers: string[];
   onLayerVisibilityToggle: (layer: string, visible: boolean) => void;
-  selectedTemplate?: string;
-  onTemplateSelect?: (template: string, enabled: boolean) => void;
+  selectedTemplates: string[];  // Changed from selectedTemplate
+  onTemplateSelect: (template: string, enabled: boolean) => void;  // Updated signature
   onElementSelect?: (elementInfo: { type: string, layer: string }) => void;
 }
 
@@ -104,7 +104,7 @@ export function DxfStructureView({
   onLayerToggle,
   visibleLayers = [],
   onLayerVisibilityToggle,
-  selectedTemplate,
+  selectedTemplates = [],  // Changed from selectedTemplate
   onTemplateSelect,
   onElementSelect
 }: DxfStructureViewProps) {
@@ -163,9 +163,18 @@ export function DxfStructureView({
     });
   };
 
-  // Check if all layers are visible/selected
+  // Handle toggle all templates
+  const handleToggleAllTemplates = (enabled: boolean) => {
+    Object.keys(entityCounts).forEach(type => {
+      onTemplateSelect(type, enabled);
+    });
+  };
+
+  // Check if all layers/templates are visible/selected
   const allLayersVisible = allLayers.length > 0 && allLayers.every(layer => visibleLayers.includes(layer));
   const allLayersSelected = allLayers.length > 0 && allLayers.every(layer => selectedLayers.includes(layer));
+  const allTemplatesSelected = Object.keys(entityCounts).length > 0 && 
+    Object.keys(entityCounts).every(type => selectedTemplates.includes(type));
 
   return (
     <ScrollArea className="h-[400px] w-full rounded-md border p-2">
@@ -320,6 +329,22 @@ export function DxfStructureView({
           count={Object.keys(entityCounts).length}
           defaultExpanded
         >
+          {/* Add master toggle for all templates */}
+          <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
+            <div className="flex items-center gap-2">
+              <Grid className="h-4 w-4" />
+              <span className="text-xs">Toggle All Templates</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Download className="h-3 w-3" />
+              <Switch
+                checked={allTemplatesSelected}
+                onCheckedChange={handleToggleAllTemplates}
+                className="scale-75"
+              />
+            </div>
+          </div>
+
           {Object.entries(entityCounts).map(([type, count]) => (
             <div key={type} className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
               <div className="flex items-center gap-2">
@@ -329,8 +354,8 @@ export function DxfStructureView({
                 </Label>
               </div>
               <Switch
-                checked={selectedTemplate === type}
-                onCheckedChange={(checked) => onTemplateSelect?.(type, checked)}
+                checked={selectedTemplates.includes(type)}
+                onCheckedChange={(checked) => onTemplateSelect(type, checked)}
                 className="scale-75"
               />
             </div>

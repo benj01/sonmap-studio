@@ -60,7 +60,7 @@ export interface AnalyzeResult {
 export interface LoaderOptions {
   selectedLayers?: string[];
   visibleLayers?: string[];
-  selectedTemplate?: string;
+  selectedTemplates?: string[];  // Changed from selectedTemplate to selectedTemplates array
   coordinateSystem?: CoordinateSystem;
   // CSV/XYZ/TXT file options
   delimiter?: string;

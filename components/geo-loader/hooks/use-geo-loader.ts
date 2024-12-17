@@ -4,7 +4,8 @@ import dxfLoader from '../loaders/dxf';
 import shapefileLoader from '../loaders/shapefile';
 import csvLoader from '../loaders/csv-xyz';
 import { DxfData } from '../utils/dxf/types';
-import { CoordinateSystem } from '../types/coordinates';
+import { CoordinateSystem, COORDINATE_SYSTEMS } from '../types/coordinates';
+import { suggestCoordinateSystem, Point } from '../utils/coordinate-utils';
 
 export function useGeoLoader() {
   const [loading, setLoading] = useState(false);
@@ -13,7 +14,7 @@ export function useGeoLoader() {
   const [options, setOptions] = useState<LoaderOptions>({
     selectedLayers: [],
     visibleLayers: [],
-    selectedTemplate: undefined,
+    selectedTemplates: [],
     coordinateSystem: undefined
   });
   const [logs, setLogs] = useState<string[]>([]);
@@ -22,6 +23,10 @@ export function useGeoLoader() {
   
   const addLog = useCallback((message: string) => {
     setLogs(prev => [...prev, message]);
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
   }, []);
 
   const getLoader = useCallback((file: File) => {
@@ -40,20 +45,77 @@ export function useGeoLoader() {
   }, []);
 
   const analyzeFile = useCallback(async (file: File) => {
-    // Only analyze if we haven't analyzed this file before
-    if (currentFile === file && analysis) {
+    // Compare file properties instead of File object reference
+    if (currentFile && 
+        currentFile.name === file.name && 
+        currentFile.size === file.size && 
+        currentFile.lastModified === file.lastModified && 
+        analysis) {
       return analysis;
     }
 
     setLoading(true);
     setError(null);
-    setLogs([]); // Clear logs for new analysis
     
     try {
       const loader = getLoader(file);
       addLog(`Analyzing ${file.name}...`);
       const result = await loader.analyze(file);
       
+      // Process analysis results
+      if (result.analysis) {
+        // Log warnings
+        if (result.analysis.warnings && result.analysis.warnings.length > 0) {
+          result.analysis.warnings.forEach(warning => {
+            addLog(`Warning: ${warning.message}`);
+          });
+        }
+
+        // Log non-critical errors
+        if (result.analysis.errors && result.analysis.errors.length > 0) {
+          result.analysis.errors.forEach(error => {
+            if (!error.isCritical) {
+              addLog(`Error: ${error.message}`);
+            }
+          });
+        }
+
+        // Log stats
+        if (result.analysis.stats) {
+          const stats = result.analysis.stats;
+          addLog(`Found ${stats.entityCount} entities:`);
+          if (stats.lineCount) addLog(`- ${stats.lineCount} lines`);
+          if (stats.pointCount) addLog(`- ${stats.pointCount} points`);
+          if (stats.polylineCount) addLog(`- ${stats.polylineCount} polylines`);
+          if (stats.circleCount) addLog(`- ${stats.circleCount} circles`);
+          if (stats.arcCount) addLog(`- ${stats.arcCount} arcs`);
+          if (stats.textCount) addLog(`- ${stats.textCount} text elements`);
+        }
+      }
+
+      // Detect coordinate system if not already set
+      if (!result.coordinateSystem && result.preview?.features) {
+        const points: Point[] = [];
+        result.preview.features.forEach(feature => {
+          if (feature.geometry.type === 'Point') {
+            const [x, y] = feature.geometry.coordinates;
+            points.push({ x, y });
+          }
+        });
+
+        // Check for coordinates outside WGS84 range
+        const hasLargeCoordinates = points.some(point => 
+          Math.abs(point.x) > 180 || 
+          Math.abs(point.y) > 90
+        );
+
+        if (hasLargeCoordinates) {
+          addLog('Warning: Coordinates appear to be in a local/projected system. Please select the correct coordinate system.');
+        }
+
+        result.coordinateSystem = suggestCoordinateSystem(points);
+      }
+
       setAnalysis(result);
       setCurrentFile(file);
       
@@ -89,11 +151,12 @@ export function useGeoLoader() {
       const loader = getLoader(file);
       addLog(`Loading ${file.name}...`);
       
-      // Use current options for coordinate system and layer selection
+      // Use current options for coordinate system, layer selection, and templates
       const result = await loader.load(file, {
         ...options,
         selectedLayers: options.selectedLayers || [],
-        visibleLayers: options.visibleLayers || []
+        visibleLayers: options.visibleLayers || [],
+        selectedTemplates: options.selectedTemplates || []
       });
       
       addLog('Load complete');
@@ -117,6 +180,7 @@ export function useGeoLoader() {
     dxfData,
     setOptions,
     analyzeFile,
-    loadFile
+    loadFile,
+    clearLogs
   };
 }

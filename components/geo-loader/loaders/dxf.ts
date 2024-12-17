@@ -340,6 +340,7 @@ class DxfLoader implements GeoFileLoader {
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
       const selectedLayers = options.selectedLayers || [];
+      const selectedTemplates = options.selectedTemplates || [];
       const sourceSystem = options.coordinateSystem || COORDINATE_SYSTEMS.WGS84;
       
       let transformer: CoordinateTransformer | null = null;
@@ -372,7 +373,13 @@ class DxfLoader implements GeoFileLoader {
       });
 
       for (const entity of expandedEntities) {
+        // Skip if entity's layer is not selected
         if (selectedLayers.length > 0 && !selectedLayers.includes(entity.layer || '0')) {
+          continue;
+        }
+
+        // Skip if entity's type is not selected (when templates are specified)
+        if (selectedTemplates.length > 0 && !selectedTemplates.includes(entity.type)) {
           continue;
         }
 
