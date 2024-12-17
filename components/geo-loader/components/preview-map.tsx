@@ -19,11 +19,22 @@ export function PreviewMap({
   bounds, 
   coordinateSystem = COORDINATE_SYSTEMS.WGS84,
   visibleLayers = [],
+  selectedElement,
   analysis
 }: PreviewMapProps) {
-  const { viewState, onMove, updateViewFromBounds } = useMapView(bounds, coordinateSystem);
+  const { 
+    viewState, 
+    onMove, 
+    updateViewFromBounds,
+    focusOnFeatures 
+  } = useMapView(bounds, coordinateSystem);
   
-  const { pointFeatures, lineFeatures, polygonFeatures } = useFeatureProcessing({
+  const { 
+    pointFeatures, 
+    lineFeatures, 
+    polygonFeatures,
+    getFeaturesByTypeAndLayer 
+  } = useFeatureProcessing({
     preview,
     coordinateSystem,
     visibleLayers,
@@ -31,11 +42,25 @@ export function PreviewMap({
     analysis
   });
 
+  // Initial zoom to bounds
   useEffect(() => {
     if (bounds) {
       updateViewFromBounds(bounds);
     }
   }, [bounds, updateViewFromBounds]);
+
+  // Focus on selected element
+  useEffect(() => {
+    if (selectedElement && preview) {
+      const features = getFeaturesByTypeAndLayer(
+        selectedElement.type,
+        selectedElement.layer
+      );
+      if (features.length > 0) {
+        focusOnFeatures(features);
+      }
+    }
+  }, [selectedElement, preview, getFeaturesByTypeAndLayer, focusOnFeatures]);
 
   return (
     <div className="h-full w-full relative">

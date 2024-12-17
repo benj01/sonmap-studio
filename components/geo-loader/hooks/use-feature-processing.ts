@@ -1,108 +1,98 @@
 import { useMemo } from 'react';
-import { Feature, FeatureCollection } from 'geojson';
-import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
-import { CoordinateTransformer } from '../utils/coordinate-utils';
-import { isValidGeometry } from '../utils/validation/geometry';
-import { transformGeometry, processFeatures, simplifyGeometry } from '../utils/geo/feature-processing';
-import { MAX_VISIBLE_FEATURES } from '../components/map/map-layers';
+import { Feature, FeatureCollection, Geometry } from 'geojson';
+import { CoordinateSystem } from '../types/coordinates';
 import { Analysis, MapFeatureCollections } from '../types/map';
+import { CoordinateTransformer } from '../utils/coordinate-utils';
+import { MAX_VISIBLE_FEATURES } from '../components/map/map-layers';
 
 interface UseFeatureProcessingProps {
   preview: FeatureCollection;
-  coordinateSystem?: CoordinateSystem;
-  visibleLayers?: string[];
+  coordinateSystem: CoordinateSystem;
+  visibleLayers: string[];
   zoom: number;
   analysis?: Analysis;
 }
 
 export function useFeatureProcessing({
   preview,
-  coordinateSystem = COORDINATE_SYSTEMS.WGS84,
-  visibleLayers = [],
+  coordinateSystem,
+  visibleLayers,
   zoom,
   analysis
 }: UseFeatureProcessingProps): MapFeatureCollections {
-  const transformedFeatures = useMemo(() => {
-    if (!preview?.features) return [];
+  return useMemo(() => {
+    const points: Feature[] = [];
+    const lines: Feature[] = [];
+    const polygons: Feature[] = [];
+    const allFeatures: Feature[] = [];
 
-    let features = preview.features.filter(f => isValidGeometry(f.geometry));
-    
-    if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-      try {
-        const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-        features = features
-          .map(feature => {
-            const transformedGeometry = transformGeometry(feature.geometry, transformer);
-            return transformedGeometry ? { ...feature, geometry: transformedGeometry } : null;
-          })
-          .filter((f): f is Feature => f !== null);
-      } catch (error) {
-        console.error('Error transforming features:', error);
-        return [];
-      }
-    }
-
-    return processFeatures(features, MAX_VISIBLE_FEATURES, analysis?.warnings);
-  }, [preview, coordinateSystem, analysis]);
-
-  const { pointFeatures, lineFeatures, polygonFeatures } = useMemo(() => {
-    const visibleFeatures = visibleLayers.length > 0
-      ? transformedFeatures.filter(f => 
-          f.properties?.layer && visibleLayers.includes(f.properties.layer)
-        )
-      : transformedFeatures;
-
-    const simplifiedFeatures = visibleFeatures.map(feature => ({
-      ...feature,
-      geometry: simplifyGeometry(feature.geometry, zoom)
-    }));
-
-    const warningsByHandle = new Map(
-      (analysis?.warnings ?? [])
-        .filter(w => w.entity?.handle && w.type)
-        .map(w => [w.entity!.handle!, w.type])
-    );
-
-    const addWarningProperties = (feature: Feature): Feature => {
-      const handle = feature.properties?.handle;
-      if (handle && warningsByHandle.has(handle)) {
-        return {
-          ...feature,
-          properties: {
-            ...feature.properties,
-            hasWarning: true,
-            warningType: warningsByHandle.get(handle)
+    // Process features
+    preview.features.forEach(feature => {
+      if (!feature.properties?.layer || visibleLayers.includes(feature.properties.layer)) {
+        // Add warning flag if needed
+        if (analysis?.warnings) {
+          const warning = analysis.warnings.find(w => 
+            w.entity?.handle === feature.properties?.handle &&
+            w.entity?.layer === feature.properties?.layer
+          );
+          if (warning) {
+            feature.properties = {
+              ...feature.properties,
+              hasWarning: true,
+              warningMessage: warning.message
+            };
           }
-        };
+        }
+
+        // Store in all features array for lookup
+        allFeatures.push(feature);
+
+        // Categorize by geometry type
+        if (feature.geometry.type === 'Point') {
+          points.push(feature);
+        } else if (
+          feature.geometry.type === 'LineString' || 
+          feature.geometry.type === 'MultiLineString'
+        ) {
+          lines.push(feature);
+        } else if (
+          feature.geometry.type === 'Polygon' || 
+          feature.geometry.type === 'MultiPolygon'
+        ) {
+          polygons.push(feature);
+        }
       }
-      return feature;
+    });
+
+    // Function to get features by type and layer
+    const getFeaturesByTypeAndLayer = (type: string, layer: string): Feature[] => {
+      return allFeatures.filter(feature => 
+        feature.properties?.entityType === type && 
+        feature.properties?.layer === layer
+      );
+    };
+
+    // Create feature collections
+    const pointFeatures: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: points.slice(0, MAX_VISIBLE_FEATURES)
+    };
+
+    const lineFeatures: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: lines.slice(0, MAX_VISIBLE_FEATURES)
+    };
+
+    const polygonFeatures: FeatureCollection = {
+      type: 'FeatureCollection',
+      features: polygons.slice(0, MAX_VISIBLE_FEATURES)
     };
 
     return {
-      pointFeatures: {
-        type: 'FeatureCollection' as const,
-        features: simplifiedFeatures
-          .filter(f => f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint')
-          .map(addWarningProperties)
-      },
-      lineFeatures: {
-        type: 'FeatureCollection' as const,
-        features: simplifiedFeatures
-          .filter(f => f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString')
-          .map(addWarningProperties)
-      },
-      polygonFeatures: {
-        type: 'FeatureCollection' as const,
-        features: simplifiedFeatures
-          .filter(f => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon')
-          .map(addWarningProperties)
-      }
+      pointFeatures,
+      lineFeatures,
+      polygonFeatures,
+      getFeaturesByTypeAndLayer
     };
-  }, [transformedFeatures, visibleLayers, zoom, analysis]);
-
-  return {
-    pointFeatures,
-    lineFeatures,
-    polygonFeatures
-  };
+  }, [preview, coordinateSystem, visibleLayers, zoom, analysis]);
 }

@@ -1,4 +1,4 @@
-import { FeatureCollection } from 'geojson';
+import { FeatureCollection, Feature } from 'geojson';
 import { CoordinateSystem, Bounds } from './coordinates';
 
 export interface Warning {
@@ -15,11 +15,17 @@ export interface Analysis {
   warnings: Warning[];
 }
 
+export interface SelectedElement {
+  type: string;
+  layer: string;
+}
+
 export interface PreviewMapProps {
   preview: FeatureCollection;
   bounds?: Bounds;
   coordinateSystem?: CoordinateSystem;
   visibleLayers?: string[];
+  selectedElement?: SelectedElement;
   analysis?: Analysis;
 }
 
@@ -35,4 +41,12 @@ export interface MapFeatureCollections {
   pointFeatures: FeatureCollection;
   lineFeatures: FeatureCollection;
   polygonFeatures: FeatureCollection;
+  getFeaturesByTypeAndLayer: (type: string, layer: string) => Feature[];
+}
+
+export interface UseMapViewResult {
+  viewState: ViewState;
+  onMove: (evt: any) => void;
+  updateViewFromBounds: (bounds: Bounds) => void;
+  focusOnFeatures: (features: Feature[]) => void;
 }

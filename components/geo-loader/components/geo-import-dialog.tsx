@@ -1,11 +1,11 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'components/ui/dialog'
 import { Button } from 'components/ui/button'
 import { ScrollArea } from 'components/ui/scroll-area'
 import { Alert, AlertDescription } from 'components/ui/alert'
 import { LoaderResult } from 'types/geo'
 import { Info, AlertTriangle } from 'lucide-react'
-import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems'
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates'
 import { DxfStructureView } from './dxf-structure-view'
 import { DxfData } from '../utils/dxf/types'
 import { PreviewMap } from './preview-map'
@@ -49,13 +49,33 @@ export function GeoImportDialog({
     logs: LogEntry[]
     hasErrors: boolean
     selectedLayers: string[]
+    visibleLayers: string[]
     selectedTemplate: string
   }>({
     logs: [],
     hasErrors: false,
     selectedLayers: [],
+    visibleLayers: [],
     selectedTemplate: '',
   });
+
+  // Use a ref to track if initial analysis is complete
+  const initialAnalysisComplete = useRef(false);
+
+  // Initialize visibleLayers with all available layers when dxfData changes
+  useEffect(() => {
+    if (dxfData?.tables?.layer?.layers) {
+      const allLayers = Object.keys(dxfData.tables.layer.layers);
+      setState(prev => ({
+        ...prev,
+        visibleLayers: allLayers
+      }));
+      setOptions(prev => ({
+        ...prev,
+        visibleLayers: allLayers
+      }));
+    }
+  }, [dxfData, setOptions]);
 
   const addLogs = useCallback((newLogs: { message: string; type: LogType }[]) => {
     const timestamp = new Date();
@@ -76,7 +96,7 @@ export function GeoImportDialog({
         hasErrors
       };
     });
-  }, []);
+  }, []); // No dependencies needed since we use the function form of setState
 
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
     setState(prev => {
@@ -86,13 +106,30 @@ export function GeoImportDialog({
       
       setOptions(opts => ({
         ...opts,
-        selectedLayers: newLayers,
-        visibleLayers: newLayers
+        selectedLayers: newLayers
       }));
 
       return {
         ...prev,
         selectedLayers: newLayers
+      };
+    });
+  }, [setOptions]);
+
+  const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
+    setState(prev => {
+      const newVisibleLayers = visible
+        ? [...prev.visibleLayers, layer]
+        : prev.visibleLayers.filter(l => l !== layer);
+      
+      setOptions(opts => ({
+        ...opts,
+        visibleLayers: newVisibleLayers
+      }));
+
+      return {
+        ...prev,
+        visibleLayers: newVisibleLayers
       };
     });
   }, [setOptions]);
@@ -105,9 +142,14 @@ export function GeoImportDialog({
   }, []);
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
+    // Ensure the value is a valid CoordinateSystem
+    const coordinateSystem = Object.values(COORDINATE_SYSTEMS).includes(value as CoordinateSystem)
+      ? value as CoordinateSystem
+      : undefined;
+
     setOptions(prev => ({
       ...prev,
-      coordinateSystem: value
+      coordinateSystem
     }));
   }, [setOptions]);
 
@@ -136,15 +178,30 @@ export function GeoImportDialog({
 
   // Initialize file analysis when dialog opens
   useEffect(() => {
-    if (isOpen && file) {
+    if (isOpen && file && !initialAnalysisComplete.current) {
       analyzeFile(file).catch(error => {
         addLogs([{
           message: `Analysis error: ${error.message}`,
           type: 'error'
         }]);
       });
+      initialAnalysisComplete.current = true;
     }
   }, [isOpen, file, analyzeFile, addLogs]);
+
+  // Reset state when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      setState({
+        logs: [],
+        hasErrors: false,
+        selectedLayers: [],
+        visibleLayers: [],
+        selectedTemplate: ''
+      });
+      initialAnalysisComplete.current = false;
+    }
+  }, [isOpen]);
 
   // Handle coordinate system warning
   useEffect(() => {
@@ -234,18 +291,6 @@ export function GeoImportDialog({
     }
   };
 
-  useEffect(() => {
-    // Clear state when dialog opens
-    if (isOpen) {
-      setState({
-        logs: [],
-        hasErrors: false,
-        selectedLayers: [],
-        selectedTemplate: ''
-      });
-    }
-  }, [isOpen]);
-
   if (!file) return null;
 
   const isDxfFile = file.name.toLowerCase().endsWith('.dxf');
@@ -304,6 +349,8 @@ export function GeoImportDialog({
                   dxfData={dxfData}
                   selectedLayers={state.selectedLayers}
                   onLayerToggle={handleLayerToggle}
+                  visibleLayers={state.visibleLayers}
+                  onLayerVisibilityToggle={handleLayerVisibilityToggle}
                   selectedTemplate={state.selectedTemplate}
                   onTemplateSelect={handleTemplateSelect}
                 />
@@ -322,7 +369,7 @@ export function GeoImportDialog({
                     preview={analysis.preview}
                     bounds={analysis.bounds}
                     coordinateSystem={options.coordinateSystem || analysis.coordinateSystem}
-                    visibleLayers={state.selectedLayers}
+                    visibleLayers={state.visibleLayers}
                   />
                 )}
               </div>

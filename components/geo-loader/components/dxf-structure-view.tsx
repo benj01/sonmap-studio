@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { ScrollArea } from 'components/ui/scroll-area';
 import { Switch } from 'components/ui/switch';
-import { RadioGroup, RadioGroupItem } from '../../../components/ui/radio-group';
 import { Label } from 'components/ui/label';
 import { 
   ChevronRight, 
@@ -18,7 +17,9 @@ import {
   Cloud,
   Palette,
   Layout,
-  Database
+  Database,
+  Eye,
+  Download
 } from 'lucide-react';
 import { DxfData } from '../utils/dxf/types';
 
@@ -26,8 +27,11 @@ interface DxfStructureViewProps {
   dxfData: DxfData;
   selectedLayers: string[];
   onLayerToggle: (layer: string, enabled: boolean) => void;
+  visibleLayers: string[];
+  onLayerVisibilityToggle: (layer: string, visible: boolean) => void;
   selectedTemplate?: string;
-  onTemplateSelect?: (template: string) => void;
+  onTemplateSelect?: (template: string, enabled: boolean) => void;
+  onElementSelect?: (elementInfo: { type: string, layer: string }) => void;
 }
 
 interface TreeNodeProps {
@@ -36,16 +40,23 @@ interface TreeNodeProps {
   icon?: React.ReactNode;
   count?: number;
   children?: React.ReactNode;
+  onClick?: () => void;
 }
 
-function TreeNode({ label, defaultExpanded = false, icon, count, children }: TreeNodeProps) {
+function TreeNode({ label, defaultExpanded = false, icon, count, children, onClick }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   return (
     <div className="space-y-1">
       <div 
         className="flex items-center gap-2 hover:bg-accent hover:text-accent-foreground rounded-sm cursor-pointer p-1"
-        onClick={() => setExpanded(!expanded)}
+        onClick={(e) => {
+          if (onClick) {
+            onClick();
+          } else {
+            setExpanded(!expanded);
+          }
+        }}
       >
         {children ? (
           expanded ? <ChevronDown className="h-3 w-3 flex-shrink-0" /> : <ChevronRight className="h-3 w-3 flex-shrink-0" />
@@ -83,12 +94,19 @@ function getEntityIcon(type: string) {
   }
 }
 
+function calculateTotalCount(elements: Record<string, number>): number {
+  return Object.values(elements).reduce((a, b) => a + b, 0);
+}
+
 export function DxfStructureView({ 
   dxfData, 
-  selectedLayers, 
+  selectedLayers = [],
   onLayerToggle,
+  visibleLayers = [],
+  onLayerVisibilityToggle,
   selectedTemplate,
-  onTemplateSelect 
+  onTemplateSelect,
+  onElementSelect
 }: DxfStructureViewProps) {
   // Extract styles and counts
   const lineTypes = new Set<string>();
@@ -96,27 +114,58 @@ export function DxfStructureView({
   const entityCounts: Record<string, number> = {};
   const elementsByLayer: Record<string, Record<string, number>> = {};
 
-  dxfData.entities.forEach(entity => {
-    // Count entities by type
-    entityCounts[entity.type] = (entityCounts[entity.type] || 0) + 1;
+  // Process entities and calculate counts including INSERT entities
+  function processEntities(entities: any[], parentLayer?: string) {
+    entities.forEach(entity => {
+      const layer = parentLayer || entity.layer;
+      
+      // Count entities by type
+      entityCounts[entity.type] = (entityCounts[entity.type] || 0) + 1;
 
-    // Count entities by layer and type
-    if (entity.layer) {
-      if (!elementsByLayer[entity.layer]) {
-        elementsByLayer[entity.layer] = {};
+      // Count entities by layer and type
+      if (layer) {
+        if (!elementsByLayer[layer]) {
+          elementsByLayer[layer] = {};
+        }
+        elementsByLayer[layer][entity.type] = 
+          (elementsByLayer[layer][entity.type] || 0) + 1;
       }
-      elementsByLayer[entity.layer][entity.type] = 
-        (elementsByLayer[entity.layer][entity.type] || 0) + 1;
-    }
 
-    // Collect styles
-    if (entity.lineType) lineTypes.add(entity.lineType);
-    if ((entity.type === 'TEXT' || entity.type === 'MTEXT') && (entity as any).style) {
-      textStyles.add((entity as any).style);
-    }
-  });
+      // Collect styles
+      if (entity.lineType) lineTypes.add(entity.lineType);
+      if ((entity.type === 'TEXT' || entity.type === 'MTEXT') && entity.style) {
+        textStyles.add(entity.style);
+      }
 
-  const totalElements = Object.values(entityCounts).reduce((a, b) => a + b, 0);
+      // Process block references (INSERT entities)
+      if (entity.type === 'INSERT' && entity.block && dxfData.blocks?.[entity.block]) {
+        processEntities(dxfData.blocks[entity.block].entities, layer);
+      }
+    });
+  }
+
+  processEntities(dxfData.entities);
+
+  // Get all available layers
+  const allLayers = Object.keys(dxfData.tables?.layer?.layers || {});
+  
+  // Handle toggle all layers visibility
+  const handleToggleAllLayers = (visible: boolean) => {
+    allLayers.forEach(layer => {
+      onLayerVisibilityToggle(layer, visible);
+    });
+  };
+
+  // Handle toggle all layers import
+  const handleToggleAllLayersImport = (enabled: boolean) => {
+    allLayers.forEach(layer => {
+      onLayerToggle(layer, enabled);
+    });
+  };
+
+  // Check if all layers are visible/selected
+  const allLayersVisible = allLayers.length > 0 && allLayers.every(layer => visibleLayers.includes(layer));
+  const allLayersSelected = allLayers.length > 0 && allLayers.every(layer => selectedLayers.includes(layer));
 
   return (
     <ScrollArea className="h-[400px] w-full rounded-md border p-2">
@@ -125,7 +174,7 @@ export function DxfStructureView({
         <TreeNode 
           label="Detailing Symbol Styles" 
           icon={<Palette />}
-          count={Object.keys(lineTypes).length + Object.keys(textStyles).length}
+          count={lineTypes.size + textStyles.size}
         >
           <TreeNode 
             label="Line Styles" 
@@ -148,12 +197,6 @@ export function DxfStructureView({
           </TreeNode>
         </TreeNode>
 
-        {/* Display Styles */}
-        <TreeNode label="Display Styles" icon={<Image />} />
-
-        {/* Environment Setups */}
-        <TreeNode label="Environment Setups" icon={<Settings />} />
-
         {/* Layers */}
         <TreeNode 
           label="Layers" 
@@ -161,6 +204,32 @@ export function DxfStructureView({
           count={Object.keys(dxfData.tables?.layer?.layers || {}).length}
           defaultExpanded
         >
+          {/* Add master toggles for all layers */}
+          <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
+            <div className="flex items-center gap-2">
+              <Layers className="h-4 w-4" />
+              <span className="text-xs">Toggle All Layers</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
+                <Eye className="h-3 w-3" />
+                <Switch
+                  checked={allLayersVisible}
+                  onCheckedChange={handleToggleAllLayers}
+                  className="scale-75"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                <Download className="h-3 w-3" />
+                <Switch
+                  checked={allLayersSelected}
+                  onCheckedChange={handleToggleAllLayersImport}
+                  className="scale-75"
+                />
+              </div>
+            </div>
+          </div>
+
           {dxfData.tables?.layer?.layers && Object.entries(dxfData.tables.layer.layers).map(([name, layer]) => (
             <div key={name} className="space-y-1">
               <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
@@ -168,19 +237,36 @@ export function DxfStructureView({
                   <Layers className="h-4 w-4" />
                   <span className="text-xs">{name}</span>
                   <span className="text-xs text-muted-foreground">
-                    ({Object.values(elementsByLayer[name] || {}).reduce((a, b) => a + b, 0)})
+                    ({calculateTotalCount(elementsByLayer[name] || {})})
                   </span>
                 </div>
-                <Switch
-                  checked={selectedLayers.includes(name)}
-                  onCheckedChange={(checked) => onLayerToggle(name, checked)}
-                  className="scale-75"
-                />
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <Eye className="h-3 w-3" />
+                    <Switch
+                      checked={visibleLayers.includes(name)}
+                      onCheckedChange={(checked) => onLayerVisibilityToggle(name, checked)}
+                      className="scale-75"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Download className="h-3 w-3" />
+                    <Switch
+                      checked={selectedLayers.includes(name)}
+                      onCheckedChange={(checked) => onLayerToggle(name, checked)}
+                      className="scale-75"
+                    />
+                  </div>
+                </div>
               </div>
               {elementsByLayer[name] && (
                 <div className="ml-6 space-y-1">
                   {Object.entries(elementsByLayer[name]).map(([type, count]) => (
-                    <div key={type} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <div 
+                      key={type} 
+                      className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
+                      onClick={() => onElementSelect?.({ type, layer: name })}
+                    >
                       {getEntityIcon(type)}
                       <span>{type}</span>
                       <span>({count})</span>
@@ -212,7 +298,11 @@ export function DxfStructureView({
                     return acc;
                   }, {} as Record<string, number>)
                 ).map(([type, count]) => (
-                  <div key={type} className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div 
+                    key={type} 
+                    className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
+                    onClick={() => onElementSelect?.({ type, layer: name })}
+                  >
                     {getEntityIcon(type)}
                     <span>{type}</span>
                     <span>({count})</span>
@@ -230,28 +320,22 @@ export function DxfStructureView({
           count={Object.keys(entityCounts).length}
           defaultExpanded
         >
-          <RadioGroup 
-            value={selectedTemplate} 
-            onValueChange={onTemplateSelect}
-            className="space-y-1"
-          >
-            {Object.entries(entityCounts).map(([type, count]) => (
-              <div key={type} className="flex items-center space-x-2 p-1 hover:bg-accent rounded-sm">
-                <RadioGroupItem value={type} id={type} className="scale-75" />
+          {Object.entries(entityCounts).map(([type, count]) => (
+            <div key={type} className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
+              <div className="flex items-center gap-2">
                 <div className="h-4 w-4">{getEntityIcon(type)}</div>
-                <Label htmlFor={type} className="text-xs cursor-pointer">
+                <Label className="text-xs cursor-pointer">
                   {type} ({count})
                 </Label>
               </div>
-            ))}
-          </RadioGroup>
+              <Switch
+                checked={selectedTemplate === type}
+                onCheckedChange={(checked) => onTemplateSelect?.(type, checked)}
+                className="scale-75"
+              />
+            </div>
+          ))}
         </TreeNode>
-
-        {/* Additional Bentley-style categories */}
-        <TreeNode label="Point Cloud Styles" icon={<Cloud />} />
-        <TreeNode label="Render Setups" icon={<Image />} />
-        <TreeNode label="Report Definitions" icon={<FileText />} />
-        <TreeNode label="Tag Sets" icon={<Tag />} />
       </div>
     </ScrollArea>
   );

@@ -1,5 +1,5 @@
-import { Feature, FeatureCollection, Geometry as GeoJSONGeometry } from 'geojson';
-import { DxfData } from '../components/geo-loader/utils/dxf/types';
+import { Feature, FeatureCollection } from 'geojson';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '../components/geo-loader/types/coordinates';
 
 export interface Point {
   x: number;
@@ -16,65 +16,9 @@ export interface Bounds {
 
 export interface GeoFeature extends Feature {
   properties: {
-    id?: string;
+    layer?: string;
     type?: string;
-    layer?: string;
-    color?: number;
-    colorRGB?: number;
-    lineType?: string;
-    lineWeight?: number;
-    elevation?: number;
-    thickness?: number;
-    visible?: boolean;
-    _transformError?: string;
-    _errors?: string[];
     [key: string]: any;
-  };
-}
-
-export interface AnalysisWarning {
-  type: string;
-  message: string;
-  entity?: {
-    type: string;
-    handle?: string;
-    layer?: string;
-  };
-}
-
-export interface AnalysisError {
-  type: string;
-  message: string;
-  entity?: {
-    type: string;
-    handle?: string;
-    layer?: string;
-  };
-  isCritical: boolean;
-}
-
-export interface AnalysisStats {
-  totalEntities: number;
-  validEntities: number;
-  skippedEntities: number;
-  entitiesByType: Record<string, number>;
-  entitiesByLayer: Record<string, number>;
-  layers: string[];
-  blocks: string[];
-  lineTypes: string[];
-  textStyles: string[];
-}
-
-export interface AnalyzeResult {
-  layers: string[];
-  coordinateSystem?: string;
-  bounds: Bounds;
-  preview: FeatureCollection;
-  dxfData?: DxfData;
-  analysis?: {
-    warnings: AnalysisWarning[];
-    errors: AnalysisError[];
-    stats: AnalysisStats;
   };
 }
 
@@ -82,23 +26,42 @@ export interface LoaderResult {
   features: GeoFeature[];
   bounds: Bounds;
   layers: string[];
-  coordinateSystem?: string;
+  coordinateSystem?: CoordinateSystem;
   statistics?: {
     pointCount: number;
     layerCount: number;
-    featureTypes: Record<string, number>;
+    featureTypes: { [key: string]: number };
     failedTransformations?: number;
     errors?: Array<{
       type: string;
       message?: string;
       count: number;
     }>;
-  } & Partial<AnalysisStats>;
+  };
+}
+
+export interface AnalyzeResult {
+  layers: string[];
+  coordinateSystem?: CoordinateSystem;
+  bounds: Bounds;
+  preview: FeatureCollection;
+  dxfData?: any;
+  analysis?: {
+    warnings: Array<{ type: string; message: string }>;
+    errors: Array<{ type: string; message: string; isCritical: boolean }>;
+    stats: {
+      entityCount: number;
+      layerCount: number;
+      [key: string]: any;
+    };
+  };
 }
 
 export interface LoaderOptions {
-  coordinateSystem?: string;
   selectedLayers?: string[];
+  visibleLayers?: string[];
+  selectedTemplate?: string;
+  coordinateSystem?: CoordinateSystem;
 }
 
 export interface GeoFileLoader {
@@ -107,4 +70,39 @@ export interface GeoFileLoader {
   load(file: File, options: LoaderOptions): Promise<LoaderResult>;
 }
 
-export type Geometry = GeoJSONGeometry;
+export interface ImportMetadata {
+  sourceFile: {
+    id: string;
+    name: string;
+  };
+  importedLayers: Array<{
+    name: string;
+    featureCount: number;
+    featureTypes: { [key: string]: number };
+  }>;
+  coordinateSystem: {
+    source: CoordinateSystem;
+    target: CoordinateSystem;
+  };
+  statistics: {
+    totalFeatures: number;
+    failedTransformations?: number;
+    errors?: Array<{
+      type: string;
+      message?: string;
+      count: number;
+    }>;
+  };
+  importedAt: string;
+}
+
+export interface ImportedGeoFile {
+  id: string;
+  name: string;
+  sourceFileId: string;
+  features: FeatureCollection;
+  metadata: ImportMetadata;
+}
+
+// Re-export coordinate system constants
+export { COORDINATE_SYSTEMS };

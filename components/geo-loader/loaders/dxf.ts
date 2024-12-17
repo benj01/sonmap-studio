@@ -383,7 +383,8 @@ class DxfLoader implements GeoFileLoader {
               try {
                 const transformedCoords = this.transformCoordinates(
                   feature.geometry.coordinates,
-                  transformer
+                  transformer,
+                  sourceSystem
                 );
                 
                 if (transformedCoords) {
@@ -452,25 +453,30 @@ class DxfLoader implements GeoFileLoader {
     }
   }
 
-  private transformCoordinates(coordinates: any, transformer: CoordinateTransformer): any {
+  private transformCoordinates(coordinates: any, transformer: CoordinateTransformer, sourceSystem: string): any {
     if (Array.isArray(coordinates)) {
       if (coordinates.length === 2 && typeof coordinates[0] === 'number') {
         const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
         if (!transformed) return null;
         
+        // For most coordinate systems, x maps to longitude and y maps to latitude
+        // But some systems might need different handling
+        let [lon, lat] = [transformed.x, transformed.y];
+
         // Validate WGS84 bounds
-        if (transformed.y < -90 || transformed.y > 90) {
-          console.warn('Transformed latitude out of bounds:', transformed.y);
+        if (lat < -90 || lat > 90) {
+          console.warn('Transformed latitude out of bounds:', lat);
           return null;
         }
-        if (transformed.x < -180 || transformed.x > 180) {
-          console.warn('Transformed longitude out of bounds:', transformed.x);
+        if (lon < -180 || lon > 180) {
+          console.warn('Transformed longitude out of bounds:', lon);
           return null;
         }
         
-        return [transformed.x, transformed.y];
+        // Return coordinates in [longitude, latitude] order for GeoJSON
+        return [lon, lat];
       }
-      const transformedArray = coordinates.map(coord => this.transformCoordinates(coord, transformer));
+      const transformedArray = coordinates.map(coord => this.transformCoordinates(coord, transformer, sourceSystem));
       return transformedArray.every(item => item !== null) ? transformedArray : null;
     }
     return coordinates;
