@@ -193,12 +193,12 @@ export interface ParserResult<T> {
 
 export interface ParserContext {
   coordinateSystem?: string;
-  validate: boolean;
+  validate?: boolean;
   onProgress?: (progress: number) => void;
 }
 
 export interface BaseParser<T> {
-  parse(content: string, context: ParserContext): Promise<ParserResult<T>>;
+  parse(content: string, context?: ParserContext): Promise<ParserResult<T>>;
   validate(data: T): string[];
 }
 

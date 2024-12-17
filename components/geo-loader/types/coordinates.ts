@@ -1,6 +1,7 @@
 import { Position } from 'geojson';
 
 export const COORDINATE_SYSTEMS = {
+  NONE: 'none',
   WGS84: 'EPSG:4326',
   SWISS_LV95: 'EPSG:2056',
   SWISS_LV03: 'EPSG:21781',

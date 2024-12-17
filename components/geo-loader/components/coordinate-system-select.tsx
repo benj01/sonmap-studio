@@ -1,7 +1,7 @@
 import React from 'react';
 import { Label } from 'components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'components/ui/select';
-import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { COORDINATE_SYSTEMS } from '../types/coordinates';
 
 interface CoordinateSystemSelectProps {
   value: string;
@@ -31,11 +31,17 @@ export function CoordinateSystemSelect({
           <SelectValue placeholder="Select coordinate system" />
         </SelectTrigger>
         <SelectContent>
+          <SelectItem value={COORDINATE_SYSTEMS.NONE}>None (Local Coordinates)</SelectItem>
           <SelectItem value={COORDINATE_SYSTEMS.WGS84}>WGS84 (EPSG:4326)</SelectItem>
           <SelectItem value={COORDINATE_SYSTEMS.SWISS_LV95}>Swiss LV95 (EPSG:2056) - New</SelectItem>
           <SelectItem value={COORDINATE_SYSTEMS.SWISS_LV03}>Swiss LV03 (EPSG:21781) - Old</SelectItem>
         </SelectContent>
       </Select>
+      {value === COORDINATE_SYSTEMS.NONE && (
+        <p className="text-sm text-muted-foreground">
+          Local coordinates will be imported without transformation. You can change the coordinate system later if needed.
+        </p>
+      )}
       {(value === COORDINATE_SYSTEMS.SWISS_LV95 || 
         value === COORDINATE_SYSTEMS.SWISS_LV03) && (
         <p className="text-sm text-muted-foreground">

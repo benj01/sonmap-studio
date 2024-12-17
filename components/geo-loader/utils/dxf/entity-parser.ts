@@ -1,8 +1,8 @@
 import { DxfEntity, DxfEntityBase, Vector3, ParserResult, ParserContext } from './types';
 import { DxfValidator } from './validator';
-import { createFeature } from '../geometry-utils';
-import { GeoFeature } from '../../../../types/geo';
 import { ErrorCollector } from './error-collector';
+import { entityToGeoFeature } from './geo-converter';
+import { GeoFeature } from '../../../../types/geo';
 
 export class DxfEntityParser {
   private validator: DxfValidator;
@@ -157,14 +157,23 @@ export class DxfEntityParser {
       this.errorCollector.addError(entity.type, entity.handle, 'Missing vertices array');
       return null;
     }
+
+    // Ensure all vertices have valid x,y coordinates
+    const vertices = entity.vertices.map((v: any) => ({
+      x: typeof v.x === 'number' ? v.x : 0,
+      y: typeof v.y === 'number' ? v.y : 0,
+      z: typeof v.z === 'number' ? v.z : 0
+    }));
+
+    if (vertices.length < 2) {
+      this.errorCollector.addError(entity.type, entity.handle, 'Polyline must have at least 2 vertices');
+      return null;
+    }
+
     return {
       ...this.extractCommonProperties(entity),
       type: entity.type,
-      vertices: entity.vertices.map((v: any) => ({
-        x: v.x ?? 0,
-        y: v.y ?? 0,
-        z: v.z ?? 0
-      })),
+      vertices,
       closed: entity.closed
     };
   }
@@ -347,21 +356,7 @@ export class DxfEntityParser {
       return null;
     }
 
-    const properties = {
-      id: entity.handle,
-      type: entity.type,
-      layer: entity.layer || '0',
-      color: entity.color ?? layerInfo?.color,
-      colorRGB: entity.colorRGB ?? layerInfo?.colorRGB,
-      lineType: entity.lineType ?? layerInfo?.lineType,
-      lineWeight: entity.lineWeight ?? layerInfo?.lineWeight,
-      elevation: entity.elevation,
-      thickness: entity.thickness,
-      visible: entity.visible ?? layerInfo?.visible,
-      extrusionDirection: entity.extrusionDirection
-    };
-
-    return createFeature(entity, properties);
+    return entityToGeoFeature(entity, layerInfo);
   }
 
   getErrors(): string[] {
@@ -377,5 +372,3 @@ export class DxfEntityParser {
     this.validator.clear();
   }
 }
-
-export const createEntityParser = () => new DxfEntityParser();

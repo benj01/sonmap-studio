@@ -1,9 +1,9 @@
 import { GeoFileLoader, LoaderOptions, LoaderResult, AnalyzeResult, GeoFeature } from '../../../types/geo';
 import { CoordinateTransformer, Point, suggestCoordinateSystem } from '../utils/coordinate-utils';
-import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
+import { COORDINATE_SYSTEMS } from '../types/coordinates';
 import { createDxfParser } from '../utils/dxf';
 import { createDxfAnalyzer } from '../utils/dxf/analyzer';
-import { Vector3 } from '../utils/dxf/types';
+import { Vector3, ParserContext } from '../utils/dxf/types';
 import { 
   Feature, 
   Geometry, 
@@ -118,7 +118,17 @@ class DxfLoader implements GeoFileLoader {
     try {
       log(`Starting analysis of ${file.name}...`);
       const content = await this.readFileContent(file);
-      const dxf = this.parser.parse(content);
+
+      const context: ParserContext = {
+        validate: true,
+        onProgress: (progress: number) => {
+          if (options.onProgress) {
+            options.onProgress(progress);
+          }
+        }
+      };
+
+      const dxf = await this.parser.parse(content, context);
       
       if (!dxf || !dxf.entities) {
         throw new Error('Invalid DXF file structure');
@@ -154,7 +164,10 @@ class DxfLoader implements GeoFileLoader {
         throw new Error('No valid points found in DXF file');
       }
       
-      const coordinateSystem = suggestCoordinateSystem(points);
+      // Only suggest coordinate system if not explicitly set to NONE
+      const coordinateSystem = options.coordinateSystem === COORDINATE_SYSTEMS.NONE ? 
+        COORDINATE_SYSTEMS.NONE : 
+        options.coordinateSystem || suggestCoordinateSystem(points);
 
       // Optimize preview by sampling entities for large files
       const shouldSample = expandedEntities.length > PREVIEW_CHUNK_SIZE * PREVIEW_SAMPLE_RATE;
@@ -253,7 +266,17 @@ class DxfLoader implements GeoFileLoader {
     try {
       log(`Starting import of ${file.name}...`);
       const content = await this.readFileContent(file);
-      const dxf = this.parser.parse(content);
+
+      const context: ParserContext = {
+        validate: true,
+        onProgress: (progress: number) => {
+          if (options.onProgress) {
+            options.onProgress(progress);
+          }
+        }
+      };
+
+      const dxf = await this.parser.parse(content, context);
       
       if (!dxf || !dxf.entities) {
         throw new Error('Invalid DXF file structure');
@@ -268,7 +291,8 @@ class DxfLoader implements GeoFileLoader {
       const sourceSystem = options.coordinateSystem || COORDINATE_SYSTEMS.WGS84;
       
       let transformer: CoordinateTransformer | null = null;
-      if (sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
+      // Only create transformer if not using local coordinates
+      if (sourceSystem !== COORDINATE_SYSTEMS.NONE && sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
         try {
           transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
           log(`Using coordinate system: ${sourceSystem}`);
@@ -334,6 +358,7 @@ class DxfLoader implements GeoFileLoader {
                 continue;
               }
             } else {
+              // For local coordinates or WGS84, use the coordinates as-is
               features.push(feature as GeoFeature);
             }
             
@@ -382,7 +407,8 @@ class DxfLoader implements GeoFileLoader {
         features,
         bounds,
         layers,
-        coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+        // If using local coordinates, keep them as-is
+        coordinateSystem: sourceSystem === COORDINATE_SYSTEMS.NONE ? COORDINATE_SYSTEMS.NONE : COORDINATE_SYSTEMS.WGS84,
         statistics: {
           ...analysisResult.stats,
           pointCount: features.length,

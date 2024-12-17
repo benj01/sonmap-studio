@@ -1,8 +1,9 @@
 // Re-export all types
 export * from './types';
 
-// Re-export validation utilities
-export * from './validation';
+// Re-export validator and error collector
+export * from './validator';
+export * from './error-collector';
 
 // Re-export transform utilities
 export * from './transform';

@@ -70,7 +70,8 @@ export interface LoaderOptions {
   simplificationTolerance?: number;
   // Shapefile options
   importAttributes?: boolean;
-  // Logging callback
+  // Progress and logging callbacks
+  onProgress?: (progress: number) => void;
   onLog?: (message: string) => void;
 }
 

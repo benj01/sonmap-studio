@@ -91,8 +91,14 @@ export class DxfCoreParser {
     this.errorCollector = new ErrorCollector();
   }
 
-  async parse(content: string, context: ParserContext): Promise<DxfData> {
+  async parse(content: string, context?: ParserContext): Promise<DxfData> {
     try {
+      // Ensure context is defined with default values
+      const ctx: ParserContext = {
+        validate: true,
+        ...context
+      };
+
       const dxf = this.parser.parseSync(content);
       if (!dxf || !Array.isArray(dxf.entities)) {
         throw new Error('Invalid DXF data structure after parsing.');
@@ -122,8 +128,8 @@ export class DxfCoreParser {
       }
       
       // Report progress if callback provided
-      if (context.onProgress) {
-        context.onProgress(1);
+      if (ctx.onProgress) {
+        ctx.onProgress(1);
       }
 
       return dxf;
