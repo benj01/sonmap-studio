@@ -154,6 +154,15 @@ export const isVector3 = (value: unknown): value is Vector3 => {
 };
 
 // Entity type guards
+export const isDxf3DFaceEntity = (entity: unknown): entity is Dxf3DFaceEntity => {
+  if (!entity || typeof entity !== 'object') return false;
+  const e = entity as any;
+  return e.type === '3DFACE' && 
+         Array.isArray(e.vertices) && 
+         e.vertices.length === 4 &&
+         e.vertices.every((v: unknown) => isVector3(v));
+};
+
 export const isDxfPointEntity = (entity: unknown): entity is DxfPointEntity => {
   if (!entity || typeof entity !== 'object') return false;
   const e = entity as any;
@@ -222,6 +231,8 @@ export const isDxfEntity = (entity: unknown): entity is DxfEntity => {
   const e = entity as any;
   
   switch (e.type) {
+    case '3DFACE':
+      return isDxf3DFaceEntity(e);
     case 'POINT':
       return isDxfPointEntity(e);
     case 'LINE':

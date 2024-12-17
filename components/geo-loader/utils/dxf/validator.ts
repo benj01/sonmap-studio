@@ -9,7 +9,8 @@ import {
   isDxfPolylineEntity,
   isDxfCircleEntity,
   isDxfArcEntity,
-  isDxfEllipseEntity
+  isDxfEllipseEntity,
+  isDxfInsertEntity
 } from './types';
 
 export class DxfValidator {
@@ -59,9 +60,27 @@ export class DxfValidator {
         return isDxfArcEntity(entity);
       case 'ELLIPSE':
         return isDxfEllipseEntity(entity);
+      case '3DFACE':
+        return this.validate3DFaceEntity(entity);
+      case 'INSERT':
+        return isDxfInsertEntity(entity);
       default:
         return false;
     }
+  }
+
+  static validate3DFaceEntity(entity: any): boolean {
+    if (!entity.vertices || !Array.isArray(entity.vertices)) {
+      return false;
+    }
+    
+    // 3DFACE must have exactly 4 vertices
+    if (entity.vertices.length !== 4) {
+      return false;
+    }
+
+    // All vertices must be valid Vector3
+    return entity.vertices.every((vertex: unknown) => isVector3(vertex));
   }
 
   static validateCoordinates(coordinates: unknown): coordinates is [number, number] {
@@ -113,8 +132,13 @@ export class DxfValidator {
         break;
 
       case 'LINE':
-        if (!e.start) return 'LINE entity missing start point';
-        if (!e.end) return 'LINE entity missing end point';
+        if (!e.start || !e.end) {
+          // Create a more specific error message
+          const missingPoints = [];
+          if (!e.start) missingPoints.push('start');
+          if (!e.end) missingPoints.push('end');
+          return `LINE entity missing ${missingPoints.join(' and ')} point${missingPoints.length > 1 ? 's' : ''}`;
+        }
         if (!isVector3(e.start)) return 'LINE entity has invalid start point';
         if (!isVector3(e.end)) return 'LINE entity has invalid end point';
         break;
@@ -148,6 +172,25 @@ export class DxfValidator {
         if (!this.validateNumericValue(e.minorAxisRatio)) return 'ELLIPSE entity has invalid minor axis ratio';
         if (!this.validateAngle(e.startAngle)) return 'ELLIPSE entity has invalid start angle';
         if (!this.validateAngle(e.endAngle)) return 'ELLIPSE entity has invalid end angle';
+        break;
+
+      case '3DFACE':
+        if (!Array.isArray(e.vertices)) return '3DFACE entity missing vertices array';
+        if (e.vertices.length !== 4) return '3DFACE entity must have exactly 4 vertices';
+        if (!e.vertices.every(isVector3)) return '3DFACE entity has invalid vertices';
+        break;
+
+      case 'INSERT':
+        if (!e.name) return 'INSERT entity missing name';
+        if (typeof e.name !== 'string') return 'INSERT entity has invalid name';
+        if (!e.position) return 'INSERT entity missing position';
+        if (!isVector3(e.position)) return 'INSERT entity has invalid position';
+        if (e.rotation !== undefined && !this.validateNumericValue(e.rotation)) return 'INSERT entity has invalid rotation';
+        if (e.scale !== undefined && !isVector3(e.scale)) return 'INSERT entity has invalid scale';
+        if (e.rows !== undefined && (!Number.isInteger(e.rows) || e.rows < 1)) return 'INSERT entity has invalid rows';
+        if (e.columns !== undefined && (!Number.isInteger(e.columns) || e.columns < 1)) return 'INSERT entity has invalid columns';
+        if (e.rowSpacing !== undefined && !this.validateNumericValue(e.rowSpacing)) return 'INSERT entity has invalid row spacing';
+        if (e.colSpacing !== undefined && !this.validateNumericValue(e.colSpacing)) return 'INSERT entity has invalid column spacing';
         break;
 
       default:

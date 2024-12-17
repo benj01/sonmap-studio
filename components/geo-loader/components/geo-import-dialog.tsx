@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'components/ui/dialog'
 import { Button } from 'components/ui/button'
 import { ScrollArea } from 'components/ui/scroll-area'
@@ -27,26 +27,36 @@ export function GeoImportDialog({
   file,
   onImportComplete,
 }: GeoImportDialogProps) {
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [hasErrors, setHasErrors] = useState(false)
+  const [state, setState] = useState<{
+    logs: LogEntry[]
+    hasErrors: boolean
+  }>({
+    logs: [],
+    hasErrors: false
+  });
 
-  const addLogs = (newLogs: { message: string; type: LogEntry['type'] }[]) => {
+  const addLogs = useCallback((newLogs: { message: string; type: LogEntry['type'] }[]) => {
     const timestamp = new Date();
-    setLogs(prev => [
-      ...prev,
-      ...newLogs.map(log => ({
-        ...log,
-        timestamp
-      }))
-    ]);
-    
-    // Only set hasErrors if there are error type logs
-    if (newLogs.some(log => log.type === 'error')) {
-      setHasErrors(true);
-    }
-  };
+    setState(prevState => {
+      const updatedLogs = [
+        ...prevState.logs,
+        ...newLogs.map(log => ({
+          ...log,
+          timestamp
+        }))
+      ];
+      
+      // Update hasErrors if there are any error type logs
+      const hasErrors = prevState.hasErrors || newLogs.some(log => log.type === 'error');
+      
+      return {
+        logs: updatedLogs,
+        hasErrors
+      };
+    });
+  }, []);
 
-  const handleLogsUpdate = (messages: string[]) => {
+  const handleLogsUpdate = useCallback((messages: string[]) => {
     const newLogs = messages.map(message => ({
       message,
       type: message.toLowerCase().includes('error') ? 'error' as const :
@@ -54,9 +64,9 @@ export function GeoImportDialog({
             'info' as const
     }));
     addLogs(newLogs);
-  };
+  }, [addLogs]);
 
-  const handleImportComplete = (result: LoaderResult) => {
+  const handleImportComplete = useCallback((result: LoaderResult) => {
     const importLogs = [];
 
     // Log coordinate system information
@@ -149,10 +159,10 @@ export function GeoImportDialog({
 
     onImportComplete(result);
     // Don't close dialog if there are errors or warnings that need attention
-    if (!hasErrors && !result.statistics?.failedTransformations) {
+    if (!state.hasErrors && !result.statistics?.failedTransformations) {
       onClose();
     }
-  };
+  }, [addLogs, onClose, onImportComplete, state.hasErrors]);
 
   if (!file) return null;
 
@@ -162,7 +172,7 @@ export function GeoImportDialog({
         <DialogHeader className="flex flex-row items-center justify-between">
           <DialogTitle>Import Geometry File</DialogTitle>
           <div className="flex items-center gap-2">
-            {hasErrors && (
+            {state.hasErrors && (
               <Alert variant="destructive" className="py-2">
                 <AlertTriangle className="h-4 w-4" />
                 <AlertDescription>
@@ -187,13 +197,12 @@ export function GeoImportDialog({
               <h4 className="font-medium">Import Logs</h4>
               <div className="flex items-center gap-2">
                 <Info className="h-4 w-4 text-muted-foreground" />
-                {hasErrors && (
+                {state.hasErrors && (
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      setLogs([]);
-                      setHasErrors(false);
+                      setState({ logs: [], hasErrors: false });
                       onClose();
                     }}
                   >
@@ -204,11 +213,11 @@ export function GeoImportDialog({
             </div>
             <ScrollArea className="h-[200px] w-full rounded-md">
               <div className="pr-4">
-                {logs.length === 0 ? (
+                {state.logs.length === 0 ? (
                   <p className="text-sm text-muted-foreground">No logs available yet...</p>
                 ) : (
                   <div className="space-y-1">
-                    {logs.map((log, index) => (
+                    {state.logs.map((log, index) => (
                       <div
                         key={index}
                         className={`py-1 text-sm ${

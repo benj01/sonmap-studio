@@ -2,8 +2,9 @@ import { GeoFileLoader, LoaderOptions, LoaderResult, AnalyzeResult } from '../..
 import { CoordinateTransformer, Point, suggestCoordinateSystem } from '../utils/coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../utils/coordinate-systems';
 import { createDxfParser } from '../utils/dxf';
+import { Vector3 } from '../utils/dxf/types';
 
-const PREVIEW_CHUNK_SIZE = 1000;
+const PREVIEW_CHUNK_SIZE = 5000; // Increased from 1000 to handle more complex files
 
 class DxfLoader implements GeoFileLoader {
   private parser = createDxfParser();
@@ -29,40 +30,43 @@ class DxfLoader implements GeoFileLoader {
       switch (entity.type) {
         case '3DFACE':
           if (Array.isArray(entity.vertices)) {
-            points.push(...entity.vertices);
+            points.push(...entity.vertices.filter((v: Vector3) => v && isFinite(v.x) && isFinite(v.y)));
           }
           break;
         case 'POINT':
-          if (entity.position) {
+          if (entity.position && isFinite(entity.position.x) && isFinite(entity.position.y)) {
             points.push(entity.position);
           }
           break;
         case 'LINE':
-          if (entity.start) points.push(entity.start);
-          if (entity.end) points.push(entity.end);
+          if (entity.start && isFinite(entity.start.x) && isFinite(entity.start.y)) {
+            points.push(entity.start);
+          }
+          if (entity.end && isFinite(entity.end.x) && isFinite(entity.end.y)) {
+            points.push(entity.end);
+          }
           break;
         case 'POLYLINE':
         case 'LWPOLYLINE':
           if (Array.isArray(entity.vertices)) {
-            points.push(...entity.vertices);
+            points.push(...entity.vertices.filter((v: Vector3) => v && isFinite(v.x) && isFinite(v.y)));
           }
           break;
         case 'CIRCLE':
         case 'ARC':
         case 'ELLIPSE':
-          if (entity.center) {
+          if (entity.center && isFinite(entity.center.x) && isFinite(entity.center.y)) {
             points.push(entity.center);
+          }
+          break;
+        case 'INSERT':
+          if (entity.position && isFinite(entity.position.x) && isFinite(entity.position.y)) {
+            points.push(entity.position);
           }
           break;
       }
     });
-    return points.filter(point => 
-      point && 
-      typeof point.x === 'number' && 
-      typeof point.y === 'number' && 
-      isFinite(point.x) && 
-      isFinite(point.y)
-    );
+    return points;
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
@@ -74,27 +78,57 @@ class DxfLoader implements GeoFileLoader {
         throw new Error('Invalid DXF file structure');
       }
 
+      // First expand block references to get all actual entities
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
       // Extract points for coordinate system detection
       const points = this.extractPoints(expandedEntities);
+      if (points.length === 0) {
+        throw new Error('No valid points found in DXF file');
+      }
+      
       const coordinateSystem = suggestCoordinateSystem(points);
 
-      // Generate preview features
+      // Generate preview features with better error handling
       const previewFeatures = [];
+      const processedLayers = new Set<string>();
+      
       for (const entity of expandedEntities) {
-        const feature = this.parser.entityToGeoFeature(entity);
-        if (feature) {
-          previewFeatures.push(feature);
-          if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
+        // Track which layers we've seen entities from
+        if (entity.layer) {
+          processedLayers.add(entity.layer);
         }
+
+        try {
+          const feature = this.parser.entityToGeoFeature(entity);
+          if (feature && this.isValidFeature(feature)) {
+            previewFeatures.push(feature);
+            if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
+          }
+        } catch (error) {
+          console.warn('Failed to convert entity to feature:', error);
+          continue;
+        }
+      }
+
+      if (previewFeatures.length === 0) {
+        throw new Error('No valid features could be extracted from DXF file');
       }
 
       // Calculate bounds from preview features
       const bounds = this.calculateBoundsFromFeatures(previewFeatures);
+      if (!bounds) {
+        throw new Error('Could not calculate valid bounds from features');
+      }
+
+      // Get all layers, including those without preview features
+      const allLayers = Array.from(new Set([
+        ...this.parser.getLayers(),
+        ...Array.from(processedLayers)
+      ]));
 
       return {
-        layers: this.parser.getLayers(),
+        layers: allLayers,
         coordinateSystem,
         bounds,
         preview: {
@@ -109,9 +143,29 @@ class DxfLoader implements GeoFileLoader {
     }
   }
 
-  private calculateBoundsFromFeatures(features: any[]): { minX: number; minY: number; maxX: number; maxY: number } {
+  private isValidFeature(feature: any): boolean {
+    if (!feature?.geometry?.coordinates) return false;
+    
+    const validateCoords = (coords: any): boolean => {
+      if (Array.isArray(coords)) {
+        if (coords.length === 2) {
+          return typeof coords[0] === 'number' && 
+                 typeof coords[1] === 'number' && 
+                 isFinite(coords[0]) && 
+                 isFinite(coords[1]);
+        }
+        return coords.every(coord => validateCoords(coord));
+      }
+      return false;
+    };
+
+    return validateCoords(feature.geometry.coordinates);
+  }
+
+  private calculateBoundsFromFeatures(features: any[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
     let minX = Infinity, minY = Infinity;
     let maxX = -Infinity, maxY = -Infinity;
+    let hasValidCoords = false;
 
     const updateBounds = (coords: number[]) => {
       if (coords.length >= 2) {
@@ -121,6 +175,7 @@ class DxfLoader implements GeoFileLoader {
           minY = Math.min(minY, y);
           maxX = Math.max(maxX, x);
           maxY = Math.max(maxY, y);
+          hasValidCoords = true;
         }
       }
     };
@@ -141,11 +196,20 @@ class DxfLoader implements GeoFileLoader {
       }
     });
 
-    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-      return { minX: -180, minY: -90, maxX: 180, maxY: 90 };
+    if (!hasValidCoords) {
+      return null;
     }
 
-    return { minX, minY, maxX, maxY };
+    // Add a small buffer to the bounds
+    const dx = (maxX - minX) * 0.05;
+    const dy = (maxY - minY) * 0.05;
+    
+    return {
+      minX: minX - dx,
+      minY: minY - dy,
+      maxX: maxX + dx,
+      maxY: maxY + dy
+    };
   }
 
   async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
@@ -183,60 +247,61 @@ class DxfLoader implements GeoFileLoader {
           continue;
         }
 
-        const feature = this.parser.entityToGeoFeature(entity);
-        if (feature) {
-          if (transformer) {
-            // Transform coordinates if needed
-            try {
-              const transformedCoords = this.transformCoordinates(
-                feature.geometry.coordinates,
-                transformer
-              );
-              
-              if (transformedCoords) {
-                feature.geometry.coordinates = transformedCoords;
-                features.push(feature);
-              } else {
-                const entityId = entity.handle || 'unknown';
-                if (!failedTransformations.has(entityId)) {
-                  console.warn(`Failed to transform coordinates for entity ${entityId}`);
+        try {
+          const feature = this.parser.entityToGeoFeature(entity);
+          if (feature && this.isValidFeature(feature)) {
+            if (transformer) {
+              try {
+                const transformedCoords = this.transformCoordinates(
+                  feature.geometry.coordinates,
+                  transformer
+                );
+                
+                if (transformedCoords) {
+                  feature.geometry.coordinates = transformedCoords;
+                  features.push(feature);
+                } else {
+                  const entityId = entity.handle || 'unknown';
                   failedTransformations.add(entityId);
+                  continue;
                 }
+              } catch (error) {
+                console.warn('Failed to transform coordinates:', error);
                 continue;
               }
-            } catch (error) {
-              console.warn('Failed to transform coordinates:', error);
-              continue;
+            } else {
+              features.push(feature);
             }
-          } else {
-            features.push(feature);
+            
+            // Count feature types
+            const type = feature.geometry.type;
+            featureTypes[type] = (featureTypes[type] || 0) + 1;
           }
-          
-          // Count feature types
-          const type = feature.geometry.type;
-          featureTypes[type] = (featureTypes[type] || 0) + 1;
-        } else if (entity.type === '3DFACE') {
-          // Track 3DFACE conversion errors
-          const errorType = '3DFACE_CONVERSION';
+        } catch (error) {
+          // Track conversion errors
+          const errorType = `${entity.type}_CONVERSION`;
           const existingError = errors.find(e => e.type === errorType);
           if (existingError) {
             existingError.count++;
           } else {
             errors.push({
               type: errorType,
-              message: 'Failed to convert 3DFACE entity to feature',
+              message: `Failed to convert ${entity.type} entity to feature`,
               count: 1
             });
           }
         }
       }
 
-      if (failedTransformations.size > 0) {
-        console.warn(`Failed to transform ${failedTransformations.size} entities`);
+      if (features.length === 0) {
+        throw new Error('No valid features could be extracted from DXF file');
       }
 
       // Calculate bounds from transformed features
       const bounds = this.calculateBoundsFromFeatures(features);
+      if (!bounds) {
+        throw new Error('Could not calculate valid bounds from features');
+      }
 
       const layers = this.parser.getLayers();
 
@@ -250,7 +315,7 @@ class DxfLoader implements GeoFileLoader {
           layerCount: layers.length,
           featureTypes,
           failedTransformations: failedTransformations.size,
-          errors
+          errors: errors.length > 0 ? errors : undefined
         }
       };
     } catch (err) {
