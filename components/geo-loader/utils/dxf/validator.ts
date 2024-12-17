@@ -10,7 +10,9 @@ import {
   isDxfCircleEntity,
   isDxfArcEntity,
   isDxfEllipseEntity,
-  isDxfInsertEntity
+  isDxfInsertEntity,
+  isDxfTextEntity,
+  isDxfSplineEntity
 } from './types';
 
 export class DxfValidator {
@@ -64,6 +66,11 @@ export class DxfValidator {
         return this.validate3DFaceEntity(entity);
       case 'INSERT':
         return isDxfInsertEntity(entity);
+      case 'TEXT':
+      case 'MTEXT':
+        return isDxfTextEntity(entity);
+      case 'SPLINE':
+        return isDxfSplineEntity(entity);
       default:
         return false;
     }
@@ -101,11 +108,11 @@ export class DxfValidator {
   }
 
   static validateAngle(angle: unknown): angle is number {
-    return this.validateNumericValue(angle) && angle as number >= 0 && angle as number <= 360;
+    return this.validateNumericValue(angle) && (angle as number) >= 0 && (angle as number) <= 360;
   }
 
   static validateRadius(radius: unknown): radius is number {
-    return this.validateNumericValue(radius) && radius as number > 0;
+    return this.validateNumericValue(radius) && (radius as number) > 0;
   }
 
   static validateVertices(vertices: unknown): vertices is Vector3[] {
@@ -191,6 +198,23 @@ export class DxfValidator {
         if (e.columns !== undefined && (!Number.isInteger(e.columns) || e.columns < 1)) return 'INSERT entity has invalid columns';
         if (e.rowSpacing !== undefined && !this.validateNumericValue(e.rowSpacing)) return 'INSERT entity has invalid row spacing';
         if (e.colSpacing !== undefined && !this.validateNumericValue(e.colSpacing)) return 'INSERT entity has invalid column spacing';
+        break;
+
+      case 'TEXT':
+      case 'MTEXT':
+        if (!e.position) return `${e.type} entity missing position`;
+        if (!isVector3(e.position)) return `${e.type} entity has invalid position`;
+        if (typeof e.text !== 'string') return `${e.type} entity missing or invalid text`;
+        if (e.height !== undefined && !this.validateNumericValue(e.height)) return `${e.type} entity has invalid height`;
+        if (e.rotation !== undefined && !this.validateAngle(e.rotation)) return `${e.type} entity has invalid rotation`;
+        break;
+
+      case 'SPLINE':
+        if (!Array.isArray(e.controlPoints)) return 'SPLINE entity missing control points array';
+        if (!e.controlPoints.every(isVector3)) return 'SPLINE entity has invalid control points';
+        if (e.degree !== undefined && (!Number.isInteger(e.degree) || e.degree < 1)) return 'SPLINE entity has invalid degree';
+        if (e.knots !== undefined && (!Array.isArray(e.knots) || !e.knots.every((k: unknown) => this.validateNumericValue(k)))) return 'SPLINE entity has invalid knots';
+        if (e.weights !== undefined && (!Array.isArray(e.weights) || !e.weights.every((w: unknown) => this.validateNumericValue(w)))) return 'SPLINE entity has invalid weights';
         break;
 
       default:

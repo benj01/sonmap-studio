@@ -1,6 +1,6 @@
 import { GeoFeature, Geometry } from '../../../../types/geo';
 import { createFeature, createLineStringGeometry, createPointGeometry, createPolygonGeometry } from '../geometry-utils';
-import { DxfEntity, DxfEntityBase, Vector3 } from './types';
+import { DxfEntity, DxfEntityBase, Vector3, DxfSplineEntity } from './types';
 import { DxfValidator } from './validator';
 
 export class DxfConverter {
@@ -133,6 +133,30 @@ export class DxfConverter {
           return createLineStringGeometry(ellipseCoords);
         }
 
+        case 'TEXT':
+        case 'MTEXT': {
+          // Represent text entities as points with text properties
+          return createPointGeometry(
+            entity.position.x,
+            entity.position.y,
+            entity.position.z
+          );
+        }
+
+        case 'SPLINE': {
+          // For splines, we'll create a series of points along the curve
+          // This is a simple linear approximation - for better results,
+          // you might want to implement proper spline interpolation
+          const coordinates = entity.controlPoints.map(p => [p.x, p.y] as [number, number]);
+          
+          if (entity.closed && coordinates.length >= 3) {
+            coordinates.push(coordinates[0]);
+            return createPolygonGeometry([coordinates]);
+          }
+          
+          return createLineStringGeometry(coordinates);
+        }
+
         default:
           console.warn(`Unsupported entity type: ${entity.type}`);
           return null;
@@ -157,6 +181,32 @@ export class DxfConverter {
       }
 
       const properties = this.extractEntityProperties(entity, layerInfo);
+
+      // Add text-specific properties
+      if (entity.type === 'TEXT' || entity.type === 'MTEXT') {
+        Object.assign(properties, {
+          text: (entity as any).text,
+          height: (entity as any).height,
+          rotation: (entity as any).rotation,
+          width: (entity as any).width,
+          style: (entity as any).style,
+          horizontalAlignment: (entity as any).horizontalAlignment,
+          verticalAlignment: (entity as any).verticalAlignment
+        });
+      }
+
+      // Add spline-specific properties
+      if (entity.type === 'SPLINE') {
+        const spline = entity as DxfSplineEntity;
+        Object.assign(properties, {
+          degree: spline.degree,
+          closed: spline.closed,
+          hasKnots: !!spline.knots,
+          hasWeights: !!spline.weights,
+          controlPointCount: spline.controlPoints.length
+        });
+      }
+
       return createFeature(geometry, properties);
     } catch (error: any) {
       console.warn(

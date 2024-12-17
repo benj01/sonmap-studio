@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Card, CardHeader, CardContent, CardFooter } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Card, CardHeader, CardContent, CardFooter } from 'components/ui/card';
+import { Button } from 'components/ui/button';
+import { Alert, AlertDescription, AlertTitle } from 'components/ui/alert';
 import { AlertCircle } from 'lucide-react';
 import type { LoaderResult } from '../../types/geo';
-import { FormatSettings } from './components/format-settings';
-import { PreviewMap } from './components/preview-map';
 import { useGeoLoader } from './hooks/use-geo-loader';
 import { COORDINATE_SYSTEMS } from './utils/coordinate-systems';
+import { DxfData } from './utils/dxf/types';
 
 interface ShapeFile extends File {
   relatedFiles: {
@@ -20,6 +19,10 @@ interface GeoLoaderProps {
   onLoad: (result: LoaderResult) => void;
   onCancel: () => void;
   onLogsUpdate?: (logs: string[]) => void;
+  onDxfDataUpdate?: (data: DxfData | null) => void;
+  onAnalysisUpdate?: (analysis: any) => void;
+  onPreviewUpdate?: (preview: any) => void;
+  selectedLayers?: string[];
 }
 
 interface ErrorState {
@@ -29,13 +32,23 @@ interface ErrorState {
   severity: 'error' | 'warning';
 }
 
-export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoLoaderProps) {
+export default function GeoLoader({ 
+  file, 
+  onLoad, 
+  onCancel, 
+  onLogsUpdate,
+  onDxfDataUpdate,
+  onAnalysisUpdate,
+  onPreviewUpdate,
+  selectedLayers 
+}: GeoLoaderProps) {
   const {
     loading,
     error: loaderError,
     analysis,
     options,
     logs,
+    dxfData,
     setOptions,
     analyzeFile,
     loadFile,
@@ -47,6 +60,30 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
   useEffect(() => {
     onLogsUpdate?.(logs);
   }, [logs, onLogsUpdate]);
+
+  // Update DXF data whenever it changes
+  useEffect(() => {
+    onDxfDataUpdate?.(dxfData);
+  }, [dxfData, onDxfDataUpdate]);
+
+  // Update analysis whenever it changes
+  useEffect(() => {
+    onAnalysisUpdate?.(analysis);
+    if (analysis?.preview) {
+      onPreviewUpdate?.(analysis.preview);
+    }
+  }, [analysis, onAnalysisUpdate, onPreviewUpdate]);
+
+  // Update options when selectedLayers prop changes
+  useEffect(() => {
+    if (selectedLayers) {
+      setOptions(prev => ({
+        ...prev,
+        selectedLayers,
+        visibleLayers: selectedLayers
+      }));
+    }
+  }, [selectedLayers, setOptions]);
 
   useEffect(() => {
     const isShapefile = file.name.toLowerCase().endsWith('.shp');
@@ -203,34 +240,6 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
         </CardHeader>
         
         <CardContent className="flex-1 space-y-6">
-          <div className="grid grid-cols-2 gap-4">
-            {/* Settings Panel */}
-            <div className="space-y-4">
-              <h4 className="font-medium">Settings</h4>
-              <FormatSettings
-                fileType={file.name.split('.').pop() || ''}
-                analysis={analysis}
-                options={options}
-                onOptionsChange={setOptions}
-              />
-            </div>
-
-            {/* Preview Map Panel */}
-            <div className="space-y-4">
-              <h4 className="font-medium">Preview</h4>
-              <div className="h-96 relative">
-                {analysis?.preview && (
-                  <PreviewMap
-                    preview={analysis.preview}
-                    bounds={analysis.bounds}
-                    coordinateSystem={analysis.coordinateSystem}
-                    visibleLayers={options.visibleLayers}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-
           {error && (
             <Alert variant={getAlertVariant(error.severity)}>
               <AlertCircle className="h-4 w-4" />
@@ -247,21 +256,17 @@ export default function GeoLoader({ file, onLoad, onCancel, onLogsUpdate }: GeoL
           )}
         </CardContent>
 
-        {/* Ensure footer is above map overlays */}
-        <div className="relative z-50">
-          <CardFooter className="flex justify-end space-x-2 border-t pt-4">
-            <Button variant="outline" onClick={onCancel} className="relative z-50">
-              Cancel
-            </Button>
-            <Button 
-              onClick={handleImport} 
-              disabled={loading || (error?.severity === 'error')} 
-              className="relative z-50"
-            >
-              {loading ? 'Importing...' : 'Import'}
-            </Button>
-          </CardFooter>
-        </div>
+        <CardFooter className="flex justify-end space-x-2 border-t pt-4">
+          <Button variant="outline" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button 
+            onClick={handleImport} 
+            disabled={loading || (error?.severity === 'error')}
+          >
+            {loading ? 'Importing...' : 'Import'}
+          </Button>
+        </CardFooter>
       </Card>
     </div>
   );

@@ -242,13 +242,13 @@ function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
   try {
     if (!Array.isArray(points) || points.length === 0) {
       console.warn('No points provided for coordinate system detection');
-      return COORDINATE_SYSTEMS.WGS84;
+      return COORDINATE_SYSTEMS.SWISS_LV95; // Default to LV95 if no points
     }
 
     const validPoints = points.filter(isValidPoint);
     if (validPoints.length === 0) {
       console.warn('No valid points found for coordinate system detection');
-      return COORDINATE_SYSTEMS.WGS84;
+      return COORDINATE_SYSTEMS.SWISS_LV95; // Default to LV95 if no valid points
     }
 
     if (detectLV95Coordinates(validPoints)) {
@@ -258,22 +258,29 @@ function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
       return COORDINATE_SYSTEMS.SWISS_LV03;
     }
 
-    // Check if coordinates might be in WGS84 range
-    const isWGS84Range = validPoints.every(point => 
-      point.x >= -180 && point.x <= 180 &&
-      point.y >= -90 && point.y <= 90
-    );
+    // Check if coordinates are definitely in WGS84 range
+    const isDefinitelyWGS84 = validPoints.every(point => {
+      // More strict WGS84 validation
+      const isInWGS84Range = point.x >= -180 && point.x <= 180 && point.y >= -90 && point.y <= 90;
+      // Check if values look like actual lat/long (usually have decimal places)
+      const hasDecimals = point.x % 1 !== 0 || point.y % 1 !== 0;
+      // Check if values are in a reasonable range (most real-world coordinates aren't at the extremes)
+      const isReasonableRange = Math.abs(point.x) < 180 && Math.abs(point.y) < 90;
+      
+      return isInWGS84Range && hasDecimals && isReasonableRange;
+    });
 
-    if (isWGS84Range) {
-      console.debug('Coordinates appear to be in WGS84 range');
-    } else {
-      console.warn('Coordinates outside expected ranges, defaulting to WGS84');
+    if (isDefinitelyWGS84) {
+      console.debug('Coordinates confirmed to be in WGS84');
+      return COORDINATE_SYSTEMS.WGS84;
     }
 
-    return COORDINATE_SYSTEMS.WGS84;
+    // If we can't definitively determine the coordinate system, default to LV95
+    console.warn('Could not definitively determine coordinate system, defaulting to LV95');
+    return COORDINATE_SYSTEMS.SWISS_LV95;
   } catch (error) {
     console.error('Error detecting coordinate system:', error);
-    return COORDINATE_SYSTEMS.WGS84;
+    return COORDINATE_SYSTEMS.SWISS_LV95; // Default to LV95 on error
   }
 }
 

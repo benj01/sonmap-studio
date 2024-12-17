@@ -103,9 +103,59 @@ class DxfParserLibImpl implements CustomDxfParserLib {
       return null;
     }
 
+    const e = entity as any;
+    
+    // Add default values for missing required properties
+    switch (e.type) {
+      case '3DFACE':
+        if (!e.vertices || !Array.isArray(e.vertices) || e.vertices.length !== 4) {
+          e.vertices = Array(4).fill({ x: 0, y: 0, z: 0 });
+        }
+        e.vertices = e.vertices.map((v: any) => this.ensureVector3(v));
+        break;
+
+      case 'LINE':
+        if (!e.start) e.start = { x: 0, y: 0, z: 0 };
+        if (!e.end) e.end = { x: 0, y: 0, z: 0 };
+        e.start = this.ensureVector3(e.start);
+        e.end = this.ensureVector3(e.end);
+        break;
+
+      case 'TEXT':
+      case 'MTEXT':
+        if (!e.position) e.position = { x: 0, y: 0, z: 0 };
+        if (!e.text) e.text = '';
+        e.position = this.ensureVector3(e.position);
+        break;
+
+      case 'ELLIPSE':
+        if (!e.center) e.center = { x: 0, y: 0, z: 0 };
+        if (!e.majorAxis) e.majorAxis = { x: 1, y: 0, z: 0 };
+        if (typeof e.minorAxisRatio !== 'number') e.minorAxisRatio = 1;
+        if (typeof e.startAngle !== 'number') e.startAngle = 0;
+        if (typeof e.endAngle !== 'number') e.endAngle = 2 * Math.PI;
+        e.center = this.ensureVector3(e.center);
+        e.majorAxis = this.ensureVector3(e.majorAxis);
+        break;
+
+      case 'POINT':
+        if (!e.position) e.position = { x: 0, y: 0, z: 0 };
+        e.position = this.ensureVector3(e.position);
+        break;
+
+      case 'POLYLINE':
+      case 'LWPOLYLINE':
+        if (!e.vertices || !Array.isArray(e.vertices)) {
+          e.vertices = [];
+        }
+        e.vertices = e.vertices.map((v: any) => this.ensureVector3(v));
+        break;
+    }
+
+    // Validate after adding defaults
     const validationError = DxfValidator.getEntityValidationError(entity);
     if (validationError) {
-      console.warn(`Entity validation error: ${validationError}`);
+      console.warn(`Entity validation error after defaults: ${validationError}`);
       return null;
     }
 
@@ -114,6 +164,17 @@ class DxfParserLibImpl implements CustomDxfParserLib {
     }
 
     return null;
+  }
+
+  private ensureVector3(point: any): Vector3 {
+    if (!point || typeof point !== 'object') {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return {
+      x: typeof point.x === 'number' && isFinite(point.x) ? point.x : 0,
+      y: typeof point.y === 'number' && isFinite(point.y) ? point.y : 0,
+      z: typeof point.z === 'number' && isFinite(point.z) ? point.z : 0
+    };
   }
 }
 

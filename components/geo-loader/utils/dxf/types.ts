@@ -103,6 +103,28 @@ export interface DxfInsertEntity extends DxfEntityBase {
   colSpacing?: number;
 }
 
+// New entity types
+export interface DxfTextEntity extends DxfEntityBase {
+  type: 'TEXT' | 'MTEXT';
+  position: Vector3;
+  text: string;
+  height?: number;
+  rotation?: number;
+  width?: number;
+  style?: string;
+  horizontalAlignment?: string;
+  verticalAlignment?: string;
+}
+
+export interface DxfSplineEntity extends DxfEntityBase {
+  type: 'SPLINE';
+  controlPoints: Vector3[];
+  degree?: number;
+  knots?: number[];
+  weights?: number[];
+  closed?: boolean;
+}
+
 // Union type for all DXF entities
 export type DxfEntity = 
   | Dxf3DFaceEntity
@@ -112,7 +134,9 @@ export type DxfEntity =
   | DxfCircleEntity
   | DxfArcEntity
   | DxfEllipseEntity
-  | DxfInsertEntity;
+  | DxfInsertEntity
+  | DxfTextEntity
+  | DxfSplineEntity;
 
 // Block definitions
 export interface DxfBlock {
@@ -226,6 +250,22 @@ export const isDxfInsertEntity = (entity: unknown): entity is DxfInsertEntity =>
          e.position && isVector3(e.position);
 };
 
+export const isDxfTextEntity = (entity: unknown): entity is DxfTextEntity => {
+  if (!entity || typeof entity !== 'object') return false;
+  const e = entity as any;
+  return (e.type === 'TEXT' || e.type === 'MTEXT') && 
+         e.position && isVector3(e.position) &&
+         typeof e.text === 'string';
+};
+
+export const isDxfSplineEntity = (entity: unknown): entity is DxfSplineEntity => {
+  if (!entity || typeof entity !== 'object') return false;
+  const e = entity as any;
+  return e.type === 'SPLINE' && 
+         Array.isArray(e.controlPoints) &&
+         e.controlPoints.every((p: unknown) => isVector3(p));
+};
+
 export const isDxfEntity = (entity: unknown): entity is DxfEntity => {
   if (!entity || typeof entity !== 'object') return false;
   const e = entity as any;
@@ -248,6 +288,11 @@ export const isDxfEntity = (entity: unknown): entity is DxfEntity => {
       return isDxfEllipseEntity(e);
     case 'INSERT':
       return isDxfInsertEntity(e);
+    case 'TEXT':
+    case 'MTEXT':
+      return isDxfTextEntity(e);
+    case 'SPLINE':
+      return isDxfSplineEntity(e);
     default:
       return false;
   }

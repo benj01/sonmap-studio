@@ -1,101 +1,110 @@
-// types/geo.ts
+import { Feature, FeatureCollection, Geometry as GeoJSONGeometry } from 'geojson';
+import { DxfData } from '../components/geo-loader/utils/dxf/types';
 
-export type GeoFileType = 'dxf' | 'shp' | 'xyz' | 'csv' | 'txt';
-
-export type Point2D = {
-  type: 'Point';
-  coordinates: [number, number];
-};
-
-export type Point3D = {
-  type: 'Point';
-  coordinates: [number, number, number];
-};
-
-export type Point = Point2D | Point3D;
-
-export type LineString = {
-  type: 'LineString';
-  coordinates: Array<[number, number]>;
-};
-
-export type Polygon = {
-  type: 'Polygon';
-  coordinates: Array<Array<[number, number]>>;
-};
-
-export type Geometry = Point | LineString | Polygon;
-
-export interface GeoFeature {
-  type: 'Feature';
-  geometry: Geometry;
-  properties: Record<string, any>;
-  layer?: string;
+export interface Point {
+  x: number;
+  y: number;
+  z?: number;
 }
 
-export interface GeoFeatureCollection {
-  type: 'FeatureCollection';
-  features: GeoFeature[];
+export interface Bounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
 }
 
-export interface LoaderOptions {
-  // Common options
-  coordinateSystem?: string;
-  targetSystem?: string;
-
-  // Format-specific options
-  delimiter?: string;     // For CSV/TXT
-  skipRows?: number;      // For CSV/TXT
-  skipColumns?: number;   // For CSV/TXT
-  selectedLayers?: string[]; // For DXF/SHP - Layers to import
-  visibleLayers?: string[]; // For DXF/SHP - Layers to show in preview
-  importAttributes?: boolean; // For SHP
-  boundingBox?: {         // For spatial filtering
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
+export interface GeoFeature extends Feature {
+  properties: {
+    id?: string;
+    type?: string;
+    layer?: string;
+    color?: number;
+    colorRGB?: number;
+    lineType?: string;
+    lineWeight?: number;
+    elevation?: number;
+    thickness?: number;
+    visible?: boolean;
+    _transformError?: string;
+    _errors?: string[];
+    [key: string]: any;
   };
-  simplificationTolerance?: number; // For point cloud thinning
 }
 
-export interface LoaderResult {
-  features: GeoFeature[];
-  bounds: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
+export interface AnalysisWarning {
+  type: string;
+  message: string;
+  entity?: {
+    type: string;
+    handle?: string;
+    layer?: string;
   };
-  layers?: string[];          // Available layers
-  coordinateSystem?: string;  // Detected CRS
-  statistics?: {
-    pointCount: number;
-    layerCount?: number;
-    featureTypes: Record<string, number>;
-    failedTransformations?: number;  // Count of entities that failed coordinate transformation
-    errors?: {                       // Optional error statistics
-      type: string;
-      count: number;
-      message?: string;
-    }[];
+}
+
+export interface AnalysisError {
+  type: string;
+  message: string;
+  entity?: {
+    type: string;
+    handle?: string;
+    layer?: string;
   };
+  isCritical: boolean;
+}
+
+export interface AnalysisStats {
+  totalEntities: number;
+  validEntities: number;
+  skippedEntities: number;
+  entitiesByType: Record<string, number>;
+  entitiesByLayer: Record<string, number>;
+  layers: string[];
+  blocks: string[];
+  lineTypes: string[];
+  textStyles: string[];
 }
 
 export interface AnalyzeResult {
   layers: string[];
-  coordinateSystem: string;
-  bounds: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
+  coordinateSystem?: string;
+  bounds: Bounds;
+  preview: FeatureCollection;
+  dxfData?: DxfData;
+  analysis?: {
+    warnings: AnalysisWarning[];
+    errors: AnalysisError[];
+    stats: AnalysisStats;
   };
-  preview: GeoFeatureCollection;
+}
+
+export interface LoaderResult {
+  features: GeoFeature[];
+  bounds: Bounds;
+  layers: string[];
+  coordinateSystem?: string;
+  statistics?: {
+    pointCount: number;
+    layerCount: number;
+    featureTypes: Record<string, number>;
+    failedTransformations?: number;
+    errors?: Array<{
+      type: string;
+      message?: string;
+      count: number;
+    }>;
+  } & Partial<AnalysisStats>;
+}
+
+export interface LoaderOptions {
+  coordinateSystem?: string;
+  selectedLayers?: string[];
 }
 
 export interface GeoFileLoader {
-  canLoad: (file: File) => Promise<boolean>;
-  analyze: (file: File) => Promise<AnalyzeResult>;
-  load: (file: File, options: LoaderOptions) => Promise<LoaderResult>;
+  canLoad(file: File): Promise<boolean>;
+  analyze(file: File): Promise<AnalyzeResult>;
+  load(file: File, options: LoaderOptions): Promise<LoaderResult>;
 }
+
+export type Geometry = GeoJSONGeometry;
