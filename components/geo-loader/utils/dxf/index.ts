@@ -1,5 +1,18 @@
+// Re-export all types
 export * from './types';
-export * from './matrix';
-export * from './validator';
-export * from './converter';
-export * from './parser';
+
+// Re-export validation utilities
+export * from './validation';
+
+// Re-export transform utilities
+export * from './transform';
+
+// Re-export entity parser
+export * from './entity-parser';
+
+// Re-export core parser and its factory function
+export * from './core-parser';
+
+// Export the main parser creation function as the default export
+import { createDxfParser } from './core-parser';
+export default createDxfParser;
