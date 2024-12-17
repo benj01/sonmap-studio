@@ -108,8 +108,15 @@ class DxfLoader implements GeoFileLoader {
     return points;
   }
 
-  async analyze(file: File): Promise<AnalyzeResult> {
+  async analyze(file: File, options: LoaderOptions = {}): Promise<AnalyzeResult> {
+    const log = (message: string) => {
+      if (options.onLog) {
+        options.onLog(message);
+      }
+    };
+
     try {
+      log(`Starting analysis of ${file.name}...`);
       const content = await this.readFileContent(file);
       const dxf = this.parser.parse(content);
       
@@ -128,6 +135,17 @@ class DxfLoader implements GeoFileLoader {
           );
         }
       }
+
+      // Log analysis warnings and non-critical errors
+      analysisResult.warnings?.forEach(warning => {
+        log(`Warning: ${warning.message}`);
+      });
+
+      analysisResult.errors?.forEach(error => {
+        if (!error.isCritical) {
+          log(`Error: ${error.message}`);
+        }
+      });
 
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
@@ -162,7 +180,7 @@ class DxfLoader implements GeoFileLoader {
             unsupportedTypes.add(entity.type);
           }
         } catch (error) {
-          console.warn('Failed to convert entity to feature:', error);
+          log(`Warning: Failed to convert entity to feature: ${error instanceof Error ? error.message : 'Unknown error'}`);
           if (entity.type) {
             unsupportedTypes.add(entity.type);
           }
@@ -188,6 +206,20 @@ class DxfLoader implements GeoFileLoader {
         ...Array.from(processedLayers)
       ]));
 
+      // Log analysis results
+      if (analysisResult.stats) {
+        const stats = analysisResult.stats;
+        log(`Found ${stats.entityCount} entities:`);
+        if (stats.lineCount) log(`- ${stats.lineCount} lines`);
+        if (stats.pointCount) log(`- ${stats.pointCount} points`);
+        if (stats.polylineCount) log(`- ${stats.polylineCount} polylines`);
+        if (stats.circleCount) log(`- ${stats.circleCount} circles`);
+        if (stats.arcCount) log(`- ${stats.arcCount} arcs`);
+        if (stats.textCount) log(`- ${stats.textCount} text elements`);
+      }
+
+      log('Analysis complete');
+
       // Include analysis results in the response
       return {
         layers: allLayers,
@@ -206,8 +238,164 @@ class DxfLoader implements GeoFileLoader {
       };
     } catch (err) {
       const error = err as Error;
-      console.error('DXF analysis error:', error);
-      throw new Error(`Failed to analyze DXF file: ${error.message}`);
+      log(`Error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
+    const log = (message: string) => {
+      if (options.onLog) {
+        options.onLog(message);
+      }
+    };
+
+    try {
+      log(`Starting import of ${file.name}...`);
+      const content = await this.readFileContent(file);
+      const dxf = this.parser.parse(content);
+      
+      if (!dxf || !dxf.entities) {
+        throw new Error('Invalid DXF file structure');
+      }
+
+      // Run analysis before loading
+      const analysisResult = this.analyzer.analyze(dxf);
+      const expandedEntities = this.parser.expandBlockReferences(dxf);
+      
+      const selectedLayers = options.selectedLayers || [];
+      const selectedTemplates = options.selectedTemplates || [];
+      const sourceSystem = options.coordinateSystem || COORDINATE_SYSTEMS.WGS84;
+      
+      let transformer: CoordinateTransformer | null = null;
+      if (sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
+        try {
+          transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
+          log(`Using coordinate system: ${sourceSystem}`);
+        } catch (error) {
+          log(`Error: Unsupported coordinate system: ${sourceSystem}`);
+          throw new Error(`Unsupported coordinate system: ${sourceSystem}`);
+        }
+      }
+
+      const features: GeoFeature[] = [];
+      const featureTypes: Record<string, number> = {};
+      const failedTransformations = new Set<string>();
+      const errors: Array<{type: string; message?: string; count: number}> = [];
+
+      // Include analysis warnings in errors
+      analysisResult.warnings.forEach(warning => {
+        log(`Warning: ${warning.message}`);
+        const existingError = errors.find(e => e.type === warning.type);
+        if (existingError) {
+          existingError.count++;
+        } else {
+          errors.push({
+            type: warning.type,
+            message: warning.message,
+            count: 1
+          });
+        }
+      });
+
+      for (const entity of expandedEntities) {
+        // Skip if entity's layer is not selected
+        if (selectedLayers.length > 0 && !selectedLayers.includes(entity.layer || '0')) {
+          continue;
+        }
+
+        // Skip if entity's type is not selected (when templates are specified)
+        if (selectedTemplates.length > 0 && !selectedTemplates.includes(entity.type)) {
+          continue;
+        }
+
+        try {
+          const feature = this.parser.entityToGeoFeature(entity);
+          if (feature && this.isValidFeature(feature)) {
+            if (transformer && isGeometryWithCoordinates(feature.geometry)) {
+              try {
+                const transformedCoords = this.transformCoordinates(
+                  feature.geometry.coordinates,
+                  transformer,
+                  sourceSystem,
+                  log
+                );
+                
+                if (transformedCoords) {
+                  feature.geometry.coordinates = transformedCoords;
+                  features.push(feature as GeoFeature);
+                } else {
+                  const entityId = entity.handle || 'unknown';
+                  failedTransformations.add(entityId);
+                  continue;
+                }
+              } catch (error) {
+                log(`Warning: Failed to transform coordinates: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                continue;
+              }
+            } else {
+              features.push(feature as GeoFeature);
+            }
+            
+            const type = feature.geometry.type;
+            featureTypes[type] = (featureTypes[type] || 0) + 1;
+          }
+        } catch (error) {
+          const errorType = `${entity.type}_CONVERSION`;
+          const errorMessage = `Failed to convert ${entity.type} entity to feature`;
+          log(`Error: ${errorMessage}`);
+          const existingError = errors.find(e => e.type === errorType);
+          if (existingError) {
+            existingError.count++;
+          } else {
+            errors.push({
+              type: errorType,
+              message: errorMessage,
+              count: 1
+            });
+          }
+        }
+      }
+
+      if (features.length === 0) {
+        throw new Error('No valid features could be extracted from DXF file');
+      }
+
+      const bounds = this.calculateBoundsFromFeatures(features);
+      if (!bounds) {
+        throw new Error('Could not calculate valid bounds from features');
+      }
+
+      const layers = this.parser.getLayers();
+
+      // Log import statistics
+      log(`Successfully imported ${features.length} features`);
+      Object.entries(featureTypes).forEach(([type, count]) => {
+        log(`- ${count} ${type} features`);
+      });
+
+      if (failedTransformations.size > 0) {
+        log(`Warning: ${failedTransformations.size} features failed coordinate transformation`);
+      }
+
+      return {
+        features,
+        bounds,
+        layers,
+        coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+        statistics: {
+          ...analysisResult.stats,
+          pointCount: features.length,
+          layerCount: layers.length,
+          featureTypes,
+          failedTransformations: failedTransformations.size,
+          errors: errors.length > 0 ? errors : undefined
+        }
+      };
+    } catch (err) {
+      const error = err as Error;
+      log(`Error: ${error.message}`);
+      throw error;
     }
   }
 
@@ -326,141 +514,12 @@ class DxfLoader implements GeoFileLoader {
     };
   }
 
-  async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
-    try {
-      const content = await this.readFileContent(file);
-      const dxf = this.parser.parse(content);
-      
-      if (!dxf || !dxf.entities) {
-        throw new Error('Invalid DXF file structure');
-      }
-
-      // Run analysis before loading
-      const analysisResult = this.analyzer.analyze(dxf);
-      const expandedEntities = this.parser.expandBlockReferences(dxf);
-      
-      const selectedLayers = options.selectedLayers || [];
-      const selectedTemplates = options.selectedTemplates || [];
-      const sourceSystem = options.coordinateSystem || COORDINATE_SYSTEMS.WGS84;
-      
-      let transformer: CoordinateTransformer | null = null;
-      if (sourceSystem !== COORDINATE_SYSTEMS.WGS84) {
-        try {
-          transformer = new CoordinateTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
-        } catch (error) {
-          console.error('Failed to create coordinate transformer:', error);
-          throw new Error(`Unsupported coordinate system: ${sourceSystem}`);
-        }
-      }
-
-      const features: GeoFeature[] = [];
-      const featureTypes: Record<string, number> = {};
-      const failedTransformations = new Set<string>();
-      const errors: Array<{type: string; message?: string; count: number}> = [];
-
-      // Include analysis warnings in errors
-      analysisResult.warnings.forEach(warning => {
-        const existingError = errors.find(e => e.type === warning.type);
-        if (existingError) {
-          existingError.count++;
-        } else {
-          errors.push({
-            type: warning.type,
-            message: warning.message,
-            count: 1
-          });
-        }
-      });
-
-      for (const entity of expandedEntities) {
-        // Skip if entity's layer is not selected
-        if (selectedLayers.length > 0 && !selectedLayers.includes(entity.layer || '0')) {
-          continue;
-        }
-
-        // Skip if entity's type is not selected (when templates are specified)
-        if (selectedTemplates.length > 0 && !selectedTemplates.includes(entity.type)) {
-          continue;
-        }
-
-        try {
-          const feature = this.parser.entityToGeoFeature(entity);
-          if (feature && this.isValidFeature(feature)) {
-            if (transformer && isGeometryWithCoordinates(feature.geometry)) {
-              try {
-                const transformedCoords = this.transformCoordinates(
-                  feature.geometry.coordinates,
-                  transformer,
-                  sourceSystem
-                );
-                
-                if (transformedCoords) {
-                  feature.geometry.coordinates = transformedCoords;
-                  features.push(feature as GeoFeature);
-                } else {
-                  const entityId = entity.handle || 'unknown';
-                  failedTransformations.add(entityId);
-                  continue;
-                }
-              } catch (error) {
-                console.warn('Failed to transform coordinates:', error);
-                continue;
-              }
-            } else {
-              features.push(feature as GeoFeature);
-            }
-            
-            const type = feature.geometry.type;
-            featureTypes[type] = (featureTypes[type] || 0) + 1;
-          }
-        } catch (error) {
-          const errorType = `${entity.type}_CONVERSION`;
-          const existingError = errors.find(e => e.type === errorType);
-          if (existingError) {
-            existingError.count++;
-          } else {
-            errors.push({
-              type: errorType,
-              message: `Failed to convert ${entity.type} entity to feature`,
-              count: 1
-            });
-          }
-        }
-      }
-
-      if (features.length === 0) {
-        throw new Error('No valid features could be extracted from DXF file');
-      }
-
-      const bounds = this.calculateBoundsFromFeatures(features);
-      if (!bounds) {
-        throw new Error('Could not calculate valid bounds from features');
-      }
-
-      const layers = this.parser.getLayers();
-
-      return {
-        features,
-        bounds,
-        layers,
-        coordinateSystem: COORDINATE_SYSTEMS.WGS84,
-        statistics: {
-          ...analysisResult.stats,
-          pointCount: features.length,
-          layerCount: layers.length,
-          featureTypes,
-          failedTransformations: failedTransformations.size,
-          errors: errors.length > 0 ? errors : undefined
-        }
-      };
-    } catch (err) {
-      const error = err as Error;
-      console.error('DXF loading error:', error);
-      throw new Error(`Failed to load DXF file: ${error.message}`);
-    }
-  }
-
-  private transformCoordinates(coordinates: any, transformer: CoordinateTransformer, sourceSystem: string): any {
+  private transformCoordinates(
+    coordinates: any, 
+    transformer: CoordinateTransformer, 
+    sourceSystem: string,
+    log: (message: string) => void
+  ): any {
     if (Array.isArray(coordinates)) {
       if (coordinates.length === 2 && typeof coordinates[0] === 'number') {
         const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
@@ -472,18 +531,20 @@ class DxfLoader implements GeoFileLoader {
 
         // Validate WGS84 bounds
         if (lat < -90 || lat > 90) {
-          console.warn('Transformed latitude out of bounds:', lat);
+          log(`Warning: Transformed latitude out of bounds: ${lat}`);
           return null;
         }
         if (lon < -180 || lon > 180) {
-          console.warn('Transformed longitude out of bounds:', lon);
+          log(`Warning: Transformed longitude out of bounds: ${lon}`);
           return null;
         }
         
         // Return coordinates in [longitude, latitude] order for GeoJSON
         return [lon, lat];
       }
-      const transformedArray = coordinates.map(coord => this.transformCoordinates(coord, transformer, sourceSystem));
+      const transformedArray = coordinates.map(coord => 
+        this.transformCoordinates(coord, transformer, sourceSystem, log)
+      );
       return transformedArray.every(item => item !== null) ? transformedArray : null;
     }
     return coordinates;

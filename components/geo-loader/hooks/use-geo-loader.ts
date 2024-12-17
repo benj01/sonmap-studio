@@ -59,63 +59,8 @@ export function useGeoLoader() {
     
     try {
       const loader = getLoader(file);
-      addLog(`Analyzing ${file.name}...`);
-      const result = await loader.analyze(file);
+      const result = await loader.analyze(file, { onLog: addLog });
       
-      // Process analysis results
-      if (result.analysis) {
-        // Log warnings
-        if (result.analysis.warnings && result.analysis.warnings.length > 0) {
-          result.analysis.warnings.forEach(warning => {
-            addLog(`Warning: ${warning.message}`);
-          });
-        }
-
-        // Log non-critical errors
-        if (result.analysis.errors && result.analysis.errors.length > 0) {
-          result.analysis.errors.forEach(error => {
-            if (!error.isCritical) {
-              addLog(`Error: ${error.message}`);
-            }
-          });
-        }
-
-        // Log stats
-        if (result.analysis.stats) {
-          const stats = result.analysis.stats;
-          addLog(`Found ${stats.entityCount} entities:`);
-          if (stats.lineCount) addLog(`- ${stats.lineCount} lines`);
-          if (stats.pointCount) addLog(`- ${stats.pointCount} points`);
-          if (stats.polylineCount) addLog(`- ${stats.polylineCount} polylines`);
-          if (stats.circleCount) addLog(`- ${stats.circleCount} circles`);
-          if (stats.arcCount) addLog(`- ${stats.arcCount} arcs`);
-          if (stats.textCount) addLog(`- ${stats.textCount} text elements`);
-        }
-      }
-
-      // Detect coordinate system if not already set
-      if (!result.coordinateSystem && result.preview?.features) {
-        const points: Point[] = [];
-        result.preview.features.forEach(feature => {
-          if (feature.geometry.type === 'Point') {
-            const [x, y] = feature.geometry.coordinates;
-            points.push({ x, y });
-          }
-        });
-
-        // Check for coordinates outside WGS84 range
-        const hasLargeCoordinates = points.some(point => 
-          Math.abs(point.x) > 180 || 
-          Math.abs(point.y) > 90
-        );
-
-        if (hasLargeCoordinates) {
-          addLog('Warning: Coordinates appear to be in a local/projected system. Please select the correct coordinate system.');
-        }
-
-        result.coordinateSystem = suggestCoordinateSystem(points);
-      }
-
       setAnalysis(result);
       setCurrentFile(file);
       
@@ -132,7 +77,6 @@ export function useGeoLoader() {
         visibleLayers: layers
       }));
 
-      addLog('Analysis complete');
       return result;
     } catch (err) {
       const error = err as Error;
@@ -147,19 +91,19 @@ export function useGeoLoader() {
   const loadFile = useCallback(async (file: File): Promise<LoaderResult> => {
     setLoading(true);
     setError(null);
+
     try {
       const loader = getLoader(file);
-      addLog(`Loading ${file.name}...`);
       
       // Use current options for coordinate system, layer selection, and templates
       const result = await loader.load(file, {
         ...options,
         selectedLayers: options.selectedLayers || [],
         visibleLayers: options.visibleLayers || [],
-        selectedTemplates: options.selectedTemplates || []
+        selectedTemplates: options.selectedTemplates || [],
+        onLog: addLog
       });
       
-      addLog('Load complete');
       return result;
     } catch (err) {
       const error = err as Error;

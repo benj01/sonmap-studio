@@ -60,7 +60,7 @@ export interface AnalyzeResult {
 export interface LoaderOptions {
   selectedLayers?: string[];
   visibleLayers?: string[];
-  selectedTemplates?: string[];  // Changed from selectedTemplate to selectedTemplates array
+  selectedTemplates?: string[];
   coordinateSystem?: CoordinateSystem;
   // CSV/XYZ/TXT file options
   delimiter?: string;
@@ -70,11 +70,13 @@ export interface LoaderOptions {
   simplificationTolerance?: number;
   // Shapefile options
   importAttributes?: boolean;
+  // Logging callback
+  onLog?: (message: string) => void;
 }
 
 export interface GeoFileLoader {
   canLoad(file: File): Promise<boolean>;
-  analyze(file: File): Promise<AnalyzeResult>;
+  analyze(file: File, options?: LoaderOptions): Promise<AnalyzeResult>;
   load(file: File, options: LoaderOptions): Promise<LoaderResult>;
 }
 
