@@ -1,10 +1,10 @@
-
 // components/geo-loader/preview/preview-manager.ts
 
 import { Feature, FeatureCollection, Position, Geometry } from 'geojson';
 import { CoordinateSystem } from '../types/coordinates';
 import { Analysis } from '../types/map';
-import { CoordinateTransformer, Point } from '../utils/coordinate-utils';
+import { CoordinateTransformer } from '../utils/coordinate-utils';
+import { toMapboxCoordinates } from '../utils/coordinate-systems';
 
 interface PreviewOptions {
   maxFeatures?: number;
@@ -53,6 +53,7 @@ export class PreviewManager {
   private initializeTransformer(coordinateSystem?: CoordinateSystem) {
     if (coordinateSystem) {
       try {
+        // Always transform to WGS84 for Mapbox
         this.transformer = new CoordinateTransformer(coordinateSystem, 'EPSG:4326');
       } catch (error) {
         console.warn('Failed to initialize coordinate transformer:', error);
@@ -88,20 +89,26 @@ export class PreviewManager {
     }
   }
 
+  private transformPosition(pos: Position): Position {
+    if (!this.transformer) return pos;
+
+    const transformed = this.transformer.transform({ x: pos[0], y: pos[1] });
+    if (!transformed) return pos;
+
+    // Convert to Mapbox format [longitude, latitude]
+    const [lon, lat] = toMapboxCoordinates(transformed);
+    return [lon, lat, pos[2]];
+  }
+
   private transformFeatureCoordinates(feature: Feature) {
     if (!this.transformer) return;
 
-    const transformPosition = (pos: Position): Position | null => {
-      const transformed = this.transformer!.transform({ x: pos[0], y: pos[1] });
-      if (!transformed) return null;
-      return [transformed.x, transformed.y, pos[2]];
-    };
-
     const transformCoordinates = (coords: any): any => {
-      if (Array.isArray(coords) && typeof coords[0] === 'number') {
-        return transformPosition(coords as Position) || coords;
+      if (!Array.isArray(coords)) return coords;
+      if (typeof coords[0] === 'number') {
+        return this.transformPosition(coords as Position);
       }
-      return coords.map((c: any) => transformCoordinates(c));
+      return coords.map(c => transformCoordinates(c));
     };
 
     if ('coordinates' in feature.geometry) {
@@ -248,17 +255,20 @@ export class PreviewManager {
     let maxY = -Infinity;
 
     const updateBounds = (coords: Position) => {
-      minX = Math.min(minX, coords[0]);
-      minY = Math.min(minY, coords[1]);
-      maxX = Math.max(maxX, coords[0]);
-      maxY = Math.max(maxY, coords[1]);
+      // Ensure coordinates are in [longitude, latitude] format for Mapbox
+      const [lon, lat] = coords;
+      minX = Math.min(minX, lon);
+      minY = Math.min(minY, lat);
+      maxX = Math.max(maxX, lon);
+      maxY = Math.max(maxY, lat);
     };
 
-    const processCoordinates = (coordinates: Position | Position[] | Position[][]) => {
-      if (Array.isArray(coordinates) && typeof coordinates[0] === 'number') {
-        updateBounds(coordinates as Position);
-      } else if (Array.isArray(coordinates)) {
-        coordinates.forEach(coords => processCoordinates(coords));
+    const processCoordinates = (coords: any): void => {
+      if (!Array.isArray(coords)) return;
+      if (typeof coords[0] === 'number') {
+        updateBounds(coords as Position);
+      } else {
+        coords.forEach(c => processCoordinates(c));
       }
     };
 
@@ -270,11 +280,12 @@ export class PreviewManager {
 
     // Handle empty or invalid bounds
     if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+      // Default to Aarau, Switzerland if no valid bounds
       return {
-        minX: -180,
-        minY: -90,
-        maxX: 180,
-        maxY: 90
+        minX: 8.0,  // longitude
+        minY: 47.3, // latitude
+        maxX: 8.1,  // longitude
+        maxY: 47.4  // latitude
       };
     }
 

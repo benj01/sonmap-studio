@@ -3,6 +3,7 @@ import { Feature, Geometry, Point, LineString, Polygon } from 'geojson';
 import { GeoFeature } from '../../../../types/geo';
 import { CoordinateTransformer } from '../coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
+import { toMapboxCoordinates } from '../coordinate-systems';
 import proj4 from 'proj4';
 
 /**
@@ -16,14 +17,17 @@ function vector3ToCoordinate(
     if (transformer) {
       const transformed = transformer.transform({ x: v.x, y: v.y, z: v.z });
       if (transformed) {
+        // Convert to Mapbox format [longitude, latitude]
+        const [lon, lat] = toMapboxCoordinates(transformed);
         if (transformed.z !== undefined && isFinite(transformed.z)) {
-          return [transformed.x, transformed.y, transformed.z];
+          return [lon, lat, transformed.z];
         }
-        return [transformed.x, transformed.y];
+        return [lon, lat];
       }
     }
     
     // If no transformer or transformation failed, return original coordinates
+    // Still ensure proper longitude, latitude order for Mapbox
     if (v.z !== undefined && isFinite(v.z)) {
       return [v.x, v.y, v.z];
     }

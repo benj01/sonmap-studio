@@ -4,11 +4,71 @@ import type { CircleLayer, LineLayer, FillLayer } from 'mapbox-gl';
 const warningCondition: any = ['==', ['get', 'hasWarning'], true];
 
 // Style expressions for different layer types
-const pointRadiusExpression: any = ['case', warningCondition, 8, 6];
-const pointColorExpression: any = ['case', warningCondition, '#ff4444', '#007cbf'];
-const lineWidthExpression: any = ['case', warningCondition, 3, 2];
-const lineColorExpression: any = ['case', warningCondition, '#ff4444', '#007cbf'];
-const fillOpacityExpression: any = ['case', warningCondition, 0.5, 0.4];
+const pointRadiusExpression: any = [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  10, ['case', warningCondition, 4, 3],
+  15, ['case', warningCondition, 8, 6],
+  20, ['case', warningCondition, 12, 10]
+];
+
+const pointColorExpression: any = [
+  'case',
+  warningCondition,
+  '#ff4444',
+  ['match',
+    ['get', 'type'],
+    'POINT', '#4a90e2',
+    'INSERT', '#50e3c2',
+    'TEXT', '#b8e986',
+    '#4a90e2'  // default color
+  ]
+];
+
+const lineWidthExpression: any = [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  10, ['case', warningCondition, 2, 1],
+  15, ['case', warningCondition, 3, 2],
+  20, ['case', warningCondition, 4, 3]
+];
+
+const lineColorExpression: any = [
+  'case',
+  warningCondition,
+  '#ff4444',
+  ['match',
+    ['get', 'type'],
+    'LINE', '#4a90e2',
+    'POLYLINE', '#50e3c2',
+    'ARC', '#b8e986',
+    '#4a90e2'  // default color
+  ]
+];
+
+const fillOpacityExpression: any = [
+  'interpolate',
+  ['linear'],
+  ['zoom'],
+  10, ['case', warningCondition, 0.4, 0.3],
+  15, ['case', warningCondition, 0.5, 0.4],
+  20, ['case', warningCondition, 0.6, 0.5]
+];
+
+const fillColorExpression: any = [
+  'case',
+  warningCondition,
+  '#ff4444',
+  ['match',
+    ['get', 'type'],
+    'POLYGON', '#4a90e2',
+    'CIRCLE', '#50e3c2',
+    'HATCH', '#b8e986',
+    '#4a90e2'  // default color
+  ]
+];
 
 export const layerStyles = {
   point: {
@@ -18,8 +78,15 @@ export const layerStyles = {
       'circle-radius': pointRadiusExpression,
       'circle-color': pointColorExpression,
       'circle-opacity': 0.8,
-      'circle-stroke-width': 2,
-      'circle-stroke-color': '#fff'
+      'circle-stroke-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        10, 1,
+        15, 1.5,
+        20, 2
+      ],
+      'circle-stroke-color': '#ffffff'
     }
   } as Omit<CircleLayer, 'source'>,
 
@@ -29,7 +96,8 @@ export const layerStyles = {
     paint: {
       'line-color': lineColorExpression,
       'line-width': lineWidthExpression,
-      'line-opacity': 0.8
+      'line-opacity': 0.8,
+      'line-blur': 0.5
     }
   } as Omit<LineLayer, 'source'>,
 
@@ -37,9 +105,9 @@ export const layerStyles = {
     id: 'polygons',
     type: 'fill',
     paint: {
-      'fill-color': lineColorExpression,
+      'fill-color': fillColorExpression,
       'fill-opacity': fillOpacityExpression,
-      'fill-outline-color': '#fff'
+      'fill-outline-color': '#ffffff'
     }
   } as Omit<FillLayer, 'source'>,
 
@@ -48,11 +116,27 @@ export const layerStyles = {
     type: 'line',
     paint: {
       'line-color': lineColorExpression,
-      'line-width': ['case', warningCondition, 2, 1],
-      'line-opacity': 0.8
+      'line-width': [
+        'interpolate',
+        ['linear'],
+        ['zoom'],
+        10, ['case', warningCondition, 1, 0.5],
+        15, ['case', warningCondition, 2, 1],
+        20, ['case', warningCondition, 3, 1.5]
+      ],
+      'line-opacity': 0.8,
+      'line-blur': 0.5
     }
   } as Omit<LineLayer, 'source'>
 };
 
 // Constants for feature processing
 export const MAX_VISIBLE_FEATURES = 5000;
+
+// Layer z-index order
+export const LAYER_ORDER = [
+  'polygons',
+  'polygon-outlines',
+  'lines',
+  'points'
+];

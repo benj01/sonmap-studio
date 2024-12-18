@@ -1,26 +1,27 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ViewStateChangeEvent } from 'react-map-gl';
-import { Feature, BBox, Geometry, Position } from 'geojson';
+import { Feature, BBox } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
 import proj4 from 'proj4';
 
-const DEFAULT_PADDING = 0.1; // 10% padding
-const MIN_ZOOM = 1;
-const MAX_ZOOM = 20;
-const SWISS_CENTER = { longitude: 8.2275, latitude: 46.8182, zoom: 7 };
+// Default center on Aarau, Switzerland
+const DEFAULT_CENTER = {
+  longitude: 8.0472,  // Aarau longitude
+  latitude: 47.3925,  // Aarau latitude
+  zoom: 13
+};
 
-type Coordinates = Position | Position[] | Position[][] | Position[][][];
+// Padding for bounds (in degrees for WGS84)
+const BOUNDS_PADDING_DEGREES = 0.01;  // About 1km at Swiss latitudes
 
 export function useMapView(
   initialBounds?: Bounds,
   coordinateSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84
 ): UseMapViewResult {
   const [viewState, setViewState] = useState<ViewState>({
-    longitude: 0,
-    latitude: 0,
-    zoom: 1,
+    ...DEFAULT_CENTER,
     bearing: 0,
     pitch: 0
   });
@@ -29,30 +30,13 @@ export function useMapView(
   useEffect(() => {
     if (coordinateSystem && !proj4.defs(coordinateSystem)) {
       console.error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
-      // Set a default view of Switzerland if we're using Swiss coordinates
-      if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
-          coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
-        setViewState(prev => ({
-          ...prev,
-          ...SWISS_CENTER
-        }));
-      }
+      // Set default view of Aarau
+      setViewState(prev => ({
+        ...prev,
+        ...DEFAULT_CENTER
+      }));
     }
   }, [coordinateSystem]);
-
-  const processCoordinates = useCallback((
-    coords: Coordinates,
-    updateBounds: (lon: number, lat: number) => void
-  ) => {
-    if (!Array.isArray(coords)) return;
-
-    if (typeof coords[0] === 'number') {
-      const [lon, lat] = coords as Position;
-      updateBounds(lon, lat);
-    } else {
-      (coords as any[]).forEach(coord => processCoordinates(coord as Coordinates, updateBounds));
-    }
-  }, []);
 
   const calculateBoundsFromFeatures = useCallback((features: Feature[]): Bounds | null => {
     if (!features.length) return null;
@@ -62,7 +46,9 @@ export function useMapView(
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    const updateBounds = (lon: number, lat: number) => {
+    const updateBounds = (coords: [number, number]) => {
+      // Coordinates should already be in WGS84 [longitude, latitude] format
+      const [lon, lat] = coords;
       if (isFinite(lon) && isFinite(lat)) {
         minX = Math.min(minX, lon);
         minY = Math.min(minY, lat);
@@ -71,42 +57,18 @@ export function useMapView(
       }
     };
 
+    const processCoordinates = (coords: any): void => {
+      if (!Array.isArray(coords)) return;
+      if (typeof coords[0] === 'number') {
+        updateBounds(coords as [number, number]);
+      } else {
+        coords.forEach(c => processCoordinates(c));
+      }
+    };
+
     features.forEach(feature => {
-      const geometry = feature.geometry;
-      switch (geometry.type) {
-        case 'Point':
-          updateBounds(geometry.coordinates[0], geometry.coordinates[1]);
-          break;
-        case 'MultiPoint':
-        case 'LineString':
-          geometry.coordinates.forEach(coord => {
-            updateBounds(coord[0], coord[1]);
-          });
-          break;
-        case 'MultiLineString':
-        case 'Polygon':
-          geometry.coordinates.forEach(line => {
-            line.forEach(coord => {
-              updateBounds(coord[0], coord[1]);
-            });
-          });
-          break;
-        case 'MultiPolygon':
-          geometry.coordinates.forEach(poly => {
-            poly.forEach(line => {
-              line.forEach(coord => {
-                updateBounds(coord[0], coord[1]);
-              });
-            });
-          });
-          break;
-        case 'GeometryCollection':
-          geometry.geometries.forEach(geom => {
-            if ('coordinates' in geom) {
-              processCoordinates(geom.coordinates as Coordinates, updateBounds);
-            }
-          });
-          break;
+      if ('coordinates' in feature.geometry) {
+        processCoordinates(feature.geometry.coordinates);
       }
     });
 
@@ -115,9 +77,9 @@ export function useMapView(
     }
 
     return { minX, minY, maxX, maxY };
-  }, [processCoordinates]);
+  }, []);
 
-  const updateViewFromBounds = useCallback((bounds: Bounds, padding: number = DEFAULT_PADDING) => {
+  const updateViewFromBounds = useCallback((bounds: Bounds) => {
     try {
       // Verify coordinate system is registered before attempting transformation
       if (coordinateSystem && !proj4.defs(coordinateSystem)) {
@@ -137,21 +99,17 @@ export function useMapView(
           transformedBounds = result;
         } catch (error) {
           console.error('Coordinate transformation error:', error);
-          // If transformation fails, try to use original bounds but constrained to valid ranges
-          transformedBounds = {
-            minX: Math.max(Math.min(bounds.minX, 180), -180),
-            minY: Math.max(Math.min(bounds.minY, 90), -90),
-            maxX: Math.max(Math.min(bounds.maxX, 180), -180),
-            maxY: Math.max(Math.min(bounds.maxY, 90), -90)
-          };
+          // If transformation fails, default to Aarau
+          setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
+          return;
         }
       }
 
       // Add padding
       const width = transformedBounds.maxX - transformedBounds.minX;
       const height = transformedBounds.maxY - transformedBounds.minY;
-      const padX = width * padding;
-      const padY = height * padding;
+      const padX = Math.max(width * 0.1, BOUNDS_PADDING_DEGREES);
+      const padY = Math.max(height * 0.1, BOUNDS_PADDING_DEGREES);
 
       transformedBounds = {
         minX: transformedBounds.minX - padX,
@@ -167,51 +125,35 @@ export function useMapView(
       const validMaxLon = Math.min(transformedBounds.maxX, 180);
 
       // Calculate center point
-      const center = {
-        lng: (validMinLon + validMaxLon) / 2,
-        lat: (validMinLat + validMaxLat) / 2
-      };
+      const longitude = (validMinLon + validMaxLon) / 2;
+      const latitude = (validMinLat + validMaxLat) / 2;
 
-      // Calculate zoom level based on bounds size
+      // Calculate zoom level
       const latZoom = Math.log2(360 / (validMaxLat - validMinLat)) - 1;
       const lonZoom = Math.log2(360 / (validMaxLon - validMinLon)) - 1;
       let zoom = Math.min(latZoom, lonZoom);
 
-      // Adjust zoom for coordinate system
-      if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
-          coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
-        // For Swiss coordinates, adjust zoom based on meter-based scale
-        const metersPerPixel = width / 900; // Assuming 900px viewport width
-        zoom = Math.log2(40075016.686 / (metersPerPixel * Math.cos(center.lat * Math.PI / 180) * 256));
-      }
-
       // Ensure zoom is within valid range and add slight zoom out for context
-      zoom = Math.min(Math.max(zoom - 0.5, MIN_ZOOM), MAX_ZOOM);
+      zoom = Math.min(Math.max(zoom - 0.5, 1), 20);
 
       setViewState(prev => ({
         ...prev,
-        longitude: center.lng,
-        latitude: center.lat,
+        longitude,
+        latitude,
         zoom
       }));
     } catch (error) {
       console.error('Error setting map view state:', error);
-      // Set a default view of Switzerland if we're using Swiss coordinates
-      if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
-          coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
-        setViewState(prev => ({
-          ...prev,
-          ...SWISS_CENTER
-        }));
-      }
+      // Default to Aarau view
+      setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
       throw error;
     }
   }, [coordinateSystem]);
 
-  const focusOnFeatures = useCallback((features: Feature[], padding: number = DEFAULT_PADDING * 100) => {
+  const focusOnFeatures = useCallback((features: Feature[], padding: number = 50) => {
     const bounds = calculateBoundsFromFeatures(features);
     if (bounds) {
-      updateViewFromBounds(bounds, padding / 100);
+      updateViewFromBounds(bounds);
     }
   }, [calculateBoundsFromFeatures, updateViewFromBounds]);
 
