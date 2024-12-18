@@ -1,4 +1,4 @@
-import { FeatureCollection, Feature } from 'geojson';
+import { FeatureCollection, Feature, BBox } from 'geojson';
 import { CoordinateSystem, Bounds } from './coordinates';
 
 export interface Warning {
@@ -42,11 +42,24 @@ export interface MapFeatureCollections {
   lineFeatures: FeatureCollection;
   polygonFeatures: FeatureCollection;
   getFeaturesByTypeAndLayer: (type: string, layer: string) => Feature[];
+  totalFeatureCount: number;
+  visibleFeatureCount: number;
 }
 
 export interface UseMapViewResult {
   viewState: ViewState;
   onMove: (evt: any) => void;
   updateViewFromBounds: (bounds: Bounds) => void;
-  focusOnFeatures: (features: Feature[]) => void;
+  focusOnFeatures: (features: Feature[], padding?: number) => void;
+  getViewportBounds: () => BBox | undefined;
+}
+
+export interface UseFeatureProcessingProps {
+  preview: FeatureCollection;
+  coordinateSystem: CoordinateSystem;
+  visibleLayers: string[];
+  zoom: number;
+  analysis?: Analysis;
+  viewportBounds?: BBox;
+  batchSize?: number;
 }

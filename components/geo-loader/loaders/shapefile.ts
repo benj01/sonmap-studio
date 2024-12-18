@@ -7,11 +7,19 @@ import { Feature, Geometry, Point as GeoJSONPoint, LineString, Polygon, Position
 
 const PREVIEW_CHUNK_SIZE = 100;
 const LOAD_CHUNK_SIZE = 1000;
+const MAX_SAMPLE_POINTS = 5;
 
 interface ShapeFile extends File {
   relatedFiles?: {
     [key: string]: File
   }
+}
+
+interface FileValidationResult {
+  isValid: boolean;
+  missingComponents: string[];
+  availableComponents: { [key: string]: File };
+  warnings: string[];
 }
 
 // Type guards for geometry types
@@ -37,18 +45,30 @@ class ShapefileLoader implements GeoFileLoader {
     return file.name.toLowerCase().endsWith('.shp');
   }
 
-  private validateComponents(file: File): { [key: string]: File } {
+  private validateComponents(file: File): FileValidationResult {
     const shapeFile = file as ShapeFile;
     const relatedFiles = shapeFile.relatedFiles || {};
     const requiredComponents = ['.dbf', '.shx'];
-    const missingComponents = requiredComponents.filter(ext => !relatedFiles[ext]);
+    const optionalComponents = ['.prj'];
+    const missingRequired = requiredComponents.filter(ext => !relatedFiles[ext]);
+    const missingOptional = optionalComponents.filter(ext => !relatedFiles[ext]);
     
-    if (missingComponents.length > 0) {
-      // Instead of throwing an error, log a warning and continue with available files
-      console.warn(`Warning: Missing shapefile components: ${missingComponents.join(', ')}. Some functionality may be limited.`);
+    const warnings: string[] = [];
+    
+    if (missingRequired.length > 0) {
+      warnings.push(`Missing required components: ${missingRequired.join(', ')}`);
+    }
+    
+    if (missingOptional.length > 0) {
+      warnings.push(`Missing optional components: ${missingOptional.join(', ')}`);
     }
 
-    return relatedFiles;
+    return {
+      isValid: missingRequired.length === 0,
+      missingComponents: [...missingRequired, ...missingOptional],
+      availableComponents: relatedFiles,
+      warnings
+    };
   }
 
   private async readPRJFile(prjFile: File): Promise<CoordinateSystem | undefined> {
@@ -80,6 +100,78 @@ class ShapefileLoader implements GeoFileLoader {
     }
   }
 
+  private async getSamplePoints(file: File, header: any): Promise<{ x: number; y: number }[]> {
+    const shpBuffer = await file.arrayBuffer();
+    const points: { x: number; y: number }[] = [];
+    
+    try {
+      for await (const feature of this.parser.streamFeatures(shpBuffer, header)) {
+        if (isPoint(feature.geometry)) {
+          const coords = getPointCoordinates(feature.geometry);
+          if (coords) {
+            points.push({ x: coords[0], y: coords[1] });
+          }
+          if (points.length >= MAX_SAMPLE_POINTS) break;
+        }
+      }
+    } catch (error) {
+      console.warn('Error sampling points:', error);
+    }
+    
+    return points;
+  }
+
+  private async analyzeCoordinateSystem(
+    file: File, 
+    header: any, 
+    validation: FileValidationResult,
+    options?: LoaderOptions
+  ): Promise<{ 
+    coordinateSystem?: CoordinateSystem; 
+    warnings: string[];
+  }> {
+    const warnings: string[] = [];
+    let coordinateSystem = options?.coordinateSystem;
+
+    // Try to read from PRJ file first
+    if (validation.availableComponents['.prj']) {
+      try {
+        coordinateSystem = await this.readPRJFile(validation.availableComponents['.prj']);
+        if (coordinateSystem) {
+          console.debug('Using coordinate system from PRJ:', coordinateSystem);
+        } else {
+          warnings.push('Could not determine coordinate system from PRJ file');
+        }
+      } catch (error) {
+        warnings.push('Failed to parse PRJ file');
+        console.warn('PRJ parsing error:', error);
+      }
+    }
+
+    // If no coordinate system determined yet, try to detect from coordinates
+    if (!coordinateSystem) {
+      try {
+        const samplePoints = await this.getSamplePoints(file, header);
+        if (samplePoints.length > 0) {
+          coordinateSystem = suggestCoordinateSystem(samplePoints);
+          console.debug('Detected coordinate system from sample points:', coordinateSystem);
+          warnings.push(`No projection file found. Detected coordinate system: ${coordinateSystem}`);
+        }
+      } catch (error) {
+        warnings.push('Failed to detect coordinate system from coordinates');
+        console.warn('Coordinate system detection error:', error);
+      }
+    }
+
+    // Default to WGS84 if nothing else determined
+    if (!coordinateSystem) {
+      coordinateSystem = COORDINATE_SYSTEMS.WGS84;
+      warnings.push('Using default WGS84 coordinate system');
+    }
+
+    return { coordinateSystem, warnings };
+  }
+
   private emitProgress(count: number) {
     const progressEvent = new CustomEvent('shapefileLoadProgress', { 
       detail: { count } 
@@ -87,60 +179,55 @@ class ShapefileLoader implements GeoFileLoader {
     window.dispatchEvent(progressEvent);
   }
 
-  async analyze(file: File): Promise<AnalyzeResult> {
+  async analyze(file: File, options?: LoaderOptions): Promise<AnalyzeResult> {
+    const validation = this.validateComponents(file);
+    const warnings = [...validation.warnings];
+    const errors: Array<{ type: string; message: string; isCritical: boolean }> = [];
+    
     try {
-      const relatedFiles = this.validateComponents(file);
-      
-      // Read projection information if available
-      let coordinateSystem: CoordinateSystem | undefined;
-      if (relatedFiles['.prj']) {
-        coordinateSystem = await this.readPRJFile(relatedFiles['.prj']);
-      }
-      
       // Read the main shapefile
       const shpBuffer = await file.arrayBuffer();
       const header = await this.parser.readShapefileHeader(shpBuffer);
       
-      // If no coordinate system was found in PRJ, detect it from sample features
-      if (!coordinateSystem) {
-        const sampleFeatures: GeoFeature[] = [];
-        for await (const feature of this.parser.streamFeatures(shpBuffer, header)) {
-          if (isPoint(feature.geometry)) {
-            sampleFeatures.push(feature);
-            if (sampleFeatures.length >= 5) break; 
-          }
-        }
-        const samplePoints = sampleFeatures
-          .map(f => {
-            const coords = getPointCoordinates(f.geometry);
-            return coords ? { x: coords[0], y: coords[1] } : null;
-          })
-          .filter((point): point is { x: number; y: number } => point !== null);
-
-        if (samplePoints.length > 0) {
-          coordinateSystem = suggestCoordinateSystem(samplePoints);
-          console.debug('Detected coordinate system from sample points:', coordinateSystem);
-        }
-      }
+      // Determine coordinate system
+      const { coordinateSystem, warnings: csWarnings } = 
+        await this.analyzeCoordinateSystem(file, header, validation, options);
+      warnings.push(...csWarnings);
       
-      // Read DBF header for attribute information if available
-      if (relatedFiles['.dbf']) {
+      // Read DBF header if available
+      if (validation.availableComponents['.dbf']) {
         try {
-          const dbfBuffer = await relatedFiles['.dbf'].arrayBuffer();
+          const dbfBuffer = await validation.availableComponents['.dbf'].arrayBuffer();
           await this.parser.readDBFHeader(dbfBuffer);
         } catch (error) {
-          console.warn('Failed to read DBF header:', error);
+          warnings.push('Failed to read attribute data');
+          console.warn('DBF header error:', error);
+          errors.push({
+            type: 'dbf_read_error',
+            message: 'Failed to read attribute data',
+            isCritical: false
+          });
         }
       }
       
-      // Generate preview features
+      // Generate preview features with progress tracking
       const previewFeatures: GeoFeature[] = [];
+      let processedCount = 0;
+      let entityCount = 0;
+      
       for await (const feature of this.parser.streamFeatures(shpBuffer, header)) {
         previewFeatures.push(feature);
+        processedCount++;
+        entityCount++;
+        
+        if (options?.onProgress) {
+          options.onProgress(Math.min(processedCount / PREVIEW_CHUNK_SIZE, 1));
+        }
+        
         if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
       }
 
-      // Transform bounds if needed
+      // Calculate and transform bounds
       let bounds = {
         minX: header.bounds.xMin,
         minY: header.bounds.yMin,
@@ -154,19 +241,40 @@ class ShapefileLoader implements GeoFileLoader {
           const transformedBounds = transformer.transformBounds(bounds);
           if (transformedBounds) {
             bounds = transformedBounds;
+          } else {
+            warnings.push('Failed to transform bounds to WGS84');
+            errors.push({
+              type: 'bounds_transform_error',
+              message: 'Failed to transform bounds to WGS84',
+              isCritical: false
+            });
           }
         } catch (error) {
-          console.warn('Failed to transform bounds:', error);
+          warnings.push('Error transforming bounds');
+          console.warn('Bounds transformation error:', error);
+          errors.push({
+            type: 'bounds_transform_error',
+            message: 'Error transforming bounds',
+            isCritical: false
+          });
         }
       }
 
       return {
         layers: ['default'],
-        coordinateSystem: coordinateSystem || COORDINATE_SYSTEMS.WGS84,
+        coordinateSystem,
         bounds,
         preview: {
           type: 'FeatureCollection',
           features: previewFeatures
+        },
+        analysis: {
+          warnings: warnings.map(w => ({ type: 'warning', message: w })),
+          errors,
+          stats: {
+            entityCount,
+            layerCount: 1
+          }
         }
       };
     } catch (err) {
@@ -177,13 +285,16 @@ class ShapefileLoader implements GeoFileLoader {
   }
 
   async load(file: File, options: LoaderOptions): Promise<LoaderResult> {
+    const validation = this.validateComponents(file);
+    if (!validation.isValid) {
+      throw new Error(`Cannot load shapefile: ${validation.warnings.join(', ')}`);
+    }
+
     try {
-      const relatedFiles = this.validateComponents(file);
-      
       // Read projection information if available
       let sourceSystem = options.coordinateSystem;
-      if (!sourceSystem && relatedFiles['.prj']) {
-        sourceSystem = await this.readPRJFile(relatedFiles['.prj']);
+      if (!sourceSystem && validation.availableComponents['.prj']) {
+        sourceSystem = await this.readPRJFile(validation.availableComponents['.prj']);
       }
       
       // Read the main shapefile
@@ -192,9 +303,9 @@ class ShapefileLoader implements GeoFileLoader {
       
       // Read DBF data if attributes should be imported and DBF file is available
       let attributeData: Record<number, Record<string, any>> = {};
-      if (options.importAttributes && relatedFiles['.dbf']) {
+      if (options.importAttributes && validation.availableComponents['.dbf']) {
         try {
-          const dbfBuffer = await relatedFiles['.dbf'].arrayBuffer();
+          const dbfBuffer = await validation.availableComponents['.dbf'].arrayBuffer();
           const dbfHeader = await this.parser.readDBFHeader(dbfBuffer);
           attributeData = await this.parser.readDBFRecords(dbfBuffer, dbfHeader);
         } catch (error) {

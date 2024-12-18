@@ -1,16 +1,9 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ViewStateChangeEvent } from 'react-map-gl';
-import { Feature } from 'geojson';
+import { Feature, BBox } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds } from '../types/coordinates';
-import { ViewState } from '../types/map';
+import { ViewState, UseMapViewResult } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
-
-interface UseMapViewResult {
-  viewState: ViewState;
-  onMove: (evt: ViewStateChangeEvent) => void;
-  updateViewFromBounds: (bounds: Bounds) => void;
-  focusOnFeatures: (features: Feature[]) => void;
-}
 
 export function useMapView(
   initialBounds?: Bounds,
@@ -46,7 +39,6 @@ export function useMapView(
         : [];
 
       coords.forEach(([lon, lat]) => {
-        // Note: GeoJSON coordinates are [longitude, latitude]
         minX = Math.min(minX, lon);
         minY = Math.min(minY, lat);
         maxX = Math.max(maxX, lon);
@@ -66,7 +58,6 @@ export function useMapView(
     try {
       let transformedBounds = bounds;
       
-      // Only transform if not already in WGS84
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
         const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
         const result = transformer.transformBounds(bounds);
@@ -77,24 +68,19 @@ export function useMapView(
         transformedBounds = result;
       }
 
-      // Validate transformed bounds
       if (!isFinite(transformedBounds.minX) || !isFinite(transformedBounds.minY) ||
           !isFinite(transformedBounds.maxX) || !isFinite(transformedBounds.maxY)) {
         console.warn('Invalid bounds:', transformedBounds);
         return;
       }
 
-      // For WGS84, ensure bounds are within valid ranges
       const validMinLat = Math.max(transformedBounds.minY, -90);
       const validMaxLat = Math.min(transformedBounds.maxY, 90);
       const validMinLon = Math.max(transformedBounds.minX, -180);
       const validMaxLon = Math.min(transformedBounds.maxX, 180);
 
-      // Calculate center using valid coordinates
       const center = {
-        // longitude is X in WGS84
         lng: (validMinLon + validMaxLon) / 2,
-        // latitude is Y in WGS84
         lat: (validMinLat + validMaxLat) / 2
       };
 
@@ -103,7 +89,6 @@ export function useMapView(
         return;
       }
 
-      // Validate center coordinates are within WGS84 bounds
       if (center.lat < -90 || center.lat > 90 || center.lng < -180 || center.lng > 180) {
         console.warn('Center coordinates out of WGS84 bounds:', center);
         return;
@@ -113,16 +98,12 @@ export function useMapView(
       const height = Math.abs(validMaxLat - validMinLat);
       const maxDimension = Math.max(width, height);
       
-      // Adjust zoom calculation based on coordinate system
       let zoom = coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
                  coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03
         ? Math.floor(14 - Math.log2(maxDimension / 1000))
         : Math.floor(14 - Math.log2(maxDimension));
 
-      // Ensure zoom stays within reasonable bounds
       zoom = Math.min(Math.max(zoom, 1), 20);
-
-      // Add padding to zoom level for better visibility
       zoom = Math.max(1, zoom - 1);
 
       setViewState(prev => ({
@@ -136,10 +117,21 @@ export function useMapView(
     }
   }, [coordinateSystem]);
 
-  const focusOnFeatures = useCallback((features: Feature[]) => {
+  const focusOnFeatures = useCallback((features: Feature[], padding: number = 0) => {
     const bounds = calculateBoundsFromFeatures(features);
     if (bounds) {
-      updateViewFromBounds(bounds);
+      // Apply padding to bounds
+      const width = bounds.maxX - bounds.minX;
+      const height = bounds.maxY - bounds.minY;
+      const padX = (width * padding) / 100;
+      const padY = (height * padding) / 100;
+      
+      updateViewFromBounds({
+        minX: bounds.minX - padX,
+        minY: bounds.minY - padY,
+        maxX: bounds.maxX + padX,
+        maxY: bounds.maxY + padY
+      });
     }
   }, [calculateBoundsFromFeatures, updateViewFromBounds]);
 
@@ -147,7 +139,24 @@ export function useMapView(
     setViewState(evt.viewState as ViewState);
   }, []);
 
-  // Initialize view with bounds if provided
+  const getViewportBounds = useCallback((): BBox | undefined => {
+    if (!viewState) return undefined;
+
+    // Calculate viewport bounds based on current view state
+    const { longitude, latitude, zoom } = viewState;
+    
+    // Rough estimation of viewport bounds (can be improved with actual viewport calculations)
+    const latRange = 180 / Math.pow(2, zoom);
+    const lonRange = 360 / Math.pow(2, zoom);
+    
+    return [
+      longitude - lonRange / 2,  // minLon
+      latitude - latRange / 2,   // minLat
+      longitude + lonRange / 2,  // maxLon
+      latitude + latRange / 2    // maxLat
+    ];
+  }, [viewState]);
+
   useEffect(() => {
     if (initialBounds) {
       updateViewFromBounds(initialBounds);
@@ -158,6 +167,7 @@ export function useMapView(
     viewState,
     onMove,
     updateViewFromBounds,
-    focusOnFeatures
+    focusOnFeatures,
+    getViewportBounds
   };
 }

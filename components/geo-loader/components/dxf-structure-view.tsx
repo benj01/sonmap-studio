@@ -29,8 +29,8 @@ interface DxfStructureViewProps {
   onLayerToggle: (layer: string, enabled: boolean) => void;
   visibleLayers: string[];
   onLayerVisibilityToggle: (layer: string, visible: boolean) => void;
-  selectedTemplates: string[];  // Changed from selectedTemplate
-  onTemplateSelect: (template: string, enabled: boolean) => void;  // Updated signature
+  selectedTemplates: string[];
+  onTemplateSelect: (template: string, enabled: boolean) => void;
   onElementSelect?: (elementInfo: { type: string, layer: string }) => void;
 }
 
@@ -42,6 +42,84 @@ interface TreeNodeProps {
   children?: React.ReactNode;
   onClick?: () => void;
 }
+
+interface EntityTypeInfo {
+  label: string;
+  description?: string;
+  icon: React.ReactNode;
+}
+
+const getEntityTypeInfo = (type: string): EntityTypeInfo => {
+  switch (type) {
+    case 'POINT':
+      return {
+        label: 'Points',
+        description: 'Single point locations',
+        icon: <Circle className="h-4 w-4" />
+      };
+    case 'LINE':
+      return {
+        label: 'Lines',
+        description: 'Simple line segments',
+        icon: <Box className="h-4 w-4" />
+      };
+    case 'POLYLINE':
+    case 'LWPOLYLINE':
+      return {
+        label: 'Polylines',
+        description: 'Connected line segments',
+        icon: <Box className="h-4 w-4" />
+      };
+    case 'CIRCLE':
+      return {
+        label: 'Circles',
+        description: 'Perfect circles with radius',
+        icon: <Circle className="h-4 w-4" />
+      };
+    case 'ARC':
+      return {
+        label: 'Arcs',
+        description: 'Partial circular segments',
+        icon: <Circle className="h-4 w-4" />
+      };
+    case 'TEXT':
+    case 'MTEXT':
+      return {
+        label: 'Text',
+        description: 'Text annotations',
+        icon: <Type className="h-4 w-4" />
+      };
+    case '3DFACE':
+      return {
+        label: '3D Faces',
+        description: '3D surface elements',
+        icon: <Box className="h-4 w-4" />
+      };
+    case 'ELLIPSE':
+      return {
+        label: 'Ellipses',
+        description: 'Oval shapes',
+        icon: <Circle className="h-4 w-4" />
+      };
+    case 'INSERT':
+      return {
+        label: 'Block References',
+        description: 'Inserted block instances',
+        icon: <Database className="h-4 w-4" />
+      };
+    case 'SPLINE':
+      return {
+        label: 'Splines',
+        description: 'Smooth curves',
+        icon: <Box className="h-4 w-4" />
+      };
+    default:
+      return {
+        label: type,
+        icon: <Box className="h-4 w-4" />
+      };
+  }
+};
 
 function TreeNode({ label, defaultExpanded = false, icon, count, children, onClick }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
@@ -76,24 +154,6 @@ function TreeNode({ label, defaultExpanded = false, icon, count, children, onCli
   );
 }
 
-function getEntityIcon(type: string) {
-  switch (type) {
-    case 'LINE':
-    case 'POLYLINE':
-    case 'LWPOLYLINE':
-      return <Box className="h-4 w-4" />;
-    case 'TEXT':
-    case 'MTEXT':
-      return <Type className="h-4 w-4" />;
-    case 'INSERT':
-      return <Database className="h-4 w-4" />;
-    case 'POINT':
-      return <Circle className="h-4 w-4" />;
-    default:
-      return <Box className="h-4 w-4" />;
-  }
-}
-
 function calculateTotalCount(elements: Record<string, number>): number {
   return Object.values(elements).reduce((a, b) => a + b, 0);
 }
@@ -104,7 +164,7 @@ export function DxfStructureView({
   onLayerToggle,
   visibleLayers = [],
   onLayerVisibilityToggle,
-  selectedTemplates = [],  // Changed from selectedTemplate
+  selectedTemplates = [],
   onTemplateSelect,
   onElementSelect
 }: DxfStructureViewProps) {
@@ -270,17 +330,20 @@ export function DxfStructureView({
               </div>
               {elementsByLayer[name] && (
                 <div className="ml-6 space-y-1">
-                  {Object.entries(elementsByLayer[name]).map(([type, count]) => (
-                    <div 
-                      key={type} 
-                      className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                      onClick={() => onElementSelect?.({ type, layer: name })}
-                    >
-                      {getEntityIcon(type)}
-                      <span>{type}</span>
-                      <span>({count})</span>
-                    </div>
-                  ))}
+                  {Object.entries(elementsByLayer[name]).map(([type, count]) => {
+                    const typeInfo = getEntityTypeInfo(type);
+                    return (
+                      <div 
+                        key={type} 
+                        className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
+                        onClick={() => onElementSelect?.({ type, layer: name })}
+                      >
+                        {typeInfo.icon}
+                        <span>{typeInfo.label}</span>
+                        <span>({count})</span>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -306,25 +369,28 @@ export function DxfStructureView({
                     acc[entity.type] = (acc[entity.type] || 0) + 1;
                     return acc;
                   }, {} as Record<string, number>)
-                ).map(([type, count]) => (
-                  <div 
-                    key={type} 
-                    className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                    onClick={() => onElementSelect?.({ type, layer: name })}
-                  >
-                    {getEntityIcon(type)}
-                    <span>{type}</span>
-                    <span>({count})</span>
-                  </div>
-                ))}
+                ).map(([type, count]) => {
+                  const typeInfo = getEntityTypeInfo(type);
+                  return (
+                    <div 
+                      key={type} 
+                      className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
+                      onClick={() => onElementSelect?.({ type, layer: name })}
+                    >
+                      {typeInfo.icon}
+                      <span>{typeInfo.label}</span>
+                      <span>({count})</span>
+                    </div>
+                  );
+                })}
               </TreeNode>
             ))}
           </TreeNode>
         )}
 
-        {/* Element Templates */}
+        {/* Entity Types */}
         <TreeNode 
-          label="Element Templates" 
+          label="Entity Types" 
           icon={<Grid />}
           count={Object.keys(entityCounts).length}
           defaultExpanded
@@ -333,7 +399,7 @@ export function DxfStructureView({
           <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
             <div className="flex items-center gap-2">
               <Grid className="h-4 w-4" />
-              <span className="text-xs">Toggle All Templates</span>
+              <span className="text-xs">Toggle All Types</span>
             </div>
             <div className="flex items-center gap-1">
               <Download className="h-3 w-3" />
@@ -345,21 +411,34 @@ export function DxfStructureView({
             </div>
           </div>
 
-          {Object.entries(entityCounts).map(([type, count]) => (
-            <div key={type} className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
-              <div className="flex items-center gap-2">
-                <div className="h-4 w-4">{getEntityIcon(type)}</div>
-                <Label className="text-xs cursor-pointer">
-                  {type} ({count})
-                </Label>
+          {Object.entries(entityCounts).map(([type, count]) => {
+            const typeInfo = getEntityTypeInfo(type);
+            return (
+              <div 
+                key={type} 
+                className="flex items-center justify-between p-1 hover:bg-accent rounded-sm group"
+              >
+                <div className="flex items-center gap-2">
+                  <div className="h-4 w-4">{typeInfo.icon}</div>
+                  <div>
+                    <Label className="text-xs cursor-pointer">
+                      {typeInfo.label} ({count})
+                    </Label>
+                    {typeInfo.description && (
+                      <p className="text-xs text-muted-foreground hidden group-hover:block">
+                        {typeInfo.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <Switch
+                  checked={selectedTemplates.includes(type)}
+                  onCheckedChange={(checked) => onTemplateSelect(type, checked)}
+                  className="scale-75"
+                />
               </div>
-              <Switch
-                checked={selectedTemplates.includes(type)}
-                onCheckedChange={(checked) => onTemplateSelect(type, checked)}
-                className="scale-75"
-              />
-            </div>
-          ))}
+            );
+          })}
         </TreeNode>
       </div>
     </ScrollArea>
