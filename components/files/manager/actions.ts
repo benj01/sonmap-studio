@@ -19,14 +19,42 @@ export class FileActions {
 
   async loadFiles(): Promise<ProjectFile[]> {
     try {
-      const { data: allFiles, error } = await this.supabase
+      // First get all non-imported files
+      const { data: sourceFiles, error: sourceError } = await this.supabase
         .from('project_files')
         .select('*')
         .eq('project_id', this.projectId)
+        .is('is_imported', false)
         .order('uploaded_at', { ascending: false });
 
-      if (error) throw error;
-      return allFiles;
+      if (sourceError) throw sourceError;
+
+      // Then get all imported files
+      const { data: importedFiles, error: importError } = await this.supabase
+        .from('project_files')
+        .select('*')
+        .eq('project_id', this.projectId)
+        .eq('is_imported', true)
+        .order('uploaded_at', { ascending: false });
+
+      if (importError) throw importError;
+
+      // Group imported files by their source file
+      const importedBySource = importedFiles?.reduce((acc, file) => {
+        if (file.source_file_id) {
+          if (!acc[file.source_file_id]) {
+            acc[file.source_file_id] = [];
+          }
+          acc[file.source_file_id].push(file);
+        }
+        return acc;
+      }, {} as Record<string, ProjectFile[]>);
+
+      // Attach imported files to their source files
+      return sourceFiles?.map(file => ({
+        ...file,
+        importedFiles: importedBySource[file.id] || []
+      })) || [];
     } catch (error) {
       console.error('Error loading files:', error);
       this.onError('Failed to load files');
@@ -46,6 +74,7 @@ export class FileActions {
           size: uploadedFile.size,
           file_type: uploadedFile.type,
           storage_path: storagePath,
+          is_imported: false,
           metadata: uploadedFile.relatedFiles ? {
             relatedFiles: uploadedFile.relatedFiles
           } : null
@@ -71,6 +100,18 @@ export class FileActions {
 
   async handleImport(result: LoaderResult, sourceFile: ProjectFile) {
     try {
+      // Check if file was already imported
+      const { data: existingImport } = await this.supabase
+        .from('project_files')
+        .select('id')
+        .eq('source_file_id', sourceFile.id)
+        .eq('is_imported', true)
+        .single();
+
+      if (existingImport) {
+        throw new Error('This file has already been imported. Please delete the existing import first.');
+      }
+
       // Create GeoJSON file from import result
       const geoJsonContent = JSON.stringify({
         type: 'FeatureCollection',
@@ -131,10 +172,11 @@ export class FileActions {
       if (dbError) throw dbError;
 
       this.onSuccess('File imported and converted to GeoJSON successfully');
+      await this.onRefresh(); // Refresh to show the imported file
       return importedFile;
     } catch (error) {
       console.error('Import error:', error);
-      this.onError('Failed to import and convert file');
+      this.onError(error instanceof Error ? error.message : 'Failed to import and convert file');
       throw error;
     }
   }
@@ -143,11 +185,22 @@ export class FileActions {
     try {
       // Get all related imported files
       const { data: importedFiles } = await this.supabase
-        .rpc('get_imported_files', { source_file_id: fileId });
+        .from('project_files')
+        .select('storage_path')
+        .eq('source_file_id', fileId);
+
+      // Get the source file's storage path
+      const { data: sourceFile } = await this.supabase
+        .from('project_files')
+        .select('storage_path')
+        .eq('id', fileId)
+        .single();
+
+      if (!sourceFile) throw new Error('File not found');
 
       // Collect all storage paths to delete
       const storagePaths = [
-        fileId,
+        sourceFile.storage_path.replace(/^projects\//, ''),
         ...(importedFiles || []).map((f: { storage_path: string }) => 
           f.storage_path.replace(/^projects\//, '')
         )
@@ -170,11 +223,10 @@ export class FileActions {
 
       await this.refreshProjectStorage();
       this.onSuccess('File and related imports deleted successfully');
+      await this.onRefresh(); // Refresh to update the file list
     } catch (error) {
       console.error('Delete error:', error);
       this.onError(error instanceof Error ? error.message : 'Failed to delete file');
-      // Refresh files list to ensure UI is in sync
-      await this.onRefresh();
       throw error;
     }
   }

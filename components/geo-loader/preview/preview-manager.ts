@@ -1,9 +1,10 @@
+
 // components/geo-loader/preview/preview-manager.ts
 
 import { Feature, FeatureCollection, Position, Geometry } from 'geojson';
 import { CoordinateSystem } from '../types/coordinates';
 import { Analysis } from '../types/map';
-import { CoordinateTransformer } from '../utils/coordinate-utils';
+import { CoordinateTransformer, Point } from '../utils/coordinate-utils';
 
 interface PreviewOptions {
   maxFeatures?: number;
@@ -23,12 +24,21 @@ interface FeatureGroup {
   totalCount: number;
 }
 
+interface Bounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 export class PreviewManager {
   private readonly DEFAULT_MAX_FEATURES = 5000;
+  private readonly BOUNDS_PADDING = 0.1; // 10% padding
   private features: Feature[] = [];
   private options: PreviewOptions;
   private warningFlags: Map<string, Set<string>> = new Map(); // layer -> set of warning handles
   private transformer?: CoordinateTransformer;
+  private cachedBounds?: Bounds;
 
   constructor(options: PreviewOptions = {}) {
     this.options = {
@@ -37,10 +47,13 @@ export class PreviewManager {
       ...options
     };
 
-    // Initialize coordinate transformer if needed
-    if (options.coordinateSystem) {
+    this.initializeTransformer(options.coordinateSystem);
+  }
+
+  private initializeTransformer(coordinateSystem?: CoordinateSystem) {
+    if (coordinateSystem) {
       try {
-        this.transformer = new CoordinateTransformer(options.coordinateSystem, 'EPSG:4326');
+        this.transformer = new CoordinateTransformer(coordinateSystem, 'EPSG:4326');
       } catch (error) {
         console.warn('Failed to initialize coordinate transformer:', error);
       }
@@ -54,30 +67,66 @@ export class PreviewManager {
       this.features = features.features;
     }
 
-    // Add coordinate system info to feature properties
-    if (this.options.coordinateSystem) {
+    // Reset cached bounds
+    this.cachedBounds = undefined;
+
+    // Add coordinate system info and transform coordinates if needed
+    if (this.options.coordinateSystem && this.transformer) {
       this.features.forEach(feature => {
         if (!feature.properties) {
           feature.properties = {};
         }
         feature.properties.sourceCoordinateSystem = this.options.coordinateSystem;
+
+        // Transform coordinates to WGS84 for preview
+        try {
+          this.transformFeatureCoordinates(feature);
+        } catch (error) {
+          console.warn('Failed to transform feature coordinates:', error);
+        }
       });
     }
   }
 
+  private transformFeatureCoordinates(feature: Feature) {
+    if (!this.transformer) return;
+
+    const transformPosition = (pos: Position): Position | null => {
+      const transformed = this.transformer!.transform({ x: pos[0], y: pos[1] });
+      if (!transformed) return null;
+      return [transformed.x, transformed.y, pos[2]];
+    };
+
+    const transformCoordinates = (coords: any): any => {
+      if (Array.isArray(coords) && typeof coords[0] === 'number') {
+        return transformPosition(coords as Position) || coords;
+      }
+      return coords.map((c: any) => transformCoordinates(c));
+    };
+
+    if ('coordinates' in feature.geometry) {
+      const transformed = transformCoordinates(feature.geometry.coordinates);
+      if (transformed) {
+        feature.geometry = {
+          ...feature.geometry,
+          coordinates: transformed
+        };
+      }
+    }
+  }
+
   setOptions(options: Partial<PreviewOptions>) {
+    const prevCoordinateSystem = this.options.coordinateSystem;
     this.options = {
       ...this.options,
       ...options
     };
 
     // Update transformer if coordinate system changes
-    if (options.coordinateSystem && options.coordinateSystem !== this.options.coordinateSystem) {
-      try {
-        this.transformer = new CoordinateTransformer(options.coordinateSystem, 'EPSG:4326');
-      } catch (error) {
-        console.warn('Failed to update coordinate transformer:', error);
-      }
+    if (options.coordinateSystem && options.coordinateSystem !== prevCoordinateSystem) {
+      this.initializeTransformer(options.coordinateSystem);
+      // Re-transform features with new coordinate system
+      this.setFeatures(this.features);
     }
   }
 
@@ -187,7 +236,12 @@ export class PreviewManager {
     );
   }
 
-  calculateBounds(): { minX: number; minY: number; maxX: number; maxY: number } {
+  calculateBounds(): Bounds {
+    // Return cached bounds if available
+    if (this.cachedBounds) {
+      return this.cachedBounds;
+    }
+
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -201,47 +255,43 @@ export class PreviewManager {
     };
 
     const processCoordinates = (coordinates: Position | Position[] | Position[][]) => {
-      if (typeof coordinates[0] === 'number') {
+      if (Array.isArray(coordinates) && typeof coordinates[0] === 'number') {
         updateBounds(coordinates as Position);
-      } else {
-        (coordinates as Position[] | Position[][]).forEach(coords => 
-          processCoordinates(coords)
-        );
+      } else if (Array.isArray(coordinates)) {
+        coordinates.forEach(coords => processCoordinates(coords));
       }
     };
 
     this.features.forEach(feature => {
-      const geometry = feature.geometry;
-      switch (geometry.type) {
-        case 'Point':
-          updateBounds(geometry.coordinates);
-          break;
-        case 'MultiPoint':
-        case 'LineString':
-          geometry.coordinates.forEach(coord => updateBounds(coord));
-          break;
-        case 'MultiLineString':
-        case 'Polygon':
-          geometry.coordinates.forEach(line => 
-            line.forEach(coord => updateBounds(coord))
-          );
-          break;
-        case 'MultiPolygon':
-          geometry.coordinates.forEach(poly => 
-            poly.forEach(line => 
-              line.forEach(coord => updateBounds(coord))
-            )
-          );
-          break;
+      if ('coordinates' in feature.geometry) {
+        processCoordinates(feature.geometry.coordinates);
       }
     });
 
-    return {
-      minX: isFinite(minX) ? minX : 0,
-      minY: isFinite(minY) ? minY : 0,
-      maxX: isFinite(maxX) ? maxX : 1,
-      maxY: isFinite(maxY) ? maxY : 1
+    // Handle empty or invalid bounds
+    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+      return {
+        minX: -180,
+        minY: -90,
+        maxX: 180,
+        maxY: 90
+      };
+    }
+
+    // Add padding
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const paddingX = width * this.BOUNDS_PADDING;
+    const paddingY = height * this.BOUNDS_PADDING;
+
+    this.cachedBounds = {
+      minX: minX - paddingX,
+      minY: minY - paddingY,
+      maxX: maxX + paddingX,
+      maxY: maxY + paddingY
     };
+
+    return this.cachedBounds;
   }
 
   hasVisibleFeatures(): boolean {

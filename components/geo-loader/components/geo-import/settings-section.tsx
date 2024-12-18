@@ -5,6 +5,7 @@ import { COORDINATE_SYSTEMS } from '../../types/coordinates';
 import { DxfStructureView } from '../dxf-structure-view';
 import { CoordinateSystemSelect } from '../coordinate-system-select';
 import { SettingsSectionProps } from './types';
+import { useState } from 'react';
 
 export function SettingsSection({
   file,
@@ -21,6 +22,7 @@ export function SettingsSection({
   pendingCoordinateSystem,
   onApplyCoordinateSystem,
 }: SettingsSectionProps) {
+  const [isApplying, setIsApplying] = useState(false);
   const isDxfFile = file.name.toLowerCase().endsWith('.dxf');
   const showCoordinateWarning = analysis?.coordinateSystem === COORDINATE_SYSTEMS.WGS84 && 
     analysis?.bounds && (
@@ -31,52 +33,64 @@ export function SettingsSection({
     );
 
   const coordinateSystemChanged = pendingCoordinateSystem !== options.coordinateSystem;
+  const detectedSystem = analysis?.coordinateSystem;
+
+  const handleApplyCoordinateSystem = async () => {
+    if (!onApplyCoordinateSystem) return;
+    setIsApplying(true);
+    try {
+      await onApplyCoordinateSystem();
+    } finally {
+      setIsApplying(false);
+    }
+  };
 
   return (
     <div className="space-y-4">
-      {/* Coordinate System Warning */}
-      {showCoordinateWarning && (
-        <Alert className="mb-4 border-yellow-500 bg-yellow-50 text-yellow-900">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            Your coordinates appear to be in a local/projected system. Please select the correct coordinate system below to ensure proper transformation.
-          </AlertDescription>
-        </Alert>
-      )}
+      {/* Coordinate System Section */}
+      <div className="border rounded-lg p-4">
+        {/* Warning for invalid coordinates */}
+        {showCoordinateWarning && (
+          <Alert variant="destructive" className="mb-4">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              The coordinates appear to be outside the valid WGS84 range. Please select the correct coordinate system below.
+            </AlertDescription>
+          </Alert>
+        )}
 
-      {/* Coordinate System Select */}
-      <div className="border rounded-lg p-4 space-y-4">
-        <div className="flex items-center justify-between">
-          <h4 className="text-sm font-medium">Coordinate System</h4>
-          {coordinateSystemChanged && onApplyCoordinateSystem && (
-            <Button
-              onClick={onApplyCoordinateSystem}
-              size="sm"
-              className="gap-2"
-            >
-              <RefreshCw className="h-4 w-4" />
-              Apply Changes
-            </Button>
-          )}
-        </div>
+        {/* Coordinate System Selection */}
         <CoordinateSystemSelect
           value={pendingCoordinateSystem || options.coordinateSystem || ''}
           defaultValue={analysis?.coordinateSystem}
           onChange={onCoordinateSystemChange}
+          highlightValue={detectedSystem}
         />
-        {coordinateSystemChanged && (
-          <Alert className="mt-2">
-            <AlertDescription className="text-sm">
-              Click "Apply Changes" to update the preview with the new coordinate system.
-            </AlertDescription>
-          </Alert>
+
+        {/* Apply Changes Button */}
+        {coordinateSystemChanged && onApplyCoordinateSystem && (
+          <div className="mt-4 flex justify-end">
+            <Button
+              onClick={handleApplyCoordinateSystem}
+              className="gap-2"
+              disabled={isApplying}
+            >
+              <RefreshCw className={`h-4 w-4 ${isApplying ? 'animate-spin' : ''}`} />
+              {isApplying ? 'Applying...' : 'Apply Coordinate System'}
+            </Button>
+          </div>
         )}
       </div>
 
       {/* DXF Structure View */}
       {isDxfFile && dxfData && (
         <div className="border rounded-lg p-4">
-          <h4 className="text-sm font-medium mb-2">Structure</h4>
+          <div className="flex items-center justify-between mb-4">
+            <h4 className="text-sm font-medium">File Structure</h4>
+            <div className="text-xs text-muted-foreground">
+              {selectedLayers.length} layers selected
+            </div>
+          </div>
           <DxfStructureView
             dxfData={dxfData}
             selectedLayers={selectedLayers}

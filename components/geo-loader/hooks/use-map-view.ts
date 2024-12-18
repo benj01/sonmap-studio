@@ -1,10 +1,17 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ViewStateChangeEvent } from 'react-map-gl';
-import { Feature, BBox } from 'geojson';
+import { Feature, BBox, Geometry, Position } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
 import proj4 from 'proj4';
+
+const DEFAULT_PADDING = 0.1; // 10% padding
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 20;
+const SWISS_CENTER = { longitude: 8.2275, latitude: 46.8182, zoom: 7 };
+
+type Coordinates = Position | Position[] | Position[][] | Position[][][];
 
 export function useMapView(
   initialBounds?: Bounds,
@@ -27,13 +34,25 @@ export function useMapView(
           coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
         setViewState(prev => ({
           ...prev,
-          longitude: 8.2275,  // Approximate center of Switzerland
-          latitude: 46.8182,
-          zoom: 7
+          ...SWISS_CENTER
         }));
       }
     }
   }, [coordinateSystem]);
+
+  const processCoordinates = useCallback((
+    coords: Coordinates,
+    updateBounds: (lon: number, lat: number) => void
+  ) => {
+    if (!Array.isArray(coords)) return;
+
+    if (typeof coords[0] === 'number') {
+      const [lon, lat] = coords as Position;
+      updateBounds(lon, lat);
+    } else {
+      (coords as any[]).forEach(coord => processCoordinates(coord as Coordinates, updateBounds));
+    }
+  }, []);
 
   const calculateBoundsFromFeatures = useCallback((features: Feature[]): Bounds | null => {
     if (!features.length) return null;
@@ -43,36 +62,62 @@ export function useMapView(
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    features.forEach(feature => {
-      const coords = feature.geometry.type === 'Point' 
-        ? [feature.geometry.coordinates] 
-        : feature.geometry.type === 'LineString'
-        ? feature.geometry.coordinates
-        : feature.geometry.type === 'Polygon'
-        ? feature.geometry.coordinates[0]
-        : feature.geometry.type === 'MultiLineString'
-        ? feature.geometry.coordinates.flat()
-        : feature.geometry.type === 'MultiPolygon'
-        ? feature.geometry.coordinates.flat(2)
-        : [];
-
-      coords.forEach(([lon, lat]) => {
+    const updateBounds = (lon: number, lat: number) => {
+      if (isFinite(lon) && isFinite(lat)) {
         minX = Math.min(minX, lon);
         minY = Math.min(minY, lat);
         maxX = Math.max(maxX, lon);
         maxY = Math.max(maxY, lat);
-      });
+      }
+    };
+
+    features.forEach(feature => {
+      const geometry = feature.geometry;
+      switch (geometry.type) {
+        case 'Point':
+          updateBounds(geometry.coordinates[0], geometry.coordinates[1]);
+          break;
+        case 'MultiPoint':
+        case 'LineString':
+          geometry.coordinates.forEach(coord => {
+            updateBounds(coord[0], coord[1]);
+          });
+          break;
+        case 'MultiLineString':
+        case 'Polygon':
+          geometry.coordinates.forEach(line => {
+            line.forEach(coord => {
+              updateBounds(coord[0], coord[1]);
+            });
+          });
+          break;
+        case 'MultiPolygon':
+          geometry.coordinates.forEach(poly => {
+            poly.forEach(line => {
+              line.forEach(coord => {
+                updateBounds(coord[0], coord[1]);
+              });
+            });
+          });
+          break;
+        case 'GeometryCollection':
+          geometry.geometries.forEach(geom => {
+            if ('coordinates' in geom) {
+              processCoordinates(geom.coordinates as Coordinates, updateBounds);
+            }
+          });
+          break;
+      }
     });
 
-    return {
-      minX,
-      minY,
-      maxX,
-      maxY
-    };
-  }, []);
+    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+      return null;
+    }
 
-  const updateViewFromBounds = useCallback((bounds: Bounds) => {
+    return { minX, minY, maxX, maxY };
+  }, [processCoordinates]);
+
+  const updateViewFromBounds = useCallback((bounds: Bounds, padding: number = DEFAULT_PADDING) => {
     try {
       // Verify coordinate system is registered before attempting transformation
       if (coordinateSystem && !proj4.defs(coordinateSystem)) {
@@ -102,14 +147,21 @@ export function useMapView(
         }
       }
 
-      // Ensure bounds are valid
-      if (!isFinite(transformedBounds.minX) || !isFinite(transformedBounds.minY) ||
-          !isFinite(transformedBounds.maxX) || !isFinite(transformedBounds.maxY)) {
-        throw new Error('Invalid bounds: coordinates are not finite numbers');
-      }
+      // Add padding
+      const width = transformedBounds.maxX - transformedBounds.minX;
+      const height = transformedBounds.maxY - transformedBounds.minY;
+      const padX = width * padding;
+      const padY = height * padding;
+
+      transformedBounds = {
+        minX: transformedBounds.minX - padX,
+        minY: transformedBounds.minY - padY,
+        maxX: transformedBounds.maxX + padX,
+        maxY: transformedBounds.maxY + padY
+      };
 
       // Constrain to valid WGS84 ranges
-      const validMinLat = Math.max(transformedBounds.minY, -85); // Use 85 instead of 90 for better Mercator projection
+      const validMinLat = Math.max(transformedBounds.minY, -85);
       const validMaxLat = Math.min(transformedBounds.maxY, 85);
       const validMinLon = Math.max(transformedBounds.minX, -180);
       const validMaxLon = Math.min(transformedBounds.maxX, 180);
@@ -120,27 +172,21 @@ export function useMapView(
         lat: (validMinLat + validMaxLat) / 2
       };
 
-      // Validate center coordinates
-      if (!isFinite(center.lng) || !isFinite(center.lat)) {
-        throw new Error('Invalid center coordinates: not finite numbers');
+      // Calculate zoom level based on bounds size
+      const latZoom = Math.log2(360 / (validMaxLat - validMinLat)) - 1;
+      const lonZoom = Math.log2(360 / (validMaxLon - validMinLon)) - 1;
+      let zoom = Math.min(latZoom, lonZoom);
+
+      // Adjust zoom for coordinate system
+      if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
+          coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
+        // For Swiss coordinates, adjust zoom based on meter-based scale
+        const metersPerPixel = width / 900; // Assuming 900px viewport width
+        zoom = Math.log2(40075016.686 / (metersPerPixel * Math.cos(center.lat * Math.PI / 180) * 256));
       }
 
-      // Calculate appropriate zoom level
-      const width = Math.abs(validMaxLon - validMinLon);
-      const height = Math.abs(validMaxLat - validMinLat);
-      const maxDimension = Math.max(width, height);
-      
-      // Adjust zoom calculation based on coordinate system
-      let zoom = coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
-                 coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03
-        ? Math.floor(14 - Math.log2(maxDimension / 1000)) // For meter-based systems
-        : Math.floor(14 - Math.log2(maxDimension));       // For degree-based systems
-
-      // Ensure zoom is within valid range
-      zoom = Math.min(Math.max(zoom, 1), 20);
-      
-      // Add a small zoom out for better context
-      zoom = Math.max(1, zoom - 1);
+      // Ensure zoom is within valid range and add slight zoom out for context
+      zoom = Math.min(Math.max(zoom - 0.5, MIN_ZOOM), MAX_ZOOM);
 
       setViewState(prev => ({
         ...prev,
@@ -155,30 +201,17 @@ export function useMapView(
           coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
         setViewState(prev => ({
           ...prev,
-          longitude: 8.2275,  // Approximate center of Switzerland
-          latitude: 46.8182,
-          zoom: 7
+          ...SWISS_CENTER
         }));
       }
       throw error;
     }
   }, [coordinateSystem]);
 
-  const focusOnFeatures = useCallback((features: Feature[], padding: number = 0) => {
+  const focusOnFeatures = useCallback((features: Feature[], padding: number = DEFAULT_PADDING * 100) => {
     const bounds = calculateBoundsFromFeatures(features);
     if (bounds) {
-      // Apply padding to bounds
-      const width = bounds.maxX - bounds.minX;
-      const height = bounds.maxY - bounds.minY;
-      const padX = (width * padding) / 100;
-      const padY = (height * padding) / 100;
-      
-      updateViewFromBounds({
-        minX: bounds.minX - padX,
-        minY: bounds.minY - padY,
-        maxX: bounds.maxX + padX,
-        maxY: bounds.maxY + padY
-      });
+      updateViewFromBounds(bounds, padding / 100);
     }
   }, [calculateBoundsFromFeatures, updateViewFromBounds]);
 
@@ -189,11 +222,10 @@ export function useMapView(
   const getViewportBounds = useCallback((): BBox | undefined => {
     if (!viewState) return undefined;
 
-    // Calculate viewport bounds based on current view state
     const { longitude, latitude, zoom } = viewState;
     
-    // Rough estimation of viewport bounds (can be improved with actual viewport calculations)
-    const latRange = 180 / Math.pow(2, zoom);
+    // Calculate viewport bounds based on zoom level
+    const latRange = 360 / Math.pow(2, zoom + 1);
     const lonRange = 360 / Math.pow(2, zoom);
     
     return [
@@ -204,6 +236,7 @@ export function useMapView(
     ];
   }, [viewState]);
 
+  // Initialize view when bounds change
   useEffect(() => {
     if (initialBounds) {
       updateViewFromBounds(initialBounds);

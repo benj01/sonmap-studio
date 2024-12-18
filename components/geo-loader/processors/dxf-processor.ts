@@ -12,7 +12,30 @@ import { entityToGeoFeature } from '../utils/dxf/geo-converter';
 
 const PREVIEW_CHUNK_SIZE = 1000;
 const SAMPLE_RATE = 5;
-const PROCESS_CHUNK_SIZE = 500; // For chunked processing
+const PROCESS_CHUNK_SIZE = 500;
+
+// Progress phases
+const PROGRESS = {
+  PARSE: { START: 0, END: 0.2 },    // 0-20%
+  ANALYZE: { START: 0.2, END: 0.4 }, // 20-40%
+  PROCESS: { START: 0.4, END: 1.0 }  // 40-100%
+} as const;
+
+// Coordinate system detection ranges
+const RANGES = {
+  SWISS_LV95: {
+    X: { MIN: 2485000, MAX: 2835000 },
+    Y: { MIN: 1075000, MAX: 1295000 }
+  },
+  SWISS_LV03: {
+    X: { MIN: 485000, MAX: 835000 },
+    Y: { MIN: 75000, MAX: 295000 }
+  },
+  WGS84: {
+    X: { MIN: -180, MAX: 180 },
+    Y: { MIN: -90, MAX: 90 }
+  }
+} as const;
 
 export class DxfProcessor extends BaseProcessor {
   private parser = createDxfParser();
@@ -41,7 +64,11 @@ export class DxfProcessor extends BaseProcessor {
     try {
       const dxfData = await this.parser.parse(content, {
         validate: true,
-        onProgress: progress => this.emitProgress(progress * 0.3) // Reduced to 30% for parsing
+        onProgress: progress => {
+          const scaledProgress = PROGRESS.PARSE.START + 
+            (progress * (PROGRESS.PARSE.END - PROGRESS.PARSE.START));
+          this.emitProgress(scaledProgress);
+        }
       });
       this.rawDxfData = dxfData;
       return dxfData;
@@ -63,7 +90,7 @@ export class DxfProcessor extends BaseProcessor {
     return [];
   }
 
-  private detectCoordinateSystem(entities: DxfEntity[]): CoordinateSystem {
+  private detectCoordinateSystem(entities: DxfEntity[]): { system: CoordinateSystem; confidence: number } {
     // Sample coordinates from different entity types
     const sampleCoords: Vector3[] = [];
     for (let i = 0; i < Math.min(entities.length, 100); i++) {
@@ -72,22 +99,58 @@ export class DxfProcessor extends BaseProcessor {
       if (sampleCoords.length >= 100) break;
     }
 
-    if (sampleCoords.length === 0) return COORDINATE_SYSTEMS.WGS84;
+    if (sampleCoords.length === 0) {
+      return { system: COORDINATE_SYSTEMS.WGS84, confidence: 0 };
+    }
 
-    // Check for common Swiss coordinate ranges
-    const isInSwissRange = sampleCoords.every(coord => 
-      coord.x >= 2000000 && coord.x <= 3000000 && 
-      coord.y >= 1000000 && coord.y <= 2000000
-    );
+    // Check each coordinate system
+    const matches = {
+      [COORDINATE_SYSTEMS.SWISS_LV95]: 0,
+      [COORDINATE_SYSTEMS.SWISS_LV03]: 0,
+      [COORDINATE_SYSTEMS.WGS84]: 0
+    };
 
-    if (isInSwissRange) return COORDINATE_SYSTEMS.SWISS_LV95;
+    sampleCoords.forEach(coord => {
+      // Check Swiss LV95
+      if (coord.x >= RANGES.SWISS_LV95.X.MIN && coord.x <= RANGES.SWISS_LV95.X.MAX &&
+          coord.y >= RANGES.SWISS_LV95.Y.MIN && coord.y <= RANGES.SWISS_LV95.Y.MAX) {
+        matches[COORDINATE_SYSTEMS.SWISS_LV95]++;
+      }
+      // Check Swiss LV03
+      if (coord.x >= RANGES.SWISS_LV03.X.MIN && coord.x <= RANGES.SWISS_LV03.X.MAX &&
+          coord.y >= RANGES.SWISS_LV03.Y.MIN && coord.y <= RANGES.SWISS_LV03.Y.MAX) {
+        matches[COORDINATE_SYSTEMS.SWISS_LV03]++;
+      }
+      // Check WGS84
+      if (coord.x >= RANGES.WGS84.X.MIN && coord.x <= RANGES.WGS84.X.MAX &&
+          coord.y >= RANGES.WGS84.Y.MIN && coord.y <= RANGES.WGS84.Y.MAX) {
+        // Additional check for decimal precision typical in WGS84
+        if (Math.abs(coord.x % 1) > 0.0001 || Math.abs(coord.y % 1) > 0.0001) {
+          matches[COORDINATE_SYSTEMS.WGS84]++;
+        }
+      }
+    });
 
-    // Check for WGS84 range
-    const isInWGS84Range = sampleCoords.every(coord => 
-      Math.abs(coord.x) <= 180 && Math.abs(coord.y) <= 90
-    );
+    // Calculate confidence for each system
+    const confidences = Object.entries(matches).map(([system, count]) => ({
+      system: system as CoordinateSystem,
+      confidence: count / sampleCoords.length
+    }));
 
-    return isInWGS84Range ? COORDINATE_SYSTEMS.WGS84 : COORDINATE_SYSTEMS.SWISS_LV95;
+    // Sort by confidence and get the best match
+    const bestMatch = confidences.sort((a, b) => b.confidence - a.confidence)[0];
+
+    // If no good match found, default to WGS84 with 0 confidence
+    if (bestMatch.confidence < 0.8) {
+      this.emitWarning('Could not confidently detect coordinate system. Please verify the selection.');
+      return { system: COORDINATE_SYSTEMS.WGS84, confidence: 0 };
+    }
+
+    // Add informative message about detection
+    const message = `Detected ${bestMatch.system} with ${Math.round(bestMatch.confidence * 100)}% confidence`;
+    this.emitWarning(message);
+
+    return bestMatch;
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
@@ -121,7 +184,7 @@ export class DxfProcessor extends BaseProcessor {
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
       // Detect coordinate system
-      const detectedSystem = this.detectCoordinateSystem(expandedEntities);
+      const { system: detectedSystem } = this.detectCoordinateSystem(expandedEntities);
       
       // Convert to GeoJSON features for preview with progress updates
       const previewFeatures: Feature[] = [];
@@ -137,8 +200,10 @@ export class DxfProcessor extends BaseProcessor {
         }
         processedCount++;
         
-        // Update progress (30-50%)
-        this.emitProgress(0.3 + (processedCount / totalEntities) * 0.2);
+        // Update progress (20-40%)
+        const progress = PROGRESS.ANALYZE.START + 
+          (processedCount / totalEntities) * (PROGRESS.ANALYZE.END - PROGRESS.ANALYZE.START);
+        this.emitProgress(progress);
         
         if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) {
           break;
@@ -219,14 +284,16 @@ export class DxfProcessor extends BaseProcessor {
 
       const features: Feature[] = [];
       for (let i = 0; i < chunks.length; i++) {
-        const startProgress = 0.5 + (i / chunks.length) * 0.5;
-        const endProgress = 0.5 + ((i + 1) / chunks.length) * 0.5;
+        const chunkStartProgress = PROGRESS.PROCESS.START + 
+          (i / chunks.length) * (PROGRESS.PROCESS.END - PROGRESS.PROCESS.START);
+        const chunkEndProgress = PROGRESS.PROCESS.START + 
+          ((i + 1) / chunks.length) * (PROGRESS.PROCESS.END - PROGRESS.PROCESS.START);
         
         const chunkFeatures = await this.processChunk(
           chunks[i],
           this.options,
-          startProgress,
-          endProgress
+          chunkStartProgress,
+          chunkEndProgress
         );
         
         features.push(...chunkFeatures);
@@ -243,6 +310,9 @@ export class DxfProcessor extends BaseProcessor {
       const bounds = this.calculateBounds(features, 0.1); // 10% padding
 
       statistics.layerCount = this.options.selectedLayers?.length || this.parser.getLayers().length;
+
+      // Ensure we reach 100%
+      this.emitProgress(1.0);
 
       return {
         features: {
