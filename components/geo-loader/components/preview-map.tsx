@@ -4,25 +4,27 @@ import { COORDINATE_SYSTEMS } from '../types/coordinates';
 import { layerStyles } from './map/map-layers';
 import { PreviewMapProps } from '../types/map';
 import { useMapView } from '../hooks/use-map-view';
-import { useFeatureProcessing } from '../hooks/use-feature-processing';
 import 'mapbox-gl/dist/mapbox-gl.css';
-
-const VIEWPORT_PADDING = 50; // pixels to add around features when focusing
-const BATCH_SIZE = 1000; // number of features to process at once
-const CLUSTER_RADIUS = 50; // pixels
-const MIN_ZOOM_FOR_UNCLUSTERED = 14; // zoom level at which to show individual points
+import bboxPolygon from '@turf/bbox-polygon';
+import booleanIntersects from '@turf/boolean-intersects';
+import { FeatureCollection, Feature } from 'geojson';
+import { createPreviewManager, PreviewManager } from '../preview/preview-manager';
 
 /**
- * PreviewMap Component
+ * Updated PreviewMap:
  * 
- * Renders a map with GeoJSON features, supporting different coordinate systems
- * and feature types (points, lines, polygons). Features can be filtered by layer
- * and include warning indicators. Implements clustering and progressive loading
- * for improved performance.
+ * Instead of using `useFeatureProcessing`, we directly use a `PreviewManager` to get features.
+ * We also apply viewport filtering here manually if required. This ensures we only show features
+ * in the current viewport. For large data sets, you could incorporate the `FeatureSampler` or 
+ * other strategies.
  */
-export function PreviewMap({ 
-  preview, 
-  bounds, 
+const VIEWPORT_PADDING = 50;
+const CLUSTER_RADIUS = 50;
+const MIN_ZOOM_FOR_UNCLUSTERED = 14;
+
+export function PreviewMap({
+  preview,
+  bounds,
   coordinateSystem = COORDINATE_SYSTEMS.WGS84,
   visibleLayers = [],
   selectedElement,
@@ -32,32 +34,29 @@ export function PreviewMap({
   const [error, setError] = useState<string | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<any>(null);
   const mapRef = React.useRef<MapRef>(null);
-  
-  const { 
-    viewState, 
-    onMove, 
+
+  const {
+    viewState,
+    onMove,
     updateViewFromBounds,
     focusOnFeatures,
-    getViewportBounds 
+    getViewportBounds
   } = useMapView(bounds, coordinateSystem);
-  
-  // Process features with viewport filtering and batching
-  const { 
-    pointFeatures, 
-    lineFeatures, 
-    polygonFeatures,
-    getFeaturesByTypeAndLayer,
-    totalFeatureCount,
-    visibleFeatureCount
-  } = useFeatureProcessing({
-    preview,
-    coordinateSystem,
-    visibleLayers,
-    zoom: viewState.zoom,
-    analysis,
-    viewportBounds: getViewportBounds(),
-    batchSize: BATCH_SIZE
-  });
+
+  // Initialize preview manager
+  const previewManagerRef = React.useRef<PreviewManager | null>(null);
+
+  useEffect(() => {
+    // Create or update the preview manager whenever preview or visibleLayers changes
+    const pm = createPreviewManager({
+      maxFeatures: 5000,
+      visibleLayers,
+      analysis
+    });
+    pm.setFeatures(preview);
+    previewManagerRef.current = pm;
+    setIsLoading(false);
+  }, [preview, visibleLayers, analysis]);
 
   // Initial zoom to bounds
   useEffect(() => {
@@ -66,17 +65,17 @@ export function PreviewMap({
         updateViewFromBounds(bounds);
         setError(null);
       } catch (err) {
-        const error = err as Error;
-        setError(`Failed to set initial view: ${error.message}`);
+        const e = err as Error;
+        setError(`Failed to set initial view: ${e.message}`);
       }
     }
   }, [bounds, updateViewFromBounds]);
 
-  // Focus on selected element with padding
+  // Focus on selected element if needed
   useEffect(() => {
-    if (selectedElement && preview) {
+    if (selectedElement && previewManagerRef.current) {
       try {
-        const features = getFeaturesByTypeAndLayer(
+        const features = previewManagerRef.current.getFeaturesByTypeAndLayer(
           selectedElement.type,
           selectedElement.layer
         );
@@ -85,32 +84,70 @@ export function PreviewMap({
           setError(null);
         }
       } catch (err) {
-        const error = err as Error;
-        setError(`Failed to focus on selected element: ${error.message}`);
+        const e = err as Error;
+        setError(`Failed to focus on selected element: ${e.message}`);
       }
     }
-  }, [selectedElement, preview, getFeaturesByTypeAndLayer, focusOnFeatures]);
+  }, [selectedElement, focusOnFeatures]);
 
-  // Handle loading state with batching feedback
-  useEffect(() => {
-    setIsLoading(false);
-  }, [preview, visibleLayers]);
+  const handleMapMove = useCallback((evt: ViewStateChangeEvent) => {
+    onMove(evt);
+  }, [onMove]);
 
-  // Memoize layer components with clustering for points
+  // Filter features by viewport if needed
+  const viewportBounds = getViewportBounds();
+  const viewportPolygon = useMemo(() => viewportBounds ? bboxPolygon(viewportBounds) : null, [viewportBounds]);
+
+  const {
+    points, lines, polygons, totalCount, visibleCount
+  } = useMemo(() => {
+    if (!previewManagerRef.current) {
+      return {
+        points: { type: 'FeatureCollection', features: [] },
+        lines: { type: 'FeatureCollection', features: [] },
+        polygons: { type: 'FeatureCollection', features: [] },
+        totalCount: 0,
+        visibleCount: 0
+      };
+    }
+
+    const { points, lines, polygons, totalCount, visibleCount } = previewManagerRef.current.getPreviewCollections();
+    
+    // If viewport filtering is desired, filter features here:
+    const filterByViewport = (fc: FeatureCollection) => {
+      if (!viewportPolygon) return fc;
+      const filtered = fc.features.filter((f: Feature) => booleanIntersects(f, viewportPolygon));
+      return { ...fc, features: filtered };
+    };
+
+    const filteredPoints = filterByViewport(points);
+    const filteredLines = filterByViewport(lines);
+    const filteredPolygons = filterByViewport(polygons);
+
+    const filteredVisibleCount = filteredPoints.features.length + filteredLines.features.length + filteredPolygons.features.length;
+
+    return {
+      points: filteredPoints,
+      lines: filteredLines,
+      polygons: filteredPolygons,
+      totalCount,
+      visibleCount: filteredVisibleCount
+    };
+  }, [viewportPolygon]);
+
   const layerComponents = useMemo(() => {
     const components = [];
 
-    if (pointFeatures.features.length > 0) {
+    if (points.features.length > 0) {
       components.push(
         <Source
           key="points"
           type="geojson"
-          data={pointFeatures}
+          data={points}
           cluster={true}
           clusterMaxZoom={MIN_ZOOM_FOR_UNCLUSTERED}
           clusterRadius={CLUSTER_RADIUS}
         >
-          {/* Clustered points */}
           <Layer
             id="clusters"
             type="circle"
@@ -136,8 +173,7 @@ export function PreviewMap({
               ]
             }}
           />
-          
-          {/* Cluster count */}
+
           <Layer
             id="cluster-count"
             type="symbol"
@@ -149,7 +185,6 @@ export function PreviewMap({
             }}
           />
 
-          {/* Unclustered points */}
           <Layer
             {...layerStyles.point}
             filter={['!', ['has', 'point_count']]}
@@ -158,17 +193,17 @@ export function PreviewMap({
       );
     }
 
-    if (lineFeatures.features.length > 0) {
+    if (lines.features.length > 0) {
       components.push(
-        <Source key="lines" type="geojson" data={lineFeatures}>
+        <Source key="lines" type="geojson" data={lines}>
           <Layer {...layerStyles.line} />
         </Source>
       );
     }
 
-    if (polygonFeatures.features.length > 0) {
+    if (polygons.features.length > 0) {
       components.push(
-        <Source key="polygons" type="geojson" data={polygonFeatures}>
+        <Source key="polygons" type="geojson" data={polygons}>
           <Layer {...layerStyles.polygon} />
           <Layer {...layerStyles.polygonOutline} />
         </Source>
@@ -176,14 +211,8 @@ export function PreviewMap({
     }
 
     return components;
-  }, [pointFeatures, lineFeatures, polygonFeatures]);
+  }, [points, lines, polygons]);
 
-  // Handle move/zoom events with viewport filtering
-  const handleMapMove = useCallback((evt: ViewStateChangeEvent) => {
-    onMove(evt);
-  }, [onMove]);
-
-  // Handle feature hover interactions
   const handleMouseMove = useCallback((event: any) => {
     const features = event.features || [];
     setHoveredFeature(features[0]);
@@ -198,7 +227,7 @@ export function PreviewMap({
       {isLoading && (
         <div className="absolute inset-0 bg-background/50 z-50 flex items-center justify-center">
           <div className="text-sm text-muted-foreground">
-            Loading preview... {visibleFeatureCount} of {totalFeatureCount} features processed
+            Loading preview...
           </div>
         </div>
       )}
@@ -237,22 +266,20 @@ export function PreviewMap({
               }}
             />
           </div>
-          
-          {/* Feature count and viewport indicators */}
+
           <div className="absolute top-2 right-2 bg-background/80 text-xs p-2 rounded flex flex-col gap-1">
             <div>
-              Showing {visibleFeatureCount} of {totalFeatureCount} features
+              Showing {visibleCount} of {totalCount} features
             </div>
-            {viewState.zoom < MIN_ZOOM_FOR_UNCLUSTERED && pointFeatures.features.length > 0 && (
+            {viewState.zoom < MIN_ZOOM_FOR_UNCLUSTERED && points.features.length > 0 && (
               <div className="text-muted-foreground">
                 Zoom in to view individual points
               </div>
             )}
           </div>
 
-          {/* Hover tooltip */}
           {hoveredFeature && (
-            <div 
+            <div
               className="absolute z-50 bg-background/90 p-2 rounded shadow-lg text-xs"
               style={{
                 left: hoveredFeature.point?.[0],

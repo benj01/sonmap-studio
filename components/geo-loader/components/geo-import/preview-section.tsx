@@ -2,11 +2,25 @@ import { PreviewSectionProps } from './types';
 import { PreviewMap } from '../preview-map';
 
 export function PreviewSection({
-  preview,
+  previewManager,
   bounds,
   coordinateSystem,
-  visibleLayers
+  visibleLayers,
+  analysis
 }: PreviewSectionProps) {
+  // Get the preview collections from the manager
+  const { points, lines, polygons } = previewManager.getPreviewCollections();
+  
+  // Combine all features into one collection for the map
+  const preview = {
+    type: 'FeatureCollection' as const,
+    features: [
+      ...points.features,
+      ...lines.features,
+      ...polygons.features
+    ]
+  };
+
   return (
     <div className="border rounded-lg p-4">
       <h4 className="text-sm font-medium mb-2">Preview</h4>
@@ -16,6 +30,7 @@ export function PreviewSection({
           bounds={bounds}
           coordinateSystem={coordinateSystem}
           visibleLayers={visibleLayers}
+          analysis={analysis}
         />
       </div>
     </div>

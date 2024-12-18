@@ -1,7 +1,8 @@
 import { LoaderResult, LoaderOptions } from 'types/geo';
 import { CoordinateSystem } from '../../types/coordinates';
 import { DxfData } from '../../utils/dxf/types';
-import { FeatureCollection } from 'geojson';
+import { PreviewManager } from '../../preview/preview-manager';
+import { Analysis } from '../../types/map';
 
 export interface LogEntry {
   message: string;
@@ -28,7 +29,7 @@ export interface ImportState {
 }
 
 export interface PreviewSectionProps {
-  preview: FeatureCollection;
+  previewManager: PreviewManager;
   bounds: {
     minX: number;
     minY: number;
@@ -37,11 +38,12 @@ export interface PreviewSectionProps {
   };
   coordinateSystem?: CoordinateSystem;
   visibleLayers: string[];
+  analysis?: Analysis;
 }
 
 export interface SettingsSectionProps {
   file: File;
-  dxfData: DxfData | undefined;  // Changed from null to undefined
+  dxfData: DxfData | undefined;
   analysis: any;
   options: ImportOptions;
   selectedLayers: string[];

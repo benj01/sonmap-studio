@@ -3,12 +3,34 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'components/ui/
 import { Button } from 'components/ui/button';
 import { Alert, AlertDescription } from 'components/ui/alert';
 import { AlertTriangle } from 'lucide-react';
-import { COORDINATE_SYSTEMS } from '../../types/coordinates';
-import { useGeoLoader } from '../../hooks/use-geo-loader';
-import { GeoImportDialogProps, ImportState, LogEntry, LogType, ImportOptions } from './types';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
+import { GeoImportDialogProps, ImportState, LogType, ImportOptions } from './types';
 import { PreviewSection } from './preview-section';
 import { SettingsSection } from './settings-section';
 import { LogsSection } from './logs-section';
+import { createProcessor } from '../../processors/base-processor';
+import { ProcessorResult, AnalyzeResult, ProcessorOptions, ProcessorStats } from '../../processors/base-processor';
+import { createPreviewManager, PreviewManager } from '../../preview/preview-manager';
+import { LoaderResult, GeoFeature } from 'types/geo';
+
+// Convert processor warnings to Analysis warnings format
+const convertWarnings = (warnings: string[] = []): { type: string; message: string }[] => {
+  return warnings.map(warning => ({
+    type: 'warning',
+    message: warning
+  }));
+};
+
+// Convert ProcessorStats to LoaderResult statistics format
+const convertStatistics = (stats: ProcessorStats) => {
+  return {
+    pointCount: stats.featureCount,
+    layerCount: stats.layerCount,
+    featureTypes: stats.featureTypes,
+    failedTransformations: stats.failedTransformations,
+    errors: stats.errors
+  };
+};
 
 export function GeoImportDialog({
   isOpen,
@@ -16,19 +38,9 @@ export function GeoImportDialog({
   file,
   onImportComplete,
 }: GeoImportDialogProps) {
-  const {
-    loading,
-    error: loaderError,
-    analysis,
-    options: loaderOptions,
-    logs: loaderLogs,
-    dxfData,
-    setOptions,
-    analyzeFile,
-    loadFile,
-    clearLogs,
-  } = useGeoLoader();
-
+  const [loading, setLoading] = useState(false);
+  const [analysis, setAnalysis] = useState<AnalyzeResult | null>(null);
+  const [dxfData, setDxfData] = useState<any | null>(null);
   const [state, setState] = useState<ImportState>({
     logs: [],
     hasErrors: false,
@@ -36,38 +48,19 @@ export function GeoImportDialog({
     visibleLayers: [],
     selectedTemplates: [],
   });
+  const [coordinateSystem, setCoordinateSystem] = useState<CoordinateSystem | undefined>(undefined);
 
-  // Create a derived options object that satisfies ImportOptions
-  const options: ImportOptions = {
-    ...loaderOptions,
-    selectedLayers: state.selectedLayers,
-    visibleLayers: state.visibleLayers,
-    selectedTemplates: state.selectedTemplates,
-  };
+  // Preview manager instance
+  const previewManagerRef = useRef<PreviewManager | null>(null);
 
-  // Use a ref to track the current file being analyzed
-  const currentFileRef = useRef<File | null>(null);
+  // For deduplicating logs
   const processedLogsRef = useRef(new Set<string>());
-
-  // Initialize visibleLayers with all available layers when dxfData changes
-  useEffect(() => {
-    if (dxfData?.tables?.layer?.layers) {
-      const allLayers = Object.keys(dxfData.tables.layer.layers);
-      setState(prev => ({
-        ...prev,
-        visibleLayers: allLayers
-      }));
-      setOptions(prev => ({
-        ...prev,
-        visibleLayers: allLayers
-      }));
-    }
-  }, [dxfData, setOptions]);
+  // Track current file to re-analyze only when changed
+  const currentFileRef = useRef<File | null>(null);
 
   const addLogs = useCallback((newLogs: { message: string; type: LogType }[]) => {
     const timestamp = new Date();
-    setState(prevState => {
-      // Filter out logs we've already processed
+    setState((prevState: ImportState) => {
       const uniqueLogs = newLogs.filter(log => {
         const logId = `${log.type}:${log.message}`;
         if (processedLogsRef.current.has(logId)) {
@@ -88,9 +81,9 @@ export function GeoImportDialog({
           timestamp
         }))
       ];
-      
+
       const hasErrors = prevState.hasErrors || uniqueLogs.some(log => log.type === 'error');
-      
+
       return {
         ...prevState,
         logs: updatedLogs,
@@ -100,129 +93,181 @@ export function GeoImportDialog({
   }, []);
 
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
-    setState(prev => {
+    setState((prev: ImportState) => {
       const newLayers = enabled 
         ? [...prev.selectedLayers, layer]
-        : prev.selectedLayers.filter(l => l !== layer);
-      
-      setOptions(opts => ({
-        ...opts,
-        selectedLayers: newLayers
-      }));
+        : prev.selectedLayers.filter((l: string) => l !== layer);
 
       return {
         ...prev,
         selectedLayers: newLayers
       };
     });
-  }, [setOptions]);
+  }, []);
 
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
-    setState(prev => {
+    setState((prev: ImportState) => {
       const newVisibleLayers = visible
         ? [...prev.visibleLayers, layer]
-        : prev.visibleLayers.filter(l => l !== layer);
-      
-      setOptions(opts => ({
-        ...opts,
-        visibleLayers: newVisibleLayers
-      }));
+        : prev.visibleLayers.filter((l: string) => l !== layer);
 
       return {
         ...prev,
         visibleLayers: newVisibleLayers
       };
     });
-  }, [setOptions]);
+  }, []);
 
   const handleTemplateSelect = useCallback((template: string, enabled: boolean) => {
-    setState(prev => {
+    setState((prev: ImportState) => {
       const newTemplates = enabled
         ? [...prev.selectedTemplates, template]
-        : prev.selectedTemplates.filter(t => t !== template);
-
-      setOptions(opts => ({
-        ...opts,
-        selectedTemplates: newTemplates
-      }));
+        : prev.selectedTemplates.filter((t: string) => t !== template);
 
       return {
         ...prev,
         selectedTemplates: newTemplates
       };
     });
-  }, [setOptions]);
+  }, []);
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
-    const coordinateSystem = Object.values(COORDINATE_SYSTEMS).includes(value as any)
-      ? value as any
-      : undefined;
+    setCoordinateSystem(value as CoordinateSystem);
+  }, []);
 
-    setOptions(prev => ({
-      ...prev,
-      coordinateSystem
-    }));
-  }, [setOptions]);
+  // Processor callbacks for logging
+  const onWarning = useCallback((message: string) => {
+    addLogs([{ message, type: 'warning' }]);
+  }, [addLogs]);
 
-  // Handle loader logs
-  useEffect(() => {
-    if (loaderLogs.length > 0) {
-      const newLogs = loaderLogs.map(message => ({
-        message,
-        type: message.toLowerCase().includes('error') ? 'error' as const :
-              message.toLowerCase().includes('warn') ? 'warning' as const : 
-              'info' as const
-      }));
-      addLogs(newLogs);
-    }
-  }, [loaderLogs, addLogs]);
+  const onError = useCallback((message: string) => {
+    addLogs([{ message, type: 'error' }]);
+  }, [addLogs]);
+
+  const onProgress = useCallback((progress: number) => {
+    addLogs([{ message: `Progress: ${(progress * 100).toFixed(1)}%`, type: 'info' }]);
+  }, [addLogs]);
 
   // Handle dialog open/close and file analysis
   useEffect(() => {
-    if (isOpen) {
-      // Only reset state and analyze if it's a new file
-      if (file !== currentFileRef.current) {
-        setState(prev => ({
-          ...prev,
-          logs: [],
-          hasErrors: false,
-          selectedLayers: [],
-          visibleLayers: [],
-          selectedTemplates: []
-        }));
-        processedLogsRef.current.clear();
-        clearLogs();
-        
-        currentFileRef.current = file;
-        if (file) {
-          analyzeFile(file).catch(error => {
-            addLogs([{
-              message: `Analysis error: ${error.message}`,
-              type: 'error'
-            }]);
-          });
-        }
+    if (isOpen && file) {
+      if (
+        currentFileRef.current &&
+        currentFileRef.current.name === file.name &&
+        currentFileRef.current.size === file.size &&
+        currentFileRef.current.lastModified === file.lastModified &&
+        analysis
+      ) {
+        // Same file, already analyzed
+        return;
       }
-    } else {
+
+      // New file, reset state
+      setState({
+        logs: [],
+        hasErrors: false,
+        selectedLayers: [],
+        visibleLayers: [],
+        selectedTemplates: [],
+      });
+      processedLogsRef.current.clear();
+      setAnalysis(null);
+      setDxfData(null);
+
+      currentFileRef.current = file;
+      setLoading(true);
+
+      const doAnalyze = async () => {
+        try {
+          const processor = await createProcessor(file, {
+            onWarning,
+            onError,
+            onProgress,
+          } as ProcessorOptions);
+
+          if (!processor) {
+            onError(`No processor available for file: ${file.name}`);
+            return;
+          }
+
+          const result = await processor.analyze(file);
+          setAnalysis(result);
+
+          // Initialize layers
+          const layers = result.layers || [];
+          setState(prev => ({
+            ...prev,
+            selectedLayers: layers,
+            visibleLayers: layers
+          }));
+
+          // Initialize coordinate system
+          if (result.coordinateSystem) {
+            setCoordinateSystem(result.coordinateSystem as CoordinateSystem);
+          }
+
+          // Initialize preview manager
+          previewManagerRef.current = createPreviewManager({
+            maxFeatures: 5000,
+            visibleLayers: layers,
+            analysis: {
+              ...result,
+              warnings: convertWarnings(result.warnings)
+            }
+          });
+          if (result.preview) {
+            previewManagerRef.current.setFeatures(result.preview);
+          }
+
+        } catch (err) {
+          const error = err as Error;
+          onError(`Analysis error: ${error.message}`);
+        } finally {
+          setLoading(false);
+        }
+      };
+      doAnalyze();
+    } else if (!isOpen) {
       currentFileRef.current = null;
     }
-  }, [isOpen, file, clearLogs, analyzeFile, addLogs]);
+  }, [isOpen, file, analysis, onError, onProgress, onWarning]);
 
   const handleImport = async () => {
     if (!file) return;
 
+    setLoading(true);
     try {
-      const result = await loadFile(file);
-      
-      const importLogs: { message: string; type: LogType }[] = [];
+      const processor = await createProcessor(file, {
+        onWarning,
+        onError,
+        onProgress,
+        coordinateSystem,
+        selectedLayers: state.selectedLayers,
+        selectedTypes: state.selectedTemplates
+      } as ProcessorOptions);
 
-      if (result.coordinateSystem) {
-        if (result.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-          importLogs.push({
-            message: `Transformed coordinates from ${result.coordinateSystem} to ${COORDINATE_SYSTEMS.WGS84}`,
-            type: 'info'
-          });
-        }
+      if (!processor) {
+        onError(`No processor available for file: ${file.name}`);
+        return;
+      }
+
+      const processorResult = await processor.process(file);
+
+      // Convert ProcessorResult to LoaderResult
+      const result: LoaderResult = {
+        features: processorResult.features.features as GeoFeature[],
+        bounds: processorResult.bounds,
+        layers: processorResult.layers || [],
+        coordinateSystem: processorResult.coordinateSystem as CoordinateSystem,
+        statistics: convertStatistics(processorResult.statistics)
+      };
+
+      const importLogs: { message: string; type: LogType }[] = [];
+      if (result.coordinateSystem && result.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        importLogs.push({
+          message: `Transformed coordinates from ${result.coordinateSystem} to ${COORDINATE_SYSTEMS.WGS84}`,
+          type: 'info'
+        });
       }
 
       if (result.statistics) {
@@ -245,17 +290,17 @@ export function GeoImportDialog({
           });
         });
 
-        if (result.statistics.failedTransformations) {
+        if (result.statistics.failedTransformations && result.statistics.failedTransformations > 0) {
           importLogs.push({
             message: `Warning: ${result.statistics.failedTransformations} features failed coordinate transformation`,
             type: 'warning'
           });
         }
 
-        if (result.statistics.errors) {
+        if (result.statistics.errors && result.statistics.errors.length > 0) {
           result.statistics.errors.forEach(error => {
             importLogs.push({
-              message: error.message ? 
+              message: error.message ?
                 `${error.type}: ${error.message} (${error.count} occurrence${error.count > 1 ? 's' : ''})` :
                 `${error.type}: ${error.count} occurrence${error.count > 1 ? 's' : ''}`,
               type: 'error'
@@ -267,18 +312,30 @@ export function GeoImportDialog({
       addLogs(importLogs);
 
       onImportComplete(result);
-      if (!state.hasErrors && !result.statistics?.failedTransformations) {
+      if (!state.hasErrors && !(result.statistics?.failedTransformations)) {
         onClose();
       }
     } catch (error) {
+      const err = error as Error;
       addLogs([{
-        message: `Import error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        message: `Import error: ${err.message}`,
         type: 'error'
       }]);
+    } finally {
+      setLoading(false);
     }
   };
 
   if (!file) return null;
+
+  const options: ImportOptions = {
+    selectedLayers: state.selectedLayers,
+    visibleLayers: state.visibleLayers,
+    selectedTemplates: state.selectedTemplates,
+    coordinateSystem
+  };
+
+  const previewAvailable = analysis && previewManagerRef.current?.hasVisibleFeatures();
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -296,13 +353,13 @@ export function GeoImportDialog({
             )}
           </div>
         </DialogHeader>
-        
+
         <div className="grid grid-cols-2 gap-4">
           {/* Left side: Settings */}
           <SettingsSection
             file={file}
             dxfData={dxfData || undefined}
-            analysis={analysis}
+            analysis={analysis || undefined}
             options={options}
             selectedLayers={state.selectedLayers}
             visibleLayers={state.visibleLayers}
@@ -316,12 +373,16 @@ export function GeoImportDialog({
           {/* Right side: Preview and Logs */}
           <div className="space-y-4">
             {/* Preview Map */}
-            {analysis?.preview && (
+            {previewAvailable && analysis?.bounds && previewManagerRef.current && (
               <PreviewSection
-                preview={analysis.preview}
+                previewManager={previewManagerRef.current}
                 bounds={analysis.bounds}
                 coordinateSystem={options.coordinateSystem || analysis.coordinateSystem}
                 visibleLayers={state.visibleLayers}
+                analysis={{
+                  ...analysis,
+                  warnings: convertWarnings(analysis.warnings)
+                }}
               />
             )}
 
@@ -331,10 +392,10 @@ export function GeoImportDialog({
               loading={loading}
               hasErrors={state.hasErrors}
               onClearAndClose={() => {
-                setState(prev => ({ 
-                  ...prev, 
-                  logs: [], 
-                  hasErrors: false 
+                setState(prev => ({
+                  ...prev,
+                  logs: [],
+                  hasErrors: false
                 }));
                 onClose();
               }}
@@ -347,8 +408,8 @@ export function GeoImportDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button 
-            onClick={handleImport} 
+          <Button
+            onClick={handleImport}
             disabled={loading || state.hasErrors}
           >
             {loading ? 'Importing...' : 'Import'}
