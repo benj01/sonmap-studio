@@ -47,8 +47,24 @@ export function useMapView(
     let maxY = -Infinity;
 
     const updateBounds = (coords: [number, number]) => {
-      // Coordinates should already be in WGS84 [longitude, latitude] format
-      const [lon, lat] = coords;
+      // For Swiss coordinates, we need to transform to WGS84
+      let lon = coords[0];
+      let lat = coords[1];
+
+      if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        try {
+          const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
+          const transformed = transformer.transform({ x: coords[0], y: coords[1] });
+          if (transformed) {
+            lon = transformed.x;
+            lat = transformed.y;
+          }
+        } catch (error) {
+          console.error('Failed to transform coordinates:', error);
+          return;
+        }
+      }
+
       if (isFinite(lon) && isFinite(lat)) {
         minX = Math.min(minX, lon);
         minY = Math.min(minY, lat);
@@ -59,7 +75,7 @@ export function useMapView(
 
     const processCoordinates = (coords: any): void => {
       if (!Array.isArray(coords)) return;
-      if (typeof coords[0] === 'number') {
+      if (typeof coords[0] === 'number' && coords.length >= 2) {
         updateBounds(coords as [number, number]);
       } else {
         coords.forEach(c => processCoordinates(c));
@@ -67,17 +83,23 @@ export function useMapView(
     };
 
     features.forEach(feature => {
-      if ('coordinates' in feature.geometry) {
+      if (feature.geometry && 'coordinates' in feature.geometry) {
         processCoordinates(feature.geometry.coordinates);
       }
     });
 
     if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-      return null;
+      console.warn('Invalid bounds calculated, using default center');
+      return {
+        minX: DEFAULT_CENTER.longitude - 0.1,
+        minY: DEFAULT_CENTER.latitude - 0.1,
+        maxX: DEFAULT_CENTER.longitude + 0.1,
+        maxY: DEFAULT_CENTER.latitude + 0.1
+      };
     }
 
     return { minX, minY, maxX, maxY };
-  }, []);
+  }, [coordinateSystem]);
 
   const updateViewFromBounds = useCallback((bounds: Bounds) => {
     try {

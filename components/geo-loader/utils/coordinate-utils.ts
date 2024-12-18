@@ -97,7 +97,15 @@ export class CoordinateTransformer {
         throw new Error('Coordinate system definitions lost - reinitializing transformer');
       }
 
-      const [x, y] = this.transformer.forward([point.x, point.y]);
+      // For Swiss coordinate systems, we need to swap x/y before transformation
+      // because Swiss coordinates are typically given as (E,N) while proj4 expects (N,E)
+      const isSwissSystem = this.fromSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
+                           this.fromSystem === COORDINATE_SYSTEMS.SWISS_LV03;
+      
+      // Transform the point
+      const [x, y] = isSwissSystem ? 
+        this.transformer.forward([point.y, point.x]) : // Swap for Swiss systems
+        this.transformer.forward([point.x, point.y]);   // Don't swap for other systems
       
       if (!isFinite(x) || !isFinite(y)) {
         console.warn('Transformation resulted in invalid coordinates:', { x, y });

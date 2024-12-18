@@ -33,6 +33,7 @@ export function PreviewMap({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<any>(null);
+  const [mouseCoords, setMouseCoords] = useState<{ lng: number; lat: number } | null>(null);
   const mapRef = React.useRef<MapRef>(null);
 
   const {
@@ -216,10 +217,19 @@ export function PreviewMap({
   const handleMouseMove = useCallback((event: any) => {
     const features = event.features || [];
     setHoveredFeature(features[0]);
+    
+    // Update coordinates from the event's lngLat
+    if (event.lngLat) {
+      setMouseCoords({
+        lng: event.lngLat.lng,
+        lat: event.lngLat.lat
+      });
+    }
   }, []);
 
   const handleMouseLeave = useCallback(() => {
     setHoveredFeature(null);
+    setMouseCoords(null);
   }, []);
 
   return (
@@ -277,6 +287,12 @@ export function PreviewMap({
               </div>
             )}
           </div>
+
+          {mouseCoords && (
+            <div className="absolute bottom-8 left-2 bg-background/80 text-xs p-2 rounded">
+              Coordinates: {mouseCoords.lng.toFixed(6)}, {mouseCoords.lat.toFixed(6)}
+            </div>
+          )}
 
           {hoveredFeature && (
             <div

@@ -15,19 +15,20 @@ function vector3ToCoordinate(
 ): [number, number] | [number, number, number] {
   try {
     if (transformer) {
+      // For Swiss coordinates, x is Easting and y is Northing
       const transformed = transformer.transform({ x: v.x, y: v.y, z: v.z });
       if (transformed) {
-        // Convert to Mapbox format [longitude, latitude]
-        const [lon, lat] = toMapboxCoordinates(transformed);
+        // transformed.x will be longitude and transformed.y will be latitude
+        // after proj4 transformation, so no need to swap
         if (transformed.z !== undefined && isFinite(transformed.z)) {
-          return [lon, lat, transformed.z];
+          return [transformed.x, transformed.y, transformed.z];
         }
-        return [lon, lat];
+        return [transformed.x, transformed.y];
       }
     }
     
     // If no transformer or transformation failed, return original coordinates
-    // Still ensure proper longitude, latitude order for Mapbox
+    // For non-transformed coordinates, still need to ensure proper order
     if (v.z !== undefined && isFinite(v.z)) {
       return [v.x, v.y, v.z];
     }

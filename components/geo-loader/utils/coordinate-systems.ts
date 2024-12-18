@@ -107,7 +107,8 @@ export function needsTransformation(system: string): boolean {
  * @returns [longitude, latitude] array for Mapbox
  */
 export function toMapboxCoordinates(point: { x: number; y: number }): [number, number] {
-  // Mapbox expects coordinates in [longitude, latitude] format
+  // proj4js already returns coordinates in [longitude, latitude] order
+  // so we don't need to swap them here
   return [point.x, point.y];
 }
 
