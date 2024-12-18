@@ -1,21 +1,24 @@
 // components/geo-loader/processors/dxf-processor.ts
 
 import { BaseProcessor, ProcessorOptions, AnalyzeResult, ProcessorResult } from './base-processor';
-import { DxfData, DxfEntity } from '../utils/dxf/types';
+import { DxfData, DxfEntity, Vector3, isDxfPointEntity, isDxfLineEntity, isDxfPolylineEntity, isDxfCircleEntity } from '../utils/dxf/types';
 import { createDxfParser } from '../utils/dxf/core-parser';
 import { createDxfAnalyzer } from '../utils/dxf/analyzer';
 import { DxfConverter } from '../utils/dxf/converter';
-import { CoordinateTransformer } from '../utils/coordinate-utils';
-import { COORDINATE_SYSTEMS } from '../types/coordinates';
+import { CoordinateTransformer, suggestCoordinateSystem } from '../utils/coordinate-utils';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { Feature } from 'geojson';
+import { entityToGeoFeature } from '../utils/dxf/geo-converter';
 
 const PREVIEW_CHUNK_SIZE = 1000;
 const SAMPLE_RATE = 5;
+const PROCESS_CHUNK_SIZE = 500; // For chunked processing
 
 export class DxfProcessor extends BaseProcessor {
   private parser = createDxfParser();
   private analyzer = createDxfAnalyzer();
   private converter = new DxfConverter();
+  private rawDxfData: DxfData | undefined = undefined;
 
   constructor(options: ProcessorOptions = {}) {
     super(options);
@@ -36,13 +39,55 @@ export class DxfProcessor extends BaseProcessor {
 
   private async parseDxf(content: string): Promise<DxfData> {
     try {
-      return await this.parser.parse(content, {
+      const dxfData = await this.parser.parse(content, {
         validate: true,
-        onProgress: progress => this.emitProgress(progress * 0.5)
+        onProgress: progress => this.emitProgress(progress * 0.3) // Reduced to 30% for parsing
       });
+      this.rawDxfData = dxfData;
+      return dxfData;
     } catch (error) {
       throw new Error(`DXF parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  private getEntityCoordinates(entity: DxfEntity): Vector3[] {
+    if (isDxfPointEntity(entity)) {
+      return [entity.position];
+    } else if (isDxfLineEntity(entity)) {
+      return [entity.start, entity.end];
+    } else if (isDxfPolylineEntity(entity)) {
+      return entity.vertices;
+    } else if (isDxfCircleEntity(entity)) {
+      return [entity.center];
+    }
+    return [];
+  }
+
+  private detectCoordinateSystem(entities: DxfEntity[]): CoordinateSystem {
+    // Sample coordinates from different entity types
+    const sampleCoords: Vector3[] = [];
+    for (let i = 0; i < Math.min(entities.length, 100); i++) {
+      const coords = this.getEntityCoordinates(entities[i]);
+      sampleCoords.push(...coords);
+      if (sampleCoords.length >= 100) break;
+    }
+
+    if (sampleCoords.length === 0) return COORDINATE_SYSTEMS.WGS84;
+
+    // Check for common Swiss coordinate ranges
+    const isInSwissRange = sampleCoords.every(coord => 
+      coord.x >= 2000000 && coord.x <= 3000000 && 
+      coord.y >= 1000000 && coord.y <= 2000000
+    );
+
+    if (isInSwissRange) return COORDINATE_SYSTEMS.SWISS_LV95;
+
+    // Check for WGS84 range
+    const isInWGS84Range = sampleCoords.every(coord => 
+      Math.abs(coord.x) <= 180 && Math.abs(coord.y) <= 90
+    );
+
+    return isInWGS84Range ? COORDINATE_SYSTEMS.WGS84 : COORDINATE_SYSTEMS.SWISS_LV95;
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
@@ -75,44 +120,84 @@ export class DxfProcessor extends BaseProcessor {
       // Expand block references for preview
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
-      // Convert to GeoJSON features for preview
+      // Detect coordinate system
+      const detectedSystem = this.detectCoordinateSystem(expandedEntities);
+      
+      // Convert to GeoJSON features for preview with progress updates
       const previewFeatures: Feature[] = [];
       let processedCount = 0;
+      const totalEntities = expandedEntities.length;
       
       for (const entity of expandedEntities) {
         if (processedCount % SAMPLE_RATE === 0) {
-          const feature = this.parser.entityToGeoFeature(entity);
+          const feature = entityToGeoFeature(entity, {}, detectedSystem);
           if (feature) {
             previewFeatures.push(feature);
           }
         }
         processedCount++;
         
+        // Update progress (30-50%)
+        this.emitProgress(0.3 + (processedCount / totalEntities) * 0.2);
+        
         if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) {
           break;
         }
       }
 
-      // Calculate bounds from preview features
-      const bounds = this.calculateBounds(previewFeatures);
+      // Calculate bounds from preview features with padding
+      const bounds = this.calculateBounds(previewFeatures, 0.1); // 10% padding
 
       // Get all available layers
       const layers = this.parser.getLayers();
 
       return {
         layers,
-        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95,
+        coordinateSystem: detectedSystem,
         bounds,
         preview: {
           type: 'FeatureCollection',
           features: previewFeatures
         },
-        warnings
+        warnings,
+        dxfData: this.rawDxfData
       };
 
     } catch (error) {
       throw new Error(`DXF analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+
+  private async processChunk(entities: DxfEntity[], options: ProcessorOptions, startProgress: number, endProgress: number): Promise<Feature[]> {
+    const features: Feature[] = [];
+    const totalEntities = entities.length;
+
+    for (let i = 0; i < totalEntities; i++) {
+      const entity = entities[i];
+      
+      // Filter by layer and type if specified
+      if (options.selectedLayers?.length && !options.selectedLayers.includes(entity.layer || '0')) {
+        continue;
+      }
+      if (options.selectedTypes?.length && !options.selectedTypes.includes(entity.type)) {
+        continue;
+      }
+
+      try {
+        const feature = entityToGeoFeature(entity, {}, options.coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95);
+        if (feature) {
+          features.push(feature);
+        }
+      } catch (error) {
+        this.emitWarning(`Failed to convert ${entity.type} entity: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+
+      // Update progress
+      const progress = startProgress + ((i / totalEntities) * (endProgress - startProgress));
+      this.emitProgress(progress);
+    }
+
+    return features;
   }
 
   async process(file: File): Promise<ProcessorResult> {
@@ -122,55 +207,42 @@ export class DxfProcessor extends BaseProcessor {
       
       const statistics = this.createDefaultStats();
       const warnings: string[] = [];
-      const selectedLayers = this.options.selectedLayers || [];
-      const selectedTypes = this.options.selectedTypes || [];
       
       // Expand all block references
       const expandedEntities = this.parser.expandBlockReferences(dxf);
       
-      // Convert entities to GeoJSON features
+      // Process entities in chunks
+      const chunks: DxfEntity[][] = [];
+      for (let i = 0; i < expandedEntities.length; i += PROCESS_CHUNK_SIZE) {
+        chunks.push(expandedEntities.slice(i, i + PROCESS_CHUNK_SIZE));
+      }
+
       const features: Feature[] = [];
-      let failedConversions = 0;
-      
-      for (const entity of expandedEntities) {
-        // Filter by layer and type if specified
-        if (selectedLayers.length > 0 && !selectedLayers.includes(entity.layer || '0')) {
-          continue;
-        }
-        if (selectedTypes.length > 0 && !selectedTypes.includes(entity.type)) {
-          continue;
-        }
-
-        try {
-          const feature = this.parser.entityToGeoFeature(entity);
-          if (feature) {
-            features.push(feature);
-            this.updateStats(statistics, entity.type);
-          } else {
-            failedConversions++;
-            this.recordError(statistics, 'conversion', `Failed to convert ${entity.type} entity`);
+      for (let i = 0; i < chunks.length; i++) {
+        const startProgress = 0.5 + (i / chunks.length) * 0.5;
+        const endProgress = 0.5 + ((i + 1) / chunks.length) * 0.5;
+        
+        const chunkFeatures = await this.processChunk(
+          chunks[i],
+          this.options,
+          startProgress,
+          endProgress
+        );
+        
+        features.push(...chunkFeatures);
+        
+        // Update statistics
+        chunkFeatures.forEach(feature => {
+          if (feature.properties?.entityType) {
+            this.updateStats(statistics, feature.properties.entityType);
           }
-        } catch (error) {
-          failedConversions++;
-          this.recordError(
-            statistics,
-            'conversion',
-            `Error converting ${entity.type} entity: ${error instanceof Error ? error.message : 'Unknown error'}`
-          );
-        }
-
-        // Update progress
-        this.emitProgress(0.5 + (features.length / expandedEntities.length) * 0.5);
+        });
       }
 
-      if (failedConversions > 0) {
-        warnings.push(`Failed to convert ${failedConversions} entities`);
-      }
+      // Calculate final bounds with padding
+      const bounds = this.calculateBounds(features, 0.1); // 10% padding
 
-      // Calculate final bounds
-      const bounds = this.calculateBounds(features);
-
-      statistics.layerCount = selectedLayers.length || this.parser.getLayers().length;
+      statistics.layerCount = this.options.selectedLayers?.length || this.parser.getLayers().length;
 
       return {
         features: {
@@ -181,7 +253,8 @@ export class DxfProcessor extends BaseProcessor {
         layers: this.parser.getLayers(),
         coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95,
         statistics,
-        warnings
+        warnings,
+        dxfData: this.rawDxfData
       };
 
     } catch (error) {
@@ -189,7 +262,7 @@ export class DxfProcessor extends BaseProcessor {
     }
   }
 
-  private calculateBounds(features: Feature[]): ProcessorResult['bounds'] {
+  private calculateBounds(features: Feature[], padding: number = 0): ProcessorResult['bounds'] {
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -204,14 +277,26 @@ export class DxfProcessor extends BaseProcessor {
       }
     });
 
+    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+      return {
+        minX: 0,
+        minY: 0,
+        maxX: 1,
+        maxY: 1
+      };
+    }
+
+    // Add padding
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const paddingX = width * padding;
+    const paddingY = height * padding;
+
     return {
-      minX: isFinite(minX) ? minX : 0,
-      minY: isFinite(minY) ? minY : 0,
-      maxX: isFinite(maxX) ? maxX : 1,
-      maxY: isFinite(maxY) ? maxY : 1
+      minX: minX - paddingX,
+      minY: minY - paddingY,
+      maxX: maxX + paddingX,
+      maxY: maxY + paddingY
     };
   }
 }
-
-// Register the DXF processor
-ProcessorRegistry.register('dxf', DxfProcessor);

@@ -1,8 +1,9 @@
 // components/geo-loader/preview/preview-manager.ts
 
-import { Feature, FeatureCollection } from 'geojson';
+import { Feature, FeatureCollection, Position, Geometry } from 'geojson';
 import { CoordinateSystem } from '../types/coordinates';
 import { Analysis } from '../types/map';
+import { CoordinateTransformer } from '../utils/coordinate-utils';
 
 interface PreviewOptions {
   maxFeatures?: number;
@@ -12,6 +13,7 @@ interface PreviewOptions {
     layer: string;
   };
   analysis?: Analysis;
+  coordinateSystem?: CoordinateSystem;
 }
 
 interface FeatureGroup {
@@ -26,6 +28,7 @@ export class PreviewManager {
   private features: Feature[] = [];
   private options: PreviewOptions;
   private warningFlags: Map<string, Set<string>> = new Map(); // layer -> set of warning handles
+  private transformer?: CoordinateTransformer;
 
   constructor(options: PreviewOptions = {}) {
     this.options = {
@@ -33,6 +36,15 @@ export class PreviewManager {
       visibleLayers: [],
       ...options
     };
+
+    // Initialize coordinate transformer if needed
+    if (options.coordinateSystem) {
+      try {
+        this.transformer = new CoordinateTransformer(options.coordinateSystem, 'EPSG:4326');
+      } catch (error) {
+        console.warn('Failed to initialize coordinate transformer:', error);
+      }
+    }
   }
 
   setFeatures(features: Feature[] | FeatureCollection) {
@@ -41,6 +53,16 @@ export class PreviewManager {
     } else {
       this.features = features.features;
     }
+
+    // Add coordinate system info to feature properties
+    if (this.options.coordinateSystem) {
+      this.features.forEach(feature => {
+        if (!feature.properties) {
+          feature.properties = {};
+        }
+        feature.properties.sourceCoordinateSystem = this.options.coordinateSystem;
+      });
+    }
   }
 
   setOptions(options: Partial<PreviewOptions>) {
@@ -48,6 +70,15 @@ export class PreviewManager {
       ...this.options,
       ...options
     };
+
+    // Update transformer if coordinate system changes
+    if (options.coordinateSystem && options.coordinateSystem !== this.options.coordinateSystem) {
+      try {
+        this.transformer = new CoordinateTransformer(options.coordinateSystem, 'EPSG:4326');
+      } catch (error) {
+        console.warn('Failed to update coordinate transformer:', error);
+      }
+    }
   }
 
   addWarningFlag(layer: string, handle: string) {
@@ -118,19 +149,32 @@ export class PreviewManager {
   } {
     const grouped = this.groupFeatures();
 
+    // Add coordinate system info to feature collections
+    const addMetadata = (collection: FeatureCollection) => {
+      if (this.options.coordinateSystem) {
+        collection.features.forEach(feature => {
+          if (!feature.properties) {
+            feature.properties = {};
+          }
+          feature.properties.sourceCoordinateSystem = this.options.coordinateSystem;
+        });
+      }
+      return collection;
+    };
+
     return {
-      points: {
+      points: addMetadata({
         type: 'FeatureCollection',
         features: grouped.points
-      },
-      lines: {
+      }),
+      lines: addMetadata({
         type: 'FeatureCollection',
         features: grouped.lines
-      },
-      polygons: {
+      }),
+      polygons: addMetadata({
         type: 'FeatureCollection',
         features: grouped.polygons
-      },
+      }),
       totalCount: this.features.length,
       visibleCount: grouped.points.length + grouped.lines.length + grouped.polygons.length
     };
@@ -149,26 +193,46 @@ export class PreviewManager {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    const updateBounds = (coords: number[]) => {
+    const updateBounds = (coords: Position) => {
       minX = Math.min(minX, coords[0]);
       minY = Math.min(minY, coords[1]);
       maxX = Math.max(maxX, coords[0]);
       maxY = Math.max(maxY, coords[1]);
     };
 
-    const processCoordinates = (coordinates: number[] | number[][] | number[][][]) => {
+    const processCoordinates = (coordinates: Position | Position[] | Position[][]) => {
       if (typeof coordinates[0] === 'number') {
-        updateBounds(coordinates as number[]);
-      } else if (Array.isArray(coordinates[0])) {
-        coordinates.forEach(coords => processCoordinates(coords));
+        updateBounds(coordinates as Position);
+      } else {
+        (coordinates as Position[] | Position[][]).forEach(coords => 
+          processCoordinates(coords)
+        );
       }
     };
 
     this.features.forEach(feature => {
-      if (feature.geometry.type === 'Point') {
-        updateBounds(feature.geometry.coordinates as number[]);
-      } else {
-        processCoordinates(feature.geometry.coordinates as any);
+      const geometry = feature.geometry;
+      switch (geometry.type) {
+        case 'Point':
+          updateBounds(geometry.coordinates);
+          break;
+        case 'MultiPoint':
+        case 'LineString':
+          geometry.coordinates.forEach(coord => updateBounds(coord));
+          break;
+        case 'MultiLineString':
+        case 'Polygon':
+          geometry.coordinates.forEach(line => 
+            line.forEach(coord => updateBounds(coord))
+          );
+          break;
+        case 'MultiPolygon':
+          geometry.coordinates.forEach(poly => 
+            poly.forEach(line => 
+              line.forEach(coord => updateBounds(coord))
+            )
+          );
+          break;
       }
     });
 

@@ -209,27 +209,35 @@ export class ShapefileProcessor extends BaseProcessor {
       }
 
       // Process features
-      let processedCount = 0;
+      let processedBytes = 100; // Start after header
       for await (const feature of this.parser.streamFeatures(shpBuffer, header)) {
         try {
           // Add attributes if available
-          if (attributeData[processedCount + 1]) {
+          if (attributeData[features.length + 1]) {
             feature.properties = { 
               ...feature.properties, 
-              ...attributeData[processedCount + 1] 
+              ...attributeData[features.length + 1] 
             };
           }
 
           features.push(feature);
           this.updateStats(statistics, feature.geometry.type);
-          processedCount++;
           
-          this.emitProgress(processedCount / header.recordCount);
+          // Update progress based on processed bytes vs total file length
+          processedBytes += 8; // Record header
+          if (feature.geometry.type === 'Point') {
+            processedBytes += 20; // Point record size
+          } else {
+            // For other types, estimate progress based on current position
+            processedBytes = Math.min(processedBytes + 100, header.fileLength);
+          }
+          
+          this.emitProgress(processedBytes / header.fileLength);
         } catch (error) {
           this.recordError(
             statistics,
             'feature_processing',
-            `Failed to process feature ${processedCount}`
+            `Failed to process feature ${features.length}`
           );
         }
       }
@@ -257,6 +265,3 @@ export class ShapefileProcessor extends BaseProcessor {
     }
   }
 }
-
-// Register the shapefile processor
-ProcessorRegistry.register('shp', ShapefileProcessor);

@@ -1,5 +1,6 @@
 import { Alert, AlertDescription } from 'components/ui/alert';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { Button } from 'components/ui/button';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
 import { DxfStructureView } from '../dxf-structure-view';
 import { CoordinateSystemSelect } from '../coordinate-system-select';
@@ -17,6 +18,8 @@ export function SettingsSection({
   onLayerVisibilityToggle,
   onTemplateSelect,
   onCoordinateSystemChange,
+  pendingCoordinateSystem,
+  onApplyCoordinateSystem,
 }: SettingsSectionProps) {
   const isDxfFile = file.name.toLowerCase().endsWith('.dxf');
   const showCoordinateWarning = analysis?.coordinateSystem === COORDINATE_SYSTEMS.WGS84 && 
@@ -26,6 +29,8 @@ export function SettingsSection({
       Math.abs(analysis.bounds.maxY) > 90 || 
       Math.abs(analysis.bounds.minY) > 90
     );
+
+  const coordinateSystemChanged = pendingCoordinateSystem !== options.coordinateSystem;
 
   return (
     <div className="space-y-4">
@@ -40,12 +45,32 @@ export function SettingsSection({
       )}
 
       {/* Coordinate System Select */}
-      <div className="border rounded-lg p-4">
+      <div className="border rounded-lg p-4 space-y-4">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-medium">Coordinate System</h4>
+          {coordinateSystemChanged && onApplyCoordinateSystem && (
+            <Button
+              onClick={onApplyCoordinateSystem}
+              size="sm"
+              className="gap-2"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Apply Changes
+            </Button>
+          )}
+        </div>
         <CoordinateSystemSelect
-          value={options.coordinateSystem || ''}
+          value={pendingCoordinateSystem || options.coordinateSystem || ''}
           defaultValue={analysis?.coordinateSystem}
           onChange={onCoordinateSystemChange}
         />
+        {coordinateSystemChanged && (
+          <Alert className="mt-2">
+            <AlertDescription className="text-sm">
+              Click "Apply Changes" to update the preview with the new coordinate system.
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
 
       {/* DXF Structure View */}

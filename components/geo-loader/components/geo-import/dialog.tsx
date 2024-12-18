@@ -1,17 +1,23 @@
+// components/geo-loader/components/geo-import/dialog.tsx
+
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from 'components/ui/dialog';
 import { Button } from 'components/ui/button';
 import { Alert, AlertDescription } from 'components/ui/alert';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
 import { GeoImportDialogProps, ImportState, LogType, ImportOptions } from './types';
 import { PreviewSection } from './preview-section';
 import { SettingsSection } from './settings-section';
 import { LogsSection } from './logs-section';
-import { createProcessor } from '../../processors/base-processor';
-import { ProcessorResult, AnalyzeResult, ProcessorOptions, ProcessorStats } from '../../processors/base-processor';
+import { createProcessor, ProcessorResult, AnalyzeResult, ProcessorOptions, ProcessorStats } from '../../processors';
 import { createPreviewManager, PreviewManager } from '../../preview/preview-manager';
 import { LoaderResult, GeoFeature } from 'types/geo';
+import { initializeCoordinateSystems } from '../../utils/coordinate-systems';
+import proj4 from 'proj4';
+
+// Import processors to ensure they're registered
+import '../../processors';
 
 // Convert processor warnings to Analysis warnings format
 const convertWarnings = (warnings: string[] = []): { type: string; message: string }[] => {
@@ -49,6 +55,7 @@ export function GeoImportDialog({
     selectedTemplates: [],
   });
   const [coordinateSystem, setCoordinateSystem] = useState<CoordinateSystem | undefined>(undefined);
+  const [pendingCoordinateSystem, setPendingCoordinateSystem] = useState<CoordinateSystem | undefined>(undefined);
 
   // Preview manager instance
   const previewManagerRef = useRef<PreviewManager | null>(null);
@@ -92,6 +99,19 @@ export function GeoImportDialog({
     });
   }, []);
 
+  // Processor callbacks for logging
+  const onWarning = useCallback((message: string) => {
+    addLogs([{ message, type: 'warning' }]);
+  }, [addLogs]);
+
+  const onError = useCallback((message: string) => {
+    addLogs([{ message, type: 'error' }]);
+  }, [addLogs]);
+
+  const onProgress = useCallback((progress: number) => {
+    addLogs([{ message: `Progress: ${(progress * 100).toFixed(1)}%`, type: 'info' }]);
+  }, [addLogs]);
+
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
     setState((prev: ImportState) => {
       const newLayers = enabled 
@@ -132,21 +152,94 @@ export function GeoImportDialog({
   }, []);
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
-    setCoordinateSystem(value as CoordinateSystem);
-  }, []);
-
-  // Processor callbacks for logging
-  const onWarning = useCallback((message: string) => {
-    addLogs([{ message, type: 'warning' }]);
+    // Verify coordinate system is registered before setting
+    if (!proj4.defs(value)) {
+      addLogs([{
+        message: `Cannot use coordinate system ${value}: not properly initialized`,
+        type: 'error'
+      }]);
+      return;
+    }
+    setPendingCoordinateSystem(value as CoordinateSystem);
   }, [addLogs]);
 
-  const onError = useCallback((message: string) => {
-    addLogs([{ message, type: 'error' }]);
-  }, [addLogs]);
+  const handleApplyCoordinateSystem = useCallback(async () => {
+    if (!pendingCoordinateSystem || !file || !analysis) return;
 
-  const onProgress = useCallback((progress: number) => {
-    addLogs([{ message: `Progress: ${(progress * 100).toFixed(1)}%`, type: 'info' }]);
-  }, [addLogs]);
+    setLoading(true);
+    try {
+      const processor = await createProcessor(file, {
+        onWarning,
+        onError,
+        onProgress,
+        coordinateSystem: pendingCoordinateSystem
+      } as ProcessorOptions);
+
+      if (!processor) {
+        onError(`No processor available for file: ${file.name}`);
+        return;
+      }
+
+      const result = await processor.analyze(file);
+      setAnalysis(result);
+      setDxfData(result.dxfData);
+      setCoordinateSystem(pendingCoordinateSystem);
+      setPendingCoordinateSystem(undefined);
+
+      // Update preview manager
+      if (previewManagerRef.current && result.preview) {
+        previewManagerRef.current.setOptions({
+          coordinateSystem: pendingCoordinateSystem,
+          analysis: {
+            ...result,
+            warnings: convertWarnings(result.warnings)
+          }
+        });
+        previewManagerRef.current.setFeatures(result.preview);
+      }
+
+      addLogs([{
+        message: `Applied coordinate system: ${pendingCoordinateSystem}`,
+        type: 'info'
+      }]);
+    } catch (error) {
+      const err = error as Error;
+      addLogs([{
+        message: `Failed to apply coordinate system: ${err.message}`,
+        type: 'error'
+      }]);
+    } finally {
+      setLoading(false);
+    }
+  }, [pendingCoordinateSystem, file, analysis, onWarning, onError, onProgress, addLogs]);
+
+  // Initialize coordinate systems when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      try {
+        // Initialize coordinate systems
+        initializeCoordinateSystems();
+        
+        // Verify initialization
+        const systems = [
+          COORDINATE_SYSTEMS.SWISS_LV95,
+          COORDINATE_SYSTEMS.SWISS_LV03,
+          COORDINATE_SYSTEMS.WGS84
+        ];
+        
+        const unregisteredSystems = systems.filter(system => !proj4.defs(system));
+        if (unregisteredSystems.length > 0) {
+          throw new Error(`Failed to initialize coordinate systems: ${unregisteredSystems.join(', ')}`);
+        }
+      } catch (error) {
+        const err = error as Error;
+        addLogs([{
+          message: `Coordinate system initialization error: ${err.message}`,
+          type: 'error'
+        }]);
+      }
+    }
+  }, [isOpen, addLogs]);
 
   // Handle dialog open/close and file analysis
   useEffect(() => {
@@ -173,6 +266,8 @@ export function GeoImportDialog({
       processedLogsRef.current.clear();
       setAnalysis(null);
       setDxfData(null);
+      setCoordinateSystem(undefined);
+      setPendingCoordinateSystem(undefined);
 
       currentFileRef.current = file;
       setLoading(true);
@@ -192,6 +287,7 @@ export function GeoImportDialog({
 
           const result = await processor.analyze(file);
           setAnalysis(result);
+          setDxfData(result.dxfData);
 
           // Initialize layers
           const layers = result.layers || [];
@@ -201,9 +297,12 @@ export function GeoImportDialog({
             visibleLayers: layers
           }));
 
-          // Initialize coordinate system
-          if (result.coordinateSystem) {
+          // Initialize coordinate system if properly registered
+          if (result.coordinateSystem && proj4.defs(result.coordinateSystem)) {
             setCoordinateSystem(result.coordinateSystem as CoordinateSystem);
+            setPendingCoordinateSystem(result.coordinateSystem as CoordinateSystem);
+          } else if (result.coordinateSystem) {
+            onWarning(`Detected coordinate system ${result.coordinateSystem} is not properly initialized`);
           }
 
           // Initialize preview manager
@@ -213,7 +312,8 @@ export function GeoImportDialog({
             analysis: {
               ...result,
               warnings: convertWarnings(result.warnings)
-            }
+            },
+            coordinateSystem: result.coordinateSystem
           });
           if (result.preview) {
             previewManagerRef.current.setFeatures(result.preview);
@@ -230,10 +330,19 @@ export function GeoImportDialog({
     } else if (!isOpen) {
       currentFileRef.current = null;
     }
-  }, [isOpen, file, analysis, onError, onProgress, onWarning]);
+  }, [isOpen, file, analysis, onError, onProgress, onWarning, addLogs]);
 
   const handleImport = async () => {
     if (!file) return;
+
+    // Verify coordinate system is properly initialized
+    if (coordinateSystem && !proj4.defs(coordinateSystem)) {
+      addLogs([{
+        message: `Cannot import with coordinate system ${coordinateSystem}: not properly initialized`,
+        type: 'error'
+      }]);
+      return;
+    }
 
     setLoading(true);
     try {
@@ -311,9 +420,20 @@ export function GeoImportDialog({
 
       addLogs(importLogs);
 
-      onImportComplete(result);
-      if (!state.hasErrors && !(result.statistics?.failedTransformations)) {
-        onClose();
+      try {
+        await onImportComplete(result);
+        if (!state.hasErrors && !(result.statistics?.failedTransformations)) {
+          onClose();
+        }
+      } catch (error) {
+        if (error instanceof Error && error.message.includes('Duplicate')) {
+          addLogs([{
+            message: 'A file with this name already exists. Please delete the existing file first.',
+            type: 'error'
+          }]);
+        } else {
+          throw error;
+        }
       }
     } catch (error) {
       const err = error as Error;
@@ -336,6 +456,7 @@ export function GeoImportDialog({
   };
 
   const previewAvailable = analysis && previewManagerRef.current?.hasVisibleFeatures();
+  const coordinateSystemChanged = pendingCoordinateSystem !== coordinateSystem;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -358,7 +479,7 @@ export function GeoImportDialog({
           {/* Left side: Settings */}
           <SettingsSection
             file={file}
-            dxfData={dxfData || undefined}
+            dxfData={dxfData}
             analysis={analysis || undefined}
             options={options}
             selectedLayers={state.selectedLayers}
@@ -368,6 +489,8 @@ export function GeoImportDialog({
             onLayerVisibilityToggle={handleLayerVisibilityToggle}
             onTemplateSelect={handleTemplateSelect}
             onCoordinateSystemChange={handleCoordinateSystemChange}
+            pendingCoordinateSystem={pendingCoordinateSystem}
+            onApplyCoordinateSystem={handleApplyCoordinateSystem}
           />
 
           {/* Right side: Preview and Logs */}
@@ -408,9 +531,19 @@ export function GeoImportDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
+          {coordinateSystemChanged && (
+            <Button
+              onClick={handleApplyCoordinateSystem}
+              disabled={loading || !pendingCoordinateSystem}
+              className="gap-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              Apply Coordinate System
+            </Button>
+          )}
           <Button
             onClick={handleImport}
-            disabled={loading || state.hasErrors}
+            disabled={loading || state.hasErrors || coordinateSystemChanged}
           >
             {loading ? 'Importing...' : 'Import'}
           </Button>

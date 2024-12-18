@@ -1,5 +1,3 @@
-// components/geo-loader/utils/coordinate-utils.ts
-
 import proj4 from 'proj4';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 
@@ -33,16 +31,26 @@ export class CoordinateTransformer {
     this.fromSystem = fromSystem;
     this.toSystem = toSystem;
 
-    // Validate that the coordinate systems are defined in proj4
-    if (!proj4.defs(this.fromSystem)) {
-      throw new Error(`Unsupported coordinate system: ${this.fromSystem}`);
-    }
-    if (!proj4.defs(this.toSystem)) {
-      throw new Error(`Unsupported coordinate system: ${this.toSystem}`);
+    // Verify proj4 is available globally
+    if (!(window as any).proj4) {
+      console.warn('proj4 is not initialized globally. Coordinate transformations may fail.');
     }
 
-    // Create and store the transformer for reuse
-    this.transformer = proj4(this.fromSystem, this.toSystem);
+    // Validate that the coordinate systems are defined in proj4
+    if (!proj4.defs(this.fromSystem)) {
+      throw new Error(`Source coordinate system not registered: ${this.fromSystem}`);
+    }
+    if (!proj4.defs(this.toSystem)) {
+      throw new Error(`Target coordinate system not registered: ${this.toSystem}`);
+    }
+
+    try {
+      // Create and store the transformer for reuse
+      this.transformer = proj4(this.fromSystem, this.toSystem);
+    } catch (error) {
+      console.error('Failed to create coordinate transformer:', error);
+      throw new Error(`Failed to initialize transformer from ${fromSystem} to ${toSystem}`);
+    }
   }
 
   private validatePoint(point: Point): boolean {
@@ -84,6 +92,11 @@ export class CoordinateTransformer {
         return null;
       }
 
+      // Verify transformers are still valid
+      if (!proj4.defs(this.fromSystem) || !proj4.defs(this.toSystem)) {
+        throw new Error('Coordinate system definitions lost - reinitializing transformer');
+      }
+
       const [x, y] = this.transformer.forward([point.x, point.y]);
       
       if (!isFinite(x) || !isFinite(y)) {
@@ -97,6 +110,16 @@ export class CoordinateTransformer {
       return { x, y, z: point.z };
     } catch (error) {
       console.error('Transformation error:', error);
+      // Try to recreate transformer if it failed
+      try {
+        this.transformer = proj4(this.fromSystem, this.toSystem);
+        const [x, y] = this.transformer.forward([point.x, point.y]);
+        if (isFinite(x) && isFinite(y)) {
+          return { x, y, z: point.z };
+        }
+      } catch (retryError) {
+        console.error('Retry transformation failed:', retryError);
+      }
       return null;
     }
   }
@@ -118,6 +141,11 @@ export class CoordinateTransformer {
       if (bounds.minX > bounds.maxX || bounds.minY > bounds.maxY) {
         console.warn('Invalid bounds: min values greater than max values:', bounds);
         return null;
+      }
+
+      // Verify transformers are still valid
+      if (!proj4.defs(this.fromSystem) || !proj4.defs(this.toSystem)) {
+        throw new Error('Coordinate system definitions lost - reinitializing transformer');
       }
 
       const transformedMin = this.transform({ x: bounds.minX, y: bounds.minY });
@@ -146,40 +174,6 @@ export class CoordinateTransformer {
       };
     } catch (error) {
       console.error('Bounds transformation error:', error);
-      return null;
-    }
-  }
-
-  static convertLV03ToLV95(point: Point): Point | null {
-    try {
-      const validator = new CoordinateTransformer('EPSG:21781', 'EPSG:2056');
-      if (!validator.validatePoint(point)) {
-        return null;
-      }
-      return {
-        x: point.x + 2000000,
-        y: point.y + 1000000,
-        z: point.z
-      };
-    } catch (error) {
-      console.error('LV03 to LV95 conversion error:', error);
-      return null;
-    }
-  }
-
-  static convertLV95ToLV03(point: Point): Point | null {
-    try {
-      const validator = new CoordinateTransformer('EPSG:2056', 'EPSG:21781');
-      if (!validator.validatePoint(point)) {
-        return null;
-      }
-      return {
-        x: point.x - 2000000,
-        y: point.y - 1000000,
-        z: point.z
-      };
-    } catch (error) {
-      console.error('LV95 to LV03 conversion error:', error);
       return null;
     }
   }
@@ -260,9 +254,9 @@ function detectLV03Coordinates(points: Point[]): boolean {
 
 /**
  * suggestCoordinateSystem:
- * Given a set of points, suggest the most likely CRS.
+ * Given a set of points, suggest the most likely coordinate system.
  */
-function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
+export function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
   try {
     if (!Array.isArray(points) || points.length === 0) {
       console.warn('No points provided for coordinate system detection');
@@ -309,10 +303,3 @@ function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
     return COORDINATE_SYSTEMS.WGS84;
   }
 }
-
-// Export the helper functions and types
-export {
-  detectLV95Coordinates,
-  detectLV03Coordinates,
-  suggestCoordinateSystem
-};

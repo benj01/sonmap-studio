@@ -2,13 +2,35 @@ import proj4 from 'proj4';
 import { CoordinateTransformer } from './coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../types/coordinates';
 
-// Register the coordinate systems with proj4
-proj4.defs(COORDINATE_SYSTEMS.WGS84, '+proj=longlat +datum=WGS84 +no_defs');
-proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95, '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs');
-proj4.defs(COORDINATE_SYSTEMS.SWISS_LV03, '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs');
+// Initialize coordinate systems
+export function initializeCoordinateSystems() {
+  // Swiss LV95 / EPSG:2056
+  proj4.defs(
+    COORDINATE_SYSTEMS.SWISS_LV95,
+    '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs'
+  );
 
-// Special handling for local coordinates (no transformation)
-proj4.defs(COORDINATE_SYSTEMS.NONE, '+proj=longlat +datum=WGS84 +no_defs');
+  // Swiss LV03 / EPSG:21781
+  proj4.defs(
+    COORDINATE_SYSTEMS.SWISS_LV03,
+    '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs'
+  );
+
+  // WGS84 / EPSG:4326
+  proj4.defs(
+    COORDINATE_SYSTEMS.WGS84,
+    '+proj=longlat +datum=WGS84 +no_defs +type=crs'
+  );
+
+  // Special handling for local coordinates (no transformation)
+  proj4.defs(
+    COORDINATE_SYSTEMS.NONE,
+    '+proj=longlat +datum=WGS84 +no_defs +type=crs'
+  );
+
+  // Register with proj4 globally
+  (window as any).proj4 = proj4;
+}
 
 /**
  * Creates a new CoordinateTransformer instance for transforming coordinates

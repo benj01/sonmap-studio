@@ -4,6 +4,7 @@ import { Feature, BBox } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
+import proj4 from 'proj4';
 
 export function useMapView(
   initialBounds?: Bounds,
@@ -16,6 +17,23 @@ export function useMapView(
     bearing: 0,
     pitch: 0
   });
+
+  // Verify coordinate system is registered
+  useEffect(() => {
+    if (coordinateSystem && !proj4.defs(coordinateSystem)) {
+      console.error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
+      // Set a default view of Switzerland if we're using Swiss coordinates
+      if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
+          coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
+        setViewState(prev => ({
+          ...prev,
+          longitude: 8.2275,  // Approximate center of Switzerland
+          latitude: 46.8182,
+          zoom: 7
+        }));
+      }
+    }
+  }, [coordinateSystem]);
 
   const calculateBoundsFromFeatures = useCallback((features: Feature[]): Bounds | null => {
     if (!features.length) return null;
@@ -56,54 +74,72 @@ export function useMapView(
 
   const updateViewFromBounds = useCallback((bounds: Bounds) => {
     try {
+      // Verify coordinate system is registered before attempting transformation
+      if (coordinateSystem && !proj4.defs(coordinateSystem)) {
+        throw new Error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
+      }
+
       let transformedBounds = bounds;
       
+      // Only transform if we're not already in WGS84
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-        const result = transformer.transformBounds(bounds);
-        if (!result) {
-          console.warn('Failed to transform bounds');
-          return;
+        try {
+          const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
+          const result = transformer.transformBounds(bounds);
+          if (!result) {
+            throw new Error(`Failed to transform bounds from ${coordinateSystem} to WGS84`);
+          }
+          transformedBounds = result;
+        } catch (error) {
+          console.error('Coordinate transformation error:', error);
+          // If transformation fails, try to use original bounds but constrained to valid ranges
+          transformedBounds = {
+            minX: Math.max(Math.min(bounds.minX, 180), -180),
+            minY: Math.max(Math.min(bounds.minY, 90), -90),
+            maxX: Math.max(Math.min(bounds.maxX, 180), -180),
+            maxY: Math.max(Math.min(bounds.maxY, 90), -90)
+          };
         }
-        transformedBounds = result;
       }
 
+      // Ensure bounds are valid
       if (!isFinite(transformedBounds.minX) || !isFinite(transformedBounds.minY) ||
           !isFinite(transformedBounds.maxX) || !isFinite(transformedBounds.maxY)) {
-        console.warn('Invalid bounds:', transformedBounds);
-        return;
+        throw new Error('Invalid bounds: coordinates are not finite numbers');
       }
 
-      const validMinLat = Math.max(transformedBounds.minY, -90);
-      const validMaxLat = Math.min(transformedBounds.maxY, 90);
+      // Constrain to valid WGS84 ranges
+      const validMinLat = Math.max(transformedBounds.minY, -85); // Use 85 instead of 90 for better Mercator projection
+      const validMaxLat = Math.min(transformedBounds.maxY, 85);
       const validMinLon = Math.max(transformedBounds.minX, -180);
       const validMaxLon = Math.min(transformedBounds.maxX, 180);
 
+      // Calculate center point
       const center = {
         lng: (validMinLon + validMaxLon) / 2,
         lat: (validMinLat + validMaxLat) / 2
       };
 
+      // Validate center coordinates
       if (!isFinite(center.lng) || !isFinite(center.lat)) {
-        console.warn('Invalid center coordinates:', center);
-        return;
+        throw new Error('Invalid center coordinates: not finite numbers');
       }
 
-      if (center.lat < -90 || center.lat > 90 || center.lng < -180 || center.lng > 180) {
-        console.warn('Center coordinates out of WGS84 bounds:', center);
-        return;
-      }
-
+      // Calculate appropriate zoom level
       const width = Math.abs(validMaxLon - validMinLon);
       const height = Math.abs(validMaxLat - validMinLat);
       const maxDimension = Math.max(width, height);
       
+      // Adjust zoom calculation based on coordinate system
       let zoom = coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
                  coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03
-        ? Math.floor(14 - Math.log2(maxDimension / 1000))
-        : Math.floor(14 - Math.log2(maxDimension));
+        ? Math.floor(14 - Math.log2(maxDimension / 1000)) // For meter-based systems
+        : Math.floor(14 - Math.log2(maxDimension));       // For degree-based systems
 
+      // Ensure zoom is within valid range
       zoom = Math.min(Math.max(zoom, 1), 20);
+      
+      // Add a small zoom out for better context
       zoom = Math.max(1, zoom - 1);
 
       setViewState(prev => ({
@@ -114,6 +150,17 @@ export function useMapView(
       }));
     } catch (error) {
       console.error('Error setting map view state:', error);
+      // Set a default view of Switzerland if we're using Swiss coordinates
+      if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
+          coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03) {
+        setViewState(prev => ({
+          ...prev,
+          longitude: 8.2275,  // Approximate center of Switzerland
+          latitude: 46.8182,
+          zoom: 7
+        }));
+      }
+      throw error;
     }
   }, [coordinateSystem]);
 

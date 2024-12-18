@@ -53,6 +53,8 @@ export interface SettingsSectionProps {
   onLayerVisibilityToggle: (layer: string, visible: boolean) => void;
   onTemplateSelect: (template: string, enabled: boolean) => void;
   onCoordinateSystemChange: (value: string) => void;
+  pendingCoordinateSystem?: CoordinateSystem;
+  onApplyCoordinateSystem?: () => void;
 }
 
 export interface LogsSectionProps {

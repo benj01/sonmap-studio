@@ -1,15 +1,38 @@
 import { Vector3, DxfEntity, DxfPolylineEntity } from './types';
 import { Feature, Geometry, Point, LineString, Polygon } from 'geojson';
 import { GeoFeature } from '../../../../types/geo';
+import { CoordinateTransformer } from '../coordinate-utils';
+import { COORDINATE_SYSTEMS } from '../../types/coordinates';
+import proj4 from 'proj4';
 
 /**
- * Convert a Vector3 to a GeoJSON coordinate array
+ * Convert a Vector3 to a GeoJSON coordinate array, optionally transforming coordinates
  */
-function vector3ToCoordinate(v: Vector3): [number, number] | [number, number, number] {
-  if (v.z !== undefined && isFinite(v.z)) {
-    return [v.x, v.y, v.z];
+function vector3ToCoordinate(
+  v: Vector3,
+  transformer?: CoordinateTransformer
+): [number, number] | [number, number, number] {
+  try {
+    if (transformer) {
+      const transformed = transformer.transform({ x: v.x, y: v.y, z: v.z });
+      if (transformed) {
+        if (transformed.z !== undefined && isFinite(transformed.z)) {
+          return [transformed.x, transformed.y, transformed.z];
+        }
+        return [transformed.x, transformed.y];
+      }
+    }
+    
+    // If no transformer or transformation failed, return original coordinates
+    if (v.z !== undefined && isFinite(v.z)) {
+      return [v.x, v.y, v.z];
+    }
+    return [v.x, v.y];
+  } catch (error) {
+    console.error('Coordinate transformation error:', error);
+    // Return original coordinates as fallback
+    return [v.x, v.y];
   }
-  return [v.x, v.y];
 }
 
 /**
@@ -64,30 +87,23 @@ function generateEllipsePoints(
   const totalAngle = endAngle > startAngle ? endRad - startRad : (2 * Math.PI) - (startRad - endRad);
   const angleStep = totalAngle / segments;
 
-  // Calculate major and minor axis lengths
   const majorLength = Math.sqrt(
     Math.pow(majorAxis.x, 2) + Math.pow(majorAxis.y, 2)
   );
   const minorLength = majorLength * minorAxisRatio;
-
-  // Calculate rotation angle of the ellipse
   const rotation = Math.atan2(majorAxis.y, majorAxis.x);
 
   for (let i = 0; i <= segments; i++) {
     const angle = startRad + (i * angleStep);
-    // Generate point on unit circle
     const x = Math.cos(angle);
     const y = Math.sin(angle);
     
-    // Scale to ellipse size
     const scaledX = x * majorLength;
     const scaledY = y * minorLength;
     
-    // Rotate
     const rotatedX = scaledX * Math.cos(rotation) - scaledY * Math.sin(rotation);
     const rotatedY = scaledX * Math.sin(rotation) + scaledY * Math.cos(rotation);
     
-    // Translate to center
     points.push({
       x: center.x + rotatedX,
       y: center.y + rotatedY,
@@ -101,16 +117,14 @@ function generateEllipsePoints(
 /**
  * Convert a DXF LWPOLYLINE/POLYLINE to a GeoJSON LineString or Polygon
  */
-function polylineToGeometry(entity: DxfPolylineEntity): Geometry | null {
+function polylineToGeometry(entity: DxfPolylineEntity, transformer?: CoordinateTransformer): Geometry | null {
   if (!entity.vertices || entity.vertices.length < 2) {
     return null;
   }
 
-  const coordinates = entity.vertices.map(vector3ToCoordinate);
+  const coordinates = entity.vertices.map(v => vector3ToCoordinate(v, transformer));
   
-  // If the polyline is closed, make it a polygon
   if (entity.closed) {
-    // Add the first point at the end to close the ring if needed
     if (!coordinates[0].every((v, i) => v === coordinates[coordinates.length - 1][i])) {
       coordinates.push(coordinates[0]);
     }
@@ -120,7 +134,6 @@ function polylineToGeometry(entity: DxfPolylineEntity): Geometry | null {
     };
   }
 
-  // Otherwise make it a LineString
   return {
     type: 'LineString',
     coordinates
@@ -130,15 +143,29 @@ function polylineToGeometry(entity: DxfPolylineEntity): Geometry | null {
 /**
  * Convert a DXF entity to a GeoJSON feature
  */
-export function entityToGeoFeature(entity: DxfEntity, properties: Record<string, any> = {}): GeoFeature | null {
+export function entityToGeoFeature(
+  entity: DxfEntity,
+  properties: Record<string, any> = {},
+  sourceCoordinateSystem?: string
+): GeoFeature | null {
   let geometry: Geometry | null = null;
+  let transformer: CoordinateTransformer | undefined;
 
   try {
+    // Create transformer if source coordinate system is specified
+    if (sourceCoordinateSystem && sourceCoordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+      if (!proj4.defs(sourceCoordinateSystem)) {
+        console.warn(`Source coordinate system ${sourceCoordinateSystem} not registered with proj4`);
+      } else {
+        transformer = new CoordinateTransformer(sourceCoordinateSystem, COORDINATE_SYSTEMS.WGS84);
+      }
+    }
+
     switch (entity.type) {
       case 'POINT':
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.position)
+          coordinates: vector3ToCoordinate(entity.position, transformer)
         };
         break;
 
@@ -146,22 +173,22 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
         geometry = {
           type: 'LineString',
           coordinates: [
-            vector3ToCoordinate(entity.start),
-            vector3ToCoordinate(entity.end)
+            vector3ToCoordinate(entity.start, transformer),
+            vector3ToCoordinate(entity.end, transformer)
           ]
         };
         break;
 
       case 'POLYLINE':
       case 'LWPOLYLINE':
-        geometry = polylineToGeometry(entity);
+        geometry = polylineToGeometry(entity, transformer);
         break;
 
       case 'CIRCLE':
         const circlePoints = generateArcPoints(entity.center, entity.radius);
         geometry = {
           type: 'Polygon',
-          coordinates: [circlePoints.map(vector3ToCoordinate)]
+          coordinates: [circlePoints.map(p => vector3ToCoordinate(p, transformer))]
         };
         break;
 
@@ -174,7 +201,7 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
         );
         geometry = {
           type: 'LineString',
-          coordinates: arcPoints.map(vector3ToCoordinate)
+          coordinates: arcPoints.map(p => vector3ToCoordinate(p, transformer))
         };
         break;
 
@@ -186,16 +213,15 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
           entity.startAngle,
           entity.endAngle
         );
-        // If it's a full ellipse (start = 0, end = 360), make it a polygon
         if (Math.abs(entity.endAngle - entity.startAngle) >= 360) {
           geometry = {
             type: 'Polygon',
-            coordinates: [ellipsePoints.map(vector3ToCoordinate)]
+            coordinates: [ellipsePoints.map(p => vector3ToCoordinate(p, transformer))]
           };
         } else {
           geometry = {
             type: 'LineString',
-            coordinates: ellipsePoints.map(vector3ToCoordinate)
+            coordinates: ellipsePoints.map(p => vector3ToCoordinate(p, transformer))
           };
         }
         break;
@@ -204,15 +230,14 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
         if (entity.controlPoints?.length >= 2) {
           geometry = {
             type: 'LineString',
-            coordinates: entity.controlPoints.map(vector3ToCoordinate)
+            coordinates: entity.controlPoints.map(p => vector3ToCoordinate(p, transformer))
           };
         }
         break;
 
       case '3DFACE':
         if (entity.vertices?.length >= 3) {
-          const coords = entity.vertices.map(vector3ToCoordinate);
-          // Ensure the polygon is closed
+          const coords = entity.vertices.map(p => vector3ToCoordinate(p, transformer));
           if (!coords[0].every((v, i) => v === coords[coords.length - 1][i])) {
             coords.push(coords[0]);
           }
@@ -226,8 +251,7 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
       case 'SOLID':
       case '3DSOLID':
         if (entity.vertices?.length >= 3) {
-          const coords = entity.vertices.map(vector3ToCoordinate);
-          // Ensure the polygon is closed
+          const coords = entity.vertices.map(p => vector3ToCoordinate(p, transformer));
           if (!coords[0].every((v, i) => v === coords[coords.length - 1][i])) {
             coords.push(coords[0]);
           }
@@ -239,12 +263,10 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
         break;
 
       case 'INSERT':
-        // For block insertions, create a point feature at the insertion point
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.position)
+          coordinates: vector3ToCoordinate(entity.position, transformer)
         };
-        // Add block reference info to properties
         properties.blockName = entity.block;
         properties.scale = entity.scale;
         properties.rotation = entity.rotation;
@@ -252,12 +274,10 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
 
       case 'TEXT':
       case 'MTEXT':
-        // Create a point feature at the text position
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.position)
+          coordinates: vector3ToCoordinate(entity.position, transformer)
         };
-        // Add text properties
         properties.text = entity.text;
         properties.height = entity.height;
         properties.rotation = entity.rotation;
@@ -265,10 +285,9 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
         break;
 
       case 'DIMENSION':
-        // Create a point feature at the dimension insertion point
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.insertionPoint)
+          coordinates: vector3ToCoordinate(entity.insertionPoint, transformer)
         };
         properties.dimensionType = entity.dimensionType;
         properties.text = entity.text;
@@ -279,18 +298,17 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
         if (entity.vertices?.length >= 2) {
           geometry = {
             type: 'LineString',
-            coordinates: entity.vertices.map(vector3ToCoordinate)
+            coordinates: entity.vertices.map(p => vector3ToCoordinate(p, transformer))
           };
         }
         break;
 
       case 'HATCH':
         if (entity.boundaries?.length > 0) {
-          // Convert each boundary to a polygon
           const polygons = entity.boundaries
             .filter(boundary => boundary.length >= 3)
             .map(boundary => {
-              const coords = boundary.map(vector3ToCoordinate);
+              const coords = boundary.map(p => vector3ToCoordinate(p, transformer));
               if (!coords[0].every((v, i) => v === coords[coords.length - 1][i])) {
                 coords.push(coords[0]);
               }
@@ -331,6 +349,7 @@ export function entityToGeoFeature(entity: DxfEntity, properties: Record<string,
         thickness: entity.thickness,
         visible: entity.visible,
         extrusionDirection: entity.extrusionDirection,
+        sourceCoordinateSystem,
         ...properties
       }
     };

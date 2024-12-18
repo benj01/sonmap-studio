@@ -242,8 +242,3 @@ export class CsvProcessor extends BaseProcessor {
     }
   }
 }
-
-// Register the processor for different file extensions
-ProcessorRegistry.register('csv', CsvProcessor);
-ProcessorRegistry.register('xyz', CsvProcessor);
-ProcessorRegistry.register('txt', CsvProcessor);

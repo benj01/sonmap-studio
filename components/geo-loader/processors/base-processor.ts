@@ -2,6 +2,7 @@
 
 import { FeatureCollection } from 'geojson';
 import { CoordinateSystem } from '../types/coordinates';
+import { DxfData } from '../utils/dxf/types';
 
 export interface ProcessorOptions {
   coordinateSystem?: CoordinateSystem;
@@ -37,6 +38,7 @@ export interface ProcessorResult {
   coordinateSystem: CoordinateSystem;
   statistics: ProcessorStats;
   warnings?: string[];
+  dxfData?: DxfData; // Optional DXF data for DXF processor
 }
 
 export interface AnalyzeResult {
@@ -50,6 +52,7 @@ export interface AnalyzeResult {
   };
   preview: FeatureCollection;
   warnings?: string[];
+  dxfData?: DxfData; // Optional DXF data for DXF processor
 }
 
 export abstract class BaseProcessor {
