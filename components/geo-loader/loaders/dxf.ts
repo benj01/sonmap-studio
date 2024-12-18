@@ -3,7 +3,7 @@ import { CoordinateTransformer, Point, suggestCoordinateSystem } from '../utils/
 import { COORDINATE_SYSTEMS } from '../types/coordinates';
 import { createDxfParser } from '../utils/dxf';
 import { createDxfAnalyzer } from '../utils/dxf/analyzer';
-import { Vector3, ParserContext } from '../utils/dxf/types';
+import { Vector3, ParserContext, DxfEntity } from '../utils/dxf/types';
 import { 
   Feature, 
   Geometry, 
@@ -50,7 +50,7 @@ class DxfLoader implements GeoFileLoader {
     });
   }
 
-  private extractPoints(entities: any[]): Point[] {
+  private extractPoints(entities: DxfEntity[]): Point[] {
     const points: Point[] = [];
     entities.forEach(entity => {
       if (!entity) return;
@@ -173,13 +173,15 @@ class DxfLoader implements GeoFileLoader {
       const shouldSample = expandedEntities.length > PREVIEW_CHUNK_SIZE * PREVIEW_SAMPLE_RATE;
       const previewFeatures = [];
       const processedLayers = new Set<string>();
-      const unsupportedTypes = new Set<string>();
+      const conversionErrors = new Map<string, { count: number; message: string }>();
       
       for (let i = 0; i < expandedEntities.length; i++) {
         // Skip entities based on sample rate if needed
         if (shouldSample && i % PREVIEW_SAMPLE_RATE !== 0) continue;
         
         const entity = expandedEntities[i];
+        if (!entity) continue;
+
         if (entity.layer) {
           processedLayers.add(entity.layer);
         }
@@ -189,23 +191,35 @@ class DxfLoader implements GeoFileLoader {
           if (feature && this.isValidFeature(feature)) {
             previewFeatures.push(feature);
             if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) break;
-          } else if (entity.type) {
-            unsupportedTypes.add(entity.type);
+          } else {
+            // Track conversion failures by type
+            const errorKey = entity.type;
+            const current = conversionErrors.get(errorKey) || { count: 0, message: `Failed to convert ${entity.type} entities` };
+            current.count++;
+            conversionErrors.set(errorKey, current);
+            log(`Warning: Failed to convert ${entity.type} entity (handle: ${entity.handle || 'unknown'})`);
           }
         } catch (error) {
-          log(`Warning: Failed to convert entity to feature: ${error instanceof Error ? error.message : 'Unknown error'}`);
-          if (entity.type) {
-            unsupportedTypes.add(entity.type);
-          }
-          continue;
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          log(`Error converting entity: ${errorMessage}`);
+          const errorKey = entity.type;
+          const current = conversionErrors.get(errorKey) || { count: 0, message: `Error converting ${entity.type} entities: ${errorMessage}` };
+          current.count++;
+          conversionErrors.set(errorKey, current);
+        }
+      }
+
+      // Log conversion errors
+      if (conversionErrors.size > 0) {
+        log('\nConversion issues:');
+        for (const [type, error] of conversionErrors) {
+          log(`- ${error.message} (${error.count} occurrences)`);
         }
       }
 
       if (previewFeatures.length === 0) {
-        const unsupportedList = Array.from(unsupportedTypes).join(', ');
         throw new Error(
-          `No valid features could be extracted from DXF file. ` +
-          (unsupportedList ? `Unsupported types found: ${unsupportedList}` : '')
+          'No valid features could be extracted from DXF file. Check the logs for details.'
         );
       }
 
@@ -222,7 +236,7 @@ class DxfLoader implements GeoFileLoader {
       // Log analysis results
       if (analysisResult.stats) {
         const stats = analysisResult.stats;
-        log(`Found ${stats.entityCount} entities:`);
+        log(`\nFound ${stats.entityCount} entities:`);
         if (stats.lineCount) log(`- ${stats.lineCount} lines`);
         if (stats.pointCount) log(`- ${stats.pointCount} points`);
         if (stats.polylineCount) log(`- ${stats.polylineCount} polylines`);
@@ -231,6 +245,7 @@ class DxfLoader implements GeoFileLoader {
         if (stats.textCount) log(`- ${stats.textCount} text elements`);
       }
 
+      log(`\nSuccessfully converted ${previewFeatures.length} features for preview`);
       log('Analysis complete');
 
       // Include analysis results in the response
@@ -364,10 +379,24 @@ class DxfLoader implements GeoFileLoader {
             
             const type = feature.geometry.type;
             featureTypes[type] = (featureTypes[type] || 0) + 1;
+          } else {
+            const errorType = `${entity.type}_CONVERSION`;
+            const errorMessage = `Failed to convert ${entity.type} entity`;
+            log(`Warning: ${errorMessage} (handle: ${entity.handle || 'unknown'})`);
+            const existingError = errors.find(e => e.type === errorType);
+            if (existingError) {
+              existingError.count++;
+            } else {
+              errors.push({
+                type: errorType,
+                message: errorMessage,
+                count: 1
+              });
+            }
           }
         } catch (error) {
           const errorType = `${entity.type}_CONVERSION`;
-          const errorMessage = `Failed to convert ${entity.type} entity to feature`;
+          const errorMessage = `Error converting ${entity.type} entity: ${error instanceof Error ? error.message : 'Unknown error'}`;
           log(`Error: ${errorMessage}`);
           const existingError = errors.find(e => e.type === errorType);
           if (existingError) {

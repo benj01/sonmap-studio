@@ -4,10 +4,17 @@ import proj4 from 'proj4';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 
 // Basic Point interface for transformations
-interface Point {
+export interface Point {
   x: number;
   y: number;
   z?: number;
+}
+
+/**
+ * Create a coordinate transformer
+ */
+export function createTransformer(fromSystem: string, toSystem: string): CoordinateTransformer {
+  return new CoordinateTransformer(fromSystem, toSystem);
 }
 
 /**
@@ -145,7 +152,8 @@ export class CoordinateTransformer {
 
   static convertLV03ToLV95(point: Point): Point | null {
     try {
-      if (!this.prototype.validatePoint(point)) {
+      const validator = new CoordinateTransformer('EPSG:21781', 'EPSG:2056');
+      if (!validator.validatePoint(point)) {
         return null;
       }
       return {
@@ -161,7 +169,8 @@ export class CoordinateTransformer {
 
   static convertLV95ToLV03(point: Point): Point | null {
     try {
-      if (!this.prototype.validatePoint(point)) {
+      const validator = new CoordinateTransformer('EPSG:2056', 'EPSG:21781');
+      if (!validator.validatePoint(point)) {
         return null;
       }
       return {
@@ -173,11 +182,6 @@ export class CoordinateTransformer {
       console.error('LV95 to LV03 conversion error:', error);
       return null;
     }
-  }
-
-  // Factory function to create a transformer more easily
-  static createTransformer(fromSystem: string, toSystem: string): CoordinateTransformer {
-    return new CoordinateTransformer(fromSystem, toSystem);
   }
 }
 
@@ -307,7 +311,6 @@ function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
 }
 
 // Export the helper functions and types
-export type { Point };
 export {
   detectLV95Coordinates,
   detectLV03Coordinates,

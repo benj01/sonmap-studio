@@ -1,8 +1,8 @@
 import { DxfEntity, DxfEntityBase, Vector3, ParserResult, ParserContext } from './types';
 import { DxfValidator } from './validator';
 import { ErrorCollector } from './error-collector';
-import { entityToGeoFeature } from './geo-converter';
 import { GeoFeature } from '../../../../types/geo';
+import { entityToGeoFeature } from './geo-converter';
 
 export class DxfEntityParser {
   private validator: DxfValidator;
@@ -356,7 +356,24 @@ export class DxfEntityParser {
       return null;
     }
 
-    return entityToGeoFeature(entity, layerInfo);
+    try {
+      const feature = entityToGeoFeature(entity, layerInfo);
+      if (!feature) {
+        this.errorCollector.addWarning(
+          entity.type,
+          entity.handle,
+          'Failed to convert entity to GeoJSON feature'
+        );
+      }
+      return feature;
+    } catch (error: any) {
+      this.errorCollector.addError(
+        entity.type,
+        entity.handle,
+        `Error converting to GeoJSON: ${error?.message || error}`
+      );
+      return null;
+    }
   }
 
   getErrors(): string[] {
