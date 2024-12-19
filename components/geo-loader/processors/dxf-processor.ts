@@ -76,29 +76,23 @@ export class DxfProcessor extends BaseProcessor {
 
   private detectCoordinateSystem(entities: DxfEntity[]): CoordinateSystem {
     // Sample coordinates from different entity types
-    const sampleCoords: Vector3[] = [];
+    const sampleCoords: { x: number, y: number }[] = [];
+    
+    // Collect coordinates from entities
     for (let i = 0; i < Math.min(entities.length, 100); i++) {
       const coords = this.getEntityCoordinates(entities[i]);
-      sampleCoords.push(...coords);
+      sampleCoords.push(...coords.map(coord => ({ x: coord.x, y: coord.y })));
       if (sampleCoords.length >= 100) break;
     }
 
-    if (sampleCoords.length === 0) return COORDINATE_SYSTEMS.WGS84;
+    if (sampleCoords.length === 0) {
+      console.warn('No coordinates found for detection');
+      return COORDINATE_SYSTEMS.NONE;
+    }
 
-    // Check for common Swiss coordinate ranges
-    const isInSwissRange = sampleCoords.every(coord => 
-      coord.x >= 2485000 && coord.x <= 2835000 && 
-      coord.y >= 1075000 && coord.y <= 1295000
-    );
-
-    if (isInSwissRange) return COORDINATE_SYSTEMS.SWISS_LV95;
-
-    // Check for WGS84 range
-    const isInWGS84Range = sampleCoords.every(coord => 
-      Math.abs(coord.x) <= 180 && Math.abs(coord.y) <= 90
-    );
-
-    return isInWGS84Range ? COORDINATE_SYSTEMS.WGS84 : COORDINATE_SYSTEMS.SWISS_LV95;
+    // Use the suggestCoordinateSystem function from coordinate-utils
+    // This provides more robust detection logic
+    return suggestCoordinateSystem(sampleCoords);
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
@@ -133,6 +127,7 @@ export class DxfProcessor extends BaseProcessor {
       
       // Detect coordinate system
       const detectedSystem = this.detectCoordinateSystem(expandedEntities);
+      console.debug('Detected coordinate system:', detectedSystem);
       
       // Convert to GeoJSON features for preview with progress updates
       const previewFeatures: Feature[] = [];
@@ -197,7 +192,7 @@ export class DxfProcessor extends BaseProcessor {
       }
 
       try {
-        const feature = entityToGeoFeature(entity, {}, options.coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95);
+        const feature = entityToGeoFeature(entity, {}, options.coordinateSystem || COORDINATE_SYSTEMS.NONE);
         if (feature) {
           features.push(feature);
         }
@@ -269,7 +264,7 @@ export class DxfProcessor extends BaseProcessor {
         },
         bounds,
         layers: this.parser.getLayers(),
-        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95,
+        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.NONE,
         statistics,
         warnings,
         dxfData: this.rawDxfData

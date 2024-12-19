@@ -1,8 +1,9 @@
 // Initialize coordinate systems first
 import { initializeCoordinateSystems } from './utils/coordinate-systems';
 
-// Initialize coordinate systems immediately
-initializeCoordinateSystems();
+// Initialize coordinate systems immediately and verify initialization
+const initialized = initializeCoordinateSystems();
+console.debug('Coordinate systems initialization:', initialized ? 'success' : 'failed');
 
 // Import processors to ensure they're registered
 import './processors';

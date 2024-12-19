@@ -97,16 +97,9 @@ export class CoordinateTransformer {
         throw new Error('Coordinate system definitions lost - reinitializing transformer');
       }
 
-      // For Swiss coordinate systems, we need to swap x/y before transformation
-      // because Swiss coordinates are typically given as (E,N) while proj4 expects (N,E)
-      const isSwissSystem = this.fromSystem === COORDINATE_SYSTEMS.SWISS_LV95 || 
-                           this.fromSystem === COORDINATE_SYSTEMS.SWISS_LV03;
-      
       // Transform the point
-      const [x, y] = isSwissSystem ? 
-        this.transformer.forward([point.y, point.x]) : // Swap for Swiss systems
-        this.transformer.forward([point.x, point.y]);   // Don't swap for other systems
-      
+      const [x, y] = this.transformer.forward([point.x, point.y]);
+
       if (!isFinite(x) || !isFinite(y)) {
         console.warn('Transformation resulted in invalid coordinates:', { x, y });
         return null;
@@ -210,24 +203,34 @@ function detectLV95Coordinates(points: Point[]): boolean {
     return false;
   }
 
-  // For Aarau region in LV95:
-  // X: ~2640000-2650000
-  // Y: ~1245000-1255000
+  // Updated Swiss bounds for LV95
+  // More lenient bounds covering all of Switzerland
   const sampleSize = Math.min(validPoints.length, 10);
   const sample = validPoints.slice(0, sampleSize);
 
-  // Count points that fall within the Swiss bounds
-  let swissPointCount = 0;
+  // Count points that match LV95 pattern
+  let lv95PointCount = 0;
   for (const point of sample) {
-    const isXInRange = point.x >= 2485000 && point.x <= 2835000;
-    const isYInRange = point.y >= 1075000 && point.y <= 1295000;
-    if (isXInRange && isYInRange) {
-      swissPointCount++;
+    // Check if coordinates match LV95 pattern:
+    // - X should start with 2 (usually between 2.4M and 2.9M)
+    // - Y should start with 1 (usually between 1.0M and 1.3M)
+    // - Values should be within reasonable Swiss bounds
+    const xStr = Math.floor(point.x).toString();
+    const yStr = Math.floor(point.y).toString();
+    
+    const isLV95Pattern = 
+      xStr.startsWith('2') &&
+      yStr.startsWith('1') &&
+      point.x >= 2450000 && point.x <= 2850000 &&  // Expanded range
+      point.y >= 1050000 && point.y <= 1300000;    // Expanded range
+
+    if (isLV95Pattern) {
+      lv95PointCount++;
     }
   }
 
-  // If more than 80% of points are within Swiss bounds, consider it LV95
-  return (swissPointCount / sample.length) >= 0.8;
+  // If more than 80% of points match LV95 pattern, consider it LV95
+  return (lv95PointCount / sample.length) >= 0.8;
 }
 
 function detectLV03Coordinates(points: Point[]): boolean {
@@ -240,24 +243,32 @@ function detectLV03Coordinates(points: Point[]): boolean {
     return false;
   }
 
-  // For Aarau region in LV03:
-  // X: ~640000-650000
-  // Y: ~245000-255000
+  // Updated Swiss bounds for LV03
   const sampleSize = Math.min(validPoints.length, 10);
   const sample = validPoints.slice(0, sampleSize);
 
-  // Count points that fall within the Swiss bounds
-  let swissPointCount = 0;
+  // Count points that match LV03 pattern
+  let lv03PointCount = 0;
   for (const point of sample) {
-    const isXInRange = point.x >= 485000 && point.x <= 835000;
-    const isYInRange = point.y >= 75000 && point.y <= 295000;
-    if (isXInRange && isYInRange) {
-      swissPointCount++;
+    // Check if coordinates match LV03 pattern:
+    // - X should be 6-digit number (usually between 450K and 850K)
+    // - Y should be 6-digit number (usually between 50K and 300K)
+    const xStr = Math.floor(point.x).toString();
+    const yStr = Math.floor(point.y).toString();
+    
+    const isLV03Pattern = 
+      xStr.length === 6 &&
+      yStr.length === 6 &&
+      point.x >= 450000 && point.x <= 850000 &&   // Expanded range
+      point.y >= 50000 && point.y <= 300000;      // Expanded range
+
+    if (isLV03Pattern) {
+      lv03PointCount++;
     }
   }
 
-  // If more than 80% of points are within Swiss bounds, consider it LV03
-  return (swissPointCount / sample.length) >= 0.8;
+  // If more than 80% of points match LV03 pattern, consider it LV03
+  return (lv03PointCount / sample.length) >= 0.8;
 }
 
 /**
@@ -302,12 +313,11 @@ export function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
     }
 
     // If coordinates are large numbers but not in Swiss ranges,
-    // they're likely in a different local system, default to WGS84
-    // and let the user select the correct system
-    console.warn('Could not definitively determine coordinate system, defaulting to WGS84');
-    return COORDINATE_SYSTEMS.WGS84;
+    // they're likely in a different local system
+    console.warn('Could not definitively determine coordinate system, defaulting to NONE');
+    return COORDINATE_SYSTEMS.NONE;
   } catch (error) {
     console.error('Error detecting coordinate system:', error);
-    return COORDINATE_SYSTEMS.WGS84;
+    return COORDINATE_SYSTEMS.NONE;
   }
 }

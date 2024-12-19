@@ -6,37 +6,68 @@ import { COORDINATE_SYSTEMS } from '../../types/coordinates';
 import { toMapboxCoordinates } from '../coordinate-systems';
 import proj4 from 'proj4';
 
+export class CoordinateTransformationError extends Error {
+  constructor(message: string, public originalCoordinates: Vector3) {
+    super(message);
+    this.name = 'CoordinateTransformationError';
+  }
+}
+
 /**
- * Convert a Vector3 to a GeoJSON coordinate array, optionally transforming coordinates
+ * Validates transformed coordinates are within expected WGS84 bounds
+ */
+function validateWGS84Coordinates(coords: { x: number; y: number; z?: number }): boolean {
+  // Valid longitude range: -180 to 180
+  // Valid latitude range: -90 to 90
+  return coords.x >= -180 && coords.x <= 180 && coords.y >= -90 && coords.y <= 90;
+}
+
+/**
+ * Convert a Vector3 to a GeoJSON coordinate array, with mandatory coordinate transformation
+ * @throws CoordinateTransformationError if transformation fails or produces invalid coordinates
  */
 function vector3ToCoordinate(
   v: Vector3,
   transformer?: CoordinateTransformer
 ): [number, number] | [number, number, number] {
+  if (!transformer) {
+    // If no transformer is provided, assume coordinates are already in WGS84
+    if (!validateWGS84Coordinates({ x: v.x, y: v.y })) {
+      throw new CoordinateTransformationError(
+        'Coordinates appear to not be in WGS84 format but no transformer was provided',
+        v
+      );
+    }
+    return v.z !== undefined && isFinite(v.z) ? [v.x, v.y, v.z] : [v.x, v.y];
+  }
+
   try {
-    if (transformer) {
-      // For Swiss coordinates, x is Easting and y is Northing
-      const transformed = transformer.transform({ x: v.x, y: v.y, z: v.z });
-      if (transformed) {
-        // transformed.x will be longitude and transformed.y will be latitude
-        // after proj4 transformation, so no need to swap
-        if (transformed.z !== undefined && isFinite(transformed.z)) {
-          return [transformed.x, transformed.y, transformed.z];
-        }
-        return [transformed.x, transformed.y];
-      }
+    const transformed = transformer.transform({ x: v.x, y: v.y, z: v.z });
+    if (!transformed) {
+      throw new CoordinateTransformationError(
+        'Coordinate transformation failed',
+        v
+      );
     }
-    
-    // If no transformer or transformation failed, return original coordinates
-    // For non-transformed coordinates, still need to ensure proper order
-    if (v.z !== undefined && isFinite(v.z)) {
-      return [v.x, v.y, v.z];
+
+    if (!validateWGS84Coordinates(transformed)) {
+      throw new CoordinateTransformationError(
+        `Transformed coordinates (${transformed.x}, ${transformed.y}) are outside valid WGS84 bounds`,
+        v
+      );
     }
-    return [v.x, v.y];
+
+    return transformed.z !== undefined && isFinite(transformed.z)
+      ? [transformed.x, transformed.y, transformed.z]
+      : [transformed.x, transformed.y];
   } catch (error) {
-    console.error('Coordinate transformation error:', error);
-    // Return original coordinates as fallback
-    return [v.x, v.y];
+    if (error instanceof CoordinateTransformationError) {
+      throw error;
+    }
+    throw new CoordinateTransformationError(
+      `Transformation error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      v
+    );
   }
 }
 
@@ -121,6 +152,7 @@ function generateEllipsePoints(
 
 /**
  * Convert a DXF LWPOLYLINE/POLYLINE to a GeoJSON LineString or Polygon
+ * @throws CoordinateTransformationError if transformation fails
  */
 function polylineToGeometry(entity: DxfPolylineEntity, transformer?: CoordinateTransformer): Geometry | null {
   if (!entity.vertices || entity.vertices.length < 2) {
@@ -146,25 +178,26 @@ function polylineToGeometry(entity: DxfPolylineEntity, transformer?: CoordinateT
 }
 
 /**
- * Convert a DXF entity to a GeoJSON feature
+ * Convert a DXF entity to a GeoJSON feature with robust coordinate transformation
+ * @throws CoordinateTransformationError if any coordinate transformation fails
  */
 export function entityToGeoFeature(
   entity: DxfEntity,
   properties: Record<string, any> = {},
   sourceCoordinateSystem?: string
-): GeoFeature | null {
-  let geometry: Geometry | null = null;
+): GeoFeature {
   let transformer: CoordinateTransformer | undefined;
 
-  try {
-    // Create transformer if source coordinate system is specified
-    if (sourceCoordinateSystem && sourceCoordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-      if (!proj4.defs(sourceCoordinateSystem)) {
-        console.warn(`Source coordinate system ${sourceCoordinateSystem} not registered with proj4`);
-      } else {
-        transformer = new CoordinateTransformer(sourceCoordinateSystem, COORDINATE_SYSTEMS.WGS84);
-      }
+  // Create transformer if source coordinate system is specified and different from WGS84
+  if (sourceCoordinateSystem && sourceCoordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+    if (!proj4.defs(sourceCoordinateSystem)) {
+      throw new Error(`Source coordinate system ${sourceCoordinateSystem} not registered with proj4`);
     }
+    transformer = new CoordinateTransformer(sourceCoordinateSystem, COORDINATE_SYSTEMS.WGS84);
+  }
+
+  try {
+    let geometry: Geometry | null = null;
 
     switch (entity.type) {
       case 'POINT':
@@ -333,10 +366,13 @@ export function entityToGeoFeature(
           }
         }
         break;
+
+      default:
+        throw new Error(`Unsupported entity type: ${entity.type}`);
     }
 
     if (!geometry) {
-      return null;
+      throw new Error(`Failed to generate geometry for entity type: ${entity.type}`);
     }
 
     return {
@@ -355,11 +391,19 @@ export function entityToGeoFeature(
         visible: entity.visible,
         extrusionDirection: entity.extrusionDirection,
         sourceCoordinateSystem,
+        transformationSuccess: true,  // Indicate successful transformation
         ...properties
       }
     };
   } catch (error) {
-    console.error(`Error converting ${entity.type} entity to GeoJSON:`, error);
-    return null;
+    if (error instanceof CoordinateTransformationError) {
+      // Instead of silently failing, throw the error to be handled by the UI
+      throw error;
+    }
+    throw new Error(
+      `Error converting ${entity.type} entity to GeoJSON: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`
+    );
   }
 }

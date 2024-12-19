@@ -13,7 +13,6 @@ import { LogsSection } from './logs-section';
 import { createProcessor, ProcessorResult, AnalyzeResult, ProcessorOptions, ProcessorStats } from '../../processors';
 import { createPreviewManager, PreviewManager } from '../../preview/preview-manager';
 import { LoaderResult, GeoFeature } from 'types/geo';
-import { initializeCoordinateSystems } from '../../utils/coordinate-systems';
 import proj4 from 'proj4';
 
 // Import processors to ensure they're registered
@@ -38,6 +37,25 @@ const convertStatistics = (stats: ProcessorStats) => {
   };
 };
 
+// Progress phases with descriptions
+const PROGRESS_PHASES = {
+  PARSE: {
+    START: 0,
+    END: 0.3,
+    description: "Reading and parsing raw file data"
+  },
+  ANALYZE: {
+    START: 0.3,
+    END: 0.4,
+    description: "Analyzing file structure and detecting coordinate system"
+  },
+  CONVERT: {
+    START: 0.4,
+    END: 1.0,
+    description: "Converting to GeoJSON and transforming coordinates"
+  }
+} as const;
+
 export function GeoImportDialog({
   isOpen,
   onClose,
@@ -56,6 +74,7 @@ export function GeoImportDialog({
   });
   const [coordinateSystem, setCoordinateSystem] = useState<CoordinateSystem | undefined>(undefined);
   const [pendingCoordinateSystem, setPendingCoordinateSystem] = useState<CoordinateSystem | undefined>(undefined);
+  const [currentPhase, setCurrentPhase] = useState<keyof typeof PROGRESS_PHASES | null>(null);
 
   // Preview manager instance
   const previewManagerRef = useRef<PreviewManager | null>(null);
@@ -109,8 +128,32 @@ export function GeoImportDialog({
   }, [addLogs]);
 
   const onProgress = useCallback((progress: number) => {
-    addLogs([{ message: `Progress: ${(progress * 100).toFixed(1)}%`, type: 'info' }]);
-  }, [addLogs]);
+    // Determine current phase based on progress
+    let phase: keyof typeof PROGRESS_PHASES;
+    if (progress <= PROGRESS_PHASES.PARSE.END) {
+      phase = 'PARSE';
+    } else if (progress <= PROGRESS_PHASES.ANALYZE.END) {
+      phase = 'ANALYZE';
+    } else {
+      phase = 'CONVERT';
+    }
+
+    // Log phase transition if the phase has changed
+    if (phase !== currentPhase) {
+      setCurrentPhase(phase);
+      // Add a unique suffix to ensure this log isn't deduplicated
+      addLogs([{
+        message: `Step: ${PROGRESS_PHASES[phase].description} (phase: ${phase}-${Date.now()})`,
+        type: 'info'
+      }]);
+    }
+
+    // Log progress percentage (this will vary each time, so no dedup issue)
+    addLogs([{
+      message: `Progress: ${(progress * 100).toFixed(1)}%`,
+      type: 'info'
+    }]);
+  }, [addLogs, currentPhase]);
 
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
     setState((prev: ImportState) => {
@@ -213,34 +256,6 @@ export function GeoImportDialog({
     }
   }, [pendingCoordinateSystem, file, analysis, onWarning, onError, onProgress, addLogs]);
 
-  // Initialize coordinate systems when dialog opens
-  useEffect(() => {
-    if (isOpen) {
-      try {
-        // Initialize coordinate systems
-        initializeCoordinateSystems();
-        
-        // Verify initialization
-        const systems = [
-          COORDINATE_SYSTEMS.SWISS_LV95,
-          COORDINATE_SYSTEMS.SWISS_LV03,
-          COORDINATE_SYSTEMS.WGS84
-        ];
-        
-        const unregisteredSystems = systems.filter(system => !proj4.defs(system));
-        if (unregisteredSystems.length > 0) {
-          throw new Error(`Failed to initialize coordinate systems: ${unregisteredSystems.join(', ')}`);
-        }
-      } catch (error) {
-        const err = error as Error;
-        addLogs([{
-          message: `Coordinate system initialization error: ${err.message}`,
-          type: 'error'
-        }]);
-      }
-    }
-  }, [isOpen, addLogs]);
-
   // Handle dialog open/close and file analysis
   useEffect(() => {
     if (isOpen && file) {
@@ -268,6 +283,7 @@ export function GeoImportDialog({
       setDxfData(null);
       setCoordinateSystem(undefined);
       setPendingCoordinateSystem(undefined);
+      setCurrentPhase(null);
 
       currentFileRef.current = file;
       setLoading(true);
@@ -301,6 +317,18 @@ export function GeoImportDialog({
           if (result.coordinateSystem && proj4.defs(result.coordinateSystem)) {
             setCoordinateSystem(result.coordinateSystem as CoordinateSystem);
             setPendingCoordinateSystem(result.coordinateSystem as CoordinateSystem);
+            addLogs([{
+              message: `Detected coordinate system: ${result.coordinateSystem}`,
+              type: 'info'
+            }]);
+
+            // Log coordinate ranges for debugging
+            if (result.bounds) {
+              addLogs([{
+                message: `Coordinate ranges - X: ${result.bounds.minX} to ${result.bounds.maxX}, Y: ${result.bounds.minY} to ${result.bounds.maxY}`,
+                type: 'info'
+              }]);
+            }
           } else if (result.coordinateSystem) {
             onWarning(`Detected coordinate system ${result.coordinateSystem} is not properly initialized`);
           }

@@ -3,51 +3,72 @@ import { CoordinateTransformer } from './coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../types/coordinates';
 
 // Initialize coordinate systems
-export function initializeCoordinateSystems() {
-  // Swiss LV95 / EPSG:2056
-  // Updated definition from EPSG registry
-  proj4.defs(
-    COORDINATE_SYSTEMS.SWISS_LV95,
-    '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=2600000 ' +
-    '+y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
-  );
-
-  // Swiss LV03 / EPSG:21781
-  // Updated definition from EPSG registry
-  proj4.defs(
-    COORDINATE_SYSTEMS.SWISS_LV03,
-    '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=600000 ' +
-    '+y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
-  );
-
-  // WGS84 / EPSG:4326
-  proj4.defs(
-    COORDINATE_SYSTEMS.WGS84,
-    '+proj=longlat +datum=WGS84 +no_defs'
-  );
-
-  // Special handling for local coordinates (no transformation)
-  proj4.defs(
-    COORDINATE_SYSTEMS.NONE,
-    '+proj=longlat +datum=WGS84 +no_defs'
-  );
-
-  // Register with proj4 globally
-  (window as any).proj4 = proj4;
-
-  // Verify transformations
+export function initializeCoordinateSystems(): boolean {
   try {
-    // Test point near Aarau in LV95
-    const testPoint = [2645000, 1250000];
-    const result = proj4(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84, testPoint);
-    console.debug('Coordinate system test transformation:', {
-      from: 'LV95',
-      point: testPoint,
-      to: 'WGS84',
-      result
-    });
+    // Swiss LV95 / EPSG:2056
+    // Updated definition from EPSG registry
+    proj4.defs(
+      COORDINATE_SYSTEMS.SWISS_LV95,
+      '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=2600000 ' +
+      '+y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
+    );
+
+    // Swiss LV03 / EPSG:21781
+    // Updated definition from EPSG registry
+    proj4.defs(
+      COORDINATE_SYSTEMS.SWISS_LV03,
+      '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=600000 ' +
+      '+y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
+    );
+
+    // WGS84 / EPSG:4326
+    proj4.defs(
+      COORDINATE_SYSTEMS.WGS84,
+      '+proj=longlat +datum=WGS84 +no_defs'
+    );
+
+    // Special handling for local coordinates (no transformation)
+    proj4.defs(
+      COORDINATE_SYSTEMS.NONE,
+      '+proj=longlat +datum=WGS84 +no_defs'
+    );
+
+    // Register with proj4 globally
+    (window as any).proj4 = proj4;
+
+    // Verify transformations
+    try {
+      // Test point near Aarau in LV95
+      const testPoint = [2645000, 1250000];
+      const result = proj4(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84, testPoint);
+      console.debug('Coordinate system test transformation:', {
+        from: 'LV95',
+        point: testPoint,
+        to: 'WGS84',
+        result
+      });
+
+      // Verify all systems are registered
+      const systems = [
+        COORDINATE_SYSTEMS.SWISS_LV95,
+        COORDINATE_SYSTEMS.SWISS_LV03,
+        COORDINATE_SYSTEMS.WGS84,
+        COORDINATE_SYSTEMS.NONE
+      ];
+      
+      const unregisteredSystems = systems.filter(system => !proj4.defs(system));
+      if (unregisteredSystems.length > 0) {
+        throw new Error(`Failed to verify coordinate systems: ${unregisteredSystems.join(', ')}`);
+      }
+
+      return true;
+    } catch (error) {
+      console.error('Failed to verify coordinate transformations:', error);
+      return false;
+    }
   } catch (error) {
-    console.error('Failed to verify coordinate transformations:', error);
+    console.error('Failed to initialize coordinate systems:', error);
+    return false;
   }
 }
 
@@ -62,7 +83,9 @@ export function initializeCoordinateSystems() {
 export function createTransformer(fromSystem: string, toSystem: string): CoordinateTransformer {
   // Initialize systems if not already done
   if (!proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95)) {
-    initializeCoordinateSystems();
+    if (!initializeCoordinateSystems()) {
+      throw new Error('Failed to initialize coordinate systems');
+    }
   }
 
   // If either system is 'none', return null to indicate no transformation needed
@@ -112,4 +135,4 @@ export function toMapboxCoordinates(point: { x: number; y: number }): [number, n
   return [point.x, point.y];
 }
 
-export { COORDINATE_SYSTEMS };
+export { COORDINATE_SYSTEMS }
