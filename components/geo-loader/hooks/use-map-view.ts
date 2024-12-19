@@ -1,17 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ViewStateChangeEvent } from 'react-map-gl';
 import { Feature, BBox } from 'geojson';
-import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds } from '../types/coordinates';
+import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds, DEFAULT_CENTER } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
 import proj4 from 'proj4';
-
-// Default center on Aarau, Switzerland
-const DEFAULT_CENTER = {
-  longitude: 8.0472,  // Aarau longitude
-  latitude: 47.3925,  // Aarau latitude
-  zoom: 13
-};
 
 // Padding for bounds (in degrees for WGS84)
 const BOUNDS_PADDING_DEGREES = 0.01;  // About 1km at Swiss latitudes
@@ -47,7 +40,7 @@ export function useMapView(
     let maxY = -Infinity;
 
     const updateBounds = (coords: [number, number]) => {
-      // For Swiss coordinates, we need to transform to WGS84
+      // Transform coordinates to WGS84 if needed
       let lon = coords[0];
       let lat = coords[1];
 
@@ -56,6 +49,7 @@ export function useMapView(
           const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
           const transformed = transformer.transform({ x: coords[0], y: coords[1] });
           if (transformed) {
+            // Transformer handles coordinate order
             lon = transformed.x;
             lat = transformed.y;
           }
@@ -118,7 +112,15 @@ export function useMapView(
           if (!result) {
             throw new Error(`Failed to transform bounds from ${coordinateSystem} to WGS84`);
           }
+
+          // Transformer handles coordinate order
           transformedBounds = result;
+
+          console.debug('Bounds transformation:', {
+            original: bounds,
+            transformed: transformedBounds,
+            system: coordinateSystem
+          });
         } catch (error) {
           console.error('Coordinate transformation error:', error);
           // If transformation fails, default to Aarau
@@ -157,6 +159,13 @@ export function useMapView(
 
       // Ensure zoom is within valid range and add slight zoom out for context
       zoom = Math.min(Math.max(zoom - 0.5, 1), 20);
+
+      console.debug('Setting map view:', {
+        longitude,
+        latitude,
+        zoom,
+        bounds: transformedBounds
+      });
 
       setViewState(prev => ({
         ...prev,

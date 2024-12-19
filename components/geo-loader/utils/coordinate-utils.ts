@@ -1,5 +1,5 @@
 import proj4 from 'proj4';
-import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
+import { COORDINATE_SYSTEMS, CoordinateSystem, isSwissSystem } from '../types/coordinates';
 
 // Basic Point interface for transformations
 export interface Point {
@@ -47,6 +47,16 @@ export class CoordinateTransformer {
     try {
       // Create and store the transformer for reuse
       this.transformer = proj4(this.fromSystem, this.toSystem);
+      
+      // Log the transformation setup
+      console.debug('Created coordinate transformer:', {
+        from: fromSystem,
+        to: toSystem,
+        proj4Def: {
+          from: proj4.defs(fromSystem),
+          to: proj4.defs(toSystem)
+        }
+      });
     } catch (error) {
       console.error('Failed to create coordinate transformer:', error);
       throw new Error(`Failed to initialize transformer from ${fromSystem} to ${toSystem}`);
@@ -97,30 +107,47 @@ export class CoordinateTransformer {
         throw new Error('Coordinate system definitions lost - reinitializing transformer');
       }
 
-      // Transform the point
-      const [x, y] = this.transformer.forward([point.x, point.y]);
+      // For Swiss coordinates, we need to handle the coordinate order differently
+      // Swiss coordinates are in (E,N) format, while WGS84 expects (lon,lat)
+      let x = point.x;
+      let y = point.y;
 
-      if (!isFinite(x) || !isFinite(y)) {
-        console.warn('Transformation resulted in invalid coordinates:', { x, y });
+      // Transform the point
+      const [transformedX, transformedY] = this.transformer.forward([x, y]);
+
+      if (!isFinite(transformedX) || !isFinite(transformedY)) {
+        console.warn('Transformation resulted in invalid coordinates:', { x: transformedX, y: transformedY, original: point });
         return null;
       }
+
+      // If converting from Swiss to WGS84, swap coordinates after transformation
+      // This is because Swiss coordinates are (E,N) and we want (lon,lat)
+      let finalX = transformedX;
+      let finalY = transformedY;
+      if (isSwissSystem(this.fromSystem) && this.toSystem === COORDINATE_SYSTEMS.WGS84) {
+        [finalX, finalY] = [finalY, finalX];
+      }
+
+      // Log successful transformation for debugging
+      console.debug('Coordinate transformation:', {
+        from: { x: point.x, y: point.y },
+        to: { x: finalX, y: finalY },
+        systems: {
+          from: this.fromSystem,
+          to: this.toSystem
+        }
+      });
 
       // Clear transformation attempts for successful transformation
       this.transformationAttempts.delete(this.getPointKey(point));
 
-      return { x, y, z: point.z };
+      return { x: finalX, y: finalY, z: point.z };
     } catch (error) {
-      console.error('Transformation error:', error);
-      // Try to recreate transformer if it failed
-      try {
-        this.transformer = proj4(this.fromSystem, this.toSystem);
-        const [x, y] = this.transformer.forward([point.x, point.y]);
-        if (isFinite(x) && isFinite(y)) {
-          return { x, y, z: point.z };
-        }
-      } catch (retryError) {
-        console.error('Retry transformation failed:', retryError);
-      }
+      console.error('Transformation error:', error, {
+        point,
+        fromSystem: this.fromSystem,
+        toSystem: this.toSystem
+      });
       return null;
     }
   }
@@ -149,30 +176,41 @@ export class CoordinateTransformer {
         throw new Error('Coordinate system definitions lost - reinitializing transformer');
       }
 
-      const transformedMin = this.transform({ x: bounds.minX, y: bounds.minY });
-      const transformedMax = this.transform({ x: bounds.maxX, y: bounds.maxY });
+      // Transform all corners to handle rotated coordinate systems correctly
+      const corners = [
+        this.transform({ x: bounds.minX, y: bounds.minY }),
+        this.transform({ x: bounds.minX, y: bounds.maxY }),
+        this.transform({ x: bounds.maxX, y: bounds.minY }),
+        this.transform({ x: bounds.maxX, y: bounds.maxY })
+      ];
 
-      if (!transformedMin || !transformedMax) {
-        console.warn('Failed to transform bounds');
+      if (corners.some(c => c === null)) {
+        console.warn('Failed to transform one or more corners:', corners);
         return null;
       }
 
-      // Handle coordinate system specific bounds adjustments
-      if (this.toSystem === COORDINATE_SYSTEMS.WGS84) {
-        return {
-          minX: Math.max(transformedMin.x, -180),
-          minY: Math.max(transformedMin.y, -90),
-          maxX: Math.min(transformedMax.x, 180),
-          maxY: Math.min(transformedMax.y, 90)
-        };
-      }
+      const validCorners = corners.filter((c): c is Point => c !== null);
+      const xs = validCorners.map(c => c.x);
+      const ys = validCorners.map(c => c.y);
 
-      return {
-        minX: transformedMin.x,
-        minY: transformedMin.y,
-        maxX: transformedMax.x,
-        maxY: transformedMax.y,
+      const result = {
+        minX: Math.min(...xs),
+        minY: Math.min(...ys),
+        maxX: Math.max(...xs),
+        maxY: Math.max(...ys)
       };
+
+      // Log transformed bounds for debugging
+      console.debug('Bounds transformation:', {
+        from: bounds,
+        to: result,
+        systems: {
+          from: this.fromSystem,
+          to: this.toSystem
+        }
+      });
+
+      return result;
     } catch (error) {
       console.error('Bounds transformation error:', error);
       return null;
@@ -229,6 +267,15 @@ function detectLV95Coordinates(points: Point[]): boolean {
     }
   }
 
+  // Log detection results for debugging
+  console.debug('LV95 detection:', {
+    totalPoints: points.length,
+    validPoints: validPoints.length,
+    sampleSize,
+    matchingPoints: lv95PointCount,
+    samplePoints: sample.slice(0, 3)
+  });
+
   // If more than 80% of points match LV95 pattern, consider it LV95
   return (lv95PointCount / sample.length) >= 0.8;
 }
@@ -266,6 +313,15 @@ function detectLV03Coordinates(points: Point[]): boolean {
       lv03PointCount++;
     }
   }
+
+  // Log detection results for debugging
+  console.debug('LV03 detection:', {
+    totalPoints: points.length,
+    validPoints: validPoints.length,
+    sampleSize,
+    matchingPoints: lv03PointCount,
+    samplePoints: sample.slice(0, 3)
+  });
 
   // If more than 80% of points match LV03 pattern, consider it LV03
   return (lv03PointCount / sample.length) >= 0.8;
@@ -311,6 +367,9 @@ export function suggestCoordinateSystem(points: Point[]): CoordinateSystem {
       console.debug('Coordinates confirmed to be in WGS84');
       return COORDINATE_SYSTEMS.WGS84;
     }
+
+    // Log sample points for debugging
+    console.debug('Coordinate system detection sample:', validPoints.slice(0, 3));
 
     // If coordinates are large numbers but not in Swiss ranges,
     // they're likely in a different local system

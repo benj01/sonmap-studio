@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Map, Source, Layer, AttributionControl, ViewStateChangeEvent, MapRef } from 'react-map-gl';
-import { COORDINATE_SYSTEMS } from '../types/coordinates';
+import { COORDINATE_SYSTEMS, isSwissSystem } from '../types/coordinates';
 import { layerStyles } from './map/map-layers';
 import { PreviewMapProps } from '../types/map';
 import { useMapView } from '../hooks/use-map-view';
@@ -52,17 +52,33 @@ export function PreviewMap({
     const pm = createPreviewManager({
       maxFeatures: 5000,
       visibleLayers,
-      analysis
+      analysis,
+      coordinateSystem
     });
-    pm.setFeatures(preview);
+
+    if (preview) {
+      console.debug('Setting preview features:', {
+        featureCount: preview.features.length,
+        coordinateSystem,
+        isSwiss: isSwissSystem(coordinateSystem),
+        sampleFeature: preview.features[0]
+      });
+      pm.setFeatures(preview);
+    }
+
     previewManagerRef.current = pm;
     setIsLoading(false);
-  }, [preview, visibleLayers, analysis]);
+  }, [preview, visibleLayers, analysis, coordinateSystem]);
 
   // Initial zoom to bounds
   useEffect(() => {
     if (bounds) {
       try {
+        console.debug('Updating view from bounds:', {
+          bounds,
+          coordinateSystem,
+          isSwiss: isSwissSystem(coordinateSystem)
+        });
         updateViewFromBounds(bounds);
         setError(null);
       } catch (err) {
@@ -70,7 +86,7 @@ export function PreviewMap({
         setError(`Failed to set initial view: ${e.message}`);
       }
     }
-  }, [bounds, updateViewFromBounds]);
+  }, [bounds, updateViewFromBounds, coordinateSystem]);
 
   // Focus on selected element if needed
   useEffect(() => {

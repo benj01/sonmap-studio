@@ -7,8 +7,9 @@ import { createDxfAnalyzer } from '../utils/dxf/analyzer';
 import { DxfConverter } from '../utils/dxf/converter';
 import { CoordinateTransformer, suggestCoordinateSystem } from '../utils/coordinate-utils';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
-import { Feature } from 'geojson';
+import { Feature, Geometry, GeometryCollection } from 'geojson';
 import { entityToGeoFeature } from '../utils/dxf/geo-converter';
+import proj4 from 'proj4';
 
 const PREVIEW_CHUNK_SIZE = 1000;
 const SAMPLE_RATE = 5;
@@ -20,6 +21,10 @@ const PROGRESS = {
   ANALYZE: { START: 0.3, END: 0.4 },  // 30-40%
   CONVERT: { START: 0.4, END: 1.0 }   // 40-100%
 } as const;
+
+function hasCoordinates(geometry: Geometry): geometry is Exclude<Geometry, GeometryCollection> {
+  return 'coordinates' in geometry;
+}
 
 export class DxfProcessor extends BaseProcessor {
   private parser = createDxfParser();
@@ -86,13 +91,36 @@ export class DxfProcessor extends BaseProcessor {
     }
 
     if (sampleCoords.length === 0) {
-      console.warn('No coordinates found for detection');
+      this.emitWarning('No coordinates found for detection');
+      return COORDINATE_SYSTEMS.NONE;
+    }
+
+    // Log sample coordinates for debugging
+    this.emitWarning(`Sample coordinates for detection: ${JSON.stringify(sampleCoords.slice(0, 2))}`);
+
+    // Verify proj4 is properly initialized
+    if (!proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95)) {
+      this.emitWarning('Swiss LV95 coordinate system not initialized');
       return COORDINATE_SYSTEMS.NONE;
     }
 
     // Use the suggestCoordinateSystem function from coordinate-utils
-    // This provides more robust detection logic
-    return suggestCoordinateSystem(sampleCoords);
+    const suggestedSystem = suggestCoordinateSystem(sampleCoords);
+    this.emitWarning(`Detected coordinate system: ${suggestedSystem}`);
+
+    // Log a test transformation
+    if (suggestedSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+      try {
+        const transformer = new CoordinateTransformer(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84);
+        const testPoint = sampleCoords[0];
+        const transformed = transformer.transform(testPoint);
+        this.emitWarning(`Test transformation: ${JSON.stringify(testPoint)} -> ${JSON.stringify(transformed)}`);
+      } catch (error) {
+        this.emitWarning(`Test transformation failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    
+    return suggestedSystem;
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
@@ -127,7 +155,17 @@ export class DxfProcessor extends BaseProcessor {
       
       // Detect coordinate system
       const detectedSystem = this.detectCoordinateSystem(expandedEntities);
-      console.debug('Detected coordinate system:', detectedSystem);
+      
+      // Create transformer if needed
+      let transformer: CoordinateTransformer | undefined;
+      if (detectedSystem !== COORDINATE_SYSTEMS.NONE && detectedSystem !== COORDINATE_SYSTEMS.WGS84) {
+        try {
+          transformer = new CoordinateTransformer(detectedSystem, COORDINATE_SYSTEMS.WGS84);
+          this.emitWarning(`Created transformer from ${detectedSystem} to WGS84`);
+        } catch (error) {
+          this.emitWarning(`Failed to create transformer: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        }
+      }
       
       // Convert to GeoJSON features for preview with progress updates
       const previewFeatures: Feature[] = [];
@@ -136,9 +174,18 @@ export class DxfProcessor extends BaseProcessor {
       
       for (const entity of expandedEntities) {
         if (processedCount % SAMPLE_RATE === 0) {
-          const feature = entityToGeoFeature(entity, {}, detectedSystem);
-          if (feature) {
-            previewFeatures.push(feature);
+          try {
+            const feature = entityToGeoFeature(entity, {}, detectedSystem);
+            if (feature && hasCoordinates(feature.geometry)) {
+              previewFeatures.push(feature);
+              
+              // Log first feature coordinates for debugging
+              if (processedCount === 0) {
+                this.emitWarning(`First feature coordinates: ${JSON.stringify(feature.geometry.coordinates)}`);
+              }
+            }
+          } catch (error) {
+            this.emitWarning(`Failed to convert entity to feature: ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
         }
         processedCount++;
@@ -155,6 +202,9 @@ export class DxfProcessor extends BaseProcessor {
 
       // Calculate bounds from preview features with padding
       const bounds = this.calculateBounds(previewFeatures, 0.1); // 10% padding
+
+      // Log bounds for debugging
+      this.emitWarning(`Calculated bounds: ${JSON.stringify(bounds)}`);
 
       // Get all available layers
       const layers = this.parser.getLayers();

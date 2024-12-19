@@ -3,7 +3,6 @@ import { Feature, Geometry, Point, LineString, Polygon } from 'geojson';
 import { GeoFeature } from '../../../../types/geo';
 import { CoordinateTransformer } from '../coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
-import { toMapboxCoordinates } from '../coordinate-systems';
 import proj4 from 'proj4';
 
 export class CoordinateTransformationError extends Error {
@@ -28,7 +27,8 @@ function validateWGS84Coordinates(coords: { x: number; y: number; z?: number }):
  */
 function vector3ToCoordinate(
   v: Vector3,
-  transformer?: CoordinateTransformer
+  transformer?: CoordinateTransformer,
+  sourceSystem?: string
 ): [number, number] | [number, number, number] {
   if (!transformer) {
     // If no transformer is provided, assume coordinates are already in WGS84
@@ -50,16 +50,20 @@ function vector3ToCoordinate(
       );
     }
 
-    if (!validateWGS84Coordinates(transformed)) {
+    // Coordinate swapping is now handled in the transformer
+    const [x, y] = [transformed.x, transformed.y];
+
+    if (!validateWGS84Coordinates({ x, y })) {
+      console.error('Invalid transformed coordinates:', { x, y, original: v });
       throw new CoordinateTransformationError(
-        `Transformed coordinates (${transformed.x}, ${transformed.y}) are outside valid WGS84 bounds`,
+        `Transformed coordinates (${x}, ${y}) are outside valid WGS84 bounds`,
         v
       );
     }
 
     return transformed.z !== undefined && isFinite(transformed.z)
-      ? [transformed.x, transformed.y, transformed.z]
-      : [transformed.x, transformed.y];
+      ? [x, y, transformed.z]
+      : [x, y];
   } catch (error) {
     if (error instanceof CoordinateTransformationError) {
       throw error;
@@ -154,12 +158,16 @@ function generateEllipsePoints(
  * Convert a DXF LWPOLYLINE/POLYLINE to a GeoJSON LineString or Polygon
  * @throws CoordinateTransformationError if transformation fails
  */
-function polylineToGeometry(entity: DxfPolylineEntity, transformer?: CoordinateTransformer): Geometry | null {
+function polylineToGeometry(
+  entity: DxfPolylineEntity,
+  transformer?: CoordinateTransformer,
+  sourceSystem?: string
+): Geometry | null {
   if (!entity.vertices || entity.vertices.length < 2) {
     return null;
   }
 
-  const coordinates = entity.vertices.map(v => vector3ToCoordinate(v, transformer));
+  const coordinates = entity.vertices.map(v => vector3ToCoordinate(v, transformer, sourceSystem));
   
   if (entity.closed) {
     if (!coordinates[0].every((v, i) => v === coordinates[coordinates.length - 1][i])) {
@@ -194,6 +202,10 @@ export function entityToGeoFeature(
       throw new Error(`Source coordinate system ${sourceCoordinateSystem} not registered with proj4`);
     }
     transformer = new CoordinateTransformer(sourceCoordinateSystem, COORDINATE_SYSTEMS.WGS84);
+    console.debug('Created transformer:', { 
+      from: sourceCoordinateSystem, 
+      to: COORDINATE_SYSTEMS.WGS84
+    });
   }
 
   try {
@@ -203,7 +215,7 @@ export function entityToGeoFeature(
       case 'POINT':
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.position, transformer)
+          coordinates: vector3ToCoordinate(entity.position, transformer, sourceCoordinateSystem)
         };
         break;
 
@@ -211,22 +223,22 @@ export function entityToGeoFeature(
         geometry = {
           type: 'LineString',
           coordinates: [
-            vector3ToCoordinate(entity.start, transformer),
-            vector3ToCoordinate(entity.end, transformer)
+            vector3ToCoordinate(entity.start, transformer, sourceCoordinateSystem),
+            vector3ToCoordinate(entity.end, transformer, sourceCoordinateSystem)
           ]
         };
         break;
 
       case 'POLYLINE':
       case 'LWPOLYLINE':
-        geometry = polylineToGeometry(entity, transformer);
+        geometry = polylineToGeometry(entity, transformer, sourceCoordinateSystem);
         break;
 
       case 'CIRCLE':
         const circlePoints = generateArcPoints(entity.center, entity.radius);
         geometry = {
           type: 'Polygon',
-          coordinates: [circlePoints.map(p => vector3ToCoordinate(p, transformer))]
+          coordinates: [circlePoints.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))]
         };
         break;
 
@@ -239,7 +251,7 @@ export function entityToGeoFeature(
         );
         geometry = {
           type: 'LineString',
-          coordinates: arcPoints.map(p => vector3ToCoordinate(p, transformer))
+          coordinates: arcPoints.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))
         };
         break;
 
@@ -254,12 +266,12 @@ export function entityToGeoFeature(
         if (Math.abs(entity.endAngle - entity.startAngle) >= 360) {
           geometry = {
             type: 'Polygon',
-            coordinates: [ellipsePoints.map(p => vector3ToCoordinate(p, transformer))]
+            coordinates: [ellipsePoints.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))]
           };
         } else {
           geometry = {
             type: 'LineString',
-            coordinates: ellipsePoints.map(p => vector3ToCoordinate(p, transformer))
+            coordinates: ellipsePoints.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))
           };
         }
         break;
@@ -268,14 +280,14 @@ export function entityToGeoFeature(
         if (entity.controlPoints?.length >= 2) {
           geometry = {
             type: 'LineString',
-            coordinates: entity.controlPoints.map(p => vector3ToCoordinate(p, transformer))
+            coordinates: entity.controlPoints.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))
           };
         }
         break;
 
       case '3DFACE':
         if (entity.vertices?.length >= 3) {
-          const coords = entity.vertices.map(p => vector3ToCoordinate(p, transformer));
+          const coords = entity.vertices.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem));
           if (!coords[0].every((v, i) => v === coords[coords.length - 1][i])) {
             coords.push(coords[0]);
           }
@@ -289,7 +301,7 @@ export function entityToGeoFeature(
       case 'SOLID':
       case '3DSOLID':
         if (entity.vertices?.length >= 3) {
-          const coords = entity.vertices.map(p => vector3ToCoordinate(p, transformer));
+          const coords = entity.vertices.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem));
           if (!coords[0].every((v, i) => v === coords[coords.length - 1][i])) {
             coords.push(coords[0]);
           }
@@ -303,7 +315,7 @@ export function entityToGeoFeature(
       case 'INSERT':
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.position, transformer)
+          coordinates: vector3ToCoordinate(entity.position, transformer, sourceCoordinateSystem)
         };
         properties.blockName = entity.block;
         properties.scale = entity.scale;
@@ -314,7 +326,7 @@ export function entityToGeoFeature(
       case 'MTEXT':
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.position, transformer)
+          coordinates: vector3ToCoordinate(entity.position, transformer, sourceCoordinateSystem)
         };
         properties.text = entity.text;
         properties.height = entity.height;
@@ -325,7 +337,7 @@ export function entityToGeoFeature(
       case 'DIMENSION':
         geometry = {
           type: 'Point',
-          coordinates: vector3ToCoordinate(entity.insertionPoint, transformer)
+          coordinates: vector3ToCoordinate(entity.insertionPoint, transformer, sourceCoordinateSystem)
         };
         properties.dimensionType = entity.dimensionType;
         properties.text = entity.text;
@@ -336,7 +348,7 @@ export function entityToGeoFeature(
         if (entity.vertices?.length >= 2) {
           geometry = {
             type: 'LineString',
-            coordinates: entity.vertices.map(p => vector3ToCoordinate(p, transformer))
+            coordinates: entity.vertices.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))
           };
         }
         break;
@@ -346,7 +358,7 @@ export function entityToGeoFeature(
           const polygons = entity.boundaries
             .filter(boundary => boundary.length >= 3)
             .map(boundary => {
-              const coords = boundary.map(p => vector3ToCoordinate(p, transformer));
+              const coords = boundary.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem));
               if (!coords[0].every((v, i) => v === coords[coords.length - 1][i])) {
                 coords.push(coords[0]);
               }

@@ -13,7 +13,15 @@ import { LogsSection } from './logs-section';
 import { createProcessor, ProcessorResult, AnalyzeResult, ProcessorOptions, ProcessorStats } from '../../processors';
 import { createPreviewManager, PreviewManager } from '../../preview/preview-manager';
 import { LoaderResult, GeoFeature } from 'types/geo';
+import { initializeCoordinateSystems } from '../../utils/coordinate-systems';
 import proj4 from 'proj4';
+
+// Initialize coordinate systems immediately
+const initialized = initializeCoordinateSystems();
+if (!initialized) {
+  console.error('Failed to initialize coordinate systems');
+  throw new Error('Failed to initialize coordinate systems');
+}
 
 // Import processors to ensure they're registered
 import '../../processors';
@@ -115,6 +123,20 @@ export function GeoImportDialog({
         logs: updatedLogs,
         hasErrors
       };
+    });
+
+    // Also log to console for debugging
+    newLogs.forEach(log => {
+      switch (log.type) {
+        case 'error':
+          console.error(log.message);
+          break;
+        case 'warning':
+          console.warn(log.message);
+          break;
+        default:
+          console.log(log.message);
+      }
     });
   }, []);
 

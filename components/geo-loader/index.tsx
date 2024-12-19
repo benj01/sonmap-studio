@@ -1,9 +1,13 @@
 // Initialize coordinate systems first
 import { initializeCoordinateSystems } from './utils/coordinate-systems';
+import { COORDINATE_SYSTEMS } from './types/coordinates';
 
 // Initialize coordinate systems immediately and verify initialization
 const initialized = initializeCoordinateSystems();
-console.debug('Coordinate systems initialization:', initialized ? 'success' : 'failed');
+if (!initialized) {
+  console.error('Failed to initialize coordinate systems');
+  throw new Error('Failed to initialize coordinate systems');
+}
 
 // Import processors to ensure they're registered
 import './processors';

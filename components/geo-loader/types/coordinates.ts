@@ -7,6 +7,11 @@ export const COORDINATE_SYSTEMS = {
   SWISS_LV03: 'EPSG:21781',
 } as const;
 
+// Helper function to check if a coordinate system is Swiss
+export function isSwissSystem(system: string): boolean {
+  return system === COORDINATE_SYSTEMS.SWISS_LV95 || system === COORDINATE_SYSTEMS.SWISS_LV03;
+}
+
 export type CoordinateSystem = typeof COORDINATE_SYSTEMS[keyof typeof COORDINATE_SYSTEMS];
 
 export interface Point {
@@ -24,3 +29,10 @@ export interface Bounds {
 
 export type Coordinate = Position;
 export type Ring = Coordinate[];
+
+// Default center for Switzerland (Aarau)
+export const DEFAULT_CENTER = {
+  longitude: 8.0472,  // Aarau longitude
+  latitude: 47.3925,  // Aarau latitude
+  zoom: 13
+};
