@@ -1,0 +1,77 @@
+Summary:
+
+This file defines TypeScript interfaces and types related to map data, map view state, and feature processing used in the geo-loader component.
+
+Imports:
+
+FeatureCollection, Feature, BBox from geojson for GeoJSON type definitions.
+CoordinateSystem, Bounds from ./coordinates.
+Warning Interface:
+
+Defines the structure for a warning object:
+type: (string) The type of warning.
+message: (string) The warning message.
+entity: (object, optional) Information about the entity associated with the warning, including its type, optional handle, and optional layer.
+Analysis Interface:
+
+Defines the structure for analysis results:
+warnings: (Warning[]) An array of warning objects.
+The interface could be extended to include other analysis results in the future.
+SelectedElement Interface:
+
+Defines the structure for a selected element:
+type: (string) The type of the selected element.
+layer: (string) The layer of the selected element.
+PreviewMapProps Interface:
+
+Defines the props for the PreviewMap component:
+preview: (FeatureCollection) The GeoJSON data to display.
+bounds: (Bounds, optional) The initial bounds of the map.
+coordinateSystem: (CoordinateSystem, optional) The coordinate system of the data.
+visibleLayers: (string[], optional) An array of visible layer names.
+selectedElement: (SelectedElement, optional) Information about a selected element.
+analysis: (Analysis, optional) Analysis results.
+ViewState Interface:
+
+Defines the structure of the map view state:
+longitude: (number) The longitude of the map center.
+latitude: (number) The latitude of the map center.
+zoom: (number) The zoom level of the map.
+bearing: (number) The bearing (rotation) of the map.
+pitch: (number) The pitch (tilt) of the map.
+MapFeatureCollections Interface:
+
+Defines the structure for a collection of features grouped by geometry type:
+pointFeatures: (FeatureCollection) Point features.
+lineFeatures: (FeatureCollection) Line features.
+polygonFeatures: (FeatureCollection) Polygon features.
+getFeaturesByTypeAndLayer: ((type: string, layer: string) => Feature[]) A function to get features by type and layer.
+totalFeatureCount: (number) The total number of features.
+visibleFeatureCount: (number) The number of visible features.
+UseMapViewResult Interface:
+
+Defines the return type of the useMapView hook:
+viewState: (ViewState) The current map view state.
+onMove: ((evt: any) => void) A callback function to handle map move events.
+updateViewFromBounds: ((bounds: Bounds) => void) A function to update the view based on bounds.
+focusOnFeatures: ((features: Feature[], padding?: number) => void) A function to focus on features.
+getViewportBounds: (() => BBox | undefined) A function to get the current viewport bounds.
+UseFeatureProcessingProps Interface:
+
+Defines the props for a hypothetical useFeatureProcessing hook (which is not defined in this file):
+preview: (FeatureCollection) The GeoJSON data to process.
+coordinateSystem: (CoordinateSystem) The coordinate system of the data.
+visibleLayers: (string[]) An array of visible layer names.
+zoom: (number) The current zoom level.
+analysis: (Analysis, optional) Analysis results.
+viewportBounds: (BBox, optional) The current viewport bounds.
+batchSize: (number, optional) The batch size for processing.
+Potential Issues:
+
+any Type in UseMapViewResult: The onMove callback in UseMapViewResult has an evt parameter typed as any. This disables type checking and could lead to runtime errors. It should be replaced with the appropriate event type from react-map-gl.
+Inconsistent Naming: The Bounds interface is defined in ./coordinates, while BBox is imported from geojson. It might be better to use a consistent naming convention for bounding boxes.
+UseFeatureProcessingProps Definition: The UseFeatureProcessingProps interface is defined but not used in this file. This might indicate incomplete or outdated code. If it's not used anywhere in the project, it should be removed.
+Missing viewportBounds in PreviewMapProps: PreviewMapProps uses the Bounds interface for its bounds prop, but some methods in useMapView (like getViewportBounds) return a GeoJSON BBox. This inconsistency can cause confusion and potential errors.
+Overall:
+
+This file provides a well-defined set of interfaces and types for working with map data and view state. However, it has some potential issues related to the use of the any type, inconsistent naming, and the definition of an unused interface. The missing viewportBounds property in PreviewMapProps should be addressed. Addressing these issues would improve type safety and make the code easier to understand and maintain.

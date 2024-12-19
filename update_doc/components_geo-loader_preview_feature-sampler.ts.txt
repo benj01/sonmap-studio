@@ -1,0 +1,50 @@
+Summary:
+
+This file defines a FeatureSampler class that provides functionality for sampling a subset of features from a larger set, with options to prioritize features with warnings or those located on the boundaries of the dataset.
+
+Imports:
+
+Feature from geojson for GeoJSON type definitions.
+SamplingOptions Interface:
+
+Defines options for the sampling process:
+maxFeatures: (number, optional) The maximum number of features to sample (defaults to 5000).
+preserveBoundaries: (boolean, optional) Whether to prioritize features on the boundaries (defaults to true).
+preserveWarnings: (boolean, optional) Whether to prioritize features with warnings (defaults to true).
+minDistance: (number, optional) Minimum distance between sampled features (defaults to 0). This option is not used in the current implementation.
+FeatureSampler Class:
+
+options: (Required<SamplingOptions>) Stores the sampling options, with default values applied.
+Constructor: Takes optional SamplingOptions and merges them with default values.
+sampleFeatures(features: Feature[], layerKey?: string): Feature[]:
+This is the main method for sampling features.
+If the number of features is less than or equal to maxFeatures, it returns all features.
+If preserveWarnings is true, it first adds all features with a hasWarning property to the preserved array.
+If preserveBoundaries is true, it calculates the bounds of all features using calculateBounds and adds features on the boundary to the preserved array using isOnBoundary.
+It calculates the number of remaining slots (remainingSlots) for regular features.
+If remainingSlots is less than or equal to 0, it returns only the preserved features.
+It filters out the preserved features from the original features array to get regularFeatures.
+It calculates a samplingInterval to evenly sample the remaining features.
+It iterates through the regularFeatures with the calculated interval and adds them to the sampled array.
+It returns a new array containing both preserved and sampled features.
+calculateBounds(features: Feature[]): { minX: number; minY: number; maxX: number; maxY: number }:
+Calculates the bounding box of a set of features based on their bbox property.
+Returns an object with minX, minY, maxX, and maxY.
+isOnBoundary(feature: Feature, bounds: { minX: number; minY: number; maxX: number; maxY: number }): boolean:
+Checks if a feature is on the boundary of the given bounds, using a tolerance of 0.1% of the larger dimension.
+Returns true if the feature is on the boundary, false otherwise.
+createFeatureSampler(options?: SamplingOptions): FeatureSampler:
+
+A factory function that creates a new FeatureSampler instance with the provided options.
+Potential Issues:
+
+Bounding Box Dependency: The calculateBounds and isOnBoundary methods rely on the presence of a bbox property in each feature. This might not always be available, especially if the GeoJSON was not generated with bounding boxes. It also does not take into account the actual geometry of the features, only the bounding box.
+Hardcoded Tolerance: The tolerance used in isOnBoundary is hardcoded to 0.1% of the larger dimension. This might not be appropriate for all datasets or use cases. Making this configurable would provide more flexibility.
+Inefficient Sampling: The sampling algorithm iterates through the regularFeatures array with a fixed interval. This could lead to uneven sampling if the features are not randomly distributed. A more sophisticated sampling algorithm, such as reservoir sampling, might provide better results.
+Unused minDistance Option: The minDistance option in SamplingOptions is not used in the current implementation.
+Unused layerKey Parameter: The layerKey parameter in sampleFeatures is not used.
+No Error Handling: The code doesn't include any error handling. For example, if calculateBounds is called with an empty array of features, it will return an invalid bounds object.
+Inefficient Boundary Calculation: The code iterates over all features twice: once to calculate bounds, and once more to find boundary features. This could be optimized.
+Overall:
+
+The FeatureSampler class provides a basic implementation of feature sampling with options for prioritizing warning and boundary features. However, it has some limitations and potential issues, particularly regarding bounding box dependency, hardcoded tolerance, sampling efficiency, and error handling. It could be improved by addressing these issues and potentially adding support for different sampling algorithms and more configurable options. The unused parameters should be removed and the boundary calculation could be optimized.

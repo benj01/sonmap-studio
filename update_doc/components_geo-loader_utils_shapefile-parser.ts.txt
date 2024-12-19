@@ -1,0 +1,117 @@
+Summary:
+
+This file defines a ShapefileParser class for reading and parsing shapefiles (.shp) and their associated attribute data (.dbf). It also includes helper functions and constants related to the shapefile format specification.
+
+Imports:
+
+GeoFeature, Geometry from ../../../types/geo.
+Several geometry creation functions (e.g., createPointGeometry, createPolygonGeometry) from ./geometry-utils.
+SHAPE_TYPE Constant:
+
+Defines an object mapping shape type names (e.g., 'POINT', 'POLYLINE') to their corresponding numeric codes as defined in the shapefile specification.
+Uses as const to create a read-only object with literal types for the values.
+Type Aliases:
+
+ShapeType: A type alias for the numeric codes of shape types.
+ZShapeType: A type alias for shape types that include Z coordinates.
+MShapeType: A type alias for shape types that include M (measure) values.
+Type Guards:
+
+isZShape: Checks if a ShapeType is a Z shape type.
+isMShape: Checks if a ShapeType is an M shape type.
+DBFField Interface:
+
+Defines the structure of a field in a DBF file:
+name: (string) Field name.
+type: (string) Field type (e.g., 'N' for number, 'C' for character).
+length: (number) Field length.
+decimalCount: (number) Number of decimal places (for numeric fields).
+ShapefileHeader Interface:
+
+Defines the structure of the shapefile header:
+fileLength: (number) Total file length (in 16-bit words).
+version: (number) Shapefile version.
+shapeType: (ShapeType) Type of shapes in the file.
+bounds: ({ xMin: number; yMin: number; xMax: number; yMax: number; zMin: number; zMax: number; mMin: number; mMax: number }) Bounding box of the data.
+LoadError Interface:
+
+Defines the structure of an error object:
+featureIndex: (number) Index of the feature where the error occurred.
+error: (string) Error message.
+severity: ('warning' | 'error') Severity of the error.
+Type Aliases:
+
+Coordinates2D: Alias for a 2D coordinate tuple [number, number].
+Coordinates3D: Alias for a 3D coordinate tuple [number, number, number].
+ShapefileParser Class:
+
+errors: (LoadError[]) Array to store errors encountered during parsing.
+dbfFields: (DBFField[]) Array to store DBF field definitions.
+readShapefileHeader(buffer: ArrayBuffer): Promise<ShapefileHeader>:
+Reads and parses the shapefile header from an ArrayBuffer.
+Validates the file code.
+Extracts header information (file length, version, shape type, bounds).
+Returns a ShapefileHeader object.
+Throws an error if the file code is invalid.
+readDBFHeader(buffer: ArrayBuffer): Promise<{ fields: DBFField[], recordCount: number }>:
+Reads and parses the DBF header from an ArrayBuffer.
+Extracts field definitions (name, type, length, decimal count) and record count.
+Stores the field definitions in this.dbfFields.
+Returns an object containing the fields and recordCount.
+readDBFRecords(buffer: ArrayBuffer, header: { fields: DBFField[], recordCount: number }): Promise<Record<number, Record<string, any>>>:
+Reads the DBF records from an ArrayBuffer.
+Uses the provided header to determine the field structure.
+Converts DBF field values to appropriate JavaScript types using convertDBFValue.
+Returns a record where keys are record numbers and values are objects containing field name-value pairs.
+convertDBFValue(value: string, type: string): any:
+Converts a DBF field value from a string to the appropriate JavaScript type based on the field type.
+Handles numeric ('N', 'F'), boolean ('L'), date ('D'), and string types.
+readPoint(view: DataView, offset: number, hasZ: boolean): Coordinates2D | Coordinates3D:
+Reads a point from a DataView at a given offset.
+Handles 2D and 3D points based on the hasZ flag.
+readPoints(view: DataView, offset: number, numPoints: number, hasZ: boolean): Array<Coordinates2D | Coordinates3D>:
+Reads multiple points from a DataView at a given offset.
+Calls readPoint to read each point.
+readMultiPoint(view: DataView, offset: number, hasZ: boolean): Geometry:
+Reads a MultiPoint geometry from a DataView.
+Calls readPoints to read the points.
+Creates a GeoJSON MultiPoint geometry using createMultiPointGeometry.
+readPolyline(view: DataView, offset: number, hasZ: boolean): Geometry:
+Reads a PolyLine geometry from a DataView.
+Reads part indices and points.
+Creates a GeoJSON LineString or MultiLineString geometry based on the number of parts, using createLineStringGeometry and createMultiLineStringGeometry.
+readPolygon(view: DataView, offset: number, hasZ: boolean): Geometry:
+Reads a Polygon geometry from a DataView.
+Reads part indices and points.
+Determines polygon and hole boundaries based on the winding order of the rings (clockwise for polygons, counterclockwise for holes).
+Creates a GeoJSON Polygon or MultiPolygon geometry using createPolygonGeometry and createMultiPolygonGeometry.
+isClockwise(ring: Array<Coordinates2D | Coordinates3D>): boolean:
+Determines if a ring is clockwise or counterclockwise based on the signed area.
+async *streamFeatures(buffer: ArrayBuffer, header: ShapefileHeader): AsyncGenerator<GeoFeature, void, undefined>:
+An asynchronous generator function that yields GeoJSON features parsed from the shapefile data.
+Iterates through the shape records in the buffer.
+Reads the shape type and calls the appropriate reading function (e.g., readPoint, readPolyline) based on the type.
+Creates a GeoJSON Feature using createFeature.
+Yields the created feature.
+Handles errors during feature reading and logs them as warnings.
+getErrors(): LoadError[]:
+Returns the array of errors encountered during parsing.
+getDBFFields(): DBFField[]:
+Returns the array of DBF field definitions.
+createShapefileParser Function:
+
+A factory function that creates a new ShapefileParser instance.
+Potential Issues:
+
+Error Handling: Error handling could be improved. Some errors are thrown (e.g., in readShapefileHeader), while others are logged as warnings (e.g., in streamFeatures). A more consistent approach would be beneficial. Also, the error messages could be more informative.
+Hardcoded Values: The magic number 9994 for the shapefile file code and the offsets for reading header and record data are hardcoded. Defining these as constants would improve readability and maintainability.
+any Type: The use of the any type in several places (e.g., isValid2DCoordinate, isValid3DCoordinate, isValidLinearRing, readDBFRecords) disables type checking and could lead to runtime errors. Using more specific types would improve type safety.
+Direct Console Logging: The code logs directly to the console using console.warn. Using a dedicated logging library or mechanism would provide more control over logging levels and output.
+No Support for M Coordinates: The code doesn't seem to handle M (measure) coordinates, even though it defines MShapeType and reads the mMin and mMax values from the header.
+Limited Validation in streamFeatures: The streamFeatures method checks if a geometry is created successfully, but it doesn't validate the geometry itself (e.g., using the validation functions from geometry-utils.ts). This could lead to invalid GeoJSON being generated.
+No Handling of Deleted Records in DBF: The code doesn't handle deleted records in the DBF file (marked with an asterisk).
+Inconsistent Use of GeoFeature: The streamFeatures method is typed as yielding GeoFeature objects, but it uses createFeature which is supposed to return GeoFeature. This inconsistency could be confusing.
+Incorrect createFeature usage: In the streamFeatures method, you are creating a GeoJSON feature using the createFeature function, but you are not assigning any properties to it. You should pass the attributes read from the DBF file to the createFeature function.
+Overall:
+
+The ShapefileParser class provides a comprehensive implementation for parsing shapefiles and their associated DBF data. However, it has some potential issues related to error handling, hardcoded values, the use of any, logging, M coordinate handling, validation, and deleted record handling. Addressing these issues would improve the robustness, maintainability, and flexibility of the code. The code could also be extended to support M coordinates and to handle deleted records in DBF files. The inconsistent use of GeoFeature should be addressed. Also, GeoFeature should only be used to add properties to a feature, not to create a feature itself.

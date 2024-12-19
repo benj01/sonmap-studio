@@ -1,0 +1,57 @@
+Summary:
+
+This file defines TypeScript interfaces and types used by the geo-import components. These definitions specify the structure of data passed between components and functions, ensuring type safety and improving code readability.
+
+LogEntry: Defines the structure of a single log entry, including the message, type (info, warning, or error), and timestamp.
+LogType: A type alias for the possible log types, derived from LogEntry['type'].
+ImportOptions: Extends the LoaderOptions interface (from types/geo) with additional options specific to the import process:
+selectedLayers: (string[]) An array of selected layer names.
+visibleLayers: (string[]) An array of visible layer names.
+selectedTemplates: (string[]) An array of selected template names.
+coordinateSystem: (CoordinateSystem, optional) The selected coordinate system.
+ImportState: Defines the internal state of the GeoImportDialog component:
+logs: (LogEntry[]) An array of log entries.
+hasErrors: (boolean) Indicates whether any errors have occurred.
+selectedLayers: (string[]) An array of selected layer names.
+visibleLayers: (string[]) An array of visible layer names.
+selectedTemplates: (string[]) An array of selected template names.
+PreviewSectionProps: Defines the props for the PreviewSection component:
+previewManager: (PreviewManager) An instance of PreviewManager.
+bounds: ({ minX: number; minY: number; maxX: number; maxY: number }) The bounding box of the data.
+coordinateSystem: (CoordinateSystem, optional) The coordinate system of the data.
+visibleLayers: (string[]) An array of visible layer names.
+analysis: (any) The result of data analysis.
+SettingsSectionProps: Defines the props for the SettingsSection component:
+file: (File) The file being imported.
+dxfData: (DxfData | undefined) DXF data, if available.
+analysis: (any) Analysis results.
+options: (ImportOptions) Import options.
+selectedLayers: (string[]) Selected layers.
+visibleLayers: (string[]) Visible layers.
+selectedTemplates: (string[]) Selected templates.
+onLayerToggle: (function) Callback to toggle layer selection.
+onLayerVisibilityToggle: (function) Callback to toggle layer visibility.
+onTemplateSelect: (function) Callback to toggle template selection.
+onCoordinateSystemChange: (function) Callback when the coordinate system changes.
+pendingCoordinateSystem: (CoordinateSystem, optional) The pending coordinate system.
+onApplyCoordinateSystem: (function, optional) Callback to apply the pending coordinate system.
+LogsSectionProps: Defines the props for the LogsSection component:
+logs: (LogEntry[]) An array of log entries.
+loading: (boolean) Indicates whether an operation is in progress.
+hasErrors: (boolean) Indicates whether any errors have occurred.
+onClearAndClose: (function) Callback to clear logs and close the dialog.
+GeoImportDialogProps: Defines the props for the GeoImportDialog component:
+isOpen: (boolean) Whether the dialog is open.
+onClose: (function) Callback to close the dialog.
+file: (File | null) The file being imported.
+onImportComplete: (function) Callback called when the import is complete, receiving the LoaderResult.
+Potential Issues:
+
+any Type: The analysis prop in PreviewSectionProps and SettingsSectionProps is typed as any. This disables type checking and could lead to runtime errors. It's best to define a specific interface for the analysis results to ensure type safety.
+dxfData in SettingsSectionProps: The dxfData prop is typed as DxfData | undefined, but in the component it is only used when isDxfFile is true. This could be made more specific by using conditional types or a discriminated union to indicate that dxfData is only present when the file is a DXF.
+Inconsistent Naming: The PreviewSectionProps interface has a bounds property defined as an object with minX, minY, maxX, and maxY, while the LoaderResult type (used in GeoImportDialogProps) has a bounds property defined as number[]. This inconsistency should be addressed.
+Redundancy: selectedLayers, visibleLayers, and selectedTemplates are defined in both ImportOptions and ImportState, as well as passed as separate props to SettingsSection. This redundancy could be eliminated by having a single source of truth for these options.
+Optional Properties in ImportOptions: All properties in ImportOptions are optional. This might not be intended, as some options are likely required for the import process to function correctly.
+Overall:
+
+This file provides well-defined types for the geo-import components, improving code readability and maintainability. However, there are some areas that could be improved, particularly regarding the use of the any type, inconsistent naming, and redundancy. Addressing these issues would enhance type safety and make the code easier to understand and maintain. The bounds property should be made consistent across all interfaces. The redundancy of selectedLayers, visibleLayers, and selectedTemplates should be eliminated, and the optional properties in ImportOptions should be reviewed.

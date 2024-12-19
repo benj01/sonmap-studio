@@ -1,0 +1,92 @@
+Summary:
+
+This file defines a CoordinateTransformer class for transforming coordinates between different coordinate systems using proj4, along with utility functions for detecting likely Swiss coordinate systems (LV95 or LV03) and suggesting a coordinate system based on a set of points.
+
+Imports:
+
+proj4 from proj4 for coordinate system transformations.
+COORDINATE_SYSTEMS, CoordinateSystem, isSwissSystem from ../types/coordinates.
+Point Interface:
+
+Defines the structure for a point with x and y coordinates, and an optional z coordinate.
+createTransformer Function:
+
+A simple factory function that creates and returns a new CoordinateTransformer instance.
+CoordinateTransformer Class:
+
+fromSystem: (string) The source coordinate system.
+toSystem: (string) The target coordinate system.
+transformer: (proj4.Converter) The proj4 converter instance.
+transformationAttempts: (Map<string, number>) A map to track transformation attempts for individual points (to avoid infinite retries).
+MAX_ATTEMPTS: (number) Maximum transformation attempts per point (3).
+Constructor:
+Initializes fromSystem and toSystem.
+Logs a warning if proj4 is not available globally on the window object.
+Validates that both source and target coordinate systems are defined in proj4.defs.
+Creates a proj4 converter instance using proj4(fromSystem, toSystem) and stores it in this.transformer.
+Logs the transformation setup for debugging.
+Throws an error if the transformer cannot be created.
+validatePoint(point: Point): boolean:
+Validates that a point has valid x and y coordinates (and z if present), ensuring they are numbers and finite.
+getPointKey(point: Point): string:
+Creates a unique key for a point based on its coordinates, used for tracking transformation attempts.
+checkTransformationAttempts(point: Point): boolean:
+Checks if the maximum transformation attempts for a point have been exceeded.
+Logs a warning if the limit is reached.
+Increments the attempt counter for the point.
+transform(point: Point): Point | null:
+Transforms a single point from the source coordinate system to the target coordinate system.
+Returns the original point if fromSystem and toSystem are the same, and the point is valid.
+Validates the input point.
+Checks for excessive transformation attempts using checkTransformationAttempts.
+Verifies that the coordinate system definitions are still valid in proj4.defs.
+Handles coordinate order specifically for Swiss systems (swaps x and y when converting from Swiss to WGS84).
+Performs the transformation using this.transformer.forward().
+Validates the transformed coordinates.
+Logs successful transformations for debugging.
+Clears transformation attempts for successful transformations.
+Handles errors during transformation by logging an error and returning null.
+Throws a CoordinateTransformationError if a specific transformation error occurs.
+transformBounds(bounds: { minX: number; minY: number; maxX: number; maxY: number }): { minX: number; minY: number; maxX: number; maxY: number } | null:
+Transforms a bounding box from the source coordinate system to the target coordinate system.
+Validates the input bounds.
+Verifies that the coordinate system definitions are still valid in proj4.defs.
+Transforms all four corners of the bounding box using transform.
+Calculates the new bounds based on the transformed corners.
+Logs the transformed bounds for debugging.
+Handles errors during transformation by logging an error and returning null.
+isValidPoint Function:
+
+A type guard function that checks if an object is a valid Point with finite x and y coordinates.
+detectLV95Coordinates Function:
+
+Detects if a set of points is likely in the LV95 coordinate system based on their values.
+Checks if points fall within expected ranges for LV95 (x starting with '2', y starting with '1', and within specific bounds).
+Returns true if 80% or more of the sampled points match the LV95 pattern, false otherwise.
+detectLV03Coordinates Function:
+
+Detects if a set of points is likely in the LV03 coordinate system based on their values.
+Checks if points fall within expected ranges for LV03 (6-digit x and y values within specific bounds).
+Returns true if 80% or more of the sampled points match the LV03 pattern, false otherwise.
+suggestCoordinateSystem Function:
+
+Suggests the most likely coordinate system for a set of points based on their values.
+First, it checks if the points are likely in LV95 or LV03 using detectLV95Coordinates and detectLV03Coordinates.
+Then, it checks if the coordinates are definitely within the WGS84 range (-180 to 180 longitude, -90 to 90 latitude) and have decimal values.
+Defaults to COORDINATE_SYSTEMS.NONE if no definitive system can be determined.
+Logs debugging information about the detection process.
+Potential Issues:
+
+Global proj4 Dependency: The CoordinateTransformer relies on proj4 being available globally on the window object. This might not be ideal in non-browser environments or if multiple versions of proj4 are used.
+Error Handling: Error handling could be improved. Some errors are logged and null is returned, while others throw errors. A more consistent approach would be beneficial. Also, the error messages could be more informative.
+Hardcoded Values: The MAX_ATTEMPTS value and the thresholds in detectLV95Coordinates and detectLV03Coordinates are hardcoded. Making these configurable might provide more flexibility.
+any Type in isValidPoint: The point parameter in isValidPoint is typed as any. Using a more specific type (e.g., Partial<Point>) would improve type safety.
+Redundant isFinite Checks: The validatePoint method checks if point.x and point.y are numbers and then checks again if they are finite. The second check is redundant because typeof point.x === 'number' already implies that the value is not NaN or Infinity.
+detectLV95Coordinates and detectLV03Coordinates: These functions might not be accurate in all cases, especially if the points are not evenly distributed or if they are located near the boundaries of the coordinate system.
+suggestCoordinateSystem Logic: The logic in suggestCoordinateSystem could be improved. For example, it might be more accurate to check for WGS84 coordinates before checking for Swiss coordinate systems. Also, the hardcoded WGS84 range check is not very robust and might lead to false positives. It also logs to console.warn and console.debug, this should be unified.
+Extensive Debug Logging: The code includes many console.debug statements, which might be helpful during development but could clutter the console in production. These statements should be removed or made conditional based on a debug flag.
+Unclear Coordinate Order Handling: The comment about handling coordinate order for Swiss systems is not entirely clear. It's mentioned that "Swiss coordinates are in (E,N) format", but the code doesn't explicitly swap coordinates in the transform method. It's later mentioned that "The transformer already handles the coordinate order for Swiss systems", but this is not obvious from the code.
+Redundant Validation in transform: The transform method validates the input point using validatePoint and checks transformation attempts using checkTransformationAttempts. However, it also calls this.transformer.forward(), which might throw an error if the input is invalid. This could lead to redundant checks and potentially inconsistent error handling.
+Overall:
+
+This file provides a useful set of utilities for working with coordinate systems and performing transformations. However, it has several potential issues related to global dependencies, error handling, hardcoded values, type safety, logging, coordinate system detection logic, and clarity regarding coordinate order handling. Addressing these issues would improve the robustness, maintainability, and flexibility of the code.
