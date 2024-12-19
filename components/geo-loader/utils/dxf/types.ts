@@ -222,27 +222,11 @@ export function isVector3(v: unknown): v is Vector3 {
   return vec.z === undefined || (typeof vec.z === 'number' && isFinite(vec.z));
 }
 
-export function isDxfTextEntity(e: unknown): e is DxfTextEntity {
-  if (!e || typeof e !== 'object') return false;
-  const entity = e as any;
-  return (entity.type === 'TEXT' || entity.type === 'MTEXT') && 
-         isVector3(entity.position) && 
-         typeof entity.text === 'string';
-}
-
-export function isDxfSplineEntity(e: unknown): e is DxfSplineEntity {
-  if (!e || typeof e !== 'object') return false;
-  const entity = e as any;
-  return entity.type === 'SPLINE' && 
-         Array.isArray(entity.controlPoints) && 
-         entity.controlPoints.every((p: unknown) => isVector3(p)) && 
-         typeof entity.degree === 'number';
-}
-
 export function isDxfPointEntity(e: unknown): e is DxfPointEntity {
   if (!e || typeof e !== 'object') return false;
   const entity = e as any;
-  return entity.type === 'POINT' && isVector3(entity.position);
+  return entity.type === 'POINT' && 
+         isVector3(entity.position);
 }
 
 export function isDxfLineEntity(e: unknown): e is DxfLineEntity {
@@ -297,10 +281,74 @@ export function isDxfEllipseEntity(e: unknown): e is DxfEllipseEntity {
          isFinite(entity.endAngle);
 }
 
+export function isDxf3DFaceEntity(e: unknown): e is Dxf3DFaceEntity {
+  if (!e || typeof e !== 'object') return false;
+  const entity = e as any;
+  return entity.type === '3DFACE' && 
+         Array.isArray(entity.vertices) &&
+         entity.vertices.length === 4 &&
+         entity.vertices.every((v: unknown) => isVector3(v));
+}
+
 export function isDxfInsertEntity(e: unknown): e is DxfInsertEntity {
   if (!e || typeof e !== 'object') return false;
   const entity = e as any;
   return entity.type === 'INSERT' && 
          isVector3(entity.position) && 
          typeof entity.block === 'string';
+}
+
+export function isDxfTextEntity(e: unknown): e is DxfTextEntity {
+  if (!e || typeof e !== 'object') return false;
+  const entity = e as any;
+  return (entity.type === 'TEXT' || entity.type === 'MTEXT') && 
+         isVector3(entity.position) && 
+         typeof entity.text === 'string';
+}
+
+export function isDxfSplineEntity(e: unknown): e is DxfSplineEntity {
+  if (!e || typeof e !== 'object') return false;
+  const entity = e as any;
+  return entity.type === 'SPLINE' && 
+         Array.isArray(entity.controlPoints) && 
+         entity.controlPoints.every((p: unknown) => isVector3(p)) && 
+         typeof entity.degree === 'number';
+}
+
+export function isValidEntity(e: unknown): e is DxfEntity {
+  if (!e || typeof e !== 'object') return false;
+  const entity = e as any;
+  
+  // Check base properties
+  if (typeof entity.type !== 'string') return false;
+  if (entity.layer !== undefined && typeof entity.layer !== 'string') return false;
+  if (entity.handle !== undefined && typeof entity.handle !== 'string') return false;
+
+  // Check specific entity types
+  switch (entity.type) {
+    case 'POINT':
+      return isDxfPointEntity(entity);
+    case 'LINE':
+      return isDxfLineEntity(entity);
+    case 'POLYLINE':
+    case 'LWPOLYLINE':
+      return isDxfPolylineEntity(entity);
+    case 'CIRCLE':
+      return isDxfCircleEntity(entity);
+    case 'ARC':
+      return isDxfArcEntity(entity);
+    case 'ELLIPSE':
+      return isDxfEllipseEntity(entity);
+    case '3DFACE':
+      return isDxf3DFaceEntity(entity);
+    case 'INSERT':
+      return isDxfInsertEntity(entity);
+    case 'TEXT':
+    case 'MTEXT':
+      return isDxfTextEntity(entity);
+    case 'SPLINE':
+      return isDxfSplineEntity(entity);
+    default:
+      return false;
+  }
 }

@@ -21,10 +21,13 @@ export function SettingsSection({
   onCoordinateSystemChange,
   pendingCoordinateSystem,
   onApplyCoordinateSystem,
+  errorReporter,
 }: SettingsSectionProps) {
   const [isApplying, setIsApplying] = useState(false);
   const isDxfFile = file.name.toLowerCase().endsWith('.dxf');
-  const showCoordinateWarning = analysis?.coordinateSystem === COORDINATE_SYSTEMS.WGS84 && 
+  
+  // Check for invalid WGS84 coordinates
+  const hasInvalidWGS84Coordinates = analysis?.coordinateSystem === COORDINATE_SYSTEMS.WGS84 && 
     analysis?.bounds && (
       Math.abs(analysis.bounds.maxX) > 180 || 
       Math.abs(analysis.bounds.minX) > 180 || 
@@ -32,14 +35,35 @@ export function SettingsSection({
       Math.abs(analysis.bounds.minY) > 90
     );
 
+  // Report coordinate system warning if detected
+  if (hasInvalidWGS84Coordinates) {
+    errorReporter.warn('Coordinates appear to be outside the valid WGS84 range', {
+      bounds: analysis.bounds,
+      currentSystem: analysis.coordinateSystem
+    });
+  }
+
   const coordinateSystemChanged = pendingCoordinateSystem !== options.coordinateSystem;
   const detectedSystem = analysis?.coordinateSystem;
 
   const handleApplyCoordinateSystem = async () => {
-    if (!onApplyCoordinateSystem) return;
+    if (!onApplyCoordinateSystem) {
+      errorReporter.error('Cannot apply coordinate system: onApplyCoordinateSystem callback is not defined');
+      return;
+    }
+
     setIsApplying(true);
     try {
       await onApplyCoordinateSystem();
+      errorReporter.info(`Successfully applied coordinate system: ${pendingCoordinateSystem}`, {
+        from: options.coordinateSystem,
+        to: pendingCoordinateSystem
+      });
+    } catch (error: unknown) {
+      errorReporter.error('Failed to apply coordinate system', error instanceof Error ? error : new Error(String(error)), {
+        from: options.coordinateSystem,
+        to: pendingCoordinateSystem
+      });
     } finally {
       setIsApplying(false);
     }
@@ -50,7 +74,7 @@ export function SettingsSection({
       {/* Coordinate System Section */}
       <div className="border rounded-lg p-4">
         {/* Warning for invalid coordinates */}
-        {showCoordinateWarning && (
+        {hasInvalidWGS84Coordinates && (
           <Alert variant="destructive" className="mb-4">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription>
@@ -65,6 +89,7 @@ export function SettingsSection({
           defaultValue={analysis?.coordinateSystem}
           onChange={onCoordinateSystemChange}
           highlightValue={detectedSystem}
+          errorReporter={errorReporter}
         />
 
         {/* Apply Changes Button */}
@@ -99,6 +124,7 @@ export function SettingsSection({
             onLayerVisibilityToggle={onLayerVisibilityToggle}
             selectedTemplates={selectedTemplates}
             onTemplateSelect={onTemplateSelect}
+            errorReporter={errorReporter}
           />
         </div>
       )}

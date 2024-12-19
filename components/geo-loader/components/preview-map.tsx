@@ -9,15 +9,8 @@ import bboxPolygon from '@turf/bbox-polygon';
 import booleanIntersects from '@turf/boolean-intersects';
 import { FeatureCollection, Feature } from 'geojson';
 import { createPreviewManager, PreviewManager } from '../preview/preview-manager';
+import { proj4Instance } from './geo-import/coordinate-system-init';
 
-/**
- * Updated PreviewMap:
- * 
- * Instead of using `useFeatureProcessing`, we directly use a `PreviewManager` to get features.
- * We also apply viewport filtering here manually if required. This ensures we only show features
- * in the current viewport. For large data sets, you could incorporate the `FeatureSampler` or 
- * other strategies.
- */
 const VIEWPORT_PADDING = 50;
 const CLUSTER_RADIUS = 50;
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
@@ -28,7 +21,8 @@ export function PreviewMap({
   coordinateSystem = COORDINATE_SYSTEMS.WGS84,
   visibleLayers = [],
   selectedElement,
-  analysis
+  analysis,
+  errorReporter
 }: PreviewMapProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -42,22 +36,32 @@ export function PreviewMap({
     updateViewFromBounds,
     focusOnFeatures,
     getViewportBounds
-  } = useMapView(bounds, coordinateSystem);
+  } = useMapView(
+    errorReporter,
+    bounds,
+    coordinateSystem,
+    proj4Instance
+  );
 
   // Initialize preview manager
   const previewManagerRef = React.useRef<PreviewManager | null>(null);
 
   useEffect(() => {
     // Create or update the preview manager whenever preview or visibleLayers changes
-    const pm = createPreviewManager({
-      maxFeatures: 5000,
-      visibleLayers,
-      analysis,
-      coordinateSystem
-    });
+    const pm = createPreviewManager(
+      {
+        maxFeatures: 5000,
+        visibleLayers,
+        selectedElement,
+        analysis,
+        coordinateSystem
+      },
+      errorReporter,
+      proj4Instance
+    );
 
     if (preview) {
-      console.debug('Setting preview features:', {
+      errorReporter.reportInfo('PREVIEW_UPDATE', 'Setting preview features', {
         featureCount: preview.features.length,
         coordinateSystem,
         isSwiss: isSwissSystem(coordinateSystem),
@@ -68,13 +72,13 @@ export function PreviewMap({
 
     previewManagerRef.current = pm;
     setIsLoading(false);
-  }, [preview, visibleLayers, analysis, coordinateSystem]);
+  }, [preview, visibleLayers, analysis, coordinateSystem, errorReporter, selectedElement]);
 
   // Initial zoom to bounds
   useEffect(() => {
     if (bounds) {
       try {
-        console.debug('Updating view from bounds:', {
+        errorReporter.reportInfo('VIEW_UPDATE', 'Updating view from bounds', {
           bounds,
           coordinateSystem,
           isSwiss: isSwissSystem(coordinateSystem)
@@ -82,11 +86,16 @@ export function PreviewMap({
         updateViewFromBounds(bounds);
         setError(null);
       } catch (err) {
-        const e = err as Error;
-        setError(`Failed to set initial view: ${e.message}`);
+        const message = `Failed to set initial view: ${err instanceof Error ? err.message : 'Unknown error'}`;
+        errorReporter.reportError('VIEW_ERROR', message, {
+          bounds,
+          coordinateSystem,
+          error: err instanceof Error ? err : undefined
+        });
+        setError(message);
       }
     }
-  }, [bounds, updateViewFromBounds, coordinateSystem]);
+  }, [bounds, updateViewFromBounds, coordinateSystem, errorReporter]);
 
   // Focus on selected element if needed
   useEffect(() => {
@@ -101,11 +110,15 @@ export function PreviewMap({
           setError(null);
         }
       } catch (err) {
-        const e = err as Error;
-        setError(`Failed to focus on selected element: ${e.message}`);
+        const message = `Failed to focus on selected element: ${err instanceof Error ? err.message : 'Unknown error'}`;
+        errorReporter.reportError('FOCUS_ERROR', message, {
+          selectedElement,
+          error: err instanceof Error ? err : undefined
+        });
+        setError(message);
       }
     }
-  }, [selectedElement, focusOnFeatures]);
+  }, [selectedElement, focusOnFeatures, errorReporter]);
 
   const handleMapMove = useCallback((evt: ViewStateChangeEvent) => {
     onMove(evt);

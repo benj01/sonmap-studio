@@ -4,20 +4,57 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'c
 import { COORDINATE_SYSTEMS } from '../types/coordinates';
 import { cn } from 'utils/cn';
 import { Info } from 'lucide-react';
+import { ErrorReporter } from '../utils/errors';
 
 interface CoordinateSystemSelectProps {
   value: string;
   defaultValue?: string;
   onChange: (value: string) => void;
   highlightValue?: string;
+  errorReporter: ErrorReporter;
 }
 
 export function CoordinateSystemSelect({
   value,
   defaultValue,
   onChange,
-  highlightValue
+  highlightValue,
+  errorReporter
 }: CoordinateSystemSelectProps) {
+  // Validate the current value
+  const validateCoordinateSystem = (system: string) => {
+    if (!Object.values(COORDINATE_SYSTEMS).includes(system as any)) {
+      errorReporter.error('Invalid coordinate system selected', undefined, {
+        system,
+        availableSystems: Object.values(COORDINATE_SYSTEMS)
+      });
+      return false;
+    }
+    return true;
+  };
+
+  // Handle coordinate system change
+  const handleChange = (newValue: string) => {
+    if (!validateCoordinateSystem(newValue)) {
+      return;
+    }
+
+    errorReporter.info('Changing coordinate system', {
+      from: value || defaultValue,
+      to: newValue
+    });
+
+    // Warn if changing from detected system
+    if (highlightValue && highlightValue !== newValue) {
+      errorReporter.warn('Selected coordinate system differs from detected system', {
+        detected: highlightValue,
+        selected: newValue
+      });
+    }
+
+    onChange(newValue);
+  };
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -31,13 +68,7 @@ export function CoordinateSystemSelect({
       </div>
       <Select
         value={value || defaultValue || ''}
-        onValueChange={(value) => {
-          console.debug('Changing coordinate system:', {
-            from: value || defaultValue,
-            to: value
-          });
-          onChange(value);
-        }}
+        onValueChange={handleChange}
       >
         <SelectTrigger>
           <SelectValue placeholder="Select coordinate system" />

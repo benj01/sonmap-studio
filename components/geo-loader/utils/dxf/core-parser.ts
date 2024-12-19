@@ -4,7 +4,7 @@ import { DxfEntityParser } from './entity-parser';
 import { TransformUtils } from './transform';
 import { GeoFeature } from '../../../../types/geo';
 import { DxfValidator } from './validator';
-import { ErrorCollector } from './error-collector';
+import { ErrorCollector } from '../errors';
 
 type ParsedEntity = ReturnType<DxfEntityParser['parseEntity']>;
 

@@ -22,6 +22,7 @@ import {
   Download
 } from 'lucide-react';
 import { DxfData } from '../utils/dxf/types';
+import { ErrorReporter } from '../utils/errors';
 
 interface DxfStructureViewProps {
   dxfData: DxfData;
@@ -32,6 +33,7 @@ interface DxfStructureViewProps {
   selectedTemplates: string[];
   onTemplateSelect: (template: string, enabled: boolean) => void;
   onElementSelect?: (elementInfo: { type: string, layer: string }) => void;
+  errorReporter: ErrorReporter;
 }
 
 interface TreeNodeProps {
@@ -166,7 +168,8 @@ export function DxfStructureView({
   onLayerVisibilityToggle,
   selectedTemplates = [],
   onTemplateSelect,
-  onElementSelect
+  onElementSelect,
+  errorReporter
 }: DxfStructureViewProps) {
   // Extract styles and counts
   const lineTypes = new Set<string>();
@@ -176,32 +179,46 @@ export function DxfStructureView({
 
   // Process entities and calculate counts including INSERT entities
   function processEntities(entities: any[], parentLayer?: string) {
-    entities.forEach(entity => {
-      const layer = parentLayer || entity.layer;
-      
-      // Count entities by type
-      entityCounts[entity.type] = (entityCounts[entity.type] || 0) + 1;
+    try {
+      entities.forEach(entity => {
+        const layer = parentLayer || entity.layer;
+        
+        // Count entities by type
+        entityCounts[entity.type] = (entityCounts[entity.type] || 0) + 1;
 
-      // Count entities by layer and type
-      if (layer) {
-        if (!elementsByLayer[layer]) {
-          elementsByLayer[layer] = {};
+        // Count entities by layer and type
+        if (layer) {
+          if (!elementsByLayer[layer]) {
+            elementsByLayer[layer] = {};
+          }
+          elementsByLayer[layer][entity.type] = 
+            (elementsByLayer[layer][entity.type] || 0) + 1;
         }
-        elementsByLayer[layer][entity.type] = 
-          (elementsByLayer[layer][entity.type] || 0) + 1;
-      }
 
-      // Collect styles
-      if (entity.lineType) lineTypes.add(entity.lineType);
-      if ((entity.type === 'TEXT' || entity.type === 'MTEXT') && entity.style) {
-        textStyles.add(entity.style);
-      }
+        // Collect styles
+        if (entity.lineType) lineTypes.add(entity.lineType);
+        if ((entity.type === 'TEXT' || entity.type === 'MTEXT') && entity.style) {
+          textStyles.add(entity.style);
+        }
 
-      // Process block references (INSERT entities)
-      if (entity.type === 'INSERT' && entity.block && dxfData.blocks?.[entity.block]) {
-        processEntities(dxfData.blocks[entity.block].entities, layer);
-      }
-    });
+        // Process block references (INSERT entities)
+        if (entity.type === 'INSERT' && entity.block) {
+          if (!dxfData.blocks?.[entity.block]) {
+            errorReporter.warn(`Referenced block "${entity.block}" not found`, {
+              entityType: entity.type,
+              layer: layer,
+              blockName: entity.block
+            });
+            return;
+          }
+          processEntities(dxfData.blocks[entity.block].entities, layer);
+        }
+      });
+    } catch (error) {
+      errorReporter.error('Error processing DXF entities', error instanceof Error ? error : new Error(String(error)), {
+        parentLayer
+      });
+    }
   }
 
   processEntities(dxfData.entities);
@@ -211,23 +228,44 @@ export function DxfStructureView({
   
   // Handle toggle all layers visibility
   const handleToggleAllLayers = (visible: boolean) => {
-    allLayers.forEach(layer => {
-      onLayerVisibilityToggle(layer, visible);
-    });
+    try {
+      allLayers.forEach(layer => {
+        onLayerVisibilityToggle(layer, visible);
+      });
+      errorReporter.info(`${visible ? 'Showed' : 'Hid'} all layers`, {
+        layerCount: allLayers.length
+      });
+    } catch (error) {
+      errorReporter.error('Failed to toggle layer visibility', error instanceof Error ? error : new Error(String(error)));
+    }
   };
 
   // Handle toggle all layers import
   const handleToggleAllLayersImport = (enabled: boolean) => {
-    allLayers.forEach(layer => {
-      onLayerToggle(layer, enabled);
-    });
+    try {
+      allLayers.forEach(layer => {
+        onLayerToggle(layer, enabled);
+      });
+      errorReporter.info(`${enabled ? 'Selected' : 'Deselected'} all layers for import`, {
+        layerCount: allLayers.length
+      });
+    } catch (error) {
+      errorReporter.error('Failed to toggle layer selection', error instanceof Error ? error : new Error(String(error)));
+    }
   };
 
   // Handle toggle all templates
   const handleToggleAllTemplates = (enabled: boolean) => {
-    Object.keys(entityCounts).forEach(type => {
-      onTemplateSelect(type, enabled);
-    });
+    try {
+      Object.keys(entityCounts).forEach(type => {
+        onTemplateSelect(type, enabled);
+      });
+      errorReporter.info(`${enabled ? 'Selected' : 'Deselected'} all entity types as templates`, {
+        typeCount: Object.keys(entityCounts).length
+      });
+    } catch (error) {
+      errorReporter.error('Failed to toggle template selection', error instanceof Error ? error : new Error(String(error)));
+    }
   };
 
   // Check if all layers/templates are visible/selected
@@ -314,7 +352,17 @@ export function DxfStructureView({
                     <Eye className="h-3 w-3" />
                     <Switch
                       checked={visibleLayers.includes(name)}
-                      onCheckedChange={(checked) => onLayerVisibilityToggle(name, checked)}
+                      onCheckedChange={(checked) => {
+                        try {
+                          onLayerVisibilityToggle(name, checked);
+                          errorReporter.info(`${checked ? 'Showed' : 'Hid'} layer "${name}"`, {
+                            layer: name,
+                            entityCount: calculateTotalCount(elementsByLayer[name] || {})
+                          });
+                        } catch (error) {
+                          errorReporter.error(`Failed to toggle visibility for layer "${name}"`, error instanceof Error ? error : new Error(String(error)));
+                        }
+                      }}
                       className="scale-75"
                     />
                   </div>
@@ -322,7 +370,17 @@ export function DxfStructureView({
                     <Download className="h-3 w-3" />
                     <Switch
                       checked={selectedLayers.includes(name)}
-                      onCheckedChange={(checked) => onLayerToggle(name, checked)}
+                      onCheckedChange={(checked) => {
+                        try {
+                          onLayerToggle(name, checked);
+                          errorReporter.info(`${checked ? 'Selected' : 'Deselected'} layer "${name}" for import`, {
+                            layer: name,
+                            entityCount: calculateTotalCount(elementsByLayer[name] || {})
+                          });
+                        } catch (error) {
+                          errorReporter.error(`Failed to toggle selection for layer "${name}"`, error instanceof Error ? error : new Error(String(error)));
+                        }
+                      }}
                       className="scale-75"
                     />
                   </div>
@@ -336,7 +394,20 @@ export function DxfStructureView({
                       <div 
                         key={type} 
                         className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                        onClick={() => onElementSelect?.({ type, layer: name })}
+                        onClick={() => {
+                          if (onElementSelect) {
+                            try {
+                              onElementSelect({ type, layer: name });
+                              errorReporter.info(`Selected ${typeInfo.label} elements in layer "${name}"`, {
+                                type,
+                                layer: name,
+                                count
+                              });
+                            } catch (error) {
+                              errorReporter.error(`Failed to select ${typeInfo.label} elements in layer "${name}"`, error instanceof Error ? error : new Error(String(error)));
+                            }
+                          }
+                        }}
                       >
                         {typeInfo.icon}
                         <span>{typeInfo.label}</span>
@@ -375,7 +446,20 @@ export function DxfStructureView({
                     <div 
                       key={type} 
                       className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                      onClick={() => onElementSelect?.({ type, layer: name })}
+                      onClick={() => {
+                        if (onElementSelect) {
+                          try {
+                            onElementSelect({ type, layer: name });
+                            errorReporter.info(`Selected ${typeInfo.label} elements in block "${name}"`, {
+                              type,
+                              block: name,
+                              count
+                            });
+                          } catch (error) {
+                            errorReporter.error(`Failed to select ${typeInfo.label} elements in block "${name}"`, error instanceof Error ? error : new Error(String(error)));
+                          }
+                        }
+                      }}
                     >
                       {typeInfo.icon}
                       <span>{typeInfo.label}</span>
@@ -433,7 +517,17 @@ export function DxfStructureView({
                 </div>
                 <Switch
                   checked={selectedTemplates.includes(type)}
-                  onCheckedChange={(checked) => onTemplateSelect(type, checked)}
+                  onCheckedChange={(checked) => {
+                    try {
+                      onTemplateSelect(type, checked);
+                      errorReporter.info(`${checked ? 'Selected' : 'Deselected'} ${typeInfo.label} as template`, {
+                        type,
+                        count
+                      });
+                    } catch (error) {
+                      errorReporter.error(`Failed to toggle template selection for ${typeInfo.label}`, error instanceof Error ? error : new Error(String(error)));
+                    }
+                  }}
                   className="scale-75"
                 />
               </div>

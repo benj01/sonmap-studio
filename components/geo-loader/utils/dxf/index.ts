@@ -3,7 +3,7 @@ export * from './types';
 
 // Re-export validator and error collector
 export * from './validator';
-export * from './error-collector';
+export * from '../errors';
 
 // Re-export transform utilities
 export * from './transform';

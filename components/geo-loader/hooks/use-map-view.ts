@@ -4,212 +4,244 @@ import { Feature, BBox } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds, DEFAULT_CENTER } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
-import proj4 from 'proj4';
+import { ErrorReporter } from '../utils/errors';
+import type { Proj4Type } from '../types/proj4';
 
-// Padding for bounds (in degrees for WGS84)
-const BOUNDS_PADDING_DEGREES = 0.01;  // About 1km at Swiss latitudes
+const BOUNDS_PADDING_DEGREES = 0.1; // 10% padding
 
 export function useMapView(
+  errorReporter: ErrorReporter,
   initialBounds?: Bounds,
-  coordinateSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84
+  coordinateSystem?: CoordinateSystem,
+  proj4Instance?: Proj4Type
 ): UseMapViewResult {
   const [viewState, setViewState] = useState<ViewState>({
-    ...DEFAULT_CENTER,
+    longitude: DEFAULT_CENTER.longitude,
+    latitude: DEFAULT_CENTER.latitude,
+    zoom: DEFAULT_CENTER.zoom,
     bearing: 0,
     pitch: 0
   });
 
-  // Verify coordinate system is registered
+  // Verify coordinate system is properly initialized
   useEffect(() => {
-    if (coordinateSystem && !proj4.defs(coordinateSystem)) {
-      console.error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
-      // Set default view of Aarau
-      setViewState(prev => ({
-        ...prev,
-        ...DEFAULT_CENTER
-      }));
+    if (!coordinateSystem) {
+      return;
     }
-  }, [coordinateSystem]);
 
-  const calculateBoundsFromFeatures = useCallback((features: Feature[]): Bounds | null => {
-    if (!features.length) return null;
+    if (!proj4Instance) {
+      errorReporter.reportError('INITIALIZATION_ERROR', 'proj4 instance not provided');
+      return;
+    }
 
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
+    if (!proj4Instance.defs(coordinateSystem)) {
+      errorReporter.reportError('COORDINATE_SYSTEM', 'Coordinate system not initialized', {
+        system: coordinateSystem
+      });
+      setViewState({
+        longitude: DEFAULT_CENTER.longitude,
+        latitude: DEFAULT_CENTER.latitude,
+        zoom: DEFAULT_CENTER.zoom,
+        bearing: 0,
+        pitch: 0
+      });
+    }
+  }, [coordinateSystem, errorReporter, proj4Instance]);
 
-    const updateBounds = (coords: [number, number]) => {
-      // Transform coordinates to WGS84 if needed
-      let lon = coords[0];
-      let lat = coords[1];
+  const calculateBoundsFromFeatures = useCallback((features: Feature[]): BBox | null => {
+    if (features.length === 0) {
+      return null;
+    }
 
-      if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        try {
-          const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-          const transformed = transformer.transform({ x: coords[0], y: coords[1] });
-          if (transformed) {
-            // Transformer handles coordinate order
-            lon = transformed.x;
-            lat = transformed.y;
-          }
-        } catch (error) {
-          console.error('Failed to transform coordinates:', error);
-          return;
+    let transformer: CoordinateTransformer | undefined;
+    if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+      if (!proj4Instance) {
+        errorReporter.reportError('INITIALIZATION_ERROR', 'proj4 instance not provided');
+        return null;
+      }
+
+      try {
+        transformer = new CoordinateTransformer(
+          coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84,
+          errorReporter,
+          proj4Instance
+        );
+      } catch (error) {
+        errorReporter.reportError('TRANSFORM_ERROR', 'Failed to create coordinate transformer', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          coordinateSystem
+        });
+        return null;
+      }
+    }
+
+    try {
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      features.forEach(feature => {
+        if (feature.bbox) {
+          minX = Math.min(minX, feature.bbox[0]);
+          minY = Math.min(minY, feature.bbox[1]);
+          maxX = Math.max(maxX, feature.bbox[2]);
+          maxY = Math.max(maxY, feature.bbox[3]);
         }
+      });
+
+      if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+        errorReporter.reportError('BOUNDS_ERROR', 'Invalid bounds calculated from features', {
+          minX,
+          minY,
+          maxX,
+          maxY
+        });
+        return null;
       }
 
-      if (isFinite(lon) && isFinite(lat)) {
-        minX = Math.min(minX, lon);
-        minY = Math.min(minY, lat);
-        maxX = Math.max(maxX, lon);
-        maxY = Math.max(maxY, lat);
+      // Transform bounds if needed
+      if (transformer) {
+        const transformedBounds = transformer.transformBounds({ minX, minY, maxX, maxY });
+        if (!transformedBounds) {
+          errorReporter.reportWarning('TRANSFORM_WARNING', 'Failed to transform bounds', {
+            originalBounds: { minX, minY, maxX, maxY }
+          });
+          return null;
+        }
+        ({ minX, minY, maxX, maxY } = transformedBounds);
       }
-    };
 
-    const processCoordinates = (coords: any): void => {
-      if (!Array.isArray(coords)) return;
-      if (typeof coords[0] === 'number' && coords.length >= 2) {
-        updateBounds(coords as [number, number]);
-      } else {
-        coords.forEach(c => processCoordinates(c));
-      }
-    };
-
-    features.forEach(feature => {
-      if (feature.geometry && 'coordinates' in feature.geometry) {
-        processCoordinates(feature.geometry.coordinates);
-      }
-    });
-
-    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-      console.warn('Invalid bounds calculated, using default center');
-      return {
-        minX: DEFAULT_CENTER.longitude - 0.1,
-        minY: DEFAULT_CENTER.latitude - 0.1,
-        maxX: DEFAULT_CENTER.longitude + 0.1,
-        maxY: DEFAULT_CENTER.latitude + 0.1
-      };
+      return [minX, minY, maxX, maxY];
+    } catch (error) {
+      errorReporter.reportError('BOUNDS_ERROR', 'Failed to calculate bounds from features', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      return null;
     }
-
-    return { minX, minY, maxX, maxY };
-  }, [coordinateSystem]);
+  }, [coordinateSystem, errorReporter, proj4Instance]);
 
   const updateViewFromBounds = useCallback((bounds: Bounds) => {
     try {
-      // Verify coordinate system is registered before attempting transformation
-      if (coordinateSystem && !proj4.defs(coordinateSystem)) {
-        throw new Error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
-      }
-
-      let transformedBounds = bounds;
-      
-      // Only transform if we're not already in WGS84
+      let transformer: CoordinateTransformer | undefined;
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        try {
-          const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-          const result = transformer.transformBounds(bounds);
-          if (!result) {
-            throw new Error(`Failed to transform bounds from ${coordinateSystem} to WGS84`);
-          }
-
-          // Transformer handles coordinate order
-          transformedBounds = result;
-
-          console.debug('Bounds transformation:', {
-            original: bounds,
-            transformed: transformedBounds,
-            system: coordinateSystem
-          });
-        } catch (error) {
-          console.error('Coordinate transformation error:', error);
-          // If transformation fails, default to Aarau
-          setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
+        if (!proj4Instance) {
+          errorReporter.reportError('INITIALIZATION_ERROR', 'proj4 instance not provided');
           return;
         }
+
+        transformer = new CoordinateTransformer(
+          coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84,
+          errorReporter,
+          proj4Instance
+        );
       }
 
+      // Transform bounds if needed
+      let { minX, minY, maxX, maxY } = bounds;
+      if (transformer) {
+        const transformedBounds = transformer.transformBounds(bounds);
+        if (!transformedBounds) {
+          errorReporter.reportError('TRANSFORM_ERROR', 'Failed to transform bounds', {
+            bounds,
+            coordinateSystem
+          });
+          return;
+        }
+        ({ minX, minY, maxX, maxY } = transformedBounds);
+      }
+
+      // Calculate center and zoom
+      const centerLon = (minX + maxX) / 2;
+      const centerLat = (minY + maxY) / 2;
+
       // Add padding
-      const width = transformedBounds.maxX - transformedBounds.minX;
-      const height = transformedBounds.maxY - transformedBounds.minY;
-      const padX = Math.max(width * 0.1, BOUNDS_PADDING_DEGREES);
-      const padY = Math.max(height * 0.1, BOUNDS_PADDING_DEGREES);
+      const width = maxX - minX;
+      const height = maxY - minY;
+      const padding = Math.max(width, height) * BOUNDS_PADDING_DEGREES;
 
-      transformedBounds = {
-        minX: transformedBounds.minX - padX,
-        minY: transformedBounds.minY - padY,
-        maxX: transformedBounds.maxX + padX,
-        maxY: transformedBounds.maxY + padY
-      };
+      // Constrain to valid ranges
+      const lat = Math.max(-85, Math.min(85, centerLat));
+      const lon = ((centerLon + 180) % 360) - 180;
 
-      // Constrain to valid WGS84 ranges
-      const validMinLat = Math.max(transformedBounds.minY, -85);
-      const validMaxLat = Math.min(transformedBounds.maxY, 85);
-      const validMinLon = Math.max(transformedBounds.minX, -180);
-      const validMaxLon = Math.min(transformedBounds.maxX, 180);
-
-      // Calculate center point
-      const longitude = (validMinLon + validMaxLon) / 2;
-      const latitude = (validMinLat + validMaxLat) / 2;
-
-      // Calculate zoom level
-      const latZoom = Math.log2(360 / (validMaxLat - validMinLat)) - 1;
-      const lonZoom = Math.log2(360 / (validMaxLon - validMinLon)) - 1;
-      let zoom = Math.min(latZoom, lonZoom);
-
-      // Ensure zoom is within valid range and add slight zoom out for context
-      zoom = Math.min(Math.max(zoom - 0.5, 1), 20);
-
-      console.debug('Setting map view:', {
-        longitude,
-        latitude,
-        zoom,
-        bounds: transformedBounds
+      errorReporter.reportInfo('VIEW_UPDATE', 'Updating map view', {
+        center: [lon, lat],
+        bounds: [minX, minY, maxX, maxY],
+        padding
       });
 
-      setViewState(prev => ({
-        ...prev,
-        longitude,
-        latitude,
-        zoom
-      }));
+      setViewState({
+        longitude: lon,
+        latitude: lat,
+        zoom: 12, // TODO: Calculate zoom based on bounds
+        bearing: 0,
+        pitch: 0
+      });
     } catch (error) {
-      console.error('Error setting map view state:', error);
-      // Default to Aarau view
-      setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
-      throw error;
+      errorReporter.reportError('VIEW_ERROR', 'Failed to update view from bounds', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        bounds
+      });
     }
-  }, [coordinateSystem]);
+  }, [coordinateSystem, errorReporter, proj4Instance]);
 
-  const focusOnFeatures = useCallback((features: Feature[], padding: number = 50) => {
-    const bounds = calculateBoundsFromFeatures(features);
-    if (bounds) {
-      updateViewFromBounds(bounds);
+  const focusOnFeatures = useCallback((features: Feature[], padding?: number) => {
+    try {
+      const bounds = calculateBoundsFromFeatures(features);
+      if (!bounds) {
+        errorReporter.reportError('FOCUS_ERROR', 'Failed to calculate bounds for features');
+        return;
+      }
+
+      updateViewFromBounds({
+        minX: bounds[0],
+        minY: bounds[1],
+        maxX: bounds[2],
+        maxY: bounds[3]
+      });
+    } catch (error) {
+      errorReporter.reportError('FOCUS_ERROR', 'Failed to focus on features', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
     }
-  }, [calculateBoundsFromFeatures, updateViewFromBounds]);
+  }, [calculateBoundsFromFeatures, updateViewFromBounds, errorReporter]);
 
   const onMove = useCallback((evt: ViewStateChangeEvent) => {
-    setViewState(evt.viewState as ViewState);
+    setViewState(evt.viewState);
   }, []);
 
   const getViewportBounds = useCallback((): BBox | undefined => {
-    if (!viewState) return undefined;
+    try {
+      const { longitude, latitude, zoom } = viewState;
 
-    const { longitude, latitude, zoom } = viewState;
-    
-    // Calculate viewport bounds based on zoom level
-    const latRange = 360 / Math.pow(2, zoom + 1);
-    const lonRange = 360 / Math.pow(2, zoom);
-    
-    return [
-      longitude - lonRange / 2,  // minLon
-      latitude - latRange / 2,   // minLat
-      longitude + lonRange / 2,  // maxLon
-      latitude + latRange / 2    // maxLat
-    ];
-  }, [viewState]);
+      // Calculate viewport dimensions in degrees
+      const latRange = 180 / Math.pow(2, zoom);
+      const lonRange = 360 / Math.pow(2, zoom);
 
-  // Initialize view when bounds change
+      errorReporter.reportInfo('VIEWPORT_BOUNDS', 'Calculated viewport bounds', {
+        center: [longitude, latitude],
+        zoom,
+        ranges: [lonRange, latRange]
+      });
+
+      return [
+        longitude - lonRange / 2,
+        latitude - latRange / 2,
+        longitude + lonRange / 2,
+        latitude + latRange / 2
+      ];
+    } catch (error) {
+      errorReporter.reportError('VIEWPORT_ERROR', 'Failed to calculate viewport bounds', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        viewState
+      });
+      return undefined;
+    }
+  }, [viewState, errorReporter]);
+
+  // Update view when initial bounds change
   useEffect(() => {
     if (initialBounds) {
       updateViewFromBounds(initialBounds);

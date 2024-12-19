@@ -1,36 +1,33 @@
-// components/geo-loader/processors/csv-processor.ts
-
+import { Feature, Point } from 'geojson';
+import Papa, { ParseError, ParseResult, ParseConfig, ParseStepResult } from 'papaparse';
 import { BaseProcessor, ProcessorOptions, AnalyzeResult, ProcessorResult } from './base-processor';
 import { COORDINATE_SYSTEMS } from '../types/coordinates';
-import { Feature, Point } from 'geojson';
-import Papa from 'papaparse';
-import _ from 'lodash';
+import { createPointGeometry } from '../utils/geometry-utils';
 
 interface ColumnMapping {
   x: number;
   y: number;
   z?: number;
-  [key: string]: number | undefined;
 }
 
 interface ParsedRow {
-  [key: string]: any;
+  [key: string]: string | number | null;
 }
 
 export class CsvProcessor extends BaseProcessor {
-  private MAX_PREVIEW_POINTS = 1000;
-  private COORDINATE_HEADERS = {
-    x: ['x', 'longitude', 'lon', 'east', 'easting', 'rechtswert', 'e'],
-    y: ['y', 'latitude', 'lat', 'north', 'northing', 'hochwert', 'n'],
-    z: ['z', 'height', 'elevation', 'alt', 'altitude', 'h']
+  private static readonly MAX_PREVIEW_POINTS = 1000;
+  private static readonly COORDINATE_HEADERS = {
+    x: ['x', 'lon', 'longitude', 'easting', 'east', 'e'],
+    y: ['y', 'lat', 'latitude', 'northing', 'north', 'n'],
+    z: ['z', 'height', 'elevation', 'h']
   };
 
-  constructor(options: ProcessorOptions = {}) {
+  constructor(options: ProcessorOptions) {
     super(options);
   }
 
   async canProcess(file: File): Promise<boolean> {
-    const extension = file.name.toLowerCase().split('.').pop();
+    const extension = file.name.split('.').pop()?.toLowerCase();
     return ['csv', 'xyz', 'txt'].includes(extension || '');
   }
 
@@ -38,138 +35,148 @@ export class CsvProcessor extends BaseProcessor {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.onerror = () => {
+        this.reportError('FILE_READ_ERROR', 'Failed to read file content', { fileName: file.name });
+        reject(new Error('Failed to read file content'));
+      };
       reader.readAsText(file);
     });
   }
 
   private detectDelimiter(firstLine: string): string {
-    const delimiters = [',', ';', '\t', ' '];
+    const delimiters = [',', ';', '\t', '|'];
     const counts = delimiters.map(d => ({
       delimiter: d,
-      count: firstLine.split(d).length
+      count: (firstLine.match(new RegExp(d, 'g')) || []).length
     }));
     
-    const bestDelimiter = _.maxBy(counts, 'count');
-    return bestDelimiter?.delimiter || ',';
+    const maxCount = Math.max(...counts.map(c => c.count));
+    const detected = counts.find(c => c.count === maxCount);
+    
+    if (!detected || maxCount === 0) {
+      this.reportWarning('DELIMITER_DETECTION', 'Could not detect delimiter, defaulting to comma', { firstLine });
+      return ',';
+    }
+    
+    return detected.delimiter;
   }
 
-  private detectColumnMapping(headers: string[]): ColumnMapping {
-    const mapping: ColumnMapping = { x: 0, y: 1 };
-    const normalizedHeaders = headers.map(h => h.toLowerCase().trim());
+  private detectColumnMapping(headers: string[]): ColumnMapping | null {
+    const findColumn = (candidates: string[]): number => {
+      // Try exact matches first
+      const exactMatch = headers.findIndex(h => 
+        candidates.includes(h.toLowerCase().trim())
+      );
+      if (exactMatch !== -1) return exactMatch;
 
-    // First try exact matches
-    normalizedHeaders.forEach((header, index) => {
-      if (this.COORDINATE_HEADERS.x.includes(header)) mapping.x = index;
-      if (this.COORDINATE_HEADERS.y.includes(header)) mapping.y = index;
-      if (this.COORDINATE_HEADERS.z.includes(header)) mapping.z = index;
-    });
+      // Try partial matches
+      const partialMatch = headers.findIndex(h => 
+        candidates.some(c => h.toLowerCase().includes(c))
+      );
+      if (partialMatch !== -1) {
+        this.reportWarning('COLUMN_MAPPING', `Using partial match for column: ${headers[partialMatch]}`, 
+          { header: headers[partialMatch], candidates });
+      }
+      return partialMatch;
+    };
 
-    // Then try partial matches
-    if (mapping.x === 0 && mapping.y === 1) {
-      normalizedHeaders.forEach((header, index) => {
-        if (this.COORDINATE_HEADERS.x.some(h => header.includes(h))) mapping.x = index;
-        if (this.COORDINATE_HEADERS.y.some(h => header.includes(h))) mapping.y = index;
-        if (this.COORDINATE_HEADERS.z.some(h => header.includes(h))) mapping.z = index;
-      });
+    const x = findColumn(CsvProcessor.COORDINATE_HEADERS.x);
+    const y = findColumn(CsvProcessor.COORDINATE_HEADERS.y);
+    const z = findColumn(CsvProcessor.COORDINATE_HEADERS.z);
+
+    if (x === -1 || y === -1) {
+      this.reportError('COLUMN_MAPPING', 'Could not find X and Y coordinate columns', { headers });
+      return null;
     }
 
-    return mapping;
+    return { x, y, ...(z !== -1 ? { z } : {}) };
   }
 
-  private createPointFeature(
-    row: ParsedRow, 
-    mapping: ColumnMapping, 
-    headers: string[]
-  ): Feature<Point> | null {
+  private createPointFeature(row: ParsedRow, mapping: ColumnMapping, headers: string[]): Feature<Point> | null {
     const x = Number(row[headers[mapping.x]]);
     const y = Number(row[headers[mapping.y]]);
     const z = mapping.z !== undefined ? Number(row[headers[mapping.z]]) : undefined;
 
-    if (!isFinite(x) || !isFinite(y)) {
+    if (isNaN(x) || isNaN(y)) {
+      this.reportWarning('INVALID_COORDINATES', 'Invalid coordinate values', { row, x, y });
       return null;
     }
 
-    const properties: Record<string, any> = {};
-    headers.forEach((header, index) => {
-      if (index !== mapping.x && index !== mapping.y && index !== mapping.z) {
-        properties[header] = row[header];
-      }
-    });
+    try {
+      const geometry = createPointGeometry(x, y, z);
+      const properties: Record<string, any> = {};
+      
+      // Add all other columns as properties
+      headers.forEach((header, i) => {
+        if (i !== mapping.x && i !== mapping.y && i !== mapping.z) {
+          properties[header] = row[header];
+        }
+      });
 
-    if (z !== undefined && isFinite(z)) {
-      properties.elevation = z;
+      return {
+        type: 'Feature',
+        geometry,
+        properties
+      };
+    } catch (error) {
+      this.reportError('GEOMETRY_CREATION', 'Failed to create point geometry', { x, y, z, error });
+      return null;
     }
-
-    return {
-      type: 'Feature',
-      geometry: {
-        type: 'Point',
-        coordinates: z !== undefined && isFinite(z) ? [x, y, z] : [x, y]
-      },
-      properties
-    };
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
       const content = await this.readFileContent(file);
       const lines = content.split('\n');
-      const delimiter = this.detectDelimiter(lines[0]);
+      if (lines.length === 0) {
+        this.reportError('EMPTY_FILE', 'File is empty');
+        throw new Error('File is empty');
+      }
 
-      const parseResult = await new Promise<Papa.ParseResult<ParsedRow>>((resolve, reject) => {
-        Papa.parse(content, {
-          delimiter,
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true,
-          preview: this.MAX_PREVIEW_POINTS,
-          complete: resolve,
-          error: reject
-        });
+      const delimiter = this.detectDelimiter(lines[0]);
+      const parseResult = Papa.parse<ParsedRow>(content, {
+        header: true,
+        delimiter,
+        preview: CsvProcessor.MAX_PREVIEW_POINTS,
+        skipEmptyLines: true
       });
+
+      if (parseResult.errors.length > 0) {
+        parseResult.errors.forEach(error => {
+          this.reportWarning('PARSE_ERROR', error.message, { row: error.row });
+        });
+      }
 
       const headers = parseResult.meta.fields || [];
       const mapping = this.detectColumnMapping(headers);
-
-      if (mapping.x === mapping.y) {
-        throw new Error('Could not detect distinct X and Y columns');
+      if (!mapping) {
+        throw new Error('Could not detect coordinate columns');
       }
 
-      const previewFeatures: Feature[] = [];
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-      parseResult.data.forEach((row, index) => {
+      const features: Feature<Point>[] = [];
+      parseResult.data.forEach((row: ParsedRow) => {
         const feature = this.createPointFeature(row, mapping, headers);
         if (feature) {
-          previewFeatures.push(feature);
-          const [x, y] = feature.geometry.coordinates;
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
+          features.push(feature);
         }
-        this.emitProgress(index / parseResult.data.length);
       });
 
-      if (previewFeatures.length === 0) {
-        throw new Error('No valid coordinates found in file');
+      if (features.length === 0) {
+        this.reportError('NO_FEATURES', 'No valid features found in file');
+        throw new Error('No valid features found in file');
       }
 
       return {
         layers: ['points'],
-        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95,
-        bounds: { minX, minY, maxX, maxY },
+        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
         preview: {
           type: 'FeatureCollection',
-          features: previewFeatures
+          features
         }
       };
-
     } catch (error) {
-      throw new Error(
-        `CSV analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
+      this.reportError('ANALYSIS_FAILED', 'CSV analysis failed', { error });
+      throw error;
     }
   }
 
@@ -177,68 +184,87 @@ export class CsvProcessor extends BaseProcessor {
     try {
       const content = await this.readFileContent(file);
       const delimiter = this.detectDelimiter(content.split('\n')[0]);
-      const statistics = this.createDefaultStats();
+      
+      const features: Feature<Point>[] = [];
+      let headers: string[] = [];
+      let mapping: ColumnMapping | null = null;
+      let processedRows = 0;
+      let totalRows = 0;
 
-      const parseResult = await new Promise<Papa.ParseResult<ParsedRow>>((resolve, reject) => {
-        Papa.parse(content, {
-          delimiter,
-          header: true,
-          dynamicTyping: true,
-          skipEmptyLines: true,
-          complete: resolve,
-          error: reject,
-          step: (results, parser) => {
-            this.emitProgress(results.meta.cursor / content.length);
-          }
-        });
-      });
+      const stats = this.createDefaultStats();
 
-      const headers = parseResult.meta.fields || [];
-      const mapping = this.detectColumnMapping(headers);
+      await new Promise<void>((resolve, reject) => {
+        try {
+          Papa.parse<ParsedRow>(content, {
+            header: true,
+            delimiter,
+            skipEmptyLines: true,
+            step: (results: ParseStepResult<ParsedRow>) => {
+              if (!mapping && results.meta.fields) {
+                headers = results.meta.fields;
+                mapping = this.detectColumnMapping(headers);
+                if (!mapping) {
+                  throw new Error('Could not detect coordinate columns');
+                }
+              }
 
-      if (mapping.x === mapping.y) {
-        throw new Error('Could not detect distinct X and Y columns');
-      }
+              if (mapping) {
+                const feature = this.createPointFeature(results.data, mapping, headers);
+                if (feature) {
+                  features.push(feature);
+                  stats.featureCount++;
+                  stats.featureTypes['Point'] = (stats.featureTypes['Point'] || 0) + 1;
+                }
+              }
 
-      const features: Feature[] = [];
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-
-      parseResult.data.forEach(row => {
-        const feature = this.createPointFeature(row, mapping, headers);
-        if (feature) {
-          features.push(feature);
-          const [x, y] = feature.geometry.coordinates;
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
-          this.updateStats(statistics, 'Point');
-        } else {
-          this.recordError(statistics, 'invalid_coordinates', 'Invalid coordinate values');
+              processedRows++;
+              this.emitProgress(processedRows / totalRows);
+            },
+            complete: () => resolve(),
+            error: (error: Error) => {
+              this.reportError('PARSE_ERROR', error.message);
+              reject(error);
+            }
+          });
+        } catch (error) {
+          reject(error);
         }
       });
 
       if (features.length === 0) {
-        throw new Error('No valid coordinates found in file');
+        this.reportError('NO_FEATURES', 'No valid features found in file');
+        throw new Error('No valid features found in file');
       }
 
-      statistics.layerCount = 1;
+      // Calculate bounds
+      const bounds = features.reduce((acc, feature) => {
+        const coords = feature.geometry.coordinates;
+        return {
+          minX: Math.min(acc.minX, coords[0]),
+          minY: Math.min(acc.minY, coords[1]),
+          maxX: Math.max(acc.maxX, coords[0]),
+          maxY: Math.max(acc.maxY, coords[1])
+        };
+      }, {
+        minX: Infinity,
+        minY: Infinity,
+        maxX: -Infinity,
+        maxY: -Infinity
+      });
 
       return {
         features: {
           type: 'FeatureCollection',
           features
         },
-        bounds: { minX, minY, maxX, maxY },
+        bounds,
         layers: ['points'],
-        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95,
-        statistics
+        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
+        statistics: stats
       };
-
     } catch (error) {
-      throw new Error(
-        `CSV processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      );
+      this.reportError('PROCESSING_FAILED', 'CSV processing failed', { error });
+      throw error;
     }
   }
 }

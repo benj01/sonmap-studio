@@ -1,14 +1,11 @@
-// components/geo-loader/processors/dxf-processor.ts
-
 import { BaseProcessor, ProcessorOptions, AnalyzeResult, ProcessorResult } from './base-processor';
-import { DxfData, DxfEntity, Vector3, isDxfPointEntity, isDxfLineEntity, isDxfPolylineEntity, isDxfCircleEntity } from '../utils/dxf/types';
-import { createDxfParser } from '../utils/dxf/core-parser';
-import { createDxfAnalyzer } from '../utils/dxf/analyzer';
+import { DxfData, DxfEntity, Vector3 } from '../utils/dxf/types';
+import { DxfParser } from '../utils/dxf/parser';
 import { DxfConverter } from '../utils/dxf/converter';
 import { CoordinateTransformer, suggestCoordinateSystem } from '../utils/coordinate-utils';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { Feature, Geometry, GeometryCollection } from 'geojson';
-import { entityToGeoFeature } from '../utils/dxf/geo-converter';
+import { ErrorReport, Severity } from '../utils/errors';
 import proj4 from 'proj4';
 
 const PREVIEW_CHUNK_SIZE = 1000;
@@ -27,13 +24,14 @@ function hasCoordinates(geometry: Geometry): geometry is Exclude<Geometry, Geome
 }
 
 export class DxfProcessor extends BaseProcessor {
-  private parser = createDxfParser();
-  private analyzer = createDxfAnalyzer();
-  private converter = new DxfConverter();
+  private parser: DxfParser;
+  private converter: DxfConverter;
   private rawDxfData: DxfData | undefined = undefined;
 
-  constructor(options: ProcessorOptions = {}) {
+  constructor(options: ProcessorOptions) {
     super(options);
+    this.parser = new DxfParser(this.options.errorReporter);
+    this.converter = new DxfConverter(this.options.errorReporter);
   }
 
   async canProcess(file: File): Promise<boolean> {
@@ -44,39 +42,31 @@ export class DxfProcessor extends BaseProcessor {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error('Failed to read DXF file'));
+      reader.onerror = () => {
+        this.reportError('FILE_READ_ERROR', 'Failed to read DXF file', {
+          fileName: file.name,
+          error: reader.error?.message
+        });
+        reject(new Error('Failed to read DXF file'));
+      };
       reader.readAsText(file);
     });
   }
 
-  private async parseDxf(content: string): Promise<DxfData> {
-    try {
-      const dxfData = await this.parser.parse(content, {
-        validate: true,
-        onProgress: progress => {
-          const scaledProgress = PROGRESS.PARSE.START + 
-            (progress * (PROGRESS.PARSE.END - PROGRESS.PARSE.START));
-          this.emitProgress(scaledProgress);
-        }
-      });
-      this.rawDxfData = dxfData;
-      return dxfData;
-    } catch (error) {
-      throw new Error(`DXF parsing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
   private getEntityCoordinates(entity: DxfEntity): Vector3[] {
-    if (isDxfPointEntity(entity)) {
-      return [entity.position];
-    } else if (isDxfLineEntity(entity)) {
-      return [entity.start, entity.end];
-    } else if (isDxfPolylineEntity(entity)) {
-      return entity.vertices;
-    } else if (isDxfCircleEntity(entity)) {
-      return [entity.center];
+    switch (entity.type) {
+      case 'POINT':
+        return [entity.position];
+      case 'LINE':
+        return [entity.start, entity.end];
+      case 'POLYLINE':
+      case 'LWPOLYLINE':
+        return entity.vertices;
+      case 'CIRCLE':
+        return [entity.center];
+      default:
+        return [];
     }
-    return [];
   }
 
   private detectCoordinateSystem(entities: DxfEntity[]): CoordinateSystem {
@@ -91,81 +81,62 @@ export class DxfProcessor extends BaseProcessor {
     }
 
     if (sampleCoords.length === 0) {
-      this.emitWarning('No coordinates found for detection');
-      return COORDINATE_SYSTEMS.NONE;
-    }
-
-    // Log sample coordinates for debugging
-    this.emitWarning(`Sample coordinates for detection: ${JSON.stringify(sampleCoords.slice(0, 2))}`);
-
-    // Verify proj4 is properly initialized
-    if (!proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95)) {
-      this.emitWarning('Swiss LV95 coordinate system not initialized');
+      this.reportWarning('NO_COORDINATES', 'No coordinates found for detection', { entityCount: entities.length });
       return COORDINATE_SYSTEMS.NONE;
     }
 
     // Use the suggestCoordinateSystem function from coordinate-utils
-    const suggestedSystem = suggestCoordinateSystem(sampleCoords);
-    this.emitWarning(`Detected coordinate system: ${suggestedSystem}`);
+    const suggestedSystem = suggestCoordinateSystem(sampleCoords, this.options.errorReporter);
 
-    // Log a test transformation
+    // Test transformation if Swiss LV95 is detected
     if (suggestedSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
       try {
-        const transformer = new CoordinateTransformer(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84);
+        const transformer = new CoordinateTransformer(
+          COORDINATE_SYSTEMS.SWISS_LV95,
+          COORDINATE_SYSTEMS.WGS84,
+          this.options.errorReporter,
+          proj4
+        );
         const testPoint = sampleCoords[0];
-        const transformed = transformer.transform(testPoint);
-        this.emitWarning(`Test transformation: ${JSON.stringify(testPoint)} -> ${JSON.stringify(transformed)}`);
+        transformer.transform(testPoint);
       } catch (error) {
-        this.emitWarning(`Test transformation failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.reportError('TRANSFORM_ERROR', 'Test transformation failed', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          suggestedSystem,
+          testPoint: sampleCoords[0]
+        });
       }
     }
     
     return suggestedSystem;
   }
 
+  private convertErrorReports(reports: ErrorReport[]): AnalyzeResult['errors'] {
+    return reports.map(report => ({
+      type: report.type,
+      message: report.message,
+      context: report.context
+    }));
+  }
+
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
       const content = await this.readFileContent(file);
-      const dxf = await this.parseDxf(content);
-
-      if (!dxf || !Array.isArray(dxf.entities)) {
-        throw new Error('Invalid DXF file structure');
-      }
-
-      // Run comprehensive analysis
-      const analysisResult = this.analyzer.analyze(dxf);
       
-      // Process warnings and non-critical errors
-      const warnings: string[] = [
-        ...analysisResult.warnings.map(w => w.message),
-        ...analysisResult.errors.filter(e => !e.isCritical).map(e => e.message)
-      ];
-
-      // Handle critical errors
-      const criticalErrors = analysisResult.errors.filter(e => e.isCritical);
-      if (criticalErrors.length > 0) {
-        throw new Error(
-          'Critical errors found in DXF file:\n' +
-          criticalErrors.map(e => `- ${e.message}`).join('\n')
-        );
-      }
+      // Parse DXF content with progress updates
+      this.rawDxfData = await this.parser.parse(content, {
+        onProgress: progress => {
+          const scaledProgress = PROGRESS.PARSE.START + 
+            (progress * (PROGRESS.PARSE.END - PROGRESS.PARSE.START));
+          this.emitProgress(scaledProgress);
+        }
+      });
 
       // Expand block references for preview
-      const expandedEntities = this.parser.expandBlockReferences(dxf);
+      const expandedEntities = this.parser.expandBlockReferences(this.rawDxfData);
       
       // Detect coordinate system
       const detectedSystem = this.detectCoordinateSystem(expandedEntities);
-      
-      // Create transformer if needed
-      let transformer: CoordinateTransformer | undefined;
-      if (detectedSystem !== COORDINATE_SYSTEMS.NONE && detectedSystem !== COORDINATE_SYSTEMS.WGS84) {
-        try {
-          transformer = new CoordinateTransformer(detectedSystem, COORDINATE_SYSTEMS.WGS84);
-          this.emitWarning(`Created transformer from ${detectedSystem} to WGS84`);
-        } catch (error) {
-          this.emitWarning(`Failed to create transformer: ${error instanceof Error ? error.message : 'Unknown error'}`);
-        }
-      }
       
       // Convert to GeoJSON features for preview with progress updates
       const previewFeatures: Feature[] = [];
@@ -174,18 +145,9 @@ export class DxfProcessor extends BaseProcessor {
       
       for (const entity of expandedEntities) {
         if (processedCount % SAMPLE_RATE === 0) {
-          try {
-            const feature = entityToGeoFeature(entity, {}, detectedSystem);
-            if (feature && hasCoordinates(feature.geometry)) {
-              previewFeatures.push(feature);
-              
-              // Log first feature coordinates for debugging
-              if (processedCount === 0) {
-                this.emitWarning(`First feature coordinates: ${JSON.stringify(feature.geometry.coordinates)}`);
-              }
-            }
-          } catch (error) {
-            this.emitWarning(`Failed to convert entity to feature: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          const feature = this.converter.entityToGeoFeature(entity);
+          if (feature && hasCoordinates(feature.geometry)) {
+            previewFeatures.push(feature);
           }
         }
         processedCount++;
@@ -200,14 +162,20 @@ export class DxfProcessor extends BaseProcessor {
         }
       }
 
-      // Calculate bounds from preview features with padding
-      const bounds = this.calculateBounds(previewFeatures, 0.1); // 10% padding
-
-      // Log bounds for debugging
-      this.emitWarning(`Calculated bounds: ${JSON.stringify(bounds)}`);
-
       // Get all available layers
       const layers = this.parser.getLayers();
+
+      // Calculate bounds from preview features
+      const bounds = this.getBounds(previewFeatures);
+
+      // Get errors and warnings from the error reporter
+      const reports = this.options.errorReporter.getReports();
+      const errors = this.convertErrorReports(
+        reports.filter(r => r.severity === Severity.ERROR)
+      );
+      const warnings = this.convertErrorReports(
+        reports.filter(r => r.severity === Severity.WARNING)
+      );
 
       return {
         layers,
@@ -217,12 +185,16 @@ export class DxfProcessor extends BaseProcessor {
           type: 'FeatureCollection',
           features: previewFeatures
         },
+        errors,
         warnings,
         dxfData: this.rawDxfData
       };
 
     } catch (error) {
-      throw new Error(`DXF analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.reportError('ANALYSIS_ERROR', 'DXF analysis failed', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
     }
   }
 
@@ -241,13 +213,9 @@ export class DxfProcessor extends BaseProcessor {
         continue;
       }
 
-      try {
-        const feature = entityToGeoFeature(entity, {}, options.coordinateSystem || COORDINATE_SYSTEMS.NONE);
-        if (feature) {
-          features.push(feature);
-        }
-      } catch (error) {
-        this.emitWarning(`Failed to convert ${entity.type} entity: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const feature = this.converter.entityToGeoFeature(entity);
+      if (feature) {
+        features.push(feature);
       }
 
       // Update progress for this chunk
@@ -261,10 +229,15 @@ export class DxfProcessor extends BaseProcessor {
   async process(file: File): Promise<ProcessorResult> {
     try {
       const content = await this.readFileContent(file);
-      const dxf = await this.parseDxf(content);
       
-      const statistics = this.createDefaultStats();
-      const warnings: string[] = [];
+      // Parse DXF content
+      const dxf = await this.parser.parse(content, {
+        onProgress: progress => {
+          const scaledProgress = PROGRESS.PARSE.START + 
+            (progress * (PROGRESS.PARSE.END - PROGRESS.PARSE.START));
+          this.emitProgress(scaledProgress);
+        }
+      });
       
       // Expand all block references
       const expandedEntities = this.parser.expandBlockReferences(dxf);
@@ -276,6 +249,8 @@ export class DxfProcessor extends BaseProcessor {
       }
 
       const features: Feature[] = [];
+      const featureTypes: Record<string, number> = {};
+
       for (let i = 0; i < chunks.length; i++) {
         const chunkStartProgress = PROGRESS.CONVERT.START + 
           (i / chunks.length) * (PROGRESS.CONVERT.END - PROGRESS.CONVERT.START);
@@ -291,18 +266,17 @@ export class DxfProcessor extends BaseProcessor {
         
         features.push(...chunkFeatures);
         
-        // Update statistics
+        // Update feature type counts
         chunkFeatures.forEach(feature => {
-          if (feature.properties?.entityType) {
-            this.updateStats(statistics, feature.properties.entityType);
+          if (feature.properties?.type) {
+            const type = feature.properties.type;
+            featureTypes[type] = (featureTypes[type] || 0) + 1;
           }
         });
       }
 
-      // Calculate final bounds with padding
-      const bounds = this.calculateBounds(features, 0.1); // 10% padding
-
-      statistics.layerCount = this.options.selectedLayers?.length || this.parser.getLayers().length;
+      // Calculate bounds from features
+      const bounds = this.getBounds(features);
 
       // Ensure we reach 100%
       this.emitProgress(1.0);
@@ -315,17 +289,22 @@ export class DxfProcessor extends BaseProcessor {
         bounds,
         layers: this.parser.getLayers(),
         coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.NONE,
-        statistics,
-        warnings,
-        dxfData: this.rawDxfData
+        statistics: {
+          featureCount: features.length,
+          layerCount: this.options.selectedLayers?.length || this.parser.getLayers().length,
+          featureTypes
+        }
       };
 
     } catch (error) {
-      throw new Error(`DXF processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      this.reportError('PROCESSING_ERROR', 'DXF processing failed', {
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
     }
   }
 
-  private calculateBounds(features: Feature[], padding: number = 0): ProcessorResult['bounds'] {
+  private getBounds(features: Feature[]): ProcessorResult['bounds'] {
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
@@ -349,11 +328,11 @@ export class DxfProcessor extends BaseProcessor {
       };
     }
 
-    // Add padding
+    // Add 10% padding
     const width = maxX - minX;
     const height = maxY - minY;
-    const paddingX = width * padding;
-    const paddingY = height * padding;
+    const paddingX = width * 0.1;
+    const paddingY = height * 0.1;
 
     return {
       minX: minX - paddingX,

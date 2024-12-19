@@ -1,38 +1,41 @@
-// components/geo-loader/preview/preview-manager.ts
-
 import { Feature, FeatureCollection, Position, Geometry, GeometryCollection } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { Analysis } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
-import { CoordinateTransformationError } from '../utils/dxf/geo-converter';
-import proj4 from 'proj4';
+import { ErrorReporter } from '../utils/errors';
+import type { Proj4Type } from '../types/proj4';
 
-interface PreviewOptions {
+export interface PreviewManagerOptions {
   maxFeatures?: number;
   visibleLayers?: string[];
-  selectedElement?: {
-    type: string;
-    layer: string;
-  };
+  selectedElement?: { type: string; layer: string };
   analysis?: Analysis;
   coordinateSystem?: CoordinateSystem;
 }
 
-interface FeatureGroup {
+interface RequiredPreviewManagerOptions {
+  maxFeatures: number;
+  visibleLayers: string[];
+  selectedElement: { type: string; layer: string } | undefined;
+  analysis: Analysis | undefined;
+  coordinateSystem: CoordinateSystem | undefined;
+}
+
+export interface FeatureGroup {
   points: Feature[];
   lines: Feature[];
   polygons: Feature[];
   totalCount: number;
 }
 
-interface Bounds {
+export interface Bounds {
   minX: number;
   minY: number;
   maxX: number;
   maxY: number;
 }
 
-interface TransformationError {
+export interface TransformationError {
   message: string;
   originalCoordinates: { x: number; y: number; z?: number };
   featureId?: string;
@@ -46,285 +49,257 @@ function hasCoordinates(geometry: Geometry): geometry is GeometryWithCoordinates
 }
 
 export class PreviewManager {
-  private readonly DEFAULT_MAX_FEATURES = 5000;
-  private readonly BOUNDS_PADDING = 0.1; // 10% padding
-  private readonly MAX_TRANSFORMATION_ERROR_RATIO = 0.5; // 50% threshold
+  private static readonly DEFAULT_MAX_FEATURES = 5000;
+  private static readonly BOUNDS_PADDING = 0.1; // 10% padding
+  private static readonly MAX_TRANSFORMATION_ERROR_RATIO = 0.5; // 50%
+
   private features: Feature[] = [];
-  private options: PreviewOptions;
-  private warningFlags: Map<string, Set<string>> = new Map(); // layer -> set of warning handles
-  private transformer?: CoordinateTransformer;
-  private cachedBounds?: Bounds;
+  private options: RequiredPreviewManagerOptions;
+  private warningFlags = new Map<string, Set<string>>();
+  private transformer: CoordinateTransformer | undefined;
+  private cachedBounds: Bounds | undefined;
   private transformationErrors: TransformationError[] = [];
 
-  constructor(options: PreviewOptions = {}) {
+  constructor(
+    options: PreviewManagerOptions = {},
+    private readonly errorReporter: ErrorReporter,
+    private readonly proj4Instance: Proj4Type
+  ) {
     this.options = {
-      maxFeatures: this.DEFAULT_MAX_FEATURES,
-      visibleLayers: [],
-      ...options
+      maxFeatures: options.maxFeatures ?? PreviewManager.DEFAULT_MAX_FEATURES,
+      visibleLayers: options.visibleLayers ?? [],
+      selectedElement: options.selectedElement,
+      analysis: options.analysis,
+      coordinateSystem: options.coordinateSystem
     };
 
     this.initializeTransformer(options.coordinateSystem);
   }
 
-  private initializeTransformer(coordinateSystem?: CoordinateSystem) {
+  private initializeTransformer(coordinateSystem?: CoordinateSystem): void {
     if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
       try {
-        // Always transform to WGS84 for Mapbox
-        this.transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-        console.debug('Initialized coordinate transformer:', {
-          from: coordinateSystem,
-          to: COORDINATE_SYSTEMS.WGS84,
-          def: proj4.defs(coordinateSystem)
+        this.transformer = new CoordinateTransformer(
+          coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84,
+          this.errorReporter,
+          this.proj4Instance
+        );
+        this.errorReporter.reportInfo('PREVIEW_INIT', 'Initialized coordinate transformer', {
+          fromSystem: coordinateSystem,
+          toSystem: COORDINATE_SYSTEMS.WGS84
         });
       } catch (error) {
-        const err = error as Error;
-        console.error('Failed to initialize coordinate transformer:', err);
-        throw new Error(`Failed to initialize coordinate transformer: ${err.message}`);
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        this.errorReporter.reportError('TRANSFORM_ERROR', 'Failed to initialize coordinate transformer', {
+          error: errorMessage,
+          coordinateSystem
+        });
+        throw error;
       }
-    } else {
-      console.debug('No coordinate transformation needed:', coordinateSystem);
-      this.transformer = undefined;
     }
   }
 
   private transformPosition(pos: Position): Position | null {
-    if (!this.transformer || !this.options.coordinateSystem) return pos;
+    if (!this.transformer) {
+      return pos;
+    }
 
     try {
-      const transformed = this.transformer.transform({ x: pos[0], y: pos[1] });
-      if (!transformed) {
-        throw new CoordinateTransformationError(
-          'Transformation failed for position',
-          { x: pos[0], y: pos[1], z: pos[2] }
-        );
-      }
-
-      // Log transformation for debugging
-      console.debug('Position transformation:', {
-        original: pos,
-        transformed: [transformed.x, transformed.y],
-        system: this.options.coordinateSystem
-      });
-
-      // Validate transformed coordinates
-      if (!isFinite(transformed.x) || !isFinite(transformed.y) || 
-          Math.abs(transformed.x) > 180 || Math.abs(transformed.y) > 90) {
-        throw new CoordinateTransformationError(
-          `Invalid transformed coordinates: [${transformed.x}, ${transformed.y}]`,
-          { x: pos[0], y: pos[1], z: pos[2] }
-        );
-      }
-
-      return pos.length > 2 ? [transformed.x, transformed.y, pos[2]] : [transformed.x, transformed.y];
-    } catch (error) {
-      if (error instanceof CoordinateTransformationError) {
-        throw error;
-      }
-      const err = error as Error;
-      throw new CoordinateTransformationError(
-        `Transformation error: ${err.message || 'Unknown error'}`,
+      const result = this.transformer.transform(
         { x: pos[0], y: pos[1], z: pos[2] }
       );
+      if (!result) {
+        this.errorReporter.reportError('TRANSFORM_ERROR', 'Coordinate transformation failed', {
+          coordinates: pos,
+          fromSystem: this.options.coordinateSystem,
+          toSystem: COORDINATE_SYSTEMS.WGS84
+        });
+        return null;
+      }
+      return result.z !== undefined
+        ? [result.x, result.y, result.z]
+        : [result.x, result.y];
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.errorReporter.reportError('TRANSFORM_ERROR', 'Failed to transform coordinates', {
+        error: errorMessage,
+        coordinates: pos,
+        fromSystem: this.options.coordinateSystem,
+        toSystem: COORDINATE_SYSTEMS.WGS84
+      });
+      return null;
     }
   }
 
-  setFeatures(features: Feature[] | FeatureCollection) {
-    if (Array.isArray(features)) {
-      this.features = features;
-    } else {
-      this.features = features.features;
+  private transformCoordinates(coords: any): any {
+    if (Array.isArray(coords)) {
+      if (typeof coords[0] === 'number') {
+        return this.transformPosition(coords as Position);
+      }
+      const transformed = coords.map(c => this.transformCoordinates(c));
+      return transformed.every(t => t !== null) ? transformed : null;
     }
+    return coords;
+  }
 
-    // Reset cached bounds and errors
+  setFeatures(features: Feature[] | FeatureCollection): void {
     this.cachedBounds = undefined;
     this.transformationErrors = [];
-    this.warningFlags.clear();
+    this.features = Array.isArray(features) ? features : features.features;
 
-    // Add coordinate system info and transform coordinates if needed
-    if (this.options.coordinateSystem && this.transformer) {
-      console.debug('Transforming features from', this.options.coordinateSystem, 'to', COORDINATE_SYSTEMS.WGS84);
-      
+    // Transform coordinates to WGS84 if needed
+    if (this.transformer) {
       const transformedFeatures: Feature[] = [];
+      let transformationErrors = 0;
+
       for (const feature of this.features) {
-        if (!feature.properties) {
-          feature.properties = {};
-        }
-        feature.properties.sourceCoordinateSystem = this.options.coordinateSystem;
-
-        try {
-          const transformedFeature = this.transformFeature(feature);
-          if (transformedFeature) {
-            transformedFeatures.push(transformedFeature);
-          }
-        } catch (error) {
-          if (error instanceof CoordinateTransformationError) {
-            // Track error details
-            this.transformationErrors.push({
-              message: error.message,
-              originalCoordinates: error.originalCoordinates,
-              featureId: feature.properties?.id,
-              layer: feature.properties?.layer
-            });
-
-            // Add warning flag to the feature
-            const layer = feature.properties?.layer || 'default';
-            const handle = feature.properties?.id;
-            if (handle) {
-              this.addWarningFlag(layer, handle);
-            }
-
-            // Add feature with warning flag
-            transformedFeatures.push({
-              ...feature,
-              properties: {
-                ...feature.properties,
-                hasWarning: true,
-                transformationError: error.message
-              }
-            });
-          } else {
-            const err = error as Error;
-            console.error('Failed to transform feature:', err, feature);
-            this.transformationErrors.push({
-              message: err.message || 'Unknown error',
-              originalCoordinates: { x: 0, y: 0 }, // Default coordinates for non-coordinate errors
-              featureId: feature.properties?.id,
-              layer: feature.properties?.layer
-            });
+        const transformed = this.transformFeature(feature);
+        if (transformed) {
+          transformedFeatures.push(transformed);
+        } else {
+          transformationErrors++;
+          if (feature.properties?.handle && feature.properties?.layer) {
+            this.addWarningFlag(feature.properties.layer, feature.properties.handle);
           }
         }
       }
 
-      // Calculate error ratio
-      const errorRatio = this.transformationErrors.length / this.features.length;
-      if (errorRatio > this.MAX_TRANSFORMATION_ERROR_RATIO) {
-        const errorMessage = `Too many transformation errors (${this.transformationErrors.length} out of ${this.features.length} features). The coordinate system may be incorrect.`;
-        console.error(errorMessage, {
-          errors: this.transformationErrors,
-          coordinateSystem: this.options.coordinateSystem
+      // Check if too many transformations failed
+      const errorRatio = transformationErrors / this.features.length;
+      if (errorRatio > PreviewManager.MAX_TRANSFORMATION_ERROR_RATIO) {
+        this.errorReporter.reportError('TRANSFORM_ERROR', 'Too many coordinate transformations failed', {
+          failedCount: transformationErrors,
+          totalCount: this.features.length,
+          errorRatio
         });
-        throw new Error(errorMessage);
-      }
-
-      // Add transformation errors to analysis warnings
-      if (this.options.analysis && this.transformationErrors.length > 0) {
-        const warnings = this.options.analysis.warnings || [];
-        warnings.push({
-          type: 'coordinate_transformation',
-          message: `${this.transformationErrors.length} features had coordinate transformation errors`
-        });
-        this.options.analysis.warnings = warnings;
+        throw new Error('Too many coordinate transformations failed');
       }
 
       this.features = transformedFeatures;
+
+      // Add warning to analysis if any transformations failed
+      if (transformationErrors > 0 && this.options.analysis?.warnings) {
+        this.options.analysis.warnings.push({
+          type: 'TRANSFORM_ERROR',
+          message: `${transformationErrors} features failed coordinate transformation`
+        });
+      }
     }
   }
 
   private transformFeature(feature: Feature): Feature | null {
-    if (!this.transformer) return feature;
-
-    const transformCoordinates = (coords: any): any => {
-      if (!Array.isArray(coords)) return coords;
-      if (typeof coords[0] === 'number') {
-        return this.transformPosition(coords as Position);
-      }
-      return coords.map(c => transformCoordinates(c));
-    };
-
-    if (hasCoordinates(feature.geometry)) {
-      const transformed = transformCoordinates(feature.geometry.coordinates);
-      return {
-        ...feature,
-        geometry: {
-          ...feature.geometry,
-          coordinates: transformed
-        }
-      };
+    if (!feature.geometry) {
+      return feature;
     }
 
-    return feature;
+    try {
+      if (hasCoordinates(feature.geometry)) {
+        const transformed = this.transformCoordinates(feature.geometry.coordinates);
+        if (!transformed) {
+          return null;
+        }
+
+        return {
+          ...feature,
+          geometry: {
+            ...feature.geometry,
+            coordinates: transformed
+          },
+          properties: {
+            ...feature.properties,
+            sourceCoordinateSystem: this.options.coordinateSystem
+          }
+        };
+      }
+      return feature; // Return unmodified GeometryCollection
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.errorReporter.reportError('TRANSFORM_ERROR', 'Failed to transform feature', {
+        error: errorMessage,
+        featureId: feature.id,
+        layer: feature.properties?.layer,
+        geometryType: feature.geometry.type
+      });
+      return null;
+    }
   }
 
-  setOptions(options: Partial<PreviewOptions>) {
+  setOptions(options: Partial<PreviewManagerOptions>): void {
     const prevCoordinateSystem = this.options.coordinateSystem;
     this.options = {
       ...this.options,
-      ...options
+      ...options,
+      selectedElement: options.selectedElement ?? this.options.selectedElement,
+      analysis: options.analysis ?? this.options.analysis,
+      coordinateSystem: options.coordinateSystem ?? this.options.coordinateSystem
     };
 
-    // Update transformer if coordinate system changes
-    if (options.coordinateSystem && options.coordinateSystem !== prevCoordinateSystem) {
-      console.debug('Coordinate system changed:', {
-        from: prevCoordinateSystem,
-        to: options.coordinateSystem
-      });
+    // Re-initialize transformer if coordinate system changed
+    if (options.coordinateSystem !== prevCoordinateSystem) {
       this.initializeTransformer(options.coordinateSystem);
-      // Re-transform features with new coordinate system
-      this.setFeatures(this.features);
+      if (this.features.length > 0) {
+        this.setFeatures(this.features);
+      }
     }
   }
 
-  addWarningFlag(layer: string, handle: string) {
-    if (!this.warningFlags.has(layer)) {
-      this.warningFlags.set(layer, new Set());
+  addWarningFlag(layer: string, handle: string): void {
+    let layerWarnings = this.warningFlags.get(layer);
+    if (!layerWarnings) {
+      layerWarnings = new Set();
+      this.warningFlags.set(layer, layerWarnings);
     }
-    this.warningFlags.get(layer)?.add(handle);
+    layerWarnings.add(handle);
   }
 
   getTransformationErrors(): TransformationError[] {
-    return this.transformationErrors;
+    return [...this.transformationErrors];
   }
 
-  private groupFeatures(): FeatureGroup {
-    const result: FeatureGroup = {
-      points: [],
-      lines: [],
-      polygons: [],
-      totalCount: 0
-    };
-
-    const { maxFeatures, visibleLayers } = this.options;
-    const processedCounts: Record<string, number> = {};
+  groupFeatures(): FeatureGroup {
+    const points: Feature[] = [];
+    const lines: Feature[] = [];
+    const polygons: Feature[] = [];
+    let totalCount = 0;
 
     for (const feature of this.features) {
-      // Skip if feature's layer is not visible
-      const layer = feature.properties?.layer;
-      if (visibleLayers?.length && !visibleLayers.includes(layer)) {
+      if (!feature.geometry || !hasCoordinates(feature.geometry)) {
         continue;
       }
 
-      // Track counts per layer
-      processedCounts[layer] = (processedCounts[layer] || 0) + 1;
-      result.totalCount++;
-
-      // Apply sampling if needed
-      if (maxFeatures && processedCounts[layer] > maxFeatures) {
+      // Filter by visible layers
+      if (this.options.visibleLayers?.length &&
+          !this.options.visibleLayers.includes(feature.properties?.layer || '0')) {
         continue;
       }
 
       // Add warning flags
-      if (feature.properties?.handle && this.warningFlags.get(layer)?.has(feature.properties.handle)) {
-        feature.properties.hasWarning = true;
+      if (feature.properties?.layer && feature.properties?.handle) {
+        const layerWarnings = this.warningFlags.get(feature.properties.layer);
+        if (layerWarnings?.has(feature.properties.handle)) {
+          feature.properties.hasWarning = true;
+        }
       }
 
-      // Group by geometry type
       switch (feature.geometry.type) {
         case 'Point':
         case 'MultiPoint':
-          result.points.push(feature);
+          points.push(feature);
           break;
         case 'LineString':
         case 'MultiLineString':
-          result.lines.push(feature);
+          lines.push(feature);
           break;
         case 'Polygon':
         case 'MultiPolygon':
-          result.polygons.push(feature);
+          polygons.push(feature);
           break;
       }
+      totalCount++;
     }
 
-    return result;
+    return { points, lines, polygons, totalCount };
   }
 
   getPreviewCollections(): {
@@ -334,48 +309,52 @@ export class PreviewManager {
     totalCount: number;
     visibleCount: number;
   } {
-    const grouped = this.groupFeatures();
-
-    // Add coordinate system info to feature collections
-    const addMetadata = (collection: FeatureCollection) => {
-      if (this.options.coordinateSystem) {
-        collection.features.forEach(feature => {
-          if (!feature.properties) {
-            feature.properties = {};
-          }
-          feature.properties.sourceCoordinateSystem = this.options.coordinateSystem;
-        });
-      }
-      return collection;
-    };
+    const { points, lines, polygons, totalCount } = this.groupFeatures();
 
     return {
-      points: addMetadata({
+      points: {
         type: 'FeatureCollection',
-        features: grouped.points
-      }),
-      lines: addMetadata({
+        features: points.map(f => ({
+          ...f,
+          properties: {
+            ...f.properties,
+            sourceCoordinateSystem: this.options.coordinateSystem
+          }
+        }))
+      },
+      lines: {
         type: 'FeatureCollection',
-        features: grouped.lines
-      }),
-      polygons: addMetadata({
+        features: lines.map(f => ({
+          ...f,
+          properties: {
+            ...f.properties,
+            sourceCoordinateSystem: this.options.coordinateSystem
+          }
+        }))
+      },
+      polygons: {
         type: 'FeatureCollection',
-        features: grouped.polygons
-      }),
+        features: polygons.map(f => ({
+          ...f,
+          properties: {
+            ...f.properties,
+            sourceCoordinateSystem: this.options.coordinateSystem
+          }
+        }))
+      },
       totalCount: this.features.length,
-      visibleCount: grouped.points.length + grouped.lines.length + grouped.polygons.length
+      visibleCount: totalCount
     };
   }
 
   getFeaturesByTypeAndLayer(type: string, layer: string): Feature[] {
-    return this.features.filter(feature => 
-      feature.properties?.entityType === type && 
-      feature.properties?.layer === layer
+    return this.features.filter(f =>
+      f.properties?.type === type &&
+      f.properties?.layer === layer
     );
   }
 
   calculateBounds(): Bounds {
-    // Return cached bounds if available
     if (this.cachedBounds) {
       return this.cachedBounds;
     }
@@ -385,45 +364,30 @@ export class PreviewManager {
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    const updateBounds = (coords: Position) => {
-      const [x, y] = coords;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-    };
-
-    const processCoordinates = (coords: any): void => {
-      if (!Array.isArray(coords)) return;
-      if (typeof coords[0] === 'number') {
-        updateBounds(coords as Position);
-      } else {
-        coords.forEach(c => processCoordinates(c));
+    for (const feature of this.features) {
+      if (feature.bbox) {
+        minX = Math.min(minX, feature.bbox[0]);
+        minY = Math.min(minY, feature.bbox[1]);
+        maxX = Math.max(maxX, feature.bbox[2]);
+        maxY = Math.max(maxY, feature.bbox[3]);
       }
-    };
-
-    this.features.forEach(feature => {
-      if (hasCoordinates(feature.geometry)) {
-        processCoordinates(feature.geometry.coordinates);
-      }
-    });
+    }
 
     // Handle empty or invalid bounds
     if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-      // Default to Aarau, Switzerland if no valid bounds
-      return {
-        minX: 8.0444,  // longitude
-        minY: 47.3892, // latitude
-        maxX: 8.0544,  // longitude
-        maxY: 47.3992  // latitude
-      };
+      this.errorReporter.reportWarning('BOUNDS_ERROR', 'Invalid bounds, using default location');
+      // Default to Aarau, Switzerland
+      minX = 7.7472;
+      minY = 47.0892;
+      maxX = 8.3472;
+      maxY = 47.6892;
     }
 
     // Add padding
     const width = maxX - minX;
     const height = maxY - minY;
-    const paddingX = width * this.BOUNDS_PADDING;
-    const paddingY = height * this.BOUNDS_PADDING;
+    const paddingX = width * PreviewManager.BOUNDS_PADDING;
+    const paddingY = height * PreviewManager.BOUNDS_PADDING;
 
     this.cachedBounds = {
       minX: minX - paddingX,
@@ -442,14 +406,21 @@ export class PreviewManager {
 
   getLayerCounts(): Record<string, number> {
     const counts: Record<string, number> = {};
-    this.features.forEach(feature => {
-      const layer = feature.properties?.layer || 'default';
+    for (const feature of this.features) {
+      const layer = feature.properties?.layer || '0';
       counts[layer] = (counts[layer] || 0) + 1;
-    });
+    }
     return counts;
   }
 }
 
-export function createPreviewManager(options?: PreviewOptions): PreviewManager {
-  return new PreviewManager(options);
+/**
+ * Create a new PreviewManager instance
+ */
+export function createPreviewManager(
+  options: PreviewManagerOptions,
+  errorReporter: ErrorReporter,
+  proj4Instance: Proj4Type
+): PreviewManager {
+  return new PreviewManager(options, errorReporter, proj4Instance);
 }

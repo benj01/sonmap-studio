@@ -1,17 +1,15 @@
-// components/geo-loader/processors/base-processor.ts
-
 import { FeatureCollection } from 'geojson';
 import { CoordinateSystem } from '../types/coordinates';
 import { DxfData } from '../utils/dxf/types';
+import { ErrorReporter } from '../utils/errors';
 
 export interface ProcessorOptions {
   coordinateSystem?: CoordinateSystem;
   selectedLayers?: string[];
   selectedTypes?: string[];
   importAttributes?: boolean;
+  errorReporter: ErrorReporter;
   onProgress?: (progress: number) => void;
-  onWarning?: (message: string) => void;
-  onError?: (message: string) => void;
 }
 
 export interface ProcessorStats {
@@ -19,11 +17,6 @@ export interface ProcessorStats {
   layerCount: number;
   featureTypes: Record<string, number>;
   failedTransformations?: number;
-  errors?: Array<{
-    type: string;
-    message?: string;
-    count: number;
-  }>;
 }
 
 export interface ProcessorResult {
@@ -37,8 +30,7 @@ export interface ProcessorResult {
   layers: string[];
   coordinateSystem: CoordinateSystem;
   statistics: ProcessorStats;
-  warnings?: string[];
-  dxfData?: DxfData; // Optional DXF data for DXF processor
+  dxfData?: DxfData;
 }
 
 export interface AnalyzeResult {
@@ -51,14 +43,15 @@ export interface AnalyzeResult {
     maxY: number;
   };
   preview: FeatureCollection;
-  warnings?: string[];
-  dxfData?: DxfData; // Optional DXF data for DXF processor
+  warnings?: Array<{ type: string; message: string; context?: Record<string, any> }>;
+  errors?: Array<{ type: string; message: string; context?: Record<string, any> }>;
+  dxfData?: DxfData;
 }
 
 export abstract class BaseProcessor {
   protected options: ProcessorOptions;
 
-  constructor(options: ProcessorOptions = {}) {
+  constructor(options: ProcessorOptions) {
     this.options = options;
   }
 
@@ -66,28 +59,22 @@ export abstract class BaseProcessor {
   abstract analyze(file: File): Promise<AnalyzeResult>;
   abstract process(file: File): Promise<ProcessorResult>;
 
-  protected emitProgress(progress: number) {
-    this.options.onProgress?.(Math.min(1, Math.max(0, progress)));
+  protected emitProgress(progress: number): void {
+    if (this.options.onProgress) {
+      this.options.onProgress(Math.min(1, Math.max(0, progress)));
+    }
   }
 
-  protected emitWarning(message: string) {
-    this.options.onWarning?.(message);
+  protected reportError(type: string, message: string, context?: Record<string, any>): void {
+    this.options.errorReporter.reportError(type, message, context);
   }
 
-  protected emitError(message: string) {
-    this.options.onError?.(message);
+  protected reportWarning(type: string, message: string, context?: Record<string, any>): void {
+    this.options.errorReporter.reportWarning(type, message, context);
   }
 
-  // Utility methods for child classes
-  protected validateBounds(bounds: ProcessorResult['bounds']) {
-    return (
-      isFinite(bounds.minX) &&
-      isFinite(bounds.minY) &&
-      isFinite(bounds.maxX) &&
-      isFinite(bounds.maxY) &&
-      bounds.minX <= bounds.maxX &&
-      bounds.minY <= bounds.maxY
-    );
+  protected reportInfo(type: string, message: string, context?: Record<string, any>): void {
+    this.options.errorReporter.reportInfo(type, message, context);
   }
 
   protected createDefaultStats(): ProcessorStats {
@@ -95,58 +82,48 @@ export abstract class BaseProcessor {
       featureCount: 0,
       layerCount: 0,
       featureTypes: {},
-      failedTransformations: 0,
-      errors: []
+      failedTransformations: 0
     };
-  }
-
-  protected updateStats(stats: ProcessorStats, type: string) {
-    stats.featureCount++;
-    stats.featureTypes[type] = (stats.featureTypes[type] || 0) + 1;
-  }
-
-  protected recordError(stats: ProcessorStats, type: string, message?: string) {
-    const existingError = stats.errors?.find(e => e.type === type);
-    if (existingError) {
-      existingError.count++;
-    } else {
-      stats.errors = stats.errors || [];
-      stats.errors.push({ type, message, count: 1 });
-    }
   }
 }
 
-// Helper type for processor registration
 export type ProcessorConstructor = new (options: ProcessorOptions) => BaseProcessor;
 
-// Processor registry
 export class ProcessorRegistry {
   private static processors = new Map<string, ProcessorConstructor>();
 
-  static register(extension: string, processor: ProcessorConstructor) {
-    this.processors.set(extension.toLowerCase(), processor);
+  static register(extension: string, processor: ProcessorConstructor): void {
+    ProcessorRegistry.processors.set(extension.toLowerCase(), processor);
   }
 
-  static async getProcessor(file: File, options: ProcessorOptions = {}): Promise<BaseProcessor | null> {
-    const extension = file.name.split('.').pop()?.toLowerCase() || '';
-    const ProcessorClass = this.processors.get(extension);
-    
+  static async getProcessor(file: File, options: ProcessorOptions): Promise<BaseProcessor | null> {
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (!extension) {
+      options.errorReporter.reportError('FILE_ERROR', 'File has no extension');
+      return null;
+    }
+
+    const ProcessorClass = ProcessorRegistry.processors.get(extension);
     if (!ProcessorClass) {
+      options.errorReporter.reportError('FILE_ERROR', `No processor found for extension: ${extension}`);
       return null;
     }
 
     const processor = new ProcessorClass(options);
-    const canProcess = await processor.canProcess(file);
-    
-    return canProcess ? processor : null;
+    try {
+      if (await processor.canProcess(file)) {
+        return processor;
+      }
+    } catch (error: unknown) {
+      const err = error as Error;
+      options.errorReporter.reportError('PROCESSOR_ERROR', 'Failed to check if processor can handle file', { error: err });
+    }
+    return null;
   }
 
   static getSupportedExtensions(): string[] {
-    return Array.from(this.processors.keys());
+    return Array.from(ProcessorRegistry.processors.keys());
   }
 }
 
-// Export a function to create processors
-export function createProcessor(file: File, options: ProcessorOptions = {}): Promise<BaseProcessor | null> {
-  return ProcessorRegistry.getProcessor(file, options);
-}
+export const createProcessor = ProcessorRegistry.getProcessor;

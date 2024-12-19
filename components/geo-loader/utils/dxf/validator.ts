@@ -13,7 +13,7 @@ import {
   isDxfTextEntity,
   isDxfSplineEntity
 } from './types';
-import { ErrorCollector } from './error-collector';
+import { ErrorCollector } from '../errors';
 
 export class DxfValidator {
   private errorCollector: ErrorCollector;

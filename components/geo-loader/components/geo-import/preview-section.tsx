@@ -6,7 +6,8 @@ export function PreviewSection({
   bounds,
   coordinateSystem,
   visibleLayers,
-  analysis
+  analysis,
+  errorReporter
 }: PreviewSectionProps) {
   // Get the preview collections from the manager
   const { points, lines, polygons } = previewManager.getPreviewCollections();
@@ -31,6 +32,7 @@ export function PreviewSection({
           coordinateSystem={coordinateSystem}
           visibleLayers={visibleLayers}
           analysis={analysis}
+          errorReporter={errorReporter}
         />
       </div>
     </div>

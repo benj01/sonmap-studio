@@ -1,6 +1,6 @@
 import { DxfEntity, DxfEntityBase, Vector3, ParserResult, ParserContext } from './types';
 import { DxfValidator } from './validator';
-import { ErrorCollector } from './error-collector';
+import { ErrorCollector } from '../errors';
 import { GeoFeature } from '../../../../types/geo';
 import { entityToGeoFeature } from './geo-converter';
 

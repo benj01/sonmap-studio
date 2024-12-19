@@ -1,5 +1,7 @@
 import { FeatureCollection, Feature, BBox } from 'geojson';
+import { ViewStateChangeEvent } from 'react-map-gl';
 import { CoordinateSystem, Bounds } from './coordinates';
+import { ErrorReporter } from '../utils/errors';
 
 export interface Warning {
   type: string;
@@ -27,6 +29,7 @@ export interface PreviewMapProps {
   visibleLayers?: string[];
   selectedElement?: SelectedElement;
   analysis?: Analysis;
+  errorReporter: ErrorReporter;
 }
 
 export interface ViewState {
@@ -48,7 +51,7 @@ export interface MapFeatureCollections {
 
 export interface UseMapViewResult {
   viewState: ViewState;
-  onMove: (evt: any) => void;
+  onMove: (evt: ViewStateChangeEvent) => void;
   updateViewFromBounds: (bounds: Bounds) => void;
   focusOnFeatures: (features: Feature[], padding?: number) => void;
   getViewportBounds: () => BBox | undefined;

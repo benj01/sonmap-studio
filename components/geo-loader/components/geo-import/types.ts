@@ -3,11 +3,13 @@ import { CoordinateSystem } from '../../types/coordinates';
 import { DxfData } from '../../utils/dxf/types';
 import { PreviewManager } from '../../preview/preview-manager';
 import { Analysis } from '../../types/map';
+import { ErrorReporter, Severity } from '../../utils/errors';
 
 export interface LogEntry {
   message: string;
   type: 'info' | 'warning' | 'error';
   timestamp: Date;
+  severity: Severity;
 }
 
 export type LogType = LogEntry['type'];
@@ -39,6 +41,7 @@ export interface PreviewSectionProps {
   coordinateSystem?: CoordinateSystem;
   visibleLayers: string[];
   analysis?: Analysis;
+  errorReporter: ErrorReporter;
 }
 
 export interface SettingsSectionProps {
@@ -55,6 +58,7 @@ export interface SettingsSectionProps {
   onCoordinateSystemChange: (value: string) => void;
   pendingCoordinateSystem?: CoordinateSystem;
   onApplyCoordinateSystem?: () => void;
+  errorReporter: ErrorReporter;
 }
 
 export interface LogsSectionProps {
@@ -69,4 +73,5 @@ export interface GeoImportDialogProps {
   onClose: () => void;
   file: File | null;
   onImportComplete: (result: LoaderResult) => void;
+  errorReporter: ErrorReporter;
 }
