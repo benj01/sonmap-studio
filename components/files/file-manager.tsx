@@ -1,14 +1,14 @@
 import { useState, useEffect } from 'react'
-import { Card, CardHeader, CardTitle, CardDescription, CardContent } from 'components/ui/card'
-import { Button } from 'components/ui/button'
+import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { List, Grid } from 'lucide-react'
-import { useToast } from 'components/ui/use-toast'
-import { Database } from 'types/supabase'
+import { useToast } from '@/components/ui/use-toast'
+import { Database } from '@/types/supabase'
 import { S3FileUpload } from './s3-file-upload'
 import { FileItem } from './file-item'
-import { createClient } from 'utils/supabase/client'
-import { LoaderResult, ImportMetadata } from 'types/geo'
-import { COORDINATE_SYSTEMS } from '../geo-loader/types/coordinates'
+import { createClient } from '@/utils/supabase/client'
+import { LoaderResult, ImportMetadata } from '@/types/geo'
+import { COORDINATE_SYSTEMS } from '@/components/geo-loader/types/coordinates'
 
 type ProjectFile = Database['public']['Tables']['project_files']['Row'] & {
   importedFiles?: ProjectFile[]

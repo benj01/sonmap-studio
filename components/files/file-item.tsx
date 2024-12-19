@@ -1,19 +1,19 @@
-import { formatBytes } from 'lib/utils'
-import { GeoImportDialog } from 'components/geo-loader'
-import { Database } from 'types/supabase'
-import { LoaderResult } from 'types/geo'
-import { Button } from 'components/ui/button'
+import { formatBytes } from '@/lib/utils'
+import { GeoImportDialog, ErrorReporterImpl } from '@/components/geo-loader'
+import { Database } from '@/types/supabase'
+import { LoaderResult } from '@/types/geo'
+import { Button } from '@/components/ui/button'
 import { Download, Share2, Trash2, FileIcon, FileSpreadsheet, FileJson, Import } from 'lucide-react'
-import { createClient } from 'utils/supabase/client'
+import { createClient } from '@/utils/supabase/client'
 import { useState } from 'react'
-import { cn } from 'utils/cn'
-import { Dialog, DialogTrigger } from 'components/ui/dialog'
+import { cn } from '@/utils/cn'
+import { Dialog, DialogTrigger } from '@/components/ui/dialog'
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
-} from "components/ui/tooltip"
+} from "@/components/ui/tooltip"
 
 type ProjectFile = Database['public']['Tables']['project_files']['Row'] & {
   importedFiles?: ProjectFile[]
@@ -31,6 +31,7 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false)
   const [fileForImport, setFileForImport] = useState<File | null>(null)
   const supabase = createClient()
+  const errorReporter = new ErrorReporterImpl()
 
   const getFileIcon = () => {
     switch (file.file_type) {
@@ -220,6 +221,7 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
             }}
             file={fileForImport}
             onImportComplete={onImport}
+            errorReporter={errorReporter}
           />
         )}
       </div>

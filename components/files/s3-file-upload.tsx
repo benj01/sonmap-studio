@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { Button } from '../ui/button';
-import { useToast } from '../ui/use-toast';
-import { getSignedUploadUrl } from 'utils/supabase/s3';
-import { Progress } from '../ui/progress';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/use-toast';
+import { getSignedUploadUrl } from '@/utils/supabase/s3';
+import { Progress } from '@/components/ui/progress';
 
 interface S3FileUploadProps {
   projectId: string;
