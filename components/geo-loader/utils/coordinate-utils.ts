@@ -35,10 +35,18 @@ export class CoordinateTransformer {
 
     // Validate that the coordinate systems are defined in proj4
     if (!proj4.defs(this.fromSystem)) {
-      throw new GeoLoaderError(`Source coordinate system not registered: ${this.fromSystem}`);
+      throw new GeoLoaderError(
+        `Source coordinate system not registered: ${this.fromSystem}`,
+        'COORDINATE_SYSTEM_NOT_REGISTERED',
+        { system: this.fromSystem, type: 'source' }
+      );
     }
     if (!proj4.defs(this.toSystem)) {
-      throw new GeoLoaderError(`Target coordinate system not registered: ${this.toSystem}`);
+      throw new GeoLoaderError(
+        `Target coordinate system not registered: ${this.toSystem}`,
+        'COORDINATE_SYSTEM_NOT_REGISTERED',
+        { system: this.toSystem, type: 'target' }
+      );
     }
 
     try {
@@ -46,7 +54,9 @@ export class CoordinateTransformer {
       this.transformer = proj4(this.fromSystem, this.toSystem);
     } catch (error) {
       throw new GeoLoaderError(
-        `Failed to initialize transformer from ${fromSystem} to ${toSystem}: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to initialize transformer from ${fromSystem} to ${toSystem}: ${error instanceof Error ? error.message : String(error)}`,
+        'TRANSFORMER_INITIALIZATION_ERROR',
+        { fromSystem, toSystem, error: error instanceof Error ? error.message : String(error) }
       );
     }
   }
@@ -72,7 +82,7 @@ export class CoordinateTransformer {
         this.fromSystem as CoordinateSystem,
         this.toSystem as CoordinateSystem
       );
-      this.errorReporter.addError(error.message, { point, attempts: this.MAX_ATTEMPTS });
+      this.errorReporter.addError(error.message, 'MAX_TRANSFORMATION_ATTEMPTS', { point, attempts: this.MAX_ATTEMPTS });
       throw error;
     }
     this.transformationAttempts.set(key, attempts + 1);
@@ -86,8 +96,12 @@ export class CoordinateTransformer {
   transform(point: CoordinatePoint): CoordinatePoint {
     if (this.fromSystem === this.toSystem) {
       if (!this.validatePoint(point)) {
-        const error = new InvalidCoordinateError(`Invalid point coordinates`, point);
-        this.errorReporter.addError(error.message, { point });
+        const error = new InvalidCoordinateError(
+          `Invalid point coordinates`,
+          point,
+          { reason: 'not_finite', system: this.fromSystem }
+        );
+        this.errorReporter.addError(error.message, 'INVALID_POINT_COORDINATES', { point });
         throw error;
       }
       return point;
@@ -95,8 +109,12 @@ export class CoordinateTransformer {
 
     try {
       if (!this.validatePoint(point)) {
-        const error = new InvalidCoordinateError(`Invalid point coordinates`, point);
-        this.errorReporter.addError(error.message, { point });
+        const error = new InvalidCoordinateError(
+          `Invalid point coordinates`,
+          point,
+          { reason: 'not_finite', system: this.fromSystem }
+        );
+        this.errorReporter.addError(error.message, 'INVALID_POINT_COORDINATES', { point });
         throw error;
       }
 
@@ -104,7 +122,11 @@ export class CoordinateTransformer {
 
       // Verify transformers are still valid
       if (!proj4.defs(this.fromSystem) || !proj4.defs(this.toSystem)) {
-        throw new GeoLoaderError('Coordinate system definitions lost - reinitializing transformer');
+        throw new GeoLoaderError(
+          'Coordinate system definitions lost - reinitializing transformer',
+          'COORDINATE_SYSTEM_DEFINITIONS_LOST',
+          { fromSystem: this.fromSystem, toSystem: this.toSystem }
+        );
       }
 
       // Transform the point
@@ -117,7 +139,7 @@ export class CoordinateTransformer {
           this.fromSystem as CoordinateSystem,
           this.toSystem as CoordinateSystem
         );
-        this.errorReporter.addError(error.message, { 
+        this.errorReporter.addError(error.message, 'INVALID_TRANSFORMED_COORDINATES', { 
           point,
           transformed: { x: transformedX, y: transformedY }
         });
@@ -146,7 +168,7 @@ export class CoordinateTransformer {
         this.fromSystem as CoordinateSystem,
         this.toSystem as CoordinateSystem
       );
-      this.errorReporter.addError(transformError.message, { point, error: String(error) });
+      this.errorReporter.addError(transformError.message, 'TRANSFORMATION_FAILED', { point, error: String(error) });
       throw transformError;
     }
   }
@@ -171,18 +193,27 @@ export class CoordinateTransformer {
           !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
         const error = new InvalidCoordinateError(
           `Invalid bounds coordinates`,
-          { x: bounds.minX, y: bounds.minY }
+          { x: bounds.minX, y: bounds.minY },
+          { reason: 'not_finite', bounds }
         );
-        this.errorReporter.addError(error.message, { bounds });
+        this.errorReporter.addError(error.message, 'INVALID_BOUNDS_COORDINATES', { bounds });
         throw error;
       }
 
       if (bounds.minX > bounds.maxX || bounds.minY > bounds.maxY) {
         const error = new InvalidCoordinateError(
           `Invalid bounds: min values greater than max values`,
-          { x: bounds.minX, y: bounds.minY }
+          { x: bounds.minX, y: bounds.minY },
+          { 
+            reason: 'invalid_bounds',
+            bounds,
+            minX: bounds.minX,
+            maxX: bounds.maxX,
+            minY: bounds.minY,
+            maxY: bounds.maxY
+          }
         );
-        this.errorReporter.addError(error.message, { bounds });
+        this.errorReporter.addError(error.message, 'INVALID_BOUNDS_VALUES', { bounds });
         throw error;
       }
 
@@ -213,7 +244,7 @@ export class CoordinateTransformer {
         this.fromSystem as CoordinateSystem,
         this.toSystem as CoordinateSystem
       );
-      this.errorReporter.addError(transformError.message, { bounds, error: String(error) });
+      this.errorReporter.addError(transformError.message, 'BOUNDS_TRANSFORMATION_FAILED', { bounds, error: String(error) });
       throw transformError;
     }
   }
@@ -315,12 +346,20 @@ function detectLV03Coordinates(points: CoordinatePoint[]): boolean {
 export function suggestCoordinateSystem(points: CoordinatePoint[]): CoordinateSystem {
   try {
     if (!Array.isArray(points) || points.length === 0) {
-      throw new GeoLoaderError('No points provided for coordinate system detection');
+      throw new GeoLoaderError(
+        'No points provided for coordinate system detection',
+        'NO_POINTS_FOR_DETECTION',
+        { points }
+      );
     }
 
     const validPoints = points.filter(isValidPoint);
     if (validPoints.length === 0) {
-      throw new GeoLoaderError('No valid points found for coordinate system detection');
+      throw new GeoLoaderError(
+        'No valid points found for coordinate system detection',
+        'NO_VALID_POINTS_FOR_DETECTION',
+        { points, validCount: validPoints.length }
+      );
     }
 
     // First check for Swiss coordinate systems
@@ -352,7 +391,9 @@ export function suggestCoordinateSystem(points: CoordinatePoint[]): CoordinateSy
       throw error;
     }
     throw new GeoLoaderError(
-      `Failed to detect coordinate system: ${error instanceof Error ? error.message : String(error)}`
+      `Failed to detect coordinate system: ${error instanceof Error ? error.message : String(error)}`,
+      'COORDINATE_SYSTEM_DETECTION_ERROR',
+      { error: error instanceof Error ? error.message : String(error) }
     );
   }
 }

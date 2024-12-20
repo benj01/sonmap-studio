@@ -62,8 +62,20 @@ export class DxfEntityParser {
   }
 
   private convertEntity(entity: Record<string, unknown>): DxfEntity | null {
+    // Type guard to ensure required type property exists and is valid
+    if (!('type' in entity) || typeof entity.type !== 'string') {
+      this.errorReporter.addDxfError('Entity missing required type property', {
+        type: 'MISSING_TYPE',
+        entity
+      });
+      return null;
+    }
+
+    // Create a type-safe entity object with known type property
+    const typedEntity = entity as Record<string, unknown> & { type: string };
+
     try {
-      switch (entity.type) {
+      switch (typedEntity.type) {
         case '3DFACE':
           return this.parse3DFace(entity);
         case 'POINT':
@@ -122,7 +134,7 @@ export class DxfEntityParser {
 
   private parse3DFace(entity: Record<string, unknown>): DxfEntity | null {
     const vertices = entity.vertices as unknown[];
-    if (!Array.isArray(vertices) || vertices.length < 3) {
+    if (!Array.isArray(vertices) || vertices.length < 3 || !vertices.every(v => this.isValidVector3(v))) {
       this.errorReporter.addEntityError(
         '3DFACE',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -149,9 +161,22 @@ export class DxfEntityParser {
     };
   }
 
+  /**
+   * Type guard to check if a value is a valid Vector3
+   */
+  private isValidVector3(value: unknown): value is Vector3 {
+    if (!value || typeof value !== 'object') return false;
+    const v = value as Record<string, unknown>;
+    return (
+      typeof v.x === 'number' && isFinite(v.x) &&
+      typeof v.y === 'number' && isFinite(v.y) &&
+      (v.z === undefined || (typeof v.z === 'number' && isFinite(v.z)))
+    );
+  }
+
   private parsePoint(entity: Record<string, unknown>): DxfEntity | null {
-    const position = entity.position as Vector3;
-    if (!position || typeof position.x !== 'number' || typeof position.y !== 'number') {
+    const position = entity.position;
+    if (!this.isValidVector3(position)) {
       this.errorReporter.addEntityError(
         'POINT',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -171,9 +196,9 @@ export class DxfEntityParser {
   }
 
   private parseLine(entity: Record<string, unknown>): DxfEntity | null {
-    const start = entity.start as Vector3;
-    const end = entity.end as Vector3;
-    if (!start || !end || typeof start.x !== 'number' || typeof end.x !== 'number') {
+    const start = entity.start;
+    const end = entity.end;
+    if (!this.isValidVector3(start) || !this.isValidVector3(end)) {
       this.errorReporter.addEntityError(
         'LINE',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -239,9 +264,9 @@ export class DxfEntityParser {
   }
 
   private parseCircle(entity: Record<string, unknown>): DxfEntity | null {
-    const center = entity.center as Vector3;
-    const radius = entity.radius as number;
-    if (!center || typeof radius !== 'number') {
+    const center = entity.center;
+    const radius = entity.radius;
+    if (!this.isValidVector3(center) || typeof radius !== 'number' || !isFinite(radius) || radius <= 0) {
       this.errorReporter.addEntityError(
         'CIRCLE',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -263,13 +288,15 @@ export class DxfEntityParser {
   }
 
   private parseArc(entity: Record<string, unknown>): DxfEntity | null {
-    const center = entity.center as Vector3;
-    const radius = entity.radius as number;
-    const startAngle = entity.startAngle as number;
-    const endAngle = entity.endAngle as number;
+    const center = entity.center;
+    const radius = entity.radius;
+    const startAngle = entity.startAngle;
+    const endAngle = entity.endAngle;
 
-    if (!center || typeof radius !== 'number' ||
-        typeof startAngle !== 'number' || typeof endAngle !== 'number') {
+    if (!this.isValidVector3(center) || 
+        typeof radius !== 'number' || !isFinite(radius) || radius <= 0 ||
+        typeof startAngle !== 'number' || !isFinite(startAngle) ||
+        typeof endAngle !== 'number' || !isFinite(endAngle)) {
       this.errorReporter.addEntityError(
         'ARC',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -295,16 +322,17 @@ export class DxfEntityParser {
   }
 
   private parseEllipse(entity: Record<string, unknown>): DxfEntity | null {
-    const center = entity.center as Vector3;
-    const majorAxis = entity.majorAxis as Vector3;
-    const minorAxisRatio = entity.minorAxisRatio as number;
-    const startAngle = entity.startAngle as number;
-    const endAngle = entity.endAngle as number;
+    const center = entity.center;
+    const majorAxis = entity.majorAxis;
+    const minorAxisRatio = entity.minorAxisRatio;
+    const startAngle = entity.startAngle;
+    const endAngle = entity.endAngle;
 
-    if (!center || !majorAxis ||
-        typeof minorAxisRatio !== 'number' ||
-        typeof startAngle !== 'number' ||
-        typeof endAngle !== 'number') {
+    if (!this.isValidVector3(center) || 
+        !this.isValidVector3(majorAxis) ||
+        typeof minorAxisRatio !== 'number' || !isFinite(minorAxisRatio) || minorAxisRatio <= 0 ||
+        typeof startAngle !== 'number' || !isFinite(startAngle) ||
+        typeof endAngle !== 'number' || !isFinite(endAngle)) {
       this.errorReporter.addEntityError(
         'ELLIPSE',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -332,9 +360,15 @@ export class DxfEntityParser {
   }
 
   private parseInsert(entity: Record<string, unknown>): DxfEntity | null {
-    const position = entity.position as Vector3;
-    const block = entity.block as string;
-    if (!position || !block) {
+    const position = entity.position;
+    const block = entity.block;
+    const scale = entity.scale;
+    const rotation = entity.rotation;
+
+    if (!this.isValidVector3(position) || 
+        typeof block !== 'string' || !block.trim() ||
+        (scale !== undefined && !this.isValidVector3(scale)) ||
+        (rotation !== undefined && (typeof rotation !== 'number' || !isFinite(rotation)))) {
       this.errorReporter.addEntityError(
         'INSERT',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -358,9 +392,17 @@ export class DxfEntityParser {
   }
 
   private parseText(entity: Record<string, unknown>): DxfEntity | null {
-    const position = entity.position as Vector3;
-    const text = entity.text as string;
-    if (!position || typeof text !== 'string') {
+    const position = entity.position;
+    const text = entity.text;
+    const height = entity.height;
+    const rotation = entity.rotation;
+    const width = entity.width;
+
+    if (!this.isValidVector3(position) || 
+        typeof text !== 'string' || !text.trim() ||
+        (height !== undefined && (typeof height !== 'number' || !isFinite(height) || height <= 0)) ||
+        (rotation !== undefined && (typeof rotation !== 'number' || !isFinite(rotation))) ||
+        (width !== undefined && (typeof width !== 'number' || !isFinite(width) || width <= 0))) {
       this.errorReporter.addEntityError(
         String(entity.type),
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -388,17 +430,25 @@ export class DxfEntityParser {
   }
 
   private parseSpline(entity: Record<string, unknown>): DxfEntity | null {
-    const controlPoints = entity.controlPoints as Vector3[];
-    const degree = entity.degree as number;
-    if (!Array.isArray(controlPoints) || typeof degree !== 'number') {
+    const controlPoints = entity.controlPoints as unknown[];
+    const degree = entity.degree;
+    const knots = entity.knots;
+    const weights = entity.weights;
+
+    if (!Array.isArray(controlPoints) || !controlPoints.every(p => this.isValidVector3(p)) ||
+        typeof degree !== 'number' || !isFinite(degree) || degree < 1 ||
+        (knots !== undefined && (!Array.isArray(knots) || !knots.every(k => typeof k === 'number' && isFinite(k)))) ||
+        (weights !== undefined && (!Array.isArray(weights) || !weights.every(w => typeof w === 'number' && isFinite(w))))) {
       this.errorReporter.addEntityError(
         'SPLINE',
         typeof entity.handle === 'string' ? entity.handle : undefined,
-        'Missing control points or degree',
+        'Invalid spline parameters',
         {
           type: 'INVALID_SPLINE',
-          hasControlPoints: Array.isArray(controlPoints),
-          hasDegree: typeof degree === 'number'
+          hasValidControlPoints: Array.isArray(controlPoints) && controlPoints.every(p => this.isValidVector3(p)),
+          hasValidDegree: typeof degree === 'number' && isFinite(degree) && degree >= 1,
+          hasValidKnots: knots === undefined || (Array.isArray(knots) && knots.every(k => typeof k === 'number' && isFinite(k))),
+          hasValidWeights: weights === undefined || (Array.isArray(weights) && weights.every(w => typeof w === 'number' && isFinite(w)))
         }
       );
       return null;
@@ -463,13 +513,17 @@ export class DxfEntityParser {
   }
 
   private parseDimension(entity: Record<string, unknown>): DxfEntity | null {
-    const definitionPoint = entity.definitionPoint as Vector3;
-    const textMidPoint = entity.textMidPoint as Vector3;
-    const insertionPoint = entity.insertionPoint as Vector3;
-    const dimensionType = entity.dimensionType as number;
+    const definitionPoint = entity.definitionPoint;
+    const textMidPoint = entity.textMidPoint;
+    const insertionPoint = entity.insertionPoint;
+    const dimensionType = entity.dimensionType;
+    const rotation = entity.rotation;
 
-    if (!definitionPoint || !textMidPoint || !insertionPoint || 
-        typeof dimensionType !== 'number') {
+    if (!this.isValidVector3(definitionPoint) || 
+        !this.isValidVector3(textMidPoint) || 
+        !this.isValidVector3(insertionPoint) || 
+        typeof dimensionType !== 'number' || !isFinite(dimensionType) ||
+        (rotation !== undefined && (typeof rotation !== 'number' || !isFinite(rotation)))) {
       this.errorReporter.addEntityError(
         'DIMENSION',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -520,9 +574,9 @@ export class DxfEntityParser {
   }
 
   private parseRay(entity: Record<string, unknown>): DxfEntity | null {
-    const basePoint = entity.basePoint as Vector3;
-    const direction = entity.direction as Vector3;
-    if (!basePoint || !direction) {
+    const basePoint = entity.basePoint;
+    const direction = entity.direction;
+    if (!this.isValidVector3(basePoint) || !this.isValidVector3(direction)) {
       this.errorReporter.addEntityError(
         String(entity.type),
         typeof entity.handle === 'string' ? entity.handle : undefined,

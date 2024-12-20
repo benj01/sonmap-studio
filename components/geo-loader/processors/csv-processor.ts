@@ -1,25 +1,37 @@
-// components/geo-loader/processors/csv-processor.ts
-
 import { BaseProcessor, ProcessorOptions, AnalyzeResult, ProcessorResult } from './base-processor';
 import { COORDINATE_SYSTEMS } from '../types/coordinates';
 import { Feature, Point } from 'geojson';
 import Papa from 'papaparse';
 import _ from 'lodash';
+import { ParseError, ValidationError } from '../utils/errors';
 
+/**
+ * Mapping of column indices to coordinate axes
+ */
 interface ColumnMapping {
+  /** Index of X coordinate column */
   x: number;
+  /** Index of Y coordinate column */
   y: number;
+  /** Optional index of Z coordinate column */
   z?: number;
+  /** Additional column mappings */
   [key: string]: number | undefined;
 }
 
+/**
+ * Structure of a parsed CSV row
+ */
 interface ParsedRow {
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
+/**
+ * Processor for CSV, XYZ, and TXT files containing point data
+ */
 export class CsvProcessor extends BaseProcessor {
-  private MAX_PREVIEW_POINTS = 1000;
-  private COORDINATE_HEADERS = {
+  private readonly MAX_PREVIEW_POINTS = 1000;
+  private readonly COORDINATE_HEADERS = {
     x: ['x', 'longitude', 'lon', 'east', 'easting', 'rechtswert', 'e'],
     y: ['y', 'latitude', 'lat', 'north', 'northing', 'hochwert', 'n'],
     z: ['z', 'height', 'elevation', 'alt', 'altitude', 'h']
@@ -35,12 +47,21 @@ export class CsvProcessor extends BaseProcessor {
   }
 
   private async readFileContent(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.readAsText(file);
-    });
+    try {
+      return await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(new Error('Failed to read file'));
+        reader.readAsText(file);
+      });
+    } catch (error) {
+      throw new ParseError(
+        `Failed to read file: ${error instanceof Error ? error.message : String(error)}`,
+        'csv',
+        file.name,
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
   }
 
   private detectDelimiter(firstLine: string): string {
@@ -51,7 +72,15 @@ export class CsvProcessor extends BaseProcessor {
     }));
     
     const bestDelimiter = _.maxBy(counts, 'count');
-    return bestDelimiter?.delimiter || ',';
+    if (!bestDelimiter) {
+      this.errorReporter.addWarning(
+        'Could not detect delimiter, using comma as default',
+        'CSV_DELIMITER_DETECTION',
+        { firstLine }
+      );
+      return ',';
+    }
+    return bestDelimiter.delimiter;
   }
 
   private detectColumnMapping(headers: string[]): ColumnMapping {
@@ -74,6 +103,17 @@ export class CsvProcessor extends BaseProcessor {
       });
     }
 
+    // Log the detected mapping
+    this.errorReporter.addInfo(
+      'Detected column mapping',
+      'CSV_COLUMN_MAPPING',
+      { 
+        mapping,
+        headers: normalizedHeaders,
+        exactMatch: mapping.x !== 0 || mapping.y !== 1
+      }
+    );
+
     return mapping;
   }
 
@@ -87,10 +127,15 @@ export class CsvProcessor extends BaseProcessor {
     const z = mapping.z !== undefined ? Number(row[headers[mapping.z]]) : undefined;
 
     if (!isFinite(x) || !isFinite(y)) {
+      this.errorReporter.addWarning(
+        'Invalid coordinate values',
+        'INVALID_COORDINATES',
+        { row, x, y, headers: [headers[mapping.x], headers[mapping.y]] }
+      );
       return null;
     }
 
-    const properties: Record<string, any> = {};
+    const properties: Record<string, unknown> = {};
     headers.forEach((header, index) => {
       if (index !== mapping.x && index !== mapping.y && index !== mapping.z) {
         properties[header] = row[header];
@@ -133,7 +178,12 @@ export class CsvProcessor extends BaseProcessor {
       const mapping = this.detectColumnMapping(headers);
 
       if (mapping.x === mapping.y) {
-        throw new Error('Could not detect distinct X and Y columns');
+        throw new ValidationError(
+          'Could not detect distinct X and Y columns',
+          'csv_columns',
+          undefined,
+          { headers, mapping }
+        );
       }
 
       const previewFeatures: Feature[] = [];
@@ -153,7 +203,12 @@ export class CsvProcessor extends BaseProcessor {
       });
 
       if (previewFeatures.length === 0) {
-        throw new Error('No valid coordinates found in file');
+        throw new ValidationError(
+          'No valid coordinates found in file',
+          'csv_data',
+          undefined,
+          { rowCount: parseResult.data.length }
+        );
       }
 
       return {
@@ -167,8 +222,14 @@ export class CsvProcessor extends BaseProcessor {
       };
 
     } catch (error) {
-      throw new Error(
-        `CSV analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      if (error instanceof ValidationError || error instanceof ParseError) {
+        throw error;
+      }
+      throw new ParseError(
+        `CSV analysis failed: ${error instanceof Error ? error.message : String(error)}`,
+        'csv',
+        file.name,
+        { error: error instanceof Error ? error.message : String(error) }
       );
     }
   }
@@ -197,7 +258,12 @@ export class CsvProcessor extends BaseProcessor {
       const mapping = this.detectColumnMapping(headers);
 
       if (mapping.x === mapping.y) {
-        throw new Error('Could not detect distinct X and Y columns');
+        throw new ValidationError(
+          'Could not detect distinct X and Y columns',
+          'csv_columns',
+          undefined,
+          { headers, mapping }
+        );
       }
 
       const features: Feature[] = [];
@@ -214,12 +280,23 @@ export class CsvProcessor extends BaseProcessor {
           maxY = Math.max(maxY, y);
           this.updateStats(statistics, 'Point');
         } else {
-          this.recordError(statistics, 'invalid_coordinates', 'Invalid coordinate values');
+          this.recordError(
+            statistics,
+            'invalid_coordinates',
+            'CSV_INVALID_COORDINATES',
+            'Invalid coordinate values',
+            { row, headers: [headers[mapping.x], headers[mapping.y]] }
+          );
         }
       });
 
       if (features.length === 0) {
-        throw new Error('No valid coordinates found in file');
+        throw new ValidationError(
+          'No valid coordinates found in file',
+          'csv_data',
+          undefined,
+          { rowCount: parseResult.data.length }
+        );
       }
 
       statistics.layerCount = 1;
@@ -236,8 +313,14 @@ export class CsvProcessor extends BaseProcessor {
       };
 
     } catch (error) {
-      throw new Error(
-        `CSV processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      if (error instanceof ValidationError || error instanceof ParseError) {
+        throw error;
+      }
+      throw new ParseError(
+        `CSV processing failed: ${error instanceof Error ? error.message : String(error)}`,
+        'csv',
+        file.name,
+        { error: error instanceof Error ? error.message : String(error) }
       );
     }
   }

@@ -1,30 +1,44 @@
-// components/geo-loader/processors/shapefile-processor.ts
-
 import { BaseProcessor, ProcessorOptions, AnalyzeResult, ProcessorResult } from './base-processor';
 import { createShapefileParser } from '../utils/shapefile-parser';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { suggestCoordinateSystem } from '../utils/coordinate-utils';
 import { Feature, Geometry, Position } from 'geojson';
+import { 
+  ParseError, 
+  ValidationError, 
+  CoordinateTransformationError 
+} from '../utils/errors';
 
+/**
+ * Extended File interface for shapefiles with related component files
+ */
 interface ShapeFile extends File {
-  relatedFiles?: {
-    [key: string]: File
-  }
+  relatedFiles?: Record<string, File>;
 }
 
+/**
+ * Result of shapefile component validation
+ */
 interface ComponentValidation {
+  /** Whether all required components are present */
   isValid: boolean;
+  /** List of missing required components */
   missingRequired: string[];
+  /** List of missing optional components */
   missingOptional: string[];
-  availableComponents: { [key: string]: File };
+  /** Map of available component files */
+  availableComponents: Record<string, File>;
 }
 
+/**
+ * Processor for ESRI Shapefiles
+ */
 export class ShapefileProcessor extends BaseProcessor {
   private parser = createShapefileParser();
-  private REQUIRED_COMPONENTS = ['.dbf', '.shx'];
-  private OPTIONAL_COMPONENTS = ['.prj'];
-  private MAX_PREVIEW_FEATURES = 1000;
+  private readonly REQUIRED_COMPONENTS = ['.dbf', '.shx'];
+  private readonly OPTIONAL_COMPONENTS = ['.prj'];
+  private readonly MAX_PREVIEW_FEATURES = 1000;
 
   constructor(options: ProcessorOptions = {}) {
     super(options);
@@ -41,6 +55,22 @@ export class ShapefileProcessor extends BaseProcessor {
     const missingRequired = this.REQUIRED_COMPONENTS.filter(ext => !relatedFiles[ext]);
     const missingOptional = this.OPTIONAL_COMPONENTS.filter(ext => !relatedFiles[ext]);
     
+    if (missingRequired.length > 0) {
+      this.errorReporter.addError(
+        'Missing required shapefile components',
+        'SHAPEFILE_MISSING_COMPONENTS',
+        { missingRequired }
+      );
+    }
+
+    missingOptional.forEach(component => {
+      this.errorReporter.addWarning(
+        `Missing optional component: ${component}`,
+        'SHAPEFILE_MISSING_OPTIONAL',
+        { component }
+      );
+    });
+
     return {
       isValid: missingRequired.length === 0,
       missingRequired,
@@ -60,11 +90,19 @@ export class ShapefileProcessor extends BaseProcessor {
         const text = await validation.availableComponents['.prj'].text();
         const detectedSystem = this.detectFromPrj(text);
         if (detectedSystem) {
-          this.emitWarning('Using coordinate system from PRJ file');
+          this.errorReporter.addInfo(
+            'Using coordinate system from PRJ file',
+            'SHAPEFILE_PRJ_SYSTEM',
+            { system: detectedSystem }
+          );
           return detectedSystem;
         }
       } catch (error) {
-        this.emitWarning('Failed to read PRJ file');
+        this.errorReporter.addWarning(
+          'Failed to read PRJ file',
+          'SHAPEFILE_PRJ_READ_ERROR',
+          { error: error instanceof Error ? error.message : String(error) }
+        );
       }
     }
 
@@ -73,13 +111,21 @@ export class ShapefileProcessor extends BaseProcessor {
       const points = this.extractPoints(sampleFeatures);
       if (points.length > 0) {
         const detectedSystem = suggestCoordinateSystem(points);
-        this.emitWarning(`Detected coordinate system from coordinates: ${detectedSystem}`);
+        this.errorReporter.addInfo(
+          'Detected coordinate system from coordinates',
+          'SHAPEFILE_COORDINATE_SYSTEM',
+          { system: detectedSystem, sampleCount: points.length }
+        );
         return detectedSystem;
       }
     }
 
     // Default to Swiss LV95 if no other system detected
-    this.emitWarning('Using default coordinate system (Swiss LV95)');
+    this.errorReporter.addWarning(
+      'Using default coordinate system (Swiss LV95)',
+      'SHAPEFILE_DEFAULT_SYSTEM',
+      { reason: sampleFeatures.length === 0 ? 'no_features' : 'no_points' }
+    );
     return COORDINATE_SYSTEMS.SWISS_LV95;
   }
 
@@ -95,10 +141,20 @@ export class ShapefileProcessor extends BaseProcessor {
 
     for (const [key, value] of Object.entries(projectionMap)) {
       if (content.includes(key)) {
+        this.errorReporter.addInfo(
+          'Found coordinate system in PRJ file',
+          'SHAPEFILE_PRJ_MATCH',
+          { key, system: value }
+        );
         return value;
       }
     }
 
+    this.errorReporter.addWarning(
+      'No known coordinate system found in PRJ file',
+      'SHAPEFILE_PRJ_NO_MATCH',
+      { content }
+    );
     return null;
   }
 
@@ -108,7 +164,17 @@ export class ShapefileProcessor extends BaseProcessor {
     features.forEach(feature => {
       if (feature.geometry.type === 'Point') {
         const coords = feature.geometry.coordinates;
-        points.push({ x: coords[0], y: coords[1] });
+        if (Array.isArray(coords) && coords.length >= 2 && 
+            typeof coords[0] === 'number' && typeof coords[1] === 'number' &&
+            isFinite(coords[0]) && isFinite(coords[1])) {
+          points.push({ x: coords[0], y: coords[1] });
+        } else {
+          this.errorReporter.addWarning(
+            'Invalid point coordinates',
+            'SHAPEFILE_INVALID_POINT',
+            { coordinates: coords }
+          );
+        }
       }
     });
 
@@ -121,14 +187,13 @@ export class ShapefileProcessor extends BaseProcessor {
       const validation = this.validateComponents(file);
       
       if (!validation.isValid) {
-        throw new Error(
-          `Missing required shapefile components: ${validation.missingRequired.join(', ')}`
+        throw new ValidationError(
+          'Missing required shapefile components',
+          'shapefile_components',
+          file.name,
+          { missingComponents: validation.missingRequired }
         );
       }
-
-      validation.missingOptional.forEach(component => {
-        this.emitWarning(`Missing optional component: ${component}`);
-      });
 
       // Read the main shapefile
       const shpBuffer = await file.arrayBuffer();
@@ -154,7 +219,17 @@ export class ShapefileProcessor extends BaseProcessor {
         previewFeatures
       );
 
-      // Calculate bounds
+      // Validate bounds
+      if (!isFinite(header.bounds.xMin) || !isFinite(header.bounds.yMin) ||
+          !isFinite(header.bounds.xMax) || !isFinite(header.bounds.yMax)) {
+        throw new ValidationError(
+          'Invalid shapefile bounds',
+          'shapefile_bounds',
+          file.name,
+          { bounds: header.bounds }
+        );
+      }
+
       const bounds = {
         minX: header.bounds.xMin,
         minY: header.bounds.yMin,
@@ -173,8 +248,14 @@ export class ShapefileProcessor extends BaseProcessor {
       };
 
     } catch (error) {
-      throw new Error(
-        `Shapefile analysis failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      if (error instanceof ValidationError || error instanceof ParseError) {
+        throw error;
+      }
+      throw new ParseError(
+        `Shapefile analysis failed: ${error instanceof Error ? error.message : String(error)}`,
+        'shapefile',
+        file.name,
+        { error: error instanceof Error ? error.message : String(error) }
       );
     }
   }
@@ -184,8 +265,11 @@ export class ShapefileProcessor extends BaseProcessor {
       const validation = this.validateComponents(file);
       
       if (!validation.isValid) {
-        throw new Error(
-          `Missing required shapefile components: ${validation.missingRequired.join(', ')}`
+        throw new ValidationError(
+          'Missing required shapefile components',
+          'shapefile_components',
+          file.name,
+          { missingComponents: validation.missingRequired }
         );
       }
 
@@ -197,14 +281,24 @@ export class ShapefileProcessor extends BaseProcessor {
       const header = await this.parser.readShapefileHeader(shpBuffer);
 
       // Read DBF data if available
-      let attributeData: Record<number, Record<string, any>> = {};
+      let attributeData: Record<number, Record<string, unknown>> = {};
       if (this.options.importAttributes && validation.availableComponents['.dbf']) {
         try {
           const dbfBuffer = await validation.availableComponents['.dbf'].arrayBuffer();
           const dbfHeader = await this.parser.readDBFHeader(dbfBuffer);
           attributeData = await this.parser.readDBFRecords(dbfBuffer, dbfHeader);
+          
+          this.errorReporter.addInfo(
+            'Successfully read attribute data',
+            'SHAPEFILE_DBF_READ',
+            { recordCount: Object.keys(attributeData).length }
+          );
         } catch (error) {
-          this.emitWarning('Failed to read attribute data');
+          this.errorReporter.addWarning(
+            'Failed to read attribute data',
+            'SHAPEFILE_DBF_ERROR',
+            { error: error instanceof Error ? error.message : String(error) }
+          );
         }
       }
 
@@ -237,9 +331,23 @@ export class ShapefileProcessor extends BaseProcessor {
           this.recordError(
             statistics,
             'feature_processing',
-            `Failed to process feature ${features.length}`
+            'SHAPEFILE_FEATURE_ERROR',
+            'Failed to process feature',
+            {
+              featureIndex: features.length,
+              error: error instanceof Error ? error.message : String(error)
+            }
           );
         }
+      }
+
+      if (features.length === 0) {
+        throw new ValidationError(
+          'No valid features found in shapefile',
+          'shapefile_empty',
+          file.name,
+          { statistics }
+        );
       }
 
       return {
@@ -259,8 +367,14 @@ export class ShapefileProcessor extends BaseProcessor {
       };
 
     } catch (error) {
-      throw new Error(
-        `Shapefile processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+      if (error instanceof ValidationError || error instanceof ParseError) {
+        throw error;
+      }
+      throw new ParseError(
+        `Shapefile processing failed: ${error instanceof Error ? error.message : String(error)}`,
+        'shapefile',
+        file.name,
+        { error: error instanceof Error ? error.message : String(error) }
       );
     }
   }

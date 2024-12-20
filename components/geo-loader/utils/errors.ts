@@ -74,6 +74,23 @@ export class ParseError extends GeoLoaderError {
 /**
  * Error thrown when geometry operations fail
  */
+/**
+ * Error thrown when coordinate values are invalid
+ */
+export class InvalidCoordinateError extends GeoLoaderError {
+  constructor(
+    message: string,
+    public readonly coordinates: { x: number; y: number; z?: number },
+    details?: Record<string, unknown>
+  ) {
+    super(message, 'INVALID_COORDINATE_ERROR', {
+      coordinates,
+      ...details
+    });
+    this.name = 'InvalidCoordinateError';
+  }
+}
+
 export class GeometryError extends GeoLoaderError {
   constructor(
     message: string,
