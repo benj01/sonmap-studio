@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Label } from 'components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'components/ui/select';
 import { COORDINATE_SYSTEMS } from '../types/coordinates';
@@ -18,6 +18,26 @@ export function CoordinateSystemSelect({
   onChange,
   highlightValue
 }: CoordinateSystemSelectProps) {
+  // Set initial value if defaultValue is provided
+  useEffect(() => {
+    if (defaultValue && !value) {
+      console.log('Setting initial coordinate system:', defaultValue);
+      onChange(defaultValue);
+    }
+  }, [defaultValue, value, onChange]);
+
+  // Log prop changes
+  useEffect(() => {
+    console.log('CoordinateSystemSelect props:', {
+      value,
+      defaultValue,
+      highlightValue
+    });
+  }, [value, defaultValue, highlightValue]);
+
+  const currentValue = value || defaultValue || '';
+  console.log('Current coordinate system value:', currentValue);
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -25,18 +45,18 @@ export function CoordinateSystemSelect({
         {highlightValue && (
           <div className="text-xs text-muted-foreground flex items-center gap-1">
             <Info className="h-3 w-3" />
-            Detected system
+            Detected system: {highlightValue}
           </div>
         )}
       </div>
       <Select
-        value={value || defaultValue || ''}
-        onValueChange={(value) => {
-          console.debug('Changing coordinate system:', {
-            from: value || defaultValue,
-            to: value
+        value={currentValue}
+        onValueChange={(newValue) => {
+          console.log('Coordinate system changed:', {
+            from: currentValue,
+            to: newValue
           });
-          onChange(value);
+          onChange(newValue);
         }}
       >
         <SelectTrigger>
@@ -95,25 +115,25 @@ export function CoordinateSystemSelect({
       </Select>
 
       {/* Help text for different coordinate systems */}
-      {value === COORDINATE_SYSTEMS.NONE && (
+      {currentValue === COORDINATE_SYSTEMS.NONE && (
         <div className="text-sm text-muted-foreground space-y-1">
           <p>Local coordinates will be imported without transformation.</p>
           <p>Select a coordinate system if you know the source projection.</p>
         </div>
       )}
-      {value === COORDINATE_SYSTEMS.WGS84 && (
+      {currentValue === COORDINATE_SYSTEMS.WGS84 && (
         <div className="text-sm text-muted-foreground space-y-1">
           <p>WGS84: Global coordinate system used by GPS.</p>
           <p>Coordinates are in degrees (longitude: -180 to 180, latitude: -90 to 90).</p>
         </div>
       )}
-      {value === COORDINATE_SYSTEMS.SWISS_LV95 && (
+      {currentValue === COORDINATE_SYSTEMS.SWISS_LV95 && (
         <div className="text-sm text-muted-foreground space-y-1">
           <p>Swiss LV95: Modern Swiss coordinate system (since 1995).</p>
           <p>7-digit coordinates (E: 2,600,000m, N: 1,200,000m origin).</p>
         </div>
       )}
-      {value === COORDINATE_SYSTEMS.SWISS_LV03 && (
+      {currentValue === COORDINATE_SYSTEMS.SWISS_LV03 && (
         <div className="text-sm text-muted-foreground space-y-1">
           <p>Swiss LV03: Legacy Swiss coordinate system (before 1995).</p>
           <p>6-digit coordinates (E: 600,000m, N: 200,000m origin).</p>
@@ -121,12 +141,12 @@ export function CoordinateSystemSelect({
       )}
 
       {/* Show when coordinate system was detected */}
-      {highlightValue && highlightValue === value && (
+      {highlightValue && highlightValue === currentValue && (
         <div className="text-sm text-primary">
           This coordinate system was automatically detected based on the data.
         </div>
       )}
-      {highlightValue && highlightValue !== value && (
+      {highlightValue && highlightValue !== currentValue && (
         <div className="text-sm text-warning">
           You've selected a different system than what was detected. Make sure this is intended.
         </div>

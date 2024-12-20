@@ -117,6 +117,14 @@ export function GeoImportDialog({
     getProcessor
   });
 
+  // Initialize coordinate system when analysis completes
+  useEffect(() => {
+    if (analysis?.coordinateSystem) {
+      console.log('Initializing coordinate system from analysis:', analysis.coordinateSystem);
+      initializeCoordinateSystem(analysis.coordinateSystem);
+    }
+  }, [analysis, initializeCoordinateSystem]);
+
   // Reset everything when dialog closes
   useEffect(() => {
     if (!isOpen) {

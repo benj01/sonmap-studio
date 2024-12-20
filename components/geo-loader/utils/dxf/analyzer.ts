@@ -2,6 +2,7 @@ import { DxfData, DxfEntity, DxfEntityBase, Vector3, isVector3, isDxfPointEntity
 import { DxfErrorReporter, createDxfErrorReporter } from './error-collector';
 import { ErrorMessage } from '../errors';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
+import { suggestCoordinateSystem, CoordinatePoint } from '../coordinate-utils';
 
 interface AnalysisStats {
   entityCount: number;
@@ -20,7 +21,7 @@ interface AnalysisResult {
   isValid: boolean;
   stats: AnalysisStats;
   errorReporter: DxfErrorReporter;
-  coordinateSystem?: CoordinateSystem;
+  coordinateSystem: CoordinateSystem; // Changed to required
 }
 
 function isEntityBase(entity: unknown): entity is DxfEntityBase {
@@ -29,46 +30,179 @@ function isEntityBase(entity: unknown): entity is DxfEntityBase {
          typeof (entity as DxfEntityBase).type === 'string';
 }
 
-function detectCoordinateSystem(dxf: DxfData): CoordinateSystem | undefined {
-  // Check for coordinate system in header variables
-  const header = dxf.header;
-  if (!header) return undefined;
+interface CoordinateSystemDetectionResult {
+  system: CoordinateSystem;
+  confidence: number;
+  reason: string;
+  source: 'points' | 'header' | 'fallback';
+  alternativeSystems?: Array<{
+    system: CoordinateSystem;
+    confidence: number;
+    reason: string;
+  }>;
+}
 
-  // Check for common coordinate system indicators
-  if (header.$INSUNITS === 1) {
-    // Scientific and engineering units (meters)
-    // Common for Swiss coordinate systems
+function detectCoordinateSystem(dxf: DxfData, errorReporter: DxfErrorReporter): CoordinateSystemDetectionResult {
+  // Collect all coordinates from entities first
+  const points: CoordinatePoint[] = [];
+  let entityCount = 0;
+  
+  dxf.entities.forEach((entity: unknown) => {
+    if (!isEntityBase(entity)) return;
+    entityCount++;
+
+    if (isDxfPointEntity(entity)) {
+      points.push(entity.position);
+    } else if (isDxfLineEntity(entity)) {
+      points.push(entity.start, entity.end);
+    } else if (isDxfPolylineEntity(entity)) {
+      points.push(...entity.vertices);
+    } else if (isDxfCircleEntity(entity)) {
+      points.push(entity.center);
+    } else if (isDxfArcEntity(entity)) {
+      points.push(entity.center);
+    }
+  });
+
+  console.log('Analyzing coordinates for system detection:', {
+    totalEntities: entityCount,
+    pointsCollected: points.length,
+    samplePoints: points.slice(0, 5).map(p => ({x: p.x, y: p.y}))
+  });
+
+  // Try point-based detection first
+  if (points.length > 0) {
+    try {
+      const suggestion = suggestCoordinateSystem(points);
+      console.log('Point-based detection result:', suggestion);
+
+      if (suggestion.confidence >= 0.5) {
+        errorReporter.addInfo(
+          `Detected coordinate system from geometry: ${suggestion.system} (${Math.round(suggestion.confidence * 100)}% confidence)`,
+          'COORDINATE_SYSTEM_DETECTED',
+          { 
+            system: suggestion.system,
+            confidence: suggestion.confidence,
+            reason: suggestion.reason,
+            source: 'points'
+          }
+        );
+
+        return {
+          ...suggestion,
+          source: 'points'
+        };
+      }
+    } catch (error) {
+      console.warn('Point-based detection failed:', error);
+      errorReporter.addWarning(
+        'Point-based coordinate system detection failed',
+        'POINT_DETECTION_FAILED',
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+  } else {
+    errorReporter.addWarning(
+      'No valid points found for coordinate system detection',
+      'NO_POINTS_FOR_DETECTION',
+      { entityCount }
+    );
+  }
+
+  // Try header-based detection
+  const header = dxf.header;
+  if (header) {
     const extMin = header.$EXTMIN;
     const extMax = header.$EXTMAX;
 
     if (extMin && extMax && isVector3(extMin) && isVector3(extMax)) {
-      // Check coordinate ranges for Swiss systems
+      // Check for Swiss systems with confidence levels
+      if (extMin.x >= 2450000 && extMin.x <= 2850000 &&
+          extMin.y >= 1050000 && extMin.y <= 1300000) {
+        errorReporter.addInfo(
+          'Detected Swiss LV95 from header extents',
+          'HEADER_DETECTION_LV95',
+          { extMin, extMax }
+        );
+        return {
+          system: COORDINATE_SYSTEMS.SWISS_LV95,
+          confidence: 0.9,
+          reason: 'Header extents match Swiss LV95 ranges',
+          source: 'header'
+        };
+      }
+      
+      if (extMin.x >= 450000 && extMin.x <= 850000 &&
+          extMin.y >= 50000 && extMin.y <= 300000) {
+        errorReporter.addInfo(
+          'Detected Swiss LV03 from header extents',
+          'HEADER_DETECTION_LV03',
+          { extMin, extMax }
+        );
+        return {
+          system: COORDINATE_SYSTEMS.SWISS_LV03,
+          confidence: 0.9,
+          reason: 'Header extents match Swiss LV03 ranges',
+          source: 'header'
+        };
+      }
+
+      // More lenient ranges for potential matches
       if (extMin.x >= 2000000 && extMin.x <= 3000000 &&
           extMin.y >= 1000000 && extMin.y <= 2000000) {
-        return COORDINATE_SYSTEMS.SWISS_LV95;
+        errorReporter.addInfo(
+          'Possible Swiss LV95 from header extents (expanded range)',
+          'HEADER_DETECTION_LV95_EXPANDED',
+          { extMin, extMax }
+        );
+        return {
+          system: COORDINATE_SYSTEMS.SWISS_LV95,
+          confidence: 0.7,
+          reason: 'Header extents roughly match Swiss LV95 ranges',
+          source: 'header'
+        };
       }
+
       if (extMin.x >= 400000 && extMin.x <= 900000 &&
-          extMin.y >= 50000 && extMin.y <= 400000) {
-        return COORDINATE_SYSTEMS.SWISS_LV03;
+          extMin.y >= 0 && extMin.y <= 400000) {
+        errorReporter.addInfo(
+          'Possible Swiss LV03 from header extents (expanded range)',
+          'HEADER_DETECTION_LV03_EXPANDED',
+          { extMin, extMax }
+        );
+        return {
+          system: COORDINATE_SYSTEMS.SWISS_LV03,
+          confidence: 0.7,
+          reason: 'Header extents roughly match Swiss LV03 ranges',
+          source: 'header'
+        };
       }
+    } else {
+      errorReporter.addWarning(
+        'DXF header missing or has invalid extents',
+        'INVALID_HEADER_EXTENTS',
+        { header }
+      );
     }
   }
 
-  // Check for WGS84 indicators
-  if (header.$INSUNITS === 6) { // Meters
-    const extMin = header.$EXTMIN;
-    const extMax = header.$EXTMAX;
-
-    if (extMin && extMax && isVector3(extMin) && isVector3(extMax)) {
-      // Check if coordinates are in WGS84 range
-      if (Math.abs(extMin.x) <= 180 && Math.abs(extMin.y) <= 90 &&
-          Math.abs(extMax.x) <= 180 && Math.abs(extMax.y) <= 90) {
-        return COORDINATE_SYSTEMS.WGS84;
-      }
+  // Fallback to NONE with explanation
+  errorReporter.addWarning(
+    'Could not confidently detect coordinate system',
+    'NO_COORDINATE_SYSTEM_DETECTED',
+    { 
+      pointCount: points.length,
+      hasHeader: !!header,
+      hasExtents: !!(header?.$EXTMIN && header?.$EXTMAX)
     }
-  }
+  );
 
-  return undefined;
+  return {
+    system: COORDINATE_SYSTEMS.NONE,
+    confidence: 0,
+    reason: 'Could not confidently detect any coordinate system',
+    source: 'fallback'
+  };
 }
 
 export function createDxfAnalyzer() {
@@ -92,7 +226,7 @@ export function createDxfAnalyzer() {
         type: 'INVALID_DXF',
         isCritical: true
       });
-      return { isValid: false, stats, errorReporter };
+      return { isValid: false, stats, errorReporter, coordinateSystem: COORDINATE_SYSTEMS.NONE };
     }
 
     if (!dxf.entities) {
@@ -100,15 +234,49 @@ export function createDxfAnalyzer() {
         type: 'MISSING_ENTITIES',
         isCritical: true
       });
-      return { isValid: false, stats, errorReporter };
+      return { isValid: false, stats, errorReporter, coordinateSystem: COORDINATE_SYSTEMS.NONE };
     }
 
-    // Detect coordinate system
-    const coordinateSystem = detectCoordinateSystem(dxf);
-    if (!coordinateSystem) {
-      errorReporter.addDxfWarning('Could not detect coordinate system, using local coordinates', {
-        type: 'NO_COORDINATE_SYSTEM'
-      });
+    // Detect coordinate system with enhanced feedback
+    const detectionResult = detectCoordinateSystem(dxf, errorReporter);
+    
+    if (detectionResult.system === COORDINATE_SYSTEMS.NONE) {
+      errorReporter.addDxfWarning(
+        'Could not detect coordinate system, using local coordinates',
+        {
+          type: 'NO_COORDINATE_SYSTEM',
+          details: {
+            reason: detectionResult.reason,
+            confidence: detectionResult.confidence,
+            source: detectionResult.source
+          }
+        }
+      );
+    } else if (detectionResult.confidence < 0.8) {
+      errorReporter.addDxfWarning(
+        `Detected ${detectionResult.system} with moderate confidence (${Math.round(detectionResult.confidence * 100)}%)`,
+        {
+          type: 'MODERATE_CONFIDENCE_DETECTION',
+          details: {
+            system: detectionResult.system,
+            confidence: detectionResult.confidence,
+            reason: detectionResult.reason,
+            source: detectionResult.source,
+            alternatives: detectionResult.alternativeSystems
+          }
+        }
+      );
+    } else {
+      errorReporter.addInfo(
+        `Detected coordinate system: ${detectionResult.system} (${Math.round(detectionResult.confidence * 100)}% confidence)`,
+        'COORDINATE_SYSTEM_DETECTED',
+        {
+          system: detectionResult.system,
+          confidence: detectionResult.confidence,
+          reason: detectionResult.reason,
+          source: detectionResult.source
+        }
+      );
     }
 
     // Count entities and validate
@@ -296,7 +464,7 @@ export function createDxfAnalyzer() {
       ),
       stats,
       errorReporter,
-      coordinateSystem
+      coordinateSystem: detectionResult.system
     };
   };
 

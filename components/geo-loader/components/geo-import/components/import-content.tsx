@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import { AnalyzeResult } from '../../../processors';
 import { PreviewManager } from '../../../preview/preview-manager';
 import { ImportOptions } from '../types';
@@ -61,7 +62,19 @@ export function ImportContent({
   onApplyCoordinateSystem,
   onClearAndClose
 }: ImportContentProps) {
-  const previewAvailable = analysis && previewManager?.hasVisibleFeatures();
+  const [previewAvailable, setPreviewAvailable] = useState(false);
+
+  useEffect(() => {
+    async function checkPreview() {
+      if (analysis && previewManager) {
+        const hasFeatures = await previewManager.hasVisibleFeatures();
+        setPreviewAvailable(hasFeatures);
+      } else {
+        setPreviewAvailable(false);
+      }
+    }
+    checkPreview();
+  }, [analysis, previewManager]);
 
   return (
     <div className="grid grid-cols-2 gap-4">
@@ -92,8 +105,12 @@ export function ImportContent({
             coordinateSystem={options.coordinateSystem || analysis.coordinateSystem}
             visibleLayers={visibleLayers}
             analysis={{
-              ...analysis,
-              warnings: convertWarningsToAnalysis(analysis.warnings)
+              warnings: logs
+                .filter(log => log.type === 'warning')
+                .map(log => ({
+                  type: 'warning',
+                  message: log.message
+                }))
             }}
           />
         )}

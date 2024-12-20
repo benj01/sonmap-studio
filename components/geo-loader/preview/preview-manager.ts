@@ -22,6 +22,10 @@ export interface PreviewOptions {
   enableCaching?: boolean;
   /** Whether to use smart sampling */
   smartSampling?: boolean;
+  /** Analysis results including warnings */
+  analysis?: {
+    warnings: Array<{ type: string; message: string; }>;
+  };
 }
 
 export interface PreviewResult {
@@ -44,6 +48,10 @@ interface SamplingStrategy {
 /**
  * Manages preview generation with streaming and caching support
  */
+export const createPreviewManager = (options: PreviewOptions = {}) => {
+  return new PreviewManager(options);
+};
+
 export class PreviewManager {
   private readonly DEFAULT_MAX_FEATURES = 1000;
   private readonly BOUNDS_PADDING = 0.1; // 10% padding
@@ -57,7 +65,8 @@ export class PreviewManager {
       selectedElement: options.selectedElement || null,
       coordinateSystem: options.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
       enableCaching: options.enableCaching ?? true,
-      smartSampling: options.smartSampling ?? true
+      smartSampling: options.smartSampling ?? true,
+      analysis: options.analysis || { warnings: [] }
     };
 
     this.featureManager = new FeatureManager({
@@ -297,5 +306,88 @@ export class PreviewManager {
    */
   public getOptions(): Required<PreviewOptions> {
     return { ...this.options };
+  }
+
+  /**
+   * Set features directly for preview
+   */
+  public setFeatures(features: Feature[] | FeatureCollection) {
+    this.featureManager.clear();
+    
+    const featureArray = Array.isArray(features) 
+      ? features 
+      : features.features;
+
+    for (const feature of featureArray) {
+      this.featureManager.addFeature(feature);
+    }
+  }
+
+  /**
+   * Get features by type and layer
+   */
+  public async getFeaturesByTypeAndLayer(type: string, layer: string): Promise<Feature[]> {
+    const features: Feature[] = [];
+    for await (const feature of this.featureManager.getFeatures()) {
+      if (
+        feature.geometry.type === type &&
+        feature.properties?.layer === layer
+      ) {
+        features.push(feature);
+      }
+    }
+    return features;
+  }
+
+  /**
+   * Get preview collections separated by geometry type
+   */
+  public async getPreviewCollections() {
+    const points: Feature[] = [];
+    const lines: Feature[] = [];
+    const polygons: Feature[] = [];
+    let totalCount = 0;
+
+    for await (const feature of this.featureManager.getFeatures()) {
+      totalCount++;
+      switch (feature.geometry.type) {
+        case 'Point':
+          points.push(feature);
+          break;
+        case 'LineString':
+        case 'MultiLineString':
+          lines.push(feature);
+          break;
+        case 'Polygon':
+        case 'MultiPolygon':
+          polygons.push(feature);
+          break;
+      }
+    }
+
+    return {
+      points: {
+        type: 'FeatureCollection' as const,
+        features: points
+      },
+      lines: {
+        type: 'FeatureCollection' as const,
+        features: lines
+      },
+      polygons: {
+        type: 'FeatureCollection' as const,
+        features: polygons
+      },
+      totalCount,
+      visibleCount: points.length + lines.length + polygons.length
+    };
+  }
+
+  /**
+   * Check if there are any visible features
+   */
+  public async hasVisibleFeatures(): Promise<boolean> {
+    const collections = await this.getPreviewCollections();
+    return collections.visibleCount > 0;
   }
 }

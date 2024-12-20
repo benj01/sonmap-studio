@@ -1,4 +1,5 @@
-import { DxfEntity, DxfEntityBase, Vector3, ParserResult, ParserContext, DxfTextEntity } from './types';
+
+import { DxfEntity, DxfEntityBase, DxfLineEntity, Vector3, ParserResult, ParserContext, DxfTextEntity } from './types';
 import { DxfValidator } from './validator';
 import { DxfErrorReporter, createDxfErrorReporter } from './error-collector';
 import { GeoFeature } from '../../../../types/geo';
@@ -196,9 +197,21 @@ export class DxfEntityParser {
   }
 
   private parseLine(entity: Record<string, unknown>): DxfEntity | null {
+    console.log('Parsing LINE entity:', entity);
+    
     const start = entity.start;
     const end = entity.end;
+    
+    console.log('LINE points:', { start, end });
+    
     if (!this.isValidVector3(start) || !this.isValidVector3(end)) {
+      console.log('Invalid LINE points detected:', {
+        start: this.isValidVector3(start),
+        end: this.isValidVector3(end),
+        startValue: start,
+        endValue: end
+      });
+      
       this.errorReporter.addEntityError(
         'LINE',
         typeof entity.handle === 'string' ? entity.handle : undefined,
@@ -211,12 +224,28 @@ export class DxfEntityParser {
       );
       return null;
     }
-    return {
+
+    const result: DxfLineEntity = {
       ...this.extractCommonProperties(entity),
       type: 'LINE',
-      start,
-      end
+      start: start as Vector3,
+      end: end as Vector3
     };
+
+    console.log('Successfully parsed LINE:', {
+      type: result.type,
+      start: {
+        x: result.start.x,
+        y: result.start.y,
+        z: result.start.z
+      },
+      end: {
+        x: result.end.x,
+        y: result.end.y,
+        z: result.end.z
+      }
+    });
+    return result;
   }
 
   private parsePolyline(entity: Record<string, unknown>): DxfEntity | null {

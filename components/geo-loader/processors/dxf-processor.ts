@@ -24,7 +24,7 @@ const PROGRESS = {
  */
 interface DxfAnalysisResult {
   layers: Record<string, any>;
-  coordinateSystem?: CoordinateSystem;
+  coordinateSystem: CoordinateSystem; // Changed to required
   warnings: string[];
 }
 
@@ -257,12 +257,28 @@ export class DxfProcessor extends BaseProcessor {
         this.errorReporter.addWarning('DXF Analysis Warning', 'DXF_ANALYSIS_WARNING', { message: warning });
       }
 
+      // Use provided coordinate system or detected system
+      const detectedSystem = dxfResult.coordinateSystem || COORDINATE_SYSTEMS.NONE;
+      console.log('DXF Analysis - Detected coordinate system:', detectedSystem);
+
+      // Initialize coordinate systems if needed
+      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
+        try {
+          initializeCoordinateSystems();
+        } catch (error) {
+          console.warn('Failed to initialize coordinate systems:', error);
+        }
+      }
+
       // Create a converter for preview features
       const converter = createDxfConverter(this.errorReporter);
       const conversionOptions: DxfConversionOptions = {
         includeStyles: true,
-        layerInfo: dxfResult.layers
+        layerInfo: dxfResult.layers,
+        coordinateSystem: detectedSystem
       };
+
+      console.log('Preview conversion using coordinate system:', detectedSystem);
 
       // Convert a sample of entities for preview
       const previewFeatures = converter.convertEntities(
@@ -273,23 +289,7 @@ export class DxfProcessor extends BaseProcessor {
       // Calculate bounds from preview features
       const bounds = this.calculateBounds(previewFeatures);
 
-      // Use provided coordinate system or detect from DXF
-      let detectedSystem = this.options.coordinateSystem || 
-        dxfResult.coordinateSystem || 
-        COORDINATE_SYSTEMS.NONE;
-
-      // Initialize coordinate systems if needed and not already initialized
-      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
-        try {
-          initializeCoordinateSystems();
-        } catch (error) {
-          // Log error but don't throw - fall back to NONE coordinate system
-          console.warn('Failed to initialize coordinate systems:', error);
-          detectedSystem = COORDINATE_SYSTEMS.NONE;
-        }
-      }
-
-      return {
+      const result: AnalyzeResult = {
         layers: Object.keys(dxfResult.layers || {}),
         coordinateSystem: detectedSystem,
         bounds,
@@ -299,6 +299,14 @@ export class DxfProcessor extends BaseProcessor {
         },
         dxfData
       };
+
+      console.log('DXF Analysis complete:', {
+        layers: result.layers.length,
+        coordinateSystem: result.coordinateSystem,
+        features: result.preview.features.length
+      });
+
+      return result;
     } catch (error) {
       if (error instanceof GeoLoaderError) {
         throw error;
@@ -315,14 +323,35 @@ export class DxfProcessor extends BaseProcessor {
       // Use cached DXF data if available, otherwise parse the file
       const dxfData = this.rawDxfData || await this.parseDxf(await this.readFileContent(file));
 
+      // Determine coordinate system
+      let detectedSystem = this.options.coordinateSystem || 
+        (dxfData.header && this.analyzer.analyze(dxfData).coordinateSystem) || 
+        COORDINATE_SYSTEMS.NONE;
+
+      // Initialize coordinate systems if needed and not already initialized
+      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
+        try {
+          initializeCoordinateSystems();
+        } catch (error) {
+          // Log error but don't throw - fall back to NONE coordinate system
+          console.warn('Failed to initialize coordinate systems:', error);
+          detectedSystem = COORDINATE_SYSTEMS.NONE;
+        }
+      }
+
+      console.log('Using coordinate system:', detectedSystem);
+
       // Create a converter
       const converter = createDxfConverter(this.errorReporter);
       const conversionOptions: DxfConversionOptions = {
         includeStyles: true,
         layerInfo: dxfData.tables?.layer?.layers,
         validateEntities: true,
-        skipInvalidEntities: true
+        skipInvalidEntities: true,
+        coordinateSystem: detectedSystem
       };
+
+      console.log('Converting entities with options:', conversionOptions);
 
       // Convert entities in chunks to maintain responsiveness
       const CHUNK_SIZE = 500;
@@ -346,22 +375,6 @@ export class DxfProcessor extends BaseProcessor {
 
       // Get all available layers
       const layers = Object.keys(dxfData.tables?.layer?.layers || {});
-
-      // Determine coordinate system
-      let detectedSystem = this.options.coordinateSystem || 
-        (dxfData.header && this.analyzer.analyze(dxfData).coordinateSystem) || 
-        COORDINATE_SYSTEMS.NONE;
-
-      // Initialize coordinate systems if needed and not already initialized
-      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
-        try {
-          initializeCoordinateSystems();
-        } catch (error) {
-          // Log error but don't throw - fall back to NONE coordinate system
-          console.warn('Failed to initialize coordinate systems:', error);
-          detectedSystem = COORDINATE_SYSTEMS.NONE;
-        }
-      }
 
       return {
         features: {

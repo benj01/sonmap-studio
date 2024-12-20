@@ -11,6 +11,8 @@ export interface FeatureConversionOptions {
   includeMetadata?: boolean;
   // Whether to include style properties
   includeStyles?: boolean;
+  // Source coordinate system for transformations
+  coordinateSystem?: string;
 }
 
 /**

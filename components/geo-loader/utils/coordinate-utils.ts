@@ -263,87 +263,144 @@ function isValidPoint(point: any): point is CoordinatePoint {
          isFinite(point.y);
 }
 
-function detectLV95Coordinates(points: CoordinatePoint[]): boolean {
-  if (!Array.isArray(points) || points.length === 0) {
-    return false;
-  }
-
-  const validPoints = points.filter(isValidPoint);
-  if (validPoints.length === 0) {
-    return false;
-  }
-
-  // Sample up to 10 points for detection
-  const sampleSize = Math.min(validPoints.length, 10);
-  const sample = validPoints.slice(0, sampleSize);
-
-  // Count points that match LV95 pattern
-  let lv95PointCount = 0;
-  for (const point of sample) {
-    // Check if coordinates match LV95 pattern:
-    // - X should start with 2 (usually between 2.4M and 2.9M)
-    // - Y should start with 1 (usually between 1.0M and 1.3M)
-    const xStr = Math.floor(point.x).toString();
-    const yStr = Math.floor(point.y).toString();
-    
-    const isLV95Pattern = 
-      xStr.startsWith('2') &&
-      yStr.startsWith('1') &&
-      point.x >= 2450000 && point.x <= 2850000 &&  // Expanded range
-      point.y >= 1050000 && point.y <= 1300000;    // Expanded range
-
-    if (isLV95Pattern) {
-      lv95PointCount++;
-    }
-  }
-
-  // If more than 80% of points match LV95 pattern, consider it LV95
-  return (lv95PointCount / sample.length) >= 0.8;
+interface DetectionResult {
+  system: CoordinateSystem;
+  confidence: number;
+  reason: string;
 }
 
-function detectLV03Coordinates(points: CoordinatePoint[]): boolean {
+function detectLV95Coordinates(points: CoordinatePoint[]): DetectionResult {
   if (!Array.isArray(points) || points.length === 0) {
-    return false;
+    return { system: COORDINATE_SYSTEMS.NONE, confidence: 0, reason: 'No points to analyze' };
   }
 
   const validPoints = points.filter(isValidPoint);
   if (validPoints.length === 0) {
-    return false;
+    return { system: COORDINATE_SYSTEMS.NONE, confidence: 0, reason: 'No valid points found' };
   }
 
-  // Sample up to 10 points for detection
-  const sampleSize = Math.min(validPoints.length, 10);
+  // Sample up to 20 points for detection (increased from 10)
+  const sampleSize = Math.min(validPoints.length, 20);
   const sample = validPoints.slice(0, sampleSize);
 
-  // Count points that match LV03 pattern
-  let lv03PointCount = 0;
+  // Count points that match LV95 pattern with different confidence levels
+  let strongMatches = 0;
+  let weakMatches = 0;
+
   for (const point of sample) {
-    // Check if coordinates match LV03 pattern:
-    // - X should be 6-digit number (usually between 450K and 850K)
-    // - Y should be 6-digit number (usually between 50K and 300K)
     const xStr = Math.floor(point.x).toString();
     const yStr = Math.floor(point.y).toString();
     
-    const isLV03Pattern = 
-      xStr.length === 6 &&
-      yStr.length === 6 &&
-      point.x >= 450000 && point.x <= 850000 &&   // Expanded range
-      point.y >= 50000 && point.y <= 300000;      // Expanded range
+    // Strong match: Strict range check
+    const isStrongMatch = 
+      point.x >= 2450000 && point.x <= 2850000 &&
+      point.y >= 1050000 && point.y <= 1300000;
 
-    if (isLV03Pattern) {
-      lv03PointCount++;
-    }
+    // Weak match: More lenient pattern check
+    const isWeakMatch = 
+      xStr.startsWith('2') &&
+      yStr.startsWith('1') &&
+      point.x >= 2000000 && point.x <= 3000000 &&
+      point.y >= 1000000 && point.y <= 2000000;
+
+    if (isStrongMatch) strongMatches++;
+    else if (isWeakMatch) weakMatches++;
   }
 
-  // If more than 80% of points match LV03 pattern, consider it LV03
-  return (lv03PointCount / sample.length) >= 0.8;
+  const confidence = (strongMatches + (weakMatches * 0.5)) / sample.length;
+  let reason = '';
+
+  if (confidence >= 0.8) {
+    reason = 'High confidence match with LV95 coordinate ranges';
+  } else if (confidence >= 0.5) {
+    reason = 'Moderate confidence based on coordinate patterns';
+  } else if (confidence > 0) {
+    reason = 'Low confidence, some coordinates match LV95 pattern';
+  } else {
+    reason = 'No coordinates match LV95 pattern';
+  }
+
+  return {
+    system: COORDINATE_SYSTEMS.SWISS_LV95,
+    confidence,
+    reason
+  };
+}
+
+function detectLV03Coordinates(points: CoordinatePoint[]): DetectionResult {
+  if (!Array.isArray(points) || points.length === 0) {
+    return { system: COORDINATE_SYSTEMS.NONE, confidence: 0, reason: 'No points to analyze' };
+  }
+
+  const validPoints = points.filter(isValidPoint);
+  if (validPoints.length === 0) {
+    return { system: COORDINATE_SYSTEMS.NONE, confidence: 0, reason: 'No valid points found' };
+  }
+
+  // Sample up to 20 points for detection (increased from 10)
+  const sampleSize = Math.min(validPoints.length, 20);
+  const sample = validPoints.slice(0, sampleSize);
+
+  // Count points that match LV03 pattern with different confidence levels
+  let strongMatches = 0;
+  let weakMatches = 0;
+
+  for (const point of sample) {
+    const xStr = Math.floor(point.x).toString();
+    const yStr = Math.floor(point.y).toString();
+    
+    // Strong match: Strict range check
+    const isStrongMatch = 
+      point.x >= 450000 && point.x <= 850000 &&
+      point.y >= 50000 && point.y <= 300000;
+
+    // Weak match: More lenient six-digit number check
+    const isWeakMatch = 
+      xStr.length === 6 &&
+      yStr.length === 6 &&
+      point.x >= 400000 && point.x <= 900000 &&
+      point.y >= 0 && point.y <= 400000;
+
+    if (isStrongMatch) strongMatches++;
+    else if (isWeakMatch) weakMatches++;
+  }
+
+  const confidence = (strongMatches + (weakMatches * 0.5)) / sample.length;
+  let reason = '';
+
+  if (confidence >= 0.8) {
+    reason = 'High confidence match with LV03 coordinate ranges';
+  } else if (confidence >= 0.5) {
+    reason = 'Moderate confidence based on coordinate patterns';
+  } else if (confidence > 0) {
+    reason = 'Low confidence, some coordinates match LV03 pattern';
+  } else {
+    reason = 'No coordinates match LV03 pattern';
+  }
+
+  return {
+    system: COORDINATE_SYSTEMS.SWISS_LV03,
+    confidence,
+    reason
+  };
 }
 
 /**
  * Suggest the most likely coordinate system for a set of points
  * @throws {CoordinateSystemError} If coordinate system detection fails
  */
-export function suggestCoordinateSystem(points: CoordinatePoint[]): CoordinateSystem {
+interface SystemSuggestion {
+  system: CoordinateSystem;
+  confidence: number;
+  reason: string;
+  alternativeSystems?: Array<{
+    system: CoordinateSystem;
+    confidence: number;
+    reason: string;
+  }>;
+}
+
+export function suggestCoordinateSystem(points: CoordinatePoint[]): SystemSuggestion {
   try {
     if (!Array.isArray(points) || points.length === 0) {
       throw new GeoLoaderError(
@@ -362,30 +419,64 @@ export function suggestCoordinateSystem(points: CoordinatePoint[]): CoordinateSy
       );
     }
 
-    // First check for Swiss coordinate systems
-    if (detectLV95Coordinates(validPoints)) {
-      return COORDINATE_SYSTEMS.SWISS_LV95;
-    }
-    if (detectLV03Coordinates(validPoints)) {
-      return COORDINATE_SYSTEMS.SWISS_LV03;
-    }
+    // Log the points we're analyzing
+    console.log('Analyzing coordinates for system detection:', validPoints.map(p => ({x: p.x, y: p.y})));
 
-    // Check if coordinates are definitely in WGS84 range
-    const isDefinitelyWGS84 = validPoints.every(point => {
-      const isInWGS84Range = point.x >= -180 && point.x <= 180 && point.y >= -90 && point.y <= 90;
+    // Progressive detection strategy
+    const results: Array<DetectionResult> = [];
+
+    // Check WGS84 first
+    let wgs84Confidence = 0;
+    let wgs84Reason = '';
+    const wgs84Points = validPoints.filter(point => {
+      const isInRange = point.x >= -180 && point.x <= 180 && point.y >= -90 && point.y <= 90;
       const hasDecimals = point.x % 1 !== 0 || point.y % 1 !== 0;
-      const isReasonableRange = Math.abs(point.x) < 180 && Math.abs(point.y) < 90;
-      
-      return isInWGS84Range && hasDecimals && isReasonableRange;
+      return isInRange && hasDecimals;
     });
 
-    if (isDefinitelyWGS84) {
-      return COORDINATE_SYSTEMS.WGS84;
+    if (wgs84Points.length > 0) {
+      wgs84Confidence = wgs84Points.length / validPoints.length;
+      wgs84Reason = wgs84Confidence >= 0.8 
+        ? 'High confidence: Coordinates in WGS84 range with decimal values'
+        : 'Some coordinates match WGS84 pattern';
+      results.push({
+        system: COORDINATE_SYSTEMS.WGS84,
+        confidence: wgs84Confidence,
+        reason: wgs84Reason
+      });
     }
 
-    // If coordinates are large numbers but not in Swiss ranges,
-    // they're likely in a different local system
-    return COORDINATE_SYSTEMS.NONE;
+    // Check Swiss coordinate systems
+    const lv95Result = detectLV95Coordinates(validPoints);
+    if (lv95Result.confidence > 0) {
+      results.push(lv95Result);
+    }
+
+    const lv03Result = detectLV03Coordinates(validPoints);
+    if (lv03Result.confidence > 0) {
+      results.push(lv03Result);
+    }
+
+    // Sort results by confidence
+    results.sort((a, b) => b.confidence - a.confidence);
+
+    // If no system detected or all have low confidence
+    if (results.length === 0 || results[0].confidence < 0.5) {
+      return {
+        system: COORDINATE_SYSTEMS.NONE,
+        confidence: 0,
+        reason: 'No coordinate system could be confidently detected',
+        alternativeSystems: results.length > 0 ? results : undefined
+      };
+    }
+
+    // Return best match with alternatives
+    return {
+      system: results[0].system,
+      confidence: results[0].confidence,
+      reason: results[0].reason,
+      alternativeSystems: results.slice(1)
+    };
   } catch (error) {
     if (error instanceof GeoLoaderError) {
       throw error;

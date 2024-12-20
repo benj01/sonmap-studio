@@ -90,21 +90,24 @@ export function PreviewMap({
 
   // Focus on selected element if needed
   useEffect(() => {
-    if (selectedElement && previewManagerRef.current) {
-      try {
-        const features = previewManagerRef.current.getFeaturesByTypeAndLayer(
-          selectedElement.type,
-          selectedElement.layer
-        );
-        if (features.length > 0) {
-          focusOnFeatures(features, VIEWPORT_PADDING);
-          setError(null);
+    async function focusSelectedElement() {
+      if (selectedElement && previewManagerRef.current) {
+        try {
+          const features = await previewManagerRef.current.getFeaturesByTypeAndLayer(
+            selectedElement.type,
+            selectedElement.layer
+          );
+          if (features.length > 0) {
+            focusOnFeatures(features, VIEWPORT_PADDING);
+            setError(null);
+          }
+        } catch (err) {
+          const e = err as Error;
+          setError(`Failed to focus on selected element: ${e.message}`);
         }
-      } catch (err) {
-        const e = err as Error;
-        setError(`Failed to focus on selected element: ${e.message}`);
       }
     }
+    focusSelectedElement();
   }, [selectedElement, focusOnFeatures]);
 
   const handleMapMove = useCallback((evt: ViewStateChangeEvent) => {
@@ -115,42 +118,57 @@ export function PreviewMap({
   const viewportBounds = getViewportBounds();
   const viewportPolygon = useMemo(() => viewportBounds ? bboxPolygon(viewportBounds) : null, [viewportBounds]);
 
-  const {
-    points, lines, polygons, totalCount, visibleCount
-  } = useMemo(() => {
-    if (!previewManagerRef.current) {
-      return {
-        points: { type: 'FeatureCollection', features: [] },
-        lines: { type: 'FeatureCollection', features: [] },
-        polygons: { type: 'FeatureCollection', features: [] },
-        totalCount: 0,
-        visibleCount: 0
+  const [previewState, setPreviewState] = useState<{
+    points: FeatureCollection;
+    lines: FeatureCollection;
+    polygons: FeatureCollection;
+    totalCount: number;
+    visibleCount: number;
+  }>({
+    points: { type: 'FeatureCollection', features: [] },
+    lines: { type: 'FeatureCollection', features: [] },
+    polygons: { type: 'FeatureCollection', features: [] },
+    totalCount: 0,
+    visibleCount: 0
+  });
+
+  useEffect(() => {
+    async function updatePreviewCollections() {
+      if (!previewManagerRef.current) {
+        return;
+      }
+
+      const collections = await previewManagerRef.current.getPreviewCollections();
+      
+      // If viewport filtering is desired, filter features here:
+      const filterByViewport = (fc: FeatureCollection) => {
+        if (!viewportPolygon) return fc;
+        const filtered = fc.features.filter((f: Feature) => booleanIntersects(f, viewportPolygon));
+        return { ...fc, features: filtered };
       };
+
+      const filteredPoints = filterByViewport(collections.points);
+      const filteredLines = filterByViewport(collections.lines);
+      const filteredPolygons = filterByViewport(collections.polygons);
+
+      const filteredVisibleCount = 
+        filteredPoints.features.length + 
+        filteredLines.features.length + 
+        filteredPolygons.features.length;
+
+      setPreviewState({
+        points: filteredPoints,
+        lines: filteredLines,
+        polygons: filteredPolygons,
+        totalCount: collections.totalCount,
+        visibleCount: filteredVisibleCount
+      });
     }
 
-    const { points, lines, polygons, totalCount, visibleCount } = previewManagerRef.current.getPreviewCollections();
-    
-    // If viewport filtering is desired, filter features here:
-    const filterByViewport = (fc: FeatureCollection) => {
-      if (!viewportPolygon) return fc;
-      const filtered = fc.features.filter((f: Feature) => booleanIntersects(f, viewportPolygon));
-      return { ...fc, features: filtered };
-    };
+    updatePreviewCollections();
+  }, [viewportPolygon, previewManagerRef.current]);
 
-    const filteredPoints = filterByViewport(points);
-    const filteredLines = filterByViewport(lines);
-    const filteredPolygons = filterByViewport(polygons);
-
-    const filteredVisibleCount = filteredPoints.features.length + filteredLines.features.length + filteredPolygons.features.length;
-
-    return {
-      points: filteredPoints,
-      lines: filteredLines,
-      polygons: filteredPolygons,
-      totalCount,
-      visibleCount: filteredVisibleCount
-    };
-  }, [viewportPolygon]);
+  const { points, lines, polygons, totalCount, visibleCount } = previewState;
 
   const layerComponents = useMemo(() => {
     const components = [];

@@ -3,11 +3,27 @@ import { CoordinateSystem } from '../../types/coordinates';
 import { DxfData } from '../../utils/dxf/types';
 import { PreviewManager } from '../../preview/preview-manager';
 import { Analysis } from '../../types/map';
+import { AnalyzeResult } from '../../processors';
+
+export interface LogDetails {
+  source?: 'points' | 'header' | 'fallback';
+  confidence?: number;
+  reason?: string;
+  system?: string;
+  alternatives?: Array<{
+    system: string;
+    confidence: number;
+    reason: string;
+  }>;
+  [key: string]: any;
+}
 
 export interface LogEntry {
   message: string;
   type: 'info' | 'warning' | 'error';
   timestamp: Date;
+  code?: string;
+  details?: LogDetails;
 }
 
 export type LogType = LogEntry['type'];
@@ -44,7 +60,7 @@ export interface PreviewSectionProps {
 export interface SettingsSectionProps {
   file: File;
   dxfData: DxfData | undefined;
-  analysis: any;
+  analysis: AnalyzeResult | undefined;  // Changed from any to AnalyzeResult
   options: ImportOptions;
   selectedLayers: string[];
   visibleLayers: string[];
