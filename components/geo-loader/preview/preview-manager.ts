@@ -1,11 +1,18 @@
-// components/geo-loader/preview/preview-manager.ts
-
 import { Feature, FeatureCollection, Position, Geometry, GeometryCollection } from 'geojson';
-import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
+import { 
+  COORDINATE_SYSTEMS, 
+  CoordinateSystem, 
+  CoordinatePoint,
+  Bounds,
+  isValidPoint,
+  isValidBounds,
+  isWGS84Range,
+  positionToPoint,
+  pointToPosition
+} from '../types/coordinates';
 import { Analysis } from '../types/map';
 import { CoordinateTransformer } from '../utils/coordinate-utils';
-import { CoordinateTransformationError } from '../utils/dxf/geo-converter';
-import proj4 from 'proj4';
+import { CoordinateSystemError, TransformationError } from '../utils/coordinate-systems';
 
 interface PreviewOptions {
   maxFeatures?: number;
@@ -25,16 +32,9 @@ interface FeatureGroup {
   totalCount: number;
 }
 
-interface Bounds {
-  minX: number;
-  minY: number;
-  maxX: number;
-  maxY: number;
-}
-
-interface TransformationError {
+interface TransformationErrorInfo {
   message: string;
-  originalCoordinates: { x: number; y: number; z?: number };
+  originalCoordinates: CoordinatePoint;
   featureId?: string;
   layer?: string;
 }
@@ -54,7 +54,7 @@ export class PreviewManager {
   private warningFlags: Map<string, Set<string>> = new Map(); // layer -> set of warning handles
   private transformer?: CoordinateTransformer;
   private cachedBounds?: Bounds;
-  private transformationErrors: TransformationError[] = [];
+  private transformationErrors: TransformationErrorInfo[] = [];
 
   constructor(options: PreviewOptions = {}) {
     this.options = {
@@ -71,59 +71,40 @@ export class PreviewManager {
       try {
         // Always transform to WGS84 for Mapbox
         this.transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-        console.debug('Initialized coordinate transformer:', {
-          from: coordinateSystem,
-          to: COORDINATE_SYSTEMS.WGS84,
-          def: proj4.defs(coordinateSystem)
-        });
       } catch (error) {
-        const err = error as Error;
-        console.error('Failed to initialize coordinate transformer:', err);
-        throw new Error(`Failed to initialize coordinate transformer: ${err.message}`);
+        if (error instanceof CoordinateSystemError) {
+          throw error;
+        }
+        throw new CoordinateSystemError(
+          `Failed to initialize coordinate transformer: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     } else {
-      console.debug('No coordinate transformation needed:', coordinateSystem);
       this.transformer = undefined;
     }
   }
 
-  private transformPosition(pos: Position): Position | null {
+  private transformPosition(pos: Position): Position {
     if (!this.transformer || !this.options.coordinateSystem) return pos;
 
     try {
-      const transformed = this.transformer.transform({ x: pos[0], y: pos[1] });
-      if (!transformed) {
-        throw new CoordinateTransformationError(
-          'Transformation failed for position',
-          { x: pos[0], y: pos[1], z: pos[2] }
-        );
-      }
+      const point = positionToPoint(pos);
+      const transformed = this.transformer.transform(point);
 
-      // Log transformation for debugging
-      console.debug('Position transformation:', {
-        original: pos,
-        transformed: [transformed.x, transformed.y],
-        system: this.options.coordinateSystem
-      });
-
-      // Validate transformed coordinates
-      if (!isFinite(transformed.x) || !isFinite(transformed.y) || 
-          Math.abs(transformed.x) > 180 || Math.abs(transformed.y) > 90) {
-        throw new CoordinateTransformationError(
-          `Invalid transformed coordinates: [${transformed.x}, ${transformed.y}]`,
-          { x: pos[0], y: pos[1], z: pos[2] }
+      // Validate transformed coordinates are in WGS84 range
+      if (!isWGS84Range(transformed)) {
+        throw new TransformationError(
+          `Invalid transformed coordinates: [${transformed.x}, ${transformed.y}]`
         );
       }
 
       return pos.length > 2 ? [transformed.x, transformed.y, pos[2]] : [transformed.x, transformed.y];
     } catch (error) {
-      if (error instanceof CoordinateTransformationError) {
+      if (error instanceof TransformationError) {
         throw error;
       }
-      const err = error as Error;
-      throw new CoordinateTransformationError(
-        `Transformation error: ${err.message || 'Unknown error'}`,
-        { x: pos[0], y: pos[1], z: pos[2] }
+      throw new TransformationError(
+        `Transformation error: ${error instanceof Error ? error.message : String(error)}`
       );
     }
   }
@@ -135,15 +116,13 @@ export class PreviewManager {
       this.features = features.features;
     }
 
-    // Reset cached bounds and errors
+    // Reset cached data
     this.cachedBounds = undefined;
     this.transformationErrors = [];
     this.warningFlags.clear();
 
     // Add coordinate system info and transform coordinates if needed
     if (this.options.coordinateSystem && this.transformer) {
-      console.debug('Transforming features from', this.options.coordinateSystem, 'to', COORDINATE_SYSTEMS.WGS84);
-      
       const transformedFeatures: Feature[] = [];
       for (const feature of this.features) {
         if (!feature.properties) {
@@ -157,11 +136,13 @@ export class PreviewManager {
             transformedFeatures.push(transformedFeature);
           }
         } catch (error) {
-          if (error instanceof CoordinateTransformationError) {
+          if (error instanceof TransformationError) {
             // Track error details
             this.transformationErrors.push({
               message: error.message,
-              originalCoordinates: error.originalCoordinates,
+              originalCoordinates: positionToPoint(feature.geometry.type === 'Point' 
+                ? feature.geometry.coordinates as Position 
+                : [0, 0]), // Default for non-point geometries
               featureId: feature.properties?.id,
               layer: feature.properties?.layer
             });
@@ -183,14 +164,9 @@ export class PreviewManager {
               }
             });
           } else {
-            const err = error as Error;
-            console.error('Failed to transform feature:', err, feature);
-            this.transformationErrors.push({
-              message: err.message || 'Unknown error',
-              originalCoordinates: { x: 0, y: 0 }, // Default coordinates for non-coordinate errors
-              featureId: feature.properties?.id,
-              layer: feature.properties?.layer
-            });
+            throw new TransformationError(
+              `Failed to transform feature: ${error instanceof Error ? error.message : String(error)}`
+            );
           }
         }
       }
@@ -198,12 +174,9 @@ export class PreviewManager {
       // Calculate error ratio
       const errorRatio = this.transformationErrors.length / this.features.length;
       if (errorRatio > this.MAX_TRANSFORMATION_ERROR_RATIO) {
-        const errorMessage = `Too many transformation errors (${this.transformationErrors.length} out of ${this.features.length} features). The coordinate system may be incorrect.`;
-        console.error(errorMessage, {
-          errors: this.transformationErrors,
-          coordinateSystem: this.options.coordinateSystem
-        });
-        throw new Error(errorMessage);
+        throw new TransformationError(
+          `Too many transformation errors (${this.transformationErrors.length} out of ${this.features.length} features). The coordinate system may be incorrect.`
+        );
       }
 
       // Add transformation errors to analysis warnings
@@ -254,10 +227,6 @@ export class PreviewManager {
 
     // Update transformer if coordinate system changes
     if (options.coordinateSystem && options.coordinateSystem !== prevCoordinateSystem) {
-      console.debug('Coordinate system changed:', {
-        from: prevCoordinateSystem,
-        to: options.coordinateSystem
-      });
       this.initializeTransformer(options.coordinateSystem);
       // Re-transform features with new coordinate system
       this.setFeatures(this.features);
@@ -271,7 +240,7 @@ export class PreviewManager {
     this.warningFlags.get(layer)?.add(handle);
   }
 
-  getTransformationErrors(): TransformationError[] {
+  getTransformationErrors(): TransformationErrorInfo[] {
     return this.transformationErrors;
   }
 
@@ -376,7 +345,7 @@ export class PreviewManager {
 
   calculateBounds(): Bounds {
     // Return cached bounds if available
-    if (this.cachedBounds) {
+    if (this.cachedBounds && isValidBounds(this.cachedBounds)) {
       return this.cachedBounds;
     }
 

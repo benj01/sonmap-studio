@@ -1,20 +1,62 @@
-// Initialize coordinate systems first
-import { initializeCoordinateSystems } from './utils/coordinate-systems';
-import { COORDINATE_SYSTEMS } from './types/coordinates';
+import { initializeCoordinateSystems, CoordinateSystemError } from './utils/coordinate-systems';
+import { 
+  COORDINATE_SYSTEMS,
+  CoordinateSystem,
+  CoordinatePoint,
+  Bounds,
+  isSwissSystem,
+  isWGS84System,
+  isValidPoint,
+  isValidBounds,
+  isWGS84Range,
+  positionToPoint,
+  pointToPosition
+} from './types/coordinates';
 
-// Initialize coordinate systems immediately and verify initialization
-const initialized = initializeCoordinateSystems();
-if (!initialized) {
-  console.error('Failed to initialize coordinate systems');
-  throw new Error('Failed to initialize coordinate systems');
+// Initialize coordinate systems immediately
+try {
+  if (!initializeCoordinateSystems()) {
+    throw new CoordinateSystemError('Failed to initialize coordinate systems');
+  }
+} catch (error) {
+  // Re-throw with proper error type
+  if (error instanceof CoordinateSystemError) {
+    throw error;
+  }
+  throw new CoordinateSystemError(
+    `Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`
+  );
 }
 
 // Import processors to ensure they're registered
 import './processors';
 
+// Component exports
 export { default as GeoImportDialog } from './components/geo-import';
 export { PreviewMap } from './components/preview-map';
 
-// Re-export coordinate systems for external use
-export { COORDINATE_SYSTEMS } from './types/coordinates';
-export { createTransformer, needsTransformation } from './utils/coordinate-systems';
+// Type exports
+export type {
+  CoordinateSystem,
+  CoordinatePoint,
+  Bounds
+};
+
+// Coordinate system utilities
+export {
+  COORDINATE_SYSTEMS,
+  isSwissSystem,
+  isWGS84System,
+  isValidPoint,
+  isValidBounds,
+  isWGS84Range,
+  positionToPoint,
+  pointToPosition
+};
+
+// Coordinate transformation utilities
+export {
+  createTransformer,
+  CoordinateSystemError,
+  TransformationError
+} from './utils/coordinate-systems';

@@ -1,23 +1,6 @@
 import { DxfData, DxfEntity, DxfEntityBase, Vector3, isVector3, isDxfPointEntity, isDxfLineEntity, isDxfPolylineEntity, isDxfCircleEntity, isDxfArcEntity, isDxfTextEntity, isDxfInsertEntity } from './types';
-
-interface AnalysisWarning {
-  type: string;
-  message: string;
-  entity?: {
-    handle?: string;
-    layer?: string;
-  };
-}
-
-interface AnalysisError {
-  type: string;
-  message: string;
-  isCritical: boolean;
-  entity?: {
-    handle?: string;
-    layer?: string;
-  };
-}
+import { DxfErrorReporter, createDxfErrorReporter } from './error-collector';
+import { ErrorMessage } from '../errors';
 
 interface AnalysisStats {
   entityCount: number;
@@ -34,9 +17,8 @@ interface AnalysisStats {
 
 interface AnalysisResult {
   isValid: boolean;
-  warnings: AnalysisWarning[];
-  errors: AnalysisError[];
   stats: AnalysisStats;
+  errorReporter: DxfErrorReporter;
 }
 
 function isEntityBase(entity: unknown): entity is DxfEntityBase {
@@ -47,8 +29,7 @@ function isEntityBase(entity: unknown): entity is DxfEntityBase {
 
 export function createDxfAnalyzer() {
   const analyze = (dxf: DxfData): AnalysisResult => {
-    const warnings: AnalysisWarning[] = [];
-    const errors: AnalysisError[] = [];
+    const errorReporter = createDxfErrorReporter();
     const stats: AnalysisStats = {
       entityCount: 0,
       layerCount: 0,
@@ -63,21 +44,19 @@ export function createDxfAnalyzer() {
 
     // Validate basic structure
     if (!dxf) {
-      errors.push({
+      errorReporter.addDxfError('Invalid DXF file structure', {
         type: 'INVALID_DXF',
-        message: 'Invalid DXF file structure',
         isCritical: true
       });
-      return { isValid: false, warnings, errors, stats };
+      return { isValid: false, stats, errorReporter };
     }
 
     if (!dxf.entities) {
-      errors.push({
+      errorReporter.addDxfError('DXF file is missing entities section', {
         type: 'MISSING_ENTITIES',
-        message: 'DXF file is missing entities section',
         isCritical: true
       });
-      return { isValid: false, warnings, errors, stats };
+      return { isValid: false, stats, errorReporter };
     }
 
     // Count entities and validate
@@ -87,9 +66,8 @@ export function createDxfAnalyzer() {
     if (dxf.tables?.layer?.layers) {
       stats.layerCount = Object.keys(dxf.tables.layer.layers).length;
     } else {
-      warnings.push({
-        type: 'NO_LAYERS',
-        message: 'DXF file has no layer definitions'
+      errorReporter.addDxfWarning('DXF file has no layer definitions', {
+        type: 'NO_LAYERS'
       });
     }
 
@@ -104,9 +82,8 @@ export function createDxfAnalyzer() {
     // Analyze entities
     dxf.entities.forEach((entity: unknown) => {
       if (!isEntityBase(entity)) {
-        warnings.push({
-          type: 'INVALID_ENTITY',
-          message: 'Invalid entity structure'
+        errorReporter.addDxfWarning('Invalid entity structure', {
+          type: 'INVALID_ENTITY'
         });
         return;
       }
@@ -125,22 +102,24 @@ export function createDxfAnalyzer() {
         case 'LINE':
           stats.lineCount++;
           if (!isDxfLineEntity(entity)) {
-            warnings.push({
-              type: 'INVALID_LINE',
-              message: 'Line entity has invalid start or end point',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'LINE',
+              entity.handle,
+              'Line entity has invalid start or end point',
+              { type: 'INVALID_LINE', ...entityMeta }
+            );
           }
           break;
 
         case 'POINT':
           stats.pointCount++;
           if (!isDxfPointEntity(entity)) {
-            warnings.push({
-              type: 'INVALID_POINT',
-              message: 'Point entity has invalid position',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'POINT',
+              entity.handle,
+              'Point entity has invalid position',
+              { type: 'INVALID_POINT', ...entityMeta }
+            );
           }
           break;
 
@@ -148,39 +127,43 @@ export function createDxfAnalyzer() {
         case 'LWPOLYLINE':
           stats.polylineCount++;
           if (!isDxfPolylineEntity(entity)) {
-            warnings.push({
-              type: 'INVALID_POLYLINE',
-              message: 'Polyline entity has invalid structure',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'POLYLINE',
+              entity.handle,
+              'Polyline entity has invalid structure',
+              { type: 'INVALID_POLYLINE', ...entityMeta }
+            );
           } else if (entity.vertices.length < 2) {
-            warnings.push({
-              type: 'INVALID_POLYLINE',
-              message: 'Polyline entity has insufficient vertices',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'POLYLINE',
+              entity.handle,
+              'Polyline entity has insufficient vertices',
+              { type: 'INVALID_POLYLINE', ...entityMeta, vertexCount: entity.vertices.length }
+            );
           }
           break;
 
         case 'CIRCLE':
           stats.circleCount++;
           if (!isDxfCircleEntity(entity)) {
-            warnings.push({
-              type: 'INVALID_CIRCLE',
-              message: 'Circle entity has invalid structure',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'CIRCLE',
+              entity.handle,
+              'Circle entity has invalid structure',
+              { type: 'INVALID_CIRCLE', ...entityMeta }
+            );
           }
           break;
 
         case 'ARC':
           stats.arcCount++;
           if (!isDxfArcEntity(entity)) {
-            warnings.push({
-              type: 'INVALID_ARC',
-              message: 'Arc entity has invalid structure',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'ARC',
+              entity.handle,
+              'Arc entity has invalid structure',
+              { type: 'INVALID_ARC', ...entityMeta }
+            );
           }
           break;
 
@@ -188,27 +171,30 @@ export function createDxfAnalyzer() {
         case 'MTEXT':
           stats.textCount++;
           if (!isDxfTextEntity(entity)) {
-            warnings.push({
-              type: 'INVALID_TEXT',
-              message: 'Text entity has invalid structure',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'TEXT',
+              entity.handle,
+              'Text entity has invalid structure',
+              { type: 'INVALID_TEXT', ...entityMeta }
+            );
           }
           break;
 
         case 'INSERT':
           if (!isDxfInsertEntity(entity)) {
-            warnings.push({
-              type: 'INVALID_INSERT',
-              message: 'Block insertion has invalid structure',
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'INSERT',
+              entity.handle,
+              'Block insertion has invalid structure',
+              { type: 'INVALID_INSERT', ...entityMeta }
+            );
           } else if (!dxf.blocks?.[entity.block]) {
-            warnings.push({
-              type: 'INVALID_INSERT',
-              message: `Referenced block "${entity.block}" not found`,
-              entity: entityMeta
-            });
+            errorReporter.addEntityWarning(
+              'INSERT',
+              entity.handle,
+              `Referenced block "${entity.block}" not found`,
+              { type: 'INVALID_INSERT', ...entityMeta, blockName: entity.block }
+            );
           }
           break;
 
@@ -223,9 +209,9 @@ export function createDxfAnalyzer() {
     if (dxf.tables?.layer?.layers) {
       foundLayers.forEach(layer => {
         if (!dxf.tables?.layer?.layers[layer]) {
-          warnings.push({
+          errorReporter.addDxfWarning(`Entity references undefined layer: ${layer}`, {
             type: 'UNDEFINED_LAYER',
-            message: `Entity references undefined layer: ${layer}`
+            layer
           });
         }
       });
@@ -233,9 +219,8 @@ export function createDxfAnalyzer() {
 
     // Check for critical issues
     if (stats.entityCount === 0) {
-      errors.push({
+      errorReporter.addDxfError('DXF file contains no valid entities', {
         type: 'NO_ENTITIES',
-        message: 'DXF file contains no valid entities',
         isCritical: true
       });
     }
@@ -246,17 +231,19 @@ export function createDxfAnalyzer() {
       .reduce((sum, [_, count]) => sum + count, 0);
 
     if (validEntityCount < stats.entityCount) {
-      warnings.push({
+      errorReporter.addDxfWarning(`${stats.entityCount - validEntityCount} entities of unsupported types were found`, {
         type: 'UNSUPPORTED_ENTITIES',
-        message: `${stats.entityCount - validEntityCount} entities of unsupported types were found`
+        totalEntities: stats.entityCount,
+        validEntities: validEntityCount
       });
     }
 
     return {
-      isValid: errors.every(e => !e.isCritical),
-      warnings,
-      errors,
-      stats
+      isValid: !errorReporter.getMessages().some(m => 
+        m.details?.isCritical === true
+      ),
+      stats,
+      errorReporter
     };
   };
 

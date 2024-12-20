@@ -1,12 +1,34 @@
 import proj4 from 'proj4';
 import { CoordinateTransformer } from './coordinate-utils';
-import { COORDINATE_SYSTEMS, isSwissSystem } from '../types/coordinates';
+import { COORDINATE_SYSTEMS, CoordinateSystem, isSwissSystem } from '../types/coordinates';
+import { 
+  GeoLoaderError, 
+  CoordinateTransformationError, 
+  ErrorReporter,
+  createErrorReporter 
+} from './errors';
 
-// Initialize coordinate systems
+// Create a global error reporter instance for this module
+const errorReporter = createErrorReporter();
+
+// Test points for different coordinate systems
+const TEST_POINTS = {
+  [COORDINATE_SYSTEMS.SWISS_LV95]: {
+    point: [2645021, 1249991],
+    expectedWGS84: [8.0, 47.4],
+    tolerance: 0.5
+  },
+  // Add more test points for other systems as needed
+};
+
+/**
+ * Initialize coordinate systems with their proj4 definitions
+ * @throws {CoordinateSystemError} If initialization fails
+ * @returns true if initialization is successful
+ */
 export function initializeCoordinateSystems(): boolean {
   try {
     // Swiss LV95 / EPSG:2056
-    // Updated definition with more precise parameters
     proj4.defs(
       COORDINATE_SYSTEMS.SWISS_LV95,
       '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=2600000 ' +
@@ -34,56 +56,65 @@ export function initializeCoordinateSystems(): boolean {
       '+proj=longlat +datum=WGS84 +no_defs +type=crs'
     );
 
-    // Register with proj4 globally
-    (window as any).proj4 = proj4;
-
-    // Verify transformations
-    try {
-      // Test point near Aarau in LV95 (2645021, 1249991)
-      const testPoint = [2645021, 1249991];
-      const result = proj4(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84, testPoint);
-      
-      // Verify the result is reasonable (should be near 8.0, 47.4)
-      const [lon, lat] = result;
-      const isValid = 
-        Math.abs(lon - 8.0) < 0.5 && // Should be within 0.5 degrees of expected
-        Math.abs(lat - 47.4) < 0.5;  // Should be within 0.5 degrees of expected
-      
-      console.debug('Coordinate system test transformation:', {
-        from: 'LV95',
-        point: testPoint,
-        to: 'WGS84',
-        result,
-        isValid,
-        expected: [8.0, 47.4]
-      });
-
-      if (!isValid) {
-        throw new Error(`Invalid test transformation result: ${result}`);
-      }
-
-      // Verify all systems are registered
-      const systems = [
-        COORDINATE_SYSTEMS.SWISS_LV95,
-        COORDINATE_SYSTEMS.SWISS_LV03,
-        COORDINATE_SYSTEMS.WGS84,
-        COORDINATE_SYSTEMS.NONE
-      ];
-      
-      const unregisteredSystems = systems.filter(system => !proj4.defs(system));
-      if (unregisteredSystems.length > 0) {
-        throw new Error(`Failed to verify coordinate systems: ${unregisteredSystems.join(', ')}`);
-      }
-
-      return true;
-    } catch (error) {
-      console.error('Failed to verify coordinate transformations:', error);
-      return false;
+    // Verify all coordinate systems are registered
+    const systems = [
+      COORDINATE_SYSTEMS.SWISS_LV95,
+      COORDINATE_SYSTEMS.SWISS_LV03,
+      COORDINATE_SYSTEMS.WGS84,
+      COORDINATE_SYSTEMS.NONE
+    ];
+    
+    const unregisteredSystems = systems.filter(system => !proj4.defs(system));
+    if (unregisteredSystems.length > 0) {
+      throw new GeoLoaderError(
+        `Failed to verify coordinate systems: ${unregisteredSystems.join(', ')}`
+      );
     }
+
+    // Verify transformations for each test point
+    for (const [system, testData] of Object.entries(TEST_POINTS)) {
+      const result = proj4(system as CoordinateSystem, COORDINATE_SYSTEMS.WGS84, testData.point);
+      const [lon, lat] = result;
+      const [expectedLon, expectedLat] = testData.expectedWGS84;
+      
+      const isValid = 
+        Math.abs(lon - expectedLon) < testData.tolerance &&
+        Math.abs(lat - expectedLat) < testData.tolerance;
+      
+      if (!isValid) {
+        const error = new CoordinateTransformationError(
+          `Invalid test transformation result`,
+          { x: testData.point[0], y: testData.point[1] },
+          system as CoordinateSystem,
+          COORDINATE_SYSTEMS.WGS84
+        );
+        errorReporter.addError(error.message, {
+          system,
+          got: [lon, lat],
+          expected: [expectedLon, expectedLat],
+          tolerance: testData.tolerance
+        });
+        throw error;
+      }
+    }
+
+    return true;
   } catch (error) {
-    console.error('Failed to initialize coordinate systems:', error);
-    return false;
+    if (error instanceof GeoLoaderError) {
+      throw error;
+    }
+    throw new GeoLoaderError(
+      `Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
+}
+
+/**
+ * Interface for coordinate point
+ */
+export interface CoordinatePoint {
+  x: number;
+  y: number;
 }
 
 /**
@@ -92,61 +123,73 @@ export function initializeCoordinateSystems(): boolean {
  * 
  * @param fromSystem The source coordinate system
  * @param toSystem The target coordinate system
+ * @throws {CoordinateSystemError} If coordinate systems initialization fails
  * @returns A CoordinateTransformer instance
  */
 export function createTransformer(fromSystem: string, toSystem: string): CoordinateTransformer {
   // Initialize systems if not already done
   if (!proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95)) {
     if (!initializeCoordinateSystems()) {
-      throw new Error('Failed to initialize coordinate systems');
+      throw new GeoLoaderError('Failed to initialize coordinate systems');
     }
   }
 
-  // If either system is 'none', return identity transformer
-  if (fromSystem === COORDINATE_SYSTEMS.NONE || toSystem === COORDINATE_SYSTEMS.NONE) {
-    return new CoordinateTransformer(COORDINATE_SYSTEMS.WGS84, COORDINATE_SYSTEMS.WGS84);
+  // Handle special case for 'none' coordinate system
+  let from = fromSystem as CoordinateSystem;
+  let to = toSystem as CoordinateSystem;
+
+  if (from === COORDINATE_SYSTEMS.NONE) {
+    from = COORDINATE_SYSTEMS.WGS84;
+  }
+  if (to === COORDINATE_SYSTEMS.NONE) {
+    to = COORDINATE_SYSTEMS.WGS84;
   }
 
-  return new CoordinateTransformer(fromSystem, toSystem);
-}
-
-/**
- * Check if a coordinate system requires transformation
- * @param system The coordinate system to check
- * @returns boolean indicating if transformation is needed
- */
-export function needsTransformation(system: string): boolean {
-  return system !== COORDINATE_SYSTEMS.NONE && system !== COORDINATE_SYSTEMS.WGS84;
+  return new CoordinateTransformer(from, to);
 }
 
 /**
  * Convert coordinates to Mapbox format (longitude, latitude)
  * @param point The point to convert
  * @param sourceSystem The source coordinate system of the point
+ * @throws {TransformationError} If coordinate transformation fails
  * @returns [longitude, latitude] array for Mapbox
  */
 export function toMapboxCoordinates(
-  point: { x: number; y: number },
-  sourceSystem: string = COORDINATE_SYSTEMS.WGS84
+  point: CoordinatePoint,
+  sourceSystem: CoordinateSystem
 ): [number, number] {
-  // If the coordinates are already in WGS84, they're in lon/lat format
-  if (sourceSystem === COORDINATE_SYSTEMS.WGS84 || sourceSystem === COORDINATE_SYSTEMS.NONE) {
+  try {
     // For WGS84, x is longitude and y is latitude, which is what Mapbox expects
-    return [point.x, point.y];
-  }
+    if (sourceSystem === COORDINATE_SYSTEMS.WGS84 || sourceSystem === COORDINATE_SYSTEMS.NONE) {
+      return [point.x, point.y];
+    }
 
-  // For Swiss coordinates, x is easting (lon) and y is northing (lat)
-  // We need to transform them to WGS84 first
-  const transformer = createTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
-  const transformed = transformer.transform(point);
-  if (!transformed) {
-    console.error('Failed to transform coordinates to Mapbox format:', point);
-    // Return original coordinates as fallback
-    return [point.x, point.y];
-  }
+    // Transform coordinates to WGS84
+    const transformer = createTransformer(sourceSystem, COORDINATE_SYSTEMS.WGS84);
+    const transformed = transformer.transform(point);
+    
+    if (!transformed) {
+      throw new CoordinateTransformationError(
+        `Failed to transform coordinates to WGS84`,
+        point,
+        sourceSystem as CoordinateSystem,
+        COORDINATE_SYSTEMS.WGS84
+      );
+    }
 
-  // The transformer already handles the coordinate order for Swiss systems
-  return [transformed.x, transformed.y];
+    return [transformed.x, transformed.y];
+  } catch (error) {
+    if (error instanceof GeoLoaderError) {
+      throw error;
+    }
+    throw new CoordinateTransformationError(
+      `Failed to convert coordinates to Mapbox format: ${error instanceof Error ? error.message : String(error)}`,
+      point,
+      sourceSystem,
+      COORDINATE_SYSTEMS.WGS84
+    );
+  }
 }
 
-export { COORDINATE_SYSTEMS }
+export { COORDINATE_SYSTEMS };

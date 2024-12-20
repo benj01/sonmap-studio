@@ -1,89 +1,97 @@
+import { ErrorReporter, ValidationError, GeoLoaderError } from '../errors';
+
 /**
- * Centralized error and warning collection for DXF parsing and validation
+ * DXF-specific error reporter that extends the base ErrorReporter with
+ * methods for handling DXF entity errors and warnings.
  */
-export class ErrorCollector {
-  private errors: string[] = [];
-  private warnings: string[] = [];
-
+export class DxfErrorReporter extends ErrorReporter {
   /**
-   * Add an error with consistent formatting
+   * Add an error for a specific DXF entity
    * @param entityType The type of entity (e.g., 'LINE', 'CIRCLE')
    * @param handle The entity handle or identifier
    * @param message The error message
+   * @param details Additional error details
    */
-  addError(entityType: string, handle: string | undefined, message: string) {
-    this.errors.push(`[ERROR]: Entity ${entityType} (Handle: ${handle || 'unknown'}) - ${message}`);
+  addEntityError(
+    entityType: string, 
+    handle: string | undefined, 
+    message: string,
+    details?: Record<string, unknown>
+  ): void {
+    const error = new ValidationError(
+      message,
+      entityType,
+      handle,
+      {
+        layer: details?.layer,
+        ...details
+      }
+    );
+    this.addError(
+      `Entity ${entityType} (Handle: ${handle || 'unknown'}) - ${message}`,
+      error.code,
+      {
+        entityType,
+        handle,
+        ...details
+      }
+    );
   }
 
   /**
-   * Add a warning with consistent formatting
+   * Add a warning for a specific DXF entity
    * @param entityType The type of entity (e.g., 'LINE', 'CIRCLE')
    * @param handle The entity handle or identifier
    * @param message The warning message
+   * @param details Additional warning details
    */
-  addWarning(entityType: string, handle: string | undefined, message: string) {
-    this.warnings.push(`[WARNING]: Entity ${entityType} (Handle: ${handle || 'unknown'}) - ${message}`);
+  addEntityWarning(
+    entityType: string, 
+    handle: string | undefined, 
+    message: string,
+    details?: Record<string, unknown>
+  ): void {
+    this.addWarning(
+      `Entity ${entityType} (Handle: ${handle || 'unknown'}) - ${message}`,
+      'DXF_ENTITY_WARNING',
+      {
+        entityType,
+        handle,
+        ...details
+      }
+    );
   }
 
   /**
-   * Add a general error not specific to an entity
+   * Add a general DXF error not specific to an entity
    * @param message The error message
+   * @param details Additional error details
    */
-  addGeneralError(message: string) {
-    this.errors.push(`[ERROR]: ${message}`);
+  addDxfError(message: string, details?: Record<string, unknown>): void {
+    const error = new GeoLoaderError(message, 'DXF_ERROR', details);
+    this.addError(message, error.code, details);
   }
 
   /**
-   * Add a general warning not specific to an entity
+   * Add a general DXF warning not specific to an entity
    * @param message The warning message
+   * @param details Additional warning details
    */
-  addGeneralWarning(message: string) {
-    this.warnings.push(`[WARNING]: ${message}`);
+  addDxfWarning(message: string, details?: Record<string, unknown>): void {
+    this.addWarning(message, 'DXF_WARNING', details);
   }
 
   /**
-   * Get all collected errors
+   * Create a new DXF error reporter instance
    */
-  getErrors(): string[] {
-    return [...this.errors];
+  static create(): DxfErrorReporter {
+    return new DxfErrorReporter();
   }
+}
 
-  /**
-   * Get all collected warnings
-   */
-  getWarnings(): string[] {
-    return [...this.warnings];
-  }
-
-  /**
-   * Check if there are any errors
-   */
-  hasErrors(): boolean {
-    return this.errors.length > 0;
-  }
-
-  /**
-   * Check if there are any warnings
-   */
-  hasWarnings(): boolean {
-    return this.warnings.length > 0;
-  }
-
-  /**
-   * Clear all collected errors and warnings
-   */
-  clear() {
-    this.errors = [];
-    this.warnings = [];
-  }
-
-  /**
-   * Get a summary of all errors and warnings
-   */
-  getSummary(): { errors: string[]; warnings: string[] } {
-    return {
-      errors: this.getErrors(),
-      warnings: this.getWarnings()
-    };
-  }
+/**
+ * Create a new DXF error reporter instance
+ */
+export function createDxfErrorReporter(): DxfErrorReporter {
+  return DxfErrorReporter.create();
 }

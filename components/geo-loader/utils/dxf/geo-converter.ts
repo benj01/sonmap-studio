@@ -3,10 +3,22 @@ import { Feature, Geometry, Point, LineString, Polygon } from 'geojson';
 import { GeoFeature } from '../../../../types/geo';
 import { CoordinateTransformer } from '../coordinate-utils';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
+import { DxfErrorReporter, createDxfErrorReporter } from './error-collector';
 import proj4 from 'proj4';
 
+const errorReporter = createDxfErrorReporter();
+
 export class CoordinateTransformationError extends Error {
-  constructor(message: string, public originalCoordinates: Vector3) {
+  constructor(
+    message: string, 
+    public originalCoordinates: Vector3,
+    public details?: {
+      type: string;
+      transformedCoordinates?: { x: number; y: number; z?: number };
+      sourceSystem?: string;
+      targetSystem?: string;
+    }
+  ) {
     super(message);
     this.name = 'CoordinateTransformationError';
   }
@@ -35,7 +47,11 @@ function vector3ToCoordinate(
     if (!validateWGS84Coordinates({ x: v.x, y: v.y })) {
       throw new CoordinateTransformationError(
         'Coordinates appear to not be in WGS84 format but no transformer was provided',
-        v
+        v,
+        {
+          type: 'NO_TRANSFORMER',
+          transformedCoordinates: { x: v.x, y: v.y, z: v.z }
+        }
       );
     }
     return v.z !== undefined && isFinite(v.z) ? [v.x, v.y, v.z] : [v.x, v.y];
@@ -46,7 +62,12 @@ function vector3ToCoordinate(
     if (!transformed) {
       throw new CoordinateTransformationError(
         'Coordinate transformation failed',
-        v
+        v,
+        {
+          type: 'TRANSFORM_FAILED',
+          sourceSystem,
+          targetSystem: COORDINATE_SYSTEMS.WGS84
+        }
       );
     }
 
@@ -54,10 +75,20 @@ function vector3ToCoordinate(
     const [x, y] = [transformed.x, transformed.y];
 
     if (!validateWGS84Coordinates({ x, y })) {
-      console.error('Invalid transformed coordinates:', { x, y, original: v });
+      errorReporter.addDxfError('Invalid transformed coordinates', {
+        type: 'INVALID_COORDINATES',
+        original: v,
+        transformed: { x, y, z: transformed.z }
+      });
       throw new CoordinateTransformationError(
         `Transformed coordinates (${x}, ${y}) are outside valid WGS84 bounds`,
-        v
+        v,
+        {
+          type: 'INVALID_BOUNDS',
+          transformedCoordinates: { x, y, z: transformed.z },
+          sourceSystem,
+          targetSystem: COORDINATE_SYSTEMS.WGS84
+        }
       );
     }
 
@@ -70,7 +101,12 @@ function vector3ToCoordinate(
     }
     throw new CoordinateTransformationError(
       `Transformation error: ${error instanceof Error ? error.message : 'Unknown error'}`,
-      v
+      v,
+      {
+        type: 'TRANSFORM_ERROR',
+        sourceSystem,
+        targetSystem: COORDINATE_SYSTEMS.WGS84
+      }
     );
   }
 }
@@ -164,6 +200,16 @@ function polylineToGeometry(
   sourceSystem?: string
 ): Geometry | null {
   if (!entity.vertices || entity.vertices.length < 2) {
+    errorReporter.addEntityError(
+      entity.type,
+      entity.handle || 'unknown',
+      'Insufficient vertices for polyline',
+      {
+        type: 'INSUFFICIENT_VERTICES',
+        vertexCount: entity.vertices?.length ?? 0,
+        minimumRequired: 2
+      }
+    );
     return null;
   }
 
@@ -199,11 +245,16 @@ export function entityToGeoFeature(
   // Create transformer if source coordinate system is specified and different from WGS84
   if (sourceCoordinateSystem && sourceCoordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
     if (!proj4.defs(sourceCoordinateSystem)) {
+      errorReporter.addDxfError(`Source coordinate system ${sourceCoordinateSystem} not registered with proj4`, {
+        type: 'INVALID_COORDINATE_SYSTEM',
+        system: sourceCoordinateSystem
+      });
       throw new Error(`Source coordinate system ${sourceCoordinateSystem} not registered with proj4`);
     }
     transformer = new CoordinateTransformer(sourceCoordinateSystem, COORDINATE_SYSTEMS.WGS84);
-    console.debug('Created transformer:', { 
-      from: sourceCoordinateSystem, 
+    errorReporter.addDxfWarning('Created coordinate transformer', {
+      type: 'TRANSFORMER_CREATED',
+      from: sourceCoordinateSystem,
       to: COORDINATE_SYSTEMS.WGS84
     });
   }
@@ -282,6 +333,17 @@ export function entityToGeoFeature(
             type: 'LineString',
             coordinates: entity.controlPoints.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))
           };
+        } else {
+          errorReporter.addEntityError(
+            'SPLINE',
+            entity.handle || 'unknown',
+            'Insufficient control points',
+            {
+              type: 'INSUFFICIENT_CONTROL_POINTS',
+              pointCount: entity.controlPoints?.length ?? 0,
+              minimumRequired: 2
+            }
+          );
         }
         break;
 
@@ -295,6 +357,17 @@ export function entityToGeoFeature(
             type: 'Polygon',
             coordinates: [coords]
           };
+        } else {
+          errorReporter.addEntityError(
+            '3DFACE',
+            entity.handle || 'unknown',
+            'Insufficient vertices',
+            {
+              type: 'INSUFFICIENT_VERTICES',
+              vertexCount: entity.vertices?.length ?? 0,
+              minimumRequired: 3
+            }
+          );
         }
         break;
 
@@ -309,6 +382,17 @@ export function entityToGeoFeature(
             type: 'Polygon',
             coordinates: [coords]
           };
+        } else {
+          errorReporter.addEntityError(
+            entity.type,
+            entity.handle || 'unknown',
+            'Insufficient vertices',
+            {
+              type: 'INSUFFICIENT_VERTICES',
+              vertexCount: entity.vertices?.length ?? 0,
+              minimumRequired: 3
+            }
+          );
         }
         break;
 
@@ -350,6 +434,17 @@ export function entityToGeoFeature(
             type: 'LineString',
             coordinates: entity.vertices.map(p => vector3ToCoordinate(p, transformer, sourceCoordinateSystem))
           };
+        } else {
+          errorReporter.addEntityError(
+            entity.type,
+            entity.handle || 'unknown',
+            'Insufficient vertices',
+            {
+              type: 'INSUFFICIENT_VERTICES',
+              vertexCount: entity.vertices?.length ?? 0,
+              minimumRequired: 2
+            }
+          );
         }
         break;
 
@@ -376,14 +471,40 @@ export function entityToGeoFeature(
               coordinates: polygons.map(poly => [poly])
             };
           }
+        } else {
+          errorReporter.addEntityError(
+            'HATCH',
+            entity.handle || 'unknown',
+            'No valid boundaries',
+            {
+              type: 'NO_BOUNDARIES',
+              boundaryCount: entity.boundaries?.length ?? 0
+            }
+          );
         }
         break;
 
       default:
+        errorReporter.addEntityWarning(
+          entity.type,
+          entity.handle || 'unknown',
+          'Unsupported entity type',
+          {
+            type: 'UNSUPPORTED_TYPE'
+          }
+        );
         throw new Error(`Unsupported entity type: ${entity.type}`);
     }
 
     if (!geometry) {
+      errorReporter.addEntityError(
+        entity.type,
+        entity.handle || 'unknown',
+        'Failed to generate geometry',
+        {
+          type: 'GEOMETRY_GENERATION_FAILED'
+        }
+      );
       throw new Error(`Failed to generate geometry for entity type: ${entity.type}`);
     }
 
@@ -403,19 +524,46 @@ export function entityToGeoFeature(
         visible: entity.visible,
         extrusionDirection: entity.extrusionDirection,
         sourceCoordinateSystem,
-        transformationSuccess: true,  // Indicate successful transformation
+        transformationSuccess: true,
         ...properties
       }
     };
   } catch (error) {
     if (error instanceof CoordinateTransformationError) {
-      // Instead of silently failing, throw the error to be handled by the UI
+      // Add error to error reporter before re-throwing
+      errorReporter.addEntityError(
+        entity.type,
+        entity.handle || 'unknown',
+        error.message,
+        {
+          type: 'COORDINATE_TRANSFORMATION_ERROR',
+          originalCoordinates: error.originalCoordinates,
+          ...error.details
+        }
+      );
       throw error;
     }
-    throw new Error(
-      `Error converting ${entity.type} entity to GeoJSON: ${
-        error instanceof Error ? error.message : 'Unknown error'
-      }`
+    errorReporter.addEntityError(
+      entity.type,
+      entity.handle || 'unknown',
+      `Error converting to GeoJSON: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      {
+        type: 'CONVERSION_ERROR',
+        error: String(error)
+      }
     );
+    throw error;
   }
+}
+
+export function getErrors() {
+  return errorReporter.getErrors();
+}
+
+export function getWarnings() {
+  return errorReporter.getWarnings();
+}
+
+export function clear() {
+  errorReporter.clear();
 }

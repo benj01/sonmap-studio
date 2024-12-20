@@ -14,6 +14,15 @@ export interface Vector3 {
   z?: number;
 }
 
+export interface RawLayerData {
+  name: string;
+  color?: number;
+  colorRGB?: number;
+  lineType?: string;
+  lineWeight?: number;
+  flags?: number;
+}
+
 export interface LayerInfo {
   name: string;
   color?: number;
@@ -94,12 +103,15 @@ export interface DxfEllipseEntity extends DxfEntityBase {
 export interface DxfInsertEntity extends DxfEntityBase {
   type: 'INSERT';
   position: Vector3;
-  block: string;
+  block: string;  // Name of the block to insert
   scale?: Vector3;
   rotation?: number;
+  rows?: number;
+  columns?: number;
+  rowSpacing?: number;
+  colSpacing?: number;
 }
 
-// New entity types
 export interface DxfTextEntity extends DxfEntityBase {
   type: 'TEXT' | 'MTEXT';
   position: Vector3;
@@ -180,7 +192,7 @@ export interface DxfData {
   blocks?: Record<string, DxfBlock>;
   tables?: {
     layer?: {
-      layers: Record<string, any>;
+      layers: Record<string, RawLayerData>;
     };
   };
 }
@@ -220,6 +232,41 @@ export function isVector3(v: unknown): v is Vector3 {
   if (!isVector2(v)) return false;
   const vec = v as any;
   return vec.z === undefined || (typeof vec.z === 'number' && isFinite(vec.z));
+}
+
+export function isDxfEntity(e: unknown): e is DxfEntity {
+  if (!e || typeof e !== 'object') return false;
+  const entity = e as any;
+  
+  // Check common properties
+  if (typeof entity.type !== 'string') return false;
+  if (entity.layer !== undefined && typeof entity.layer !== 'string') return false;
+  if (entity.handle !== undefined && typeof entity.handle !== 'string') return false;
+  if (entity.color !== undefined && typeof entity.color !== 'number') return false;
+  if (entity.colorRGB !== undefined && typeof entity.colorRGB !== 'number') return false;
+  if (entity.lineType !== undefined && typeof entity.lineType !== 'string') return false;
+  if (entity.lineWeight !== undefined && typeof entity.lineWeight !== 'number') return false;
+  if (entity.elevation !== undefined && typeof entity.elevation !== 'number') return false;
+  if (entity.thickness !== undefined && typeof entity.thickness !== 'number') return false;
+  if (entity.visible !== undefined && typeof entity.visible !== 'boolean') return false;
+  if (entity.extrusionDirection !== undefined && !isVector3(entity.extrusionDirection)) return false;
+
+  // Check specific entity types
+  switch (entity.type) {
+    case 'POINT': return isDxfPointEntity(entity);
+    case 'LINE': return isDxfLineEntity(entity);
+    case 'POLYLINE':
+    case 'LWPOLYLINE': return isDxfPolylineEntity(entity);
+    case 'CIRCLE': return isDxfCircleEntity(entity);
+    case 'ARC': return isDxfArcEntity(entity);
+    case 'ELLIPSE': return isDxfEllipseEntity(entity);
+    case '3DFACE': return isDxf3DFaceEntity(entity);
+    case 'INSERT': return isDxfInsertEntity(entity);
+    case 'TEXT':
+    case 'MTEXT': return isDxfTextEntity(entity);
+    case 'SPLINE': return isDxfSplineEntity(entity);
+    default: return false;
+  }
 }
 
 export function isDxfTextEntity(e: unknown): e is DxfTextEntity {
@@ -303,4 +350,13 @@ export function isDxfInsertEntity(e: unknown): e is DxfInsertEntity {
   return entity.type === 'INSERT' && 
          isVector3(entity.position) && 
          typeof entity.block === 'string';
+}
+
+export function isDxf3DFaceEntity(e: unknown): e is Dxf3DFaceEntity {
+  if (!e || typeof e !== 'object') return false;
+  const entity = e as any;
+  return entity.type === '3DFACE' && 
+         Array.isArray(entity.vertices) && 
+         entity.vertices.length === 4 &&
+         entity.vertices.every((v: unknown) => isVector3(v));
 }

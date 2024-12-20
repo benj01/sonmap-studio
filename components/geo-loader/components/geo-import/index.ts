@@ -1,10 +1,16 @@
-// Export all types
-export * from './types';
+// Components
+export { ImportHeader } from './components/import-header';
+export { ImportContent } from './components/import-content';
+export { ImportControls } from './components/import-controls';
 
-// Export individual components
-export { PreviewSection } from './preview-section';
-export { SettingsSection } from './settings-section';
-export { LogsSection } from './logs-section';
+// Hooks
+export { useImportLogs } from './hooks/use-import-logs';
+export { useFileAnalysis } from './hooks/use-file-analysis';
+export { useCoordinateSystem } from './hooks/use-coordinate-system';
+export { useImportProcess } from './hooks/use-import-process';
 
-// Export main dialog component as default
+// Main Dialog
 export { GeoImportDialog as default } from './dialog';
+
+// Types
+export * from './types';

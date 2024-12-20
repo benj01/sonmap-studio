@@ -1,6 +1,9 @@
 import { Matrix4, Vector3, DxfEntity, DxfInsertEntity, isVector3 } from './types';
+import { DxfErrorReporter, createDxfErrorReporter } from './error-collector';
 
 export class TransformUtils {
+  private static errorReporter = createDxfErrorReporter();
+
   static createIdentityMatrix(): Matrix4 {
     return [
       [1, 0, 0, 0],
@@ -82,13 +85,21 @@ export class TransformUtils {
 
   static transformPoint(point: Vector3, matrix: Matrix4): Vector3 | null {
     if (!isVector3(point)) {
-      console.warn('Invalid point coordinates:', point);
+      this.errorReporter.addDxfError('Invalid point coordinates', {
+        type: 'INVALID_POINT',
+        point
+      });
       return null;
     }
 
     const [px, py, pz] = this.applyMatrix(matrix, [point.x, point.y, point.z ?? 0, 1]);
     if (!isFinite(px) || !isFinite(py) || !isFinite(pz)) {
-      console.warn('Invalid transformation result:', { px, py, pz });
+      this.errorReporter.addDxfError('Invalid transformation result', {
+        type: 'INVALID_TRANSFORM_RESULT',
+        result: { px, py, pz },
+        point,
+        matrix
+      });
       return null;
     }
     return { x: px, y: py, z: pz };
@@ -130,7 +141,15 @@ export class TransformUtils {
         case '3DFACE': {
           const transformedVertices = entity.vertices.map(v => this.transformPoint(v, matrix));
           if (transformedVertices.some(v => v === null)) {
-            console.warn(`Failed to transform 3DFACE entity handle "${entity.handle || 'unknown'}" due to invalid vertices.`);
+            this.errorReporter.addEntityError(
+              '3DFACE',
+              entity.handle || 'unknown',
+              'Failed to transform vertices',
+              {
+                type: 'TRANSFORM_VERTICES_FAILED',
+                vertices: entity.vertices
+              }
+            );
             return null;
           }
           return {
@@ -142,7 +161,15 @@ export class TransformUtils {
         case 'POINT': {
           const position = this.transformPoint(entity.position, matrix);
           if (!position) {
-            console.warn(`Failed to transform POINT entity handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'POINT',
+              entity.handle || 'unknown',
+              'Failed to transform position',
+              {
+                type: 'TRANSFORM_POSITION_FAILED',
+                position: entity.position
+              }
+            );
             return null;
           }
           return { ...entity, position };
@@ -152,7 +179,16 @@ export class TransformUtils {
           const start = this.transformPoint(entity.start, matrix);
           const end = this.transformPoint(entity.end, matrix);
           if (!start || !end) {
-            console.warn(`Failed to transform LINE entity handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'LINE',
+              entity.handle || 'unknown',
+              'Failed to transform start/end points',
+              {
+                type: 'TRANSFORM_POINTS_FAILED',
+                start: entity.start,
+                end: entity.end
+              }
+            );
             return null;
           }
           return { ...entity, start, end };
@@ -164,7 +200,16 @@ export class TransformUtils {
             .map(v => this.transformPoint(v, matrix))
             .filter((v): v is Vector3 => v !== null);
           if (vertices.length < 2) {
-            console.warn(`Failed to transform POLYLINE entity handle "${entity.handle || 'unknown'}" - insufficient valid vertices.`);
+            this.errorReporter.addEntityError(
+              entity.type,
+              entity.handle || 'unknown',
+              'Insufficient valid vertices after transformation',
+              {
+                type: 'INSUFFICIENT_VERTICES',
+                vertexCount: vertices.length,
+                originalCount: entity.vertices.length
+              }
+            );
             return null;
           }
           return { ...entity, vertices };
@@ -173,12 +218,29 @@ export class TransformUtils {
         case 'CIRCLE': {
           const center = this.transformPoint(entity.center, matrix);
           if (!center) {
-            console.warn(`Failed to transform CIRCLE center handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'CIRCLE',
+              entity.handle || 'unknown',
+              'Failed to transform center point',
+              {
+                type: 'TRANSFORM_CENTER_FAILED',
+                center: entity.center
+              }
+            );
             return null;
           }
           const radius = entity.radius * this.getScaleFactor(matrix);
           if (!isFinite(radius) || radius <= 0) {
-            console.warn(`Invalid transformed radius for CIRCLE entity handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'CIRCLE',
+              entity.handle || 'unknown',
+              'Invalid transformed radius',
+              {
+                type: 'INVALID_RADIUS',
+                radius,
+                originalRadius: entity.radius
+              }
+            );
             return null;
           }
           return { ...entity, center, radius };
@@ -187,18 +249,46 @@ export class TransformUtils {
         case 'ARC': {
           const center = this.transformPoint(entity.center, matrix);
           if (!center) {
-            console.warn(`Failed to transform ARC center handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'ARC',
+              entity.handle || 'unknown',
+              'Failed to transform center point',
+              {
+                type: 'TRANSFORM_CENTER_FAILED',
+                center: entity.center
+              }
+            );
             return null;
           }
           const radius = entity.radius * this.getScaleFactor(matrix);
           if (!isFinite(radius) || radius <= 0) {
-            console.warn(`Invalid transformed radius for ARC entity handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'ARC',
+              entity.handle || 'unknown',
+              'Invalid transformed radius',
+              {
+                type: 'INVALID_RADIUS',
+                radius,
+                originalRadius: entity.radius
+              }
+            );
             return null;
           }
           const startAngle = this.transformAngle(entity.startAngle, matrix);
           const endAngle = this.transformAngle(entity.endAngle, matrix);
           if (!isFinite(startAngle) || !isFinite(endAngle)) {
-            console.warn(`Invalid transformed angles for ARC entity handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'ARC',
+              entity.handle || 'unknown',
+              'Invalid transformed angles',
+              {
+                type: 'INVALID_ANGLES',
+                startAngle,
+                endAngle,
+                originalStartAngle: entity.startAngle,
+                originalEndAngle: entity.endAngle
+              }
+            );
             return null;
           }
           return { ...entity, center, radius, startAngle, endAngle };
@@ -208,13 +298,33 @@ export class TransformUtils {
           const center = this.transformPoint(entity.center, matrix);
           const majorAxis = this.transformPoint(entity.majorAxis, matrix);
           if (!center || !majorAxis) {
-            console.warn(`Failed to transform ELLIPSE handle "${entity.handle || 'unknown'}" - invalid center or majorAxis.`);
+            this.errorReporter.addEntityError(
+              'ELLIPSE',
+              entity.handle || 'unknown',
+              'Failed to transform center or major axis',
+              {
+                type: 'TRANSFORM_POINTS_FAILED',
+                center: entity.center,
+                majorAxis: entity.majorAxis
+              }
+            );
             return null;
           }
           const startAngle = this.transformAngle(entity.startAngle, matrix);
           const endAngle = this.transformAngle(entity.endAngle, matrix);
           if (!isFinite(startAngle) || !isFinite(endAngle)) {
-            console.warn(`Invalid transformed angles for ELLIPSE entity handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'ELLIPSE',
+              entity.handle || 'unknown',
+              'Invalid transformed angles',
+              {
+                type: 'INVALID_ANGLES',
+                startAngle,
+                endAngle,
+                originalStartAngle: entity.startAngle,
+                originalEndAngle: entity.endAngle
+              }
+            );
             return null;
           }
           return {
@@ -230,7 +340,15 @@ export class TransformUtils {
         case 'INSERT': {
           const position = this.transformPoint(entity.position, matrix);
           if (!position) {
-            console.warn(`Failed to transform INSERT entity handle "${entity.handle || 'unknown'}".`);
+            this.errorReporter.addEntityError(
+              'INSERT',
+              entity.handle || 'unknown',
+              'Failed to transform position',
+              {
+                type: 'TRANSFORM_POSITION_FAILED',
+                position: entity.position
+              }
+            );
             return null;
           }
           const scaleFactor = this.getScaleFactor(matrix);
@@ -247,13 +365,40 @@ export class TransformUtils {
         }
 
         default: {
-          console.warn(`Unsupported entity type for transformation: ${entity.type}`);
+          this.errorReporter.addEntityWarning(
+            entity.type,
+            entity.handle || 'unknown',
+            'Unsupported entity type for transformation',
+            {
+              type: 'UNSUPPORTED_TRANSFORM_TYPE'
+            }
+          );
           return null;
         }
       }
     } catch (error: any) {
-      console.warn(`Error transforming entity type "${entity.type}" handle "${entity.handle || 'unknown'}":`, error?.message || error);
+      this.errorReporter.addEntityError(
+        entity.type,
+        entity.handle || 'unknown',
+        `Error transforming entity: ${error?.message || error}`,
+        {
+          type: 'TRANSFORM_ERROR',
+          error: String(error)
+        }
+      );
       return null;
     }
+  }
+
+  static getErrors() {
+    return this.errorReporter.getErrors();
+  }
+
+  static getWarnings() {
+    return this.errorReporter.getWarnings();
+  }
+
+  static clear() {
+    this.errorReporter.clear();
   }
 }
