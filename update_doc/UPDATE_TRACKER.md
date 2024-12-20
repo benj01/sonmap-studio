@@ -2,7 +2,29 @@
 
 ## Version History
 
-### v0.4.1 (Latest)
+### v0.4.2 (Latest)
+- Unified error handling system
+  - Connected all error handlers through ErrorReporter
+  - Added structured error types and codes
+  - Improved error propagation chain
+  - Added comprehensive logging
+  - Enhanced error recovery mechanisms
+
+- Improved coordinate system detection
+  - Implemented progressive detection strategy
+  - Added confidence level tracking
+  - Enhanced validation for edge cases
+  - Improved fallback mechanisms
+  - Added detailed detection logging
+
+- Enhanced component integration
+  - Improved GeoImportDialog error handling
+  - Added better progress reporting
+  - Enhanced state synchronization
+  - Added detailed logging
+  - Improved cleanup and disposal
+
+### v0.4.1
 - Enhanced coordinate system handling
   - Added upfront proj4 definitions registration
   - Improved coordinate system detection for simple DXF files with confidence levels
@@ -120,11 +142,12 @@ See URGENT_TODOS.md for detailed information about:
    - Debugging tools could be improved
    - Visualization tools could be enhanced
 
-4. Coordinate System Detection
-   - Simple DXF files may not detect coordinate system
-   - Detection thresholds may need adjustment
-   - Better handling needed for edge cases
-   - See URGENT_TODOS.md for details
+4. Coordinate System Detection and Import Flow
+   - Simple DXF files may not detect coordinate system due to strict confidence thresholds
+   - Multiple error handlers causing fragmented error reporting
+   - Preview generation and layer visibility issues
+   - Component communication and state management problems
+   - See URGENT_TODOS.md for detailed analysis and action items
 
 ## Dependencies & Compatibility
 

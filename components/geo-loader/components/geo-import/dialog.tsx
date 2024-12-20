@@ -61,10 +61,14 @@ export function GeoImportDialog({
     // Log phase transition if the phase has changed
     if (phase !== currentPhase) {
       setCurrentPhase(phase);
-      onInfo(`Step: ${PROGRESS_PHASES[phase].description}`);
+      onInfo(`[${phase}] Step: ${PROGRESS_PHASES[phase].description} (${Math.floor(progress * 100)}%)`);
     }
 
-    onInfo(`Progress: ${(progress * 100).toFixed(1)}%`);
+    // Only log progress at 10% intervals to reduce noise
+    const progressPercent = Math.floor(progress * 100);
+    if (progressPercent % 10 === 0) {
+      onInfo(`Progress: ${progressPercent}%`);
+    }
   }, [currentPhase, onInfo]);
 
   // Initialize shared processor
@@ -110,6 +114,17 @@ export function GeoImportDialog({
     getProcessor
   });
 
+  // Enhanced error handling for coordinate system changes
+  const handleCoordinateSystemChangeWrapper = useCallback(async (newSystem: string) => {
+    try {
+      onInfo(`Attempting to change coordinate system to ${newSystem}`);
+      await handleCoordinateSystemChange(newSystem);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onError(`Failed to change coordinate system: ${message}`);
+    }
+  }, [handleCoordinateSystemChange, onError, onInfo]);
+
   const { importFile } = useImportProcess({
     onWarning,
     onError,
@@ -137,34 +152,50 @@ export function GeoImportDialog({
 
   const handleApplyCoordinateSystem = async () => {
     if (!file) return;
-    const result = await applyCoordinateSystem(file, analysis, previewManager);
-    if (result) {
-      onInfo(`Applied coordinate system: ${pendingCoordinateSystem}`);
+    
+    onInfo('Applying coordinate system changes...');
+
+    try {
+      const result = await applyCoordinateSystem(file, analysis, previewManager);
+      if (result) {
+        onInfo(`Successfully applied coordinate system: ${pendingCoordinateSystem}`);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onError(`Failed to apply coordinate system: ${message}`);
     }
   };
 
   const handleImport = async () => {
     if (!file) return;
 
-    const result = await importFile(file, {
-      coordinateSystem,
-      selectedLayers: selectedLayers || [],
-      selectedTemplates: selectedTemplates || []
-    });
+    onInfo(`Starting import of ${file.name}...`);
 
-    if (result) {
-      try {
-        await onImportComplete(result);
-        if (!hasErrors) {
-          onClose();
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('Duplicate')) {
-          onError('A file with this name already exists. Please delete the existing file first.');
-        } else {
-          throw error;
+    try {
+      const result = await importFile(file, {
+        coordinateSystem,
+        selectedLayers: selectedLayers || [],
+        selectedTemplates: selectedTemplates || []
+      });
+
+      if (result) {
+        try {
+          await onImportComplete(result);
+          if (!hasErrors) {
+            onInfo('Import completed successfully');
+            onClose();
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message.includes('Duplicate')) {
+            onError('A file with this name already exists. Please delete the existing file first.');
+          } else {
+            throw error;
+          }
         }
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      onError(`Import failed: ${message}`);
     }
   };
 
@@ -208,7 +239,7 @@ export function GeoImportDialog({
           onLayerToggle={handleLayerToggle}
           onLayerVisibilityToggle={handleLayerVisibilityToggle}
           onTemplateSelect={handleTemplateSelect}
-          onCoordinateSystemChange={handleCoordinateSystemChange}
+          onCoordinateSystemChange={handleCoordinateSystemChangeWrapper}
           onApplyCoordinateSystem={handleApplyCoordinateSystem}
           onClearAndClose={handleClearAndClose}
         />

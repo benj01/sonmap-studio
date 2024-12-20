@@ -7,7 +7,11 @@ import { createDxfAnalyzer } from '../utils/dxf/analyzer';
 import { createDxfConverter, DxfConversionOptions } from '../utils/dxf/converters';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { ErrorReporter, ErrorReporterOptions, ErrorMessage, Severity, GeoLoaderError } from '../utils/errors';
-import { initializeCoordinateSystems } from '../utils/coordinate-systems';
+import { 
+  initializeCoordinateSystems,
+  areCoordinateSystemsInitialized,
+  createTransformer
+} from '../utils/coordinate-systems';
 import { EventEmitter } from 'events';
 
 /**
@@ -240,7 +244,20 @@ export class DxfProcessor extends BaseProcessor {
       this.rawDxfData = dxfData;
       return dxfData;
     } catch (error) {
-      throw new Error(`Failed to parse DXF file: ${error instanceof Error ? error.message : String(error)}`);
+      const message = error instanceof Error ? error.message : String(error);
+      this.errorReporter.addError(
+        `Failed to parse DXF file: ${message}`,
+        'DXF_PARSE_ERROR',
+        {
+          phase: 'parsing',
+          contentLength: content.length,
+          error: error instanceof Error ? error.stack : undefined
+        }
+      );
+      throw new GeoLoaderError(
+        `Failed to parse DXF file: ${message}`,
+        'DXF_PARSE_ERROR'
+      );
     }
   }
 
@@ -258,15 +275,35 @@ export class DxfProcessor extends BaseProcessor {
       }
 
       // Use provided coordinate system or detected system
-      const detectedSystem = dxfResult.coordinateSystem || COORDINATE_SYSTEMS.NONE;
-      console.log('DXF Analysis - Detected coordinate system:', detectedSystem);
+      let coordinateSystem = dxfResult.coordinateSystem || COORDINATE_SYSTEMS.NONE;
+      
+      // Log coordinate system detection result
+      this.errorReporter.addInfo(
+        `Detected coordinate system: ${coordinateSystem}`,
+        'COORDINATE_SYSTEM_DETECTION',
+        { 
+          system: coordinateSystem,
+          confidence: dxfResult.coordinateSystem ? 'high' : 'fallback',
+          source: dxfResult.coordinateSystem ? 'analysis' : 'default'
+        }
+      );
 
       // Initialize coordinate systems if needed
-      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
+      if (coordinateSystem !== COORDINATE_SYSTEMS.NONE) {
         try {
           initializeCoordinateSystems();
         } catch (error) {
-          console.warn('Failed to initialize coordinate systems:', error);
+          const message = error instanceof Error ? error.message : String(error);
+          this.errorReporter.addWarning(
+            `Failed to initialize coordinate systems: ${message}`,
+            'COORDINATE_SYSTEM_INITIALIZATION_WARNING',
+            {
+              system: coordinateSystem,
+              error: error instanceof Error ? error.stack : undefined
+            }
+          );
+          // Don't throw - we'll continue with NONE coordinate system
+          coordinateSystem = COORDINATE_SYSTEMS.NONE;
         }
       }
 
@@ -275,10 +312,19 @@ export class DxfProcessor extends BaseProcessor {
       const conversionOptions: DxfConversionOptions = {
         includeStyles: true,
         layerInfo: dxfResult.layers,
-        coordinateSystem: detectedSystem
+        coordinateSystem: coordinateSystem,
+        validateEntities: true,
+        skipInvalidEntities: true
       };
 
-      console.log('Preview conversion using coordinate system:', detectedSystem);
+      this.errorReporter.addInfo(
+        'Starting preview conversion',
+        'PREVIEW_CONVERSION_START',
+        {
+          coordinateSystem: coordinateSystem,
+          options: conversionOptions
+        }
+      );
 
       // Convert a sample of entities for preview
       const previewFeatures = converter.convertEntities(
@@ -291,7 +337,7 @@ export class DxfProcessor extends BaseProcessor {
 
       const result: AnalyzeResult = {
         layers: Object.keys(dxfResult.layers || {}),
-        coordinateSystem: detectedSystem,
+        coordinateSystem: coordinateSystem,
         bounds,
         preview: {
           type: 'FeatureCollection',
@@ -323,23 +369,157 @@ export class DxfProcessor extends BaseProcessor {
       // Use cached DXF data if available, otherwise parse the file
       const dxfData = this.rawDxfData || await this.parseDxf(await this.readFileContent(file));
 
-      // Determine coordinate system
-      let detectedSystem = this.options.coordinateSystem || 
-        (dxfData.header && this.analyzer.analyze(dxfData).coordinateSystem) || 
-        COORDINATE_SYSTEMS.NONE;
-
-      // Initialize coordinate systems if needed and not already initialized
-      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
+      // Determine coordinate system with progressive detection strategy
+      let coordinateSystem: CoordinateSystem = this.options.coordinateSystem || COORDINATE_SYSTEMS.NONE;
+      let detectionSource = 'options';
+      let confidence = this.options.coordinateSystem ? 'high' : 'none';
+      
+      // Try header-based detection if no system provided
+      if (coordinateSystem === COORDINATE_SYSTEMS.NONE && dxfData.header) {
         try {
-          initializeCoordinateSystems();
+          const analysisResult = this.analyzer.analyze(dxfData);
+          if (analysisResult.coordinateSystem) {
+            coordinateSystem = analysisResult.coordinateSystem;
+            detectionSource = 'header';
+            confidence = 'high';
+            
+            // Verify the detected system by testing coordinate transformation
+            if (areCoordinateSystemsInitialized() || initializeCoordinateSystems()) {
+              try {
+                const transformer = createTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
+                // Use a sample point based on the coordinate system
+                const testPoint = coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 
+                  ? { x: 2600000, y: 1200000 }  // Center point of LV95
+                  : coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03
+                  ? { x: 600000, y: 200000 }    // Center point of LV03
+                  : { x: 8.0, y: 47.0 };        // Default test point in Switzerland
+
+                transformer.transform(testPoint);
+                confidence = 'verified';
+              } catch (error) {
+                this.errorReporter.addWarning(
+                  'Coordinate system verification failed',
+                  'COORDINATE_SYSTEM_VERIFICATION_WARNING',
+                  {
+                    system: coordinateSystem,
+                    error: error instanceof Error ? error.stack : undefined
+                  }
+                );
+                confidence = 'unverified';
+              }
+            }
+          }
+          
+          this.errorReporter.addInfo(
+            `Coordinate system detection result: ${coordinateSystem}`,
+            'COORDINATE_SYSTEM_DETECTION',
+            {
+              system: coordinateSystem,
+              source: detectionSource,
+              confidence,
+              header: dxfData.header
+            }
+          );
         } catch (error) {
-          // Log error but don't throw - fall back to NONE coordinate system
-          console.warn('Failed to initialize coordinate systems:', error);
-          detectedSystem = COORDINATE_SYSTEMS.NONE;
+          const message = error instanceof Error ? error.message : String(error);
+          this.errorReporter.addWarning(
+            `Failed to detect coordinate system: ${message}`,
+            'COORDINATE_SYSTEM_DETECTION_WARNING',
+            {
+              error: error instanceof Error ? error.stack : undefined,
+              header: dxfData.header,
+              fallbackSystem: COORDINATE_SYSTEMS.NONE
+            }
+          );
+          coordinateSystem = COORDINATE_SYSTEMS.NONE;
+          detectionSource = 'fallback';
+          confidence = 'none';
         }
       }
 
-      console.log('Using coordinate system:', detectedSystem);
+      // If no system detected, try point-based detection
+      if (coordinateSystem === COORDINATE_SYSTEMS.NONE && dxfData.entities.length > 0) {
+        try {
+          // Sample some points for detection
+          const samplePoints = dxfData.entities
+            .slice(0, 100)
+            .flatMap(entity => {
+              if ('vertices' in entity) return entity.vertices || [];
+              if ('position' in entity) return [entity.position];
+              return [];
+            })
+            .filter(point => point && typeof point.x === 'number' && typeof point.y === 'number')
+            .map(point => ({ x: point.x, y: point.y }));
+
+          if (samplePoints.length > 0) {
+            // Check if points match Swiss coordinate ranges
+            const isInSwissRange = samplePoints.every(point => {
+              const isLV95Range = point.x >= 2000000 && point.x <= 3000000 && point.y >= 1000000 && point.y <= 2000000;
+              const isLV03Range = point.x >= 400000 && point.x <= 900000 && point.y >= 0 && point.y <= 400000;
+              return isLV95Range || isLV03Range;
+            });
+
+            if (isInSwissRange) {
+              // Determine if LV95 or LV03 based on coordinate ranges
+              const isLV95 = samplePoints[0].x > 1000000;
+              coordinateSystem = isLV95 ? COORDINATE_SYSTEMS.SWISS_LV95 : COORDINATE_SYSTEMS.SWISS_LV03;
+              detectionSource = 'point-based';
+              confidence = 'medium';
+
+              this.errorReporter.addInfo(
+                'Detected Swiss coordinate system from point ranges',
+                'COORDINATE_SYSTEM_POINT_DETECTION',
+                {
+                  system: coordinateSystem,
+                  sampleSize: samplePoints.length,
+                  ranges: {
+                    x: {
+                      min: Math.min(...samplePoints.map(p => p.x)),
+                      max: Math.max(...samplePoints.map(p => p.x))
+                    },
+                    y: {
+                      min: Math.min(...samplePoints.map(p => p.y)),
+                      max: Math.max(...samplePoints.map(p => p.y))
+                    }
+                  }
+                }
+              );
+            }
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.errorReporter.addWarning(
+            `Point-based detection failed: ${message}`,
+            'POINT_DETECTION_WARNING',
+            {
+              error: error instanceof Error ? error.stack : undefined
+            }
+          );
+        }
+      }
+
+      // Initialize coordinate systems if needed
+      if (coordinateSystem !== COORDINATE_SYSTEMS.NONE) {
+        try {
+          initializeCoordinateSystems();
+          this.errorReporter.addInfo(
+            'Initialized coordinate systems',
+            'COORDINATE_SYSTEM_INITIALIZATION',
+            { system: coordinateSystem }
+          );
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          this.errorReporter.addWarning(
+            `Failed to initialize coordinate systems: ${message}`,
+            'COORDINATE_SYSTEM_INITIALIZATION_WARNING',
+            {
+              system: coordinateSystem,
+              error: error instanceof Error ? error.stack : undefined
+            }
+          );
+          coordinateSystem = COORDINATE_SYSTEMS.NONE;
+        }
+      }
 
       // Create a converter
       const converter = createDxfConverter(this.errorReporter);
@@ -348,10 +528,18 @@ export class DxfProcessor extends BaseProcessor {
         layerInfo: dxfData.tables?.layer?.layers,
         validateEntities: true,
         skipInvalidEntities: true,
-        coordinateSystem: detectedSystem
+        coordinateSystem: coordinateSystem
       };
 
-      console.log('Converting entities with options:', conversionOptions);
+      this.errorReporter.addInfo(
+        'Starting entity conversion',
+        'ENTITY_CONVERSION_START',
+        {
+          totalEntities: dxfData.entities.length,
+          coordinateSystem: coordinateSystem,
+          options: conversionOptions
+        }
+      );
 
       // Convert entities in chunks to maintain responsiveness
       const CHUNK_SIZE = 500;
@@ -383,7 +571,7 @@ export class DxfProcessor extends BaseProcessor {
         },
         bounds,
         layers,
-        coordinateSystem: detectedSystem,
+        coordinateSystem: coordinateSystem,
         statistics: this.stats,
         dxfData
       };
