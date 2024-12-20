@@ -2,7 +2,7 @@ import proj4 from 'proj4';
 import { CoordinateTransformer } from './coordinate-utils';
 import { COORDINATE_SYSTEMS, CoordinateSystem, isSwissSystem } from '../types/coordinates';
 import { 
-  GeoLoaderError, 
+  CoordinateSystemError, 
   CoordinateTransformationError, 
   InvalidCoordinateError,
   ErrorReporter,
@@ -56,9 +56,9 @@ const TEST_POINTS: Record<CoordinateSystem, TestPoint> = {
  * @throws {CoordinateSystemError} If initialization fails
  * @returns true if initialization is successful
  */
-export function initializeCoordinateSystems(): void {
+export function initializeCoordinateSystems(): boolean {
   // Skip if already initialized
-  if (isInitialized) return;
+  if (isInitialized) return true;
   
   try {
     errorReporter.addInfo(
@@ -111,9 +111,8 @@ export function initializeCoordinateSystems(): void {
     
     const unregisteredSystems = systems.filter(system => !proj4.defs(system));
     if (unregisteredSystems.length > 0) {
-      throw new GeoLoaderError(
+      throw new CoordinateSystemError(
         `Failed to verify coordinate systems: ${unregisteredSystems.join(', ')}`,
-        'COORDINATE_SYSTEM_REGISTRATION_ERROR',
         { unregisteredSystems }
       );
     }
@@ -139,15 +138,13 @@ export function initializeCoordinateSystems(): void {
             latitude: Math.abs(lat - expectedLat)
           }
         };
-        const error = new CoordinateTransformationError(
+        throw new CoordinateTransformationError(
           `Invalid test transformation result for ${system}: difference exceeds tolerance of ${testData.tolerance} degrees`,
           { x: testData.point[0], y: testData.point[1] },
           system as CoordinateSystem,
           COORDINATE_SYSTEMS.WGS84,
           details
         );
-        errorReporter.addError(error.message, 'COORDINATE_SYSTEM_VERIFICATION_ERROR', details);
-        throw error;
       }
     }
 
@@ -158,20 +155,20 @@ export function initializeCoordinateSystems(): void {
     );
 
     isInitialized = true;
+    return true;
   } catch (error) {
     errorReporter.addError(
       'Failed to initialize coordinate systems',
       'COORDINATE_SYSTEM_INIT_FAILURE',
       { error: error instanceof Error ? error.message : String(error) }
     );
-    if (error instanceof GeoLoaderError) {
+    if (error instanceof CoordinateSystemError || error instanceof CoordinateTransformationError) {
       throw error;
     }
-      throw new GeoLoaderError(
-        `Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`,
-        'COORDINATE_SYSTEM_INITIALIZATION_ERROR',
-        { originalError: error instanceof Error ? error.message : String(error) }
-      );
+    throw new CoordinateSystemError(
+      `Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`,
+      { originalError: error instanceof Error ? error.message : String(error) }
+    );
   }
 }
 
@@ -194,8 +191,8 @@ export interface CoordinatePoint {
  */
 export function createTransformer(fromSystem: string, toSystem: string): CoordinateTransformer {
   // Initialize systems if needed
-  if (!isInitialized) {
-    initializeCoordinateSystems();
+  if (!isInitialized && !initializeCoordinateSystems()) {
+    throw new CoordinateSystemError('Failed to initialize coordinate systems');
   }
 
   // Handle special case for 'none' coordinate system
@@ -276,7 +273,7 @@ export function toMapboxCoordinates(
 
     return [transformed.x, transformed.y];
   } catch (error) {
-    if (error instanceof GeoLoaderError) {
+    if (error instanceof CoordinateSystemError || error instanceof CoordinateTransformationError) {
       throw error;
     }
     const details = {
@@ -294,4 +291,8 @@ export function toMapboxCoordinates(
   }
 }
 
-export { COORDINATE_SYSTEMS };
+export { 
+  COORDINATE_SYSTEMS,
+  CoordinateSystemError,
+  CoordinateTransformationError
+};

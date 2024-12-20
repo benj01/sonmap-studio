@@ -91,6 +91,19 @@ export class InvalidCoordinateError extends GeoLoaderError {
   }
 }
 
+/**
+ * Error thrown when coordinate system operations fail
+ */
+export class CoordinateSystemError extends GeoLoaderError {
+  constructor(
+    message: string,
+    details?: Record<string, unknown>
+  ) {
+    super(message, 'COORDINATE_SYSTEM_ERROR', details);
+    this.name = 'CoordinateSystemError';
+  }
+}
+
 export class GeometryError extends GeoLoaderError {
   constructor(
     message: string,

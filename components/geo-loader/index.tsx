@@ -1,4 +1,8 @@
-import { initializeCoordinateSystems, CoordinateSystemError } from './utils/coordinate-systems';
+import { 
+  initializeCoordinateSystems, 
+  CoordinateSystemError,
+  CoordinateTransformationError 
+} from './utils/coordinate-systems';
 import { 
   COORDINATE_SYSTEMS,
   CoordinateSystem,
@@ -15,12 +19,10 @@ import {
 
 // Initialize coordinate systems immediately
 try {
-  if (!initializeCoordinateSystems()) {
-    throw new CoordinateSystemError('Failed to initialize coordinate systems');
-  }
+  initializeCoordinateSystems();
 } catch (error) {
   // Re-throw with proper error type
-  if (error instanceof CoordinateSystemError) {
+  if (error instanceof CoordinateSystemError || error instanceof CoordinateTransformationError) {
     throw error;
   }
   throw new CoordinateSystemError(
@@ -58,5 +60,5 @@ export {
 export {
   createTransformer,
   CoordinateSystemError,
-  TransformationError
+  CoordinateTransformationError as TransformationError
 } from './utils/coordinate-systems';

@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { CoordinateSystem, COORDINATE_SYSTEMS } from '../../../types/coordinates';
-import { GeoLoaderError, CoordinateTransformationError } from '../../../utils/errors';
+import { CoordinateSystemError, CoordinateTransformationError } from '../../../utils/errors';
 import { AnalyzeResult, ProcessorOptions } from '../../../processors';
 import { PreviewManager } from '../../../preview/preview-manager';
 import { initializeCoordinateSystems } from '../../../utils/coordinate-systems';
@@ -59,12 +59,15 @@ export function useCoordinateSystem({
     try {
       // Ensure coordinate systems are initialized
       try {
-        initializeCoordinateSystems();
+        if (!initializeCoordinateSystems()) {
+          throw new CoordinateSystemError('Failed to initialize coordinate systems');
+        }
       } catch (error) {
-        throw new GeoLoaderError(
-          'Failed to initialize coordinate systems',
-          'COORDINATE_SYSTEM_INIT_ERROR',
-          { originalError: error instanceof Error ? error.message : String(error) }
+        if (error instanceof CoordinateSystemError) {
+          throw error;
+        }
+        throw new CoordinateSystemError(
+          `Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`
         );
       }
 
@@ -73,9 +76,8 @@ export function useCoordinateSystem({
       });
 
       if (!processor) {
-        throw new GeoLoaderError(
-          'Failed to create processor',
-          'PROCESSOR_CREATION_ERROR'
+        throw new CoordinateSystemError(
+          'Failed to create processor'
         );
       }
 
@@ -106,7 +108,7 @@ export function useCoordinateSystem({
 
       return result;
     } catch (error: unknown) {
-      if (error instanceof GeoLoaderError) {
+      if (error instanceof CoordinateSystemError) {
         onError(`Coordinate system error: ${error.message}`);
       } else if (error instanceof CoordinateTransformationError) {
         onError(`Transformation error: ${error.message}`);
