@@ -1,6 +1,7 @@
 import { Feature, FeatureCollection, Geometry, Position } from 'geojson';
 import { CoordinateTransformer } from '../coordinate-utils';
 import { isValidGeometry, isValidCoordinate } from '../validation/geometry';
+import { ErrorReporter, CoordinateTransformationError, GeometryError } from '../errors';
 
 const ZOOM_LEVEL_THRESHOLDS = {
   HIGH_DETAIL: 14,
@@ -8,15 +9,29 @@ const ZOOM_LEVEL_THRESHOLDS = {
   LOW_DETAIL: 6
 };
 
-export const transformCoordinates = (coordinates: Position, transformer: CoordinateTransformer): Position | null => {
+export const transformCoordinates = (
+  coordinates: Position,
+  transformer: CoordinateTransformer,
+  errorReporter: ErrorReporter
+): Position | null => {
   try {
     if (!isValidCoordinate(coordinates)) {
+      errorReporter.addError(
+        'Invalid coordinate values',
+        'INVALID_COORDINATE',
+        { coordinates }
+      );
       return null;
     }
 
     const transformed = transformer.transform({ x: coordinates[0], y: coordinates[1] });
     if (!transformed || typeof transformed.x !== 'number' || typeof transformed.y !== 'number' ||
         !isFinite(transformed.x) || !isFinite(transformed.y)) {
+      errorReporter.addError(
+        'Invalid transformed coordinate values',
+        'INVALID_TRANSFORMED_COORDINATE',
+        { original: coordinates, transformed }
+      );
       return null;
     }
 
@@ -24,25 +39,42 @@ export const transformCoordinates = (coordinates: Position, transformer: Coordin
       ? [transformed.x, transformed.y, coordinates[2]]
       : [transformed.x, transformed.y];
   } catch (error) {
-    console.error('Error transforming coordinates:', error);
+    if (error instanceof CoordinateTransformationError) {
+      errorReporter.addError(error.message, error.code, error.details);
+    } else {
+      errorReporter.addError(
+        'Failed to transform coordinates',
+        'COORDINATE_TRANSFORMATION_FAILED',
+        { error: error instanceof Error ? error.message : String(error), coordinates }
+      );
+    }
     return null;
   }
 };
 
-export const transformGeometry = (geometry: Geometry, transformer: CoordinateTransformer): Geometry | null => {
+export const transformGeometry = (
+  geometry: Geometry,
+  transformer: CoordinateTransformer,
+  errorReporter: ErrorReporter
+): Geometry | null => {
   if (!isValidGeometry(geometry)) {
+    errorReporter.addError(
+      'Invalid geometry structure',
+      'INVALID_GEOMETRY',
+      { geometryType: (geometry as Geometry).type || 'unknown' }
+    );
     return null;
   }
 
   try {
     switch (geometry.type) {
       case 'Point': {
-        const coords = transformCoordinates(geometry.coordinates, transformer);
+        const coords = transformCoordinates(geometry.coordinates, transformer, errorReporter);
         return coords ? { type: 'Point', coordinates: coords } : null;
       }
       case 'LineString': {
         const coords = geometry.coordinates
-          .map(coord => transformCoordinates(coord, transformer))
+          .map(coord => transformCoordinates(coord, transformer, errorReporter))
           .filter((coord): coord is Position => coord !== null);
         return coords.length >= 2 ? { type: 'LineString', coordinates: coords } : null;
       }
@@ -50,7 +82,7 @@ export const transformGeometry = (geometry: Geometry, transformer: CoordinateTra
         const rings = geometry.coordinates
           .map(ring => {
             const coords = ring
-              .map(coord => transformCoordinates(coord, transformer))
+              .map(coord => transformCoordinates(coord, transformer, errorReporter))
               .filter((coord): coord is Position => coord !== null);
             return coords.length >= 4 ? coords : null;
           })
@@ -59,7 +91,7 @@ export const transformGeometry = (geometry: Geometry, transformer: CoordinateTra
       }
       case 'MultiPoint': {
         const coords = geometry.coordinates
-          .map(coord => transformCoordinates(coord, transformer))
+          .map(coord => transformCoordinates(coord, transformer, errorReporter))
           .filter((coord): coord is Position => coord !== null);
         return coords.length > 0 ? { type: 'MultiPoint', coordinates: coords } : null;
       }
@@ -67,7 +99,7 @@ export const transformGeometry = (geometry: Geometry, transformer: CoordinateTra
         const lines = geometry.coordinates
           .map(line => {
             const coords = line
-              .map(coord => transformCoordinates(coord, transformer))
+              .map(coord => transformCoordinates(coord, transformer, errorReporter))
               .filter((coord): coord is Position => coord !== null);
             return coords.length >= 2 ? coords : null;
           })
@@ -80,7 +112,7 @@ export const transformGeometry = (geometry: Geometry, transformer: CoordinateTra
             const rings = poly
               .map(ring => {
                 const coords = ring
-                  .map(coord => transformCoordinates(coord, transformer))
+                  .map(coord => transformCoordinates(coord, transformer, errorReporter))
                   .filter((coord): coord is Position => coord !== null);
                 return coords.length >= 4 ? coords : null;
               })
@@ -94,7 +126,18 @@ export const transformGeometry = (geometry: Geometry, transformer: CoordinateTra
         return null;
     }
   } catch (error) {
-    console.error('Error transforming geometry:', error);
+    if (error instanceof GeometryError) {
+      errorReporter.addError(error.message, error.code, error.details);
+    } else {
+      errorReporter.addError(
+        'Failed to transform geometry',
+        'GEOMETRY_TRANSFORMATION_FAILED',
+        { 
+          error: error instanceof Error ? error.message : String(error),
+          geometryType: geometry.type
+        }
+      );
+    }
     return null;
   }
 };

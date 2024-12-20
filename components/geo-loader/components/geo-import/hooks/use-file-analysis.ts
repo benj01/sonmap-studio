@@ -1,15 +1,17 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { AnalyzeResult, ProcessorOptions, createProcessor } from '../../../processors';
+import { AnalyzeResult, ProcessorOptions } from '../../../processors';
 import { CoordinateSystem } from '../../../types/coordinates';
 import { PreviewManager, createPreviewManager } from '../../../preview/preview-manager';
-import { CoordinateSystemError, TransformationError } from '../../../utils/coordinate-systems';
+import { GeoLoaderError } from '../../../utils/errors';
 import { Warning } from '../../../types/map';
+import { initializeCoordinateSystems } from '../../../utils/coordinate-systems';
 
 interface FileAnalysisProps {
   file: File | null;
   onWarning: (message: string) => void;
   onError: (message: string) => void;
   onProgress: (progress: number) => void;
+  getProcessor: (file: File, options?: Partial<ProcessorOptions>) => Promise<any>;
 }
 
 interface FileAnalysisState {
@@ -43,29 +45,39 @@ export function useFileAnalysis({
   file,
   onWarning,
   onError,
-  onProgress
+  onProgress,
+  getProcessor
 }: FileAnalysisProps) {
   const [state, setState] = useState<FileAnalysisState>(initialState);
-
-  // Track current file to re-analyze only when changed
   const currentFileRef = useRef<File | null>(null);
 
-  const resetState = useCallback(() => {
-    setState(initialState);
-  }, []);
-
   const analyzeFile = useCallback(async (file: File) => {
+    // Prevent concurrent analysis
+    if (state.loading) {
+      return null;
+    }
+
     setState(prev => ({ ...prev, loading: true }));
 
     try {
-      const processor = await createProcessor(file, {
-        onWarning,
-        onError,
-        onProgress,
-      } as ProcessorOptions);
+      // Ensure coordinate systems are initialized
+      try {
+        initializeCoordinateSystems();
+      } catch (error) {
+        throw new GeoLoaderError(
+          'Failed to initialize coordinate systems',
+          'COORDINATE_SYSTEM_INIT_ERROR',
+          { originalError: error instanceof Error ? error.message : String(error) }
+        );
+      }
+
+      const processor = await getProcessor(file);
 
       if (!processor) {
-        throw new Error(`No processor available for file: ${file.name}`);
+        throw new GeoLoaderError(
+          `No processor available for file: ${file.name}`,
+          'PROCESSOR_NOT_FOUND'
+        );
       }
 
       const result = await processor.analyze(file);
@@ -73,17 +85,17 @@ export function useFileAnalysis({
       // Initialize layers
       const layers = result.layers || [];
 
-      // Initialize preview manager
+      // Initialize preview manager with warnings from processor
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
         visibleLayers: layers,
         analysis: {
-          ...result,
-          warnings: convertWarningsToAnalysis(result.warnings)
+          warnings: convertWarningsToAnalysis(processor.getWarnings())
         },
         coordinateSystem: result.coordinateSystem
       });
 
+      // Set preview features if available
       if (result.preview) {
         previewManager.setFeatures(result.preview);
       }
@@ -99,18 +111,17 @@ export function useFileAnalysis({
       });
 
       return result;
-    } catch (error) {
-      if (error instanceof CoordinateSystemError) {
-        onError(`Coordinate system error: ${error.message}`);
-      } else if (error instanceof TransformationError) {
-        onError(`Transformation error: ${error.message}`);
+    } catch (error: unknown) {
+      if (error instanceof GeoLoaderError) {
+        onError(`Analysis error: ${error.message}`);
       } else {
-        onError(`Analysis error: ${error instanceof Error ? error.message : String(error)}`);
+        onError(`Failed to analyze file: ${error instanceof Error ? error.message : String(error)}`);
       }
-      setState(prev => ({ ...prev, loading: false }));
+      
+      setState(initialState);
       return null;
     }
-  }, [onWarning, onError, onProgress]);
+  }, [state.loading, getProcessor, onError]);
 
   // Handle layer selection
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
@@ -123,12 +134,21 @@ export function useFileAnalysis({
   }, []);
 
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
-    setState(prev => ({
-      ...prev,
-      visibleLayers: visible
+    setState(prev => {
+      const newVisibleLayers = visible
         ? [...prev.visibleLayers, layer]
-        : prev.visibleLayers.filter(l => l !== layer)
-    }));
+        : prev.visibleLayers.filter(l => l !== layer);
+      
+      // Update preview manager visibility using setOptions
+      if (prev.previewManager) {
+        prev.previewManager.setOptions({ visibleLayers: newVisibleLayers });
+      }
+
+      return {
+        ...prev,
+        visibleLayers: newVisibleLayers
+      };
+    });
   }, []);
 
   const handleTemplateSelect = useCallback((template: string, enabled: boolean) => {
@@ -142,26 +162,30 @@ export function useFileAnalysis({
 
   // Effect to handle file changes
   useEffect(() => {
-    if (file) {
-      if (
-        currentFileRef.current &&
-        currentFileRef.current.name === file.name &&
-        currentFileRef.current.size === file.size &&
-        currentFileRef.current.lastModified === file.lastModified &&
-        state.analysis
-      ) {
-        // Same file, already analyzed
-        return;
-      }
-
-      currentFileRef.current = file;
-      resetState();
-      analyzeFile(file);
-    } else {
+    if (!file) {
       currentFileRef.current = null;
-      resetState();
+      setState(initialState);
+      return;
     }
-  }, [file, state.analysis, resetState, analyzeFile]);
+
+    // Check if this is the same file we already analyzed
+    const isSameFile = currentFileRef.current && 
+      currentFileRef.current.name === file.name &&
+      currentFileRef.current.size === file.size &&
+      currentFileRef.current.lastModified === file.lastModified;
+
+    if (isSameFile) {
+      return;
+    }
+
+    // New file to analyze
+    currentFileRef.current = file;
+    setState(initialState);
+    analyzeFile(file).catch(error => {
+      console.error('File analysis error:', error);
+      onError(`Failed to analyze file: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }, [file, analyzeFile, onError]);
 
   return {
     ...state,

@@ -1,10 +1,53 @@
-import { GeoFeature, Geometry } from '../../../../types/geo';
+import { GeoFeature } from '../../../../types/geo';
+import { Geometry } from 'geojson';
 import { createFeature, createLineStringGeometry, createPointGeometry, createPolygonGeometry } from '../geometry-utils';
 import { DxfEntity, DxfEntityBase, Vector3, DxfSplineEntity } from './types';
 import { DxfValidator } from './validator';
+import { ErrorReporter, GeometryError } from '../errors';
+
+// Type for entity info used in error handling
+interface EntityErrorInfo {
+  type: string;
+  handle: string;
+}
+
+// Helper function for handling errors
+function handleError(
+  error: unknown,
+  errorReporter: ErrorReporter,
+  entityInfo: EntityErrorInfo,
+  context: string
+): void {
+  if (error instanceof GeometryError) {
+    errorReporter.addError(error.message, error.code, error.details);
+  } else {
+    errorReporter.addError(
+      `Failed to ${context}`,
+      `${context.toUpperCase()}_ERROR`,
+      {
+        entityType: entityInfo.type,
+        handle: entityInfo.handle,
+        error: error instanceof Error ? error.message : String(error)
+      }
+    );
+  }
+}
 
 export class DxfConverter {
-  static entityToGeometry(entity: DxfEntity): Geometry | null {
+  private validator: DxfValidator;
+
+  constructor(private errorReporter: ErrorReporter) {
+    this.validator = new DxfValidator();
+  }
+
+  // Rest of the class implementation remains the same until the catch blocks...
+  entityToGeometry(entity: DxfEntity): Geometry | null {
+    // Store entity info for error handling
+    const entityInfo: EntityErrorInfo = {
+      type: entity.type,
+      handle: entity.handle || 'unknown'
+    };
+
     try {
       switch (entity.type) {
         case '3DFACE': {
@@ -57,7 +100,17 @@ export class DxfConverter {
             const x = entity.center.x + entity.radius * Math.cos(angle);
             const y = entity.center.y + entity.radius * Math.sin(angle);
             if (!isFinite(x) || !isFinite(y)) {
-              console.warn('Invalid circle point calculation.');
+              this.errorReporter.addWarning(
+                'Invalid circle point calculation',
+                'INVALID_CIRCLE_POINT',
+                {
+                  entityType: entityInfo.type,
+                  handle: entityInfo.handle,
+                  center: entity.center,
+                  radius: entity.radius,
+                  angle: angle
+                }
+              );
               return null;
             }
             circleCoords.push([x, y]);
@@ -82,7 +135,17 @@ export class DxfConverter {
             const x = entity.center.x + entity.radius * Math.cos(angle);
             const y = entity.center.y + entity.radius * Math.sin(angle);
             if (!isFinite(x) || !isFinite(y)) {
-              console.warn('Invalid arc point calculation.');
+              this.errorReporter.addWarning(
+                'Invalid arc point calculation',
+                'INVALID_ARC_POINT',
+                {
+                  entityType: entityInfo.type,
+                  handle: entityInfo.handle,
+                  center: entity.center,
+                  radius: entity.radius,
+                  angle: angle
+                }
+              );
               return null;
             }
             arcCoords.push([x, y]);
@@ -99,7 +162,16 @@ export class DxfConverter {
           );
 
           if (!isFinite(majorLength) || majorLength === 0) {
-            console.warn('Invalid major axis length for ELLIPSE.');
+            this.errorReporter.addWarning(
+              'Invalid major axis length for ELLIPSE',
+              'INVALID_ELLIPSE_AXIS',
+              {
+                entityType: entityInfo.type,
+                handle: entityInfo.handle,
+                majorAxis: entity.majorAxis,
+                majorLength
+              }
+            );
             return null;
           }
 
@@ -125,7 +197,18 @@ export class DxfConverter {
             const finalY = entity.center.y + rotatedY;
 
             if (!isFinite(finalX) || !isFinite(finalY)) {
-              console.warn('Invalid ellipse point calculation.');
+              this.errorReporter.addWarning(
+                'Invalid ellipse point calculation',
+                'INVALID_ELLIPSE_POINT',
+                {
+                  entityType: entityInfo.type,
+                  handle: entityInfo.handle,
+                  center: entity.center,
+                  majorAxis: entity.majorAxis,
+                  angle: angle,
+                  point: { x: finalX, y: finalY }
+                }
+              );
               return null;
             }
             ellipseCoords.push([finalX, finalY]);
@@ -158,20 +241,41 @@ export class DxfConverter {
         }
 
         default:
-          console.warn(`Unsupported entity type: ${entity.type}`);
+          this.errorReporter.addWarning(
+            `Unsupported entity type: ${entityInfo.type}`,
+            'UNSUPPORTED_ENTITY_TYPE',
+            {
+              entityType: entityInfo.type,
+              handle: entityInfo.handle
+            }
+          );
           return null;
       }
-    } catch (error: any) {
-      console.error('Error converting entity to geometry:', error?.message || error);
+    } catch (error: unknown) {
+      handleError(error, this.errorReporter, entityInfo, 'convert entity to geometry');
       return null;
     }
   }
 
-  static entityToGeoFeature(entity: DxfEntity, layerInfo?: Record<string, any>): GeoFeature | null {
+  entityToGeoFeature(entity: DxfEntity, layerInfo?: Record<string, any>): GeoFeature | null {
+    // Store entity info for error handling
+    const entityInfo: EntityErrorInfo = {
+      type: entity.type,
+      handle: entity.handle || 'unknown'
+    };
+
     try {
-      const validationError = DxfValidator.getEntityValidationError(entity);
+      const validationError = this.validator.validateEntity(entity);
       if (validationError) {
-        console.warn(`Validation error for entity ${entity.handle || 'unknown'}: ${validationError}`);
+        this.errorReporter.addWarning(
+          `Validation error for entity ${entityInfo.handle}: ${validationError}`,
+          'ENTITY_VALIDATION_ERROR',
+          {
+            entityType: entityInfo.type,
+            handle: entityInfo.handle,
+            validationError
+          }
+        );
         return null;
       }
 
@@ -208,16 +312,13 @@ export class DxfConverter {
       }
 
       return createFeature(geometry, properties);
-    } catch (error: any) {
-      console.warn(
-        `Error converting entity to feature (type: "${entity.type}", handle: "${entity.handle || 'unknown'}"):`,
-        error?.message || error
-      );
+    } catch (error: unknown) {
+      handleError(error, this.errorReporter, entityInfo, 'convert entity to feature');
       return null;
     }
   }
 
-  private static extractEntityProperties(
+  private extractEntityProperties(
     entity: DxfEntityBase,
     layerInfo?: Record<string, any>
   ): Record<string, any> {

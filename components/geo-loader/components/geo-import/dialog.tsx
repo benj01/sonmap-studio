@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Dialog, DialogContent } from 'components/ui/dialog';
 import { GeoImportDialogProps } from './types';
 import { ImportHeader } from './components/import-header';
@@ -8,6 +8,7 @@ import { useImportLogs } from './hooks/use-import-logs';
 import { useFileAnalysis } from './hooks/use-file-analysis';
 import { useCoordinateSystem } from './hooks/use-coordinate-system';
 import { useImportProcess } from './hooks/use-import-process';
+import { useProcessor } from './hooks/use-processor';
 
 // Progress phases with descriptions
 const PROGRESS_PHASES = {
@@ -46,7 +47,7 @@ export function GeoImportDialog({
     clearLogs
   } = useImportLogs();
 
-  const onProgress = (progress: number) => {
+  const onProgress = useCallback((progress: number) => {
     // Determine current phase based on progress
     let phase: keyof typeof PROGRESS_PHASES;
     if (progress <= PROGRESS_PHASES.PARSE.END) {
@@ -64,7 +65,14 @@ export function GeoImportDialog({
     }
 
     onInfo(`Progress: ${(progress * 100).toFixed(1)}%`);
-  };
+  }, [currentPhase, onInfo]);
+
+  // Initialize shared processor
+  const { getProcessor, resetProcessor } = useProcessor({
+    onWarning,
+    onError,
+    onProgress
+  });
 
   const {
     loading: analysisLoading,
@@ -76,12 +84,14 @@ export function GeoImportDialog({
     previewManager,
     handleLayerToggle,
     handleLayerVisibilityToggle,
-    handleTemplateSelect
+    handleTemplateSelect,
+    analyzeFile
   } = useFileAnalysis({
     file,
     onWarning,
     onError,
-    onProgress
+    onProgress,
+    getProcessor
   });
 
   const {
@@ -91,20 +101,34 @@ export function GeoImportDialog({
     hasChanges: coordinateSystemChanged,
     handleCoordinateSystemChange,
     applyCoordinateSystem,
-    initializeCoordinateSystem
+    initializeCoordinateSystem,
+    resetCoordinateSystem
   } = useCoordinateSystem({
     onWarning,
     onError,
-    onProgress
+    onProgress,
+    getProcessor
   });
 
   const { importFile } = useImportProcess({
     onWarning,
     onError,
-    onProgress
+    onProgress,
+    getProcessor
   });
 
+  // Reset everything when dialog closes
+  useEffect(() => {
+    if (!isOpen) {
+      resetProcessor();
+      resetCoordinateSystem();
+      clearLogs();
+      setCurrentPhase(null);
+    }
+  }, [isOpen, resetProcessor, resetCoordinateSystem, clearLogs]);
+
   const handleApplyCoordinateSystem = async () => {
+    if (!file) return;
     const result = await applyCoordinateSystem(file, analysis, previewManager);
     if (result) {
       onInfo(`Applied coordinate system: ${pendingCoordinateSystem}`);
@@ -116,8 +140,8 @@ export function GeoImportDialog({
 
     const result = await importFile(file, {
       coordinateSystem,
-      selectedLayers,
-      selectedTemplates
+      selectedLayers: selectedLayers || [],
+      selectedTemplates: selectedTemplates || []
     });
 
     if (result) {
@@ -153,7 +177,7 @@ export function GeoImportDialog({
   const loading = analysisLoading || coordinateSystemLoading;
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClearAndClose()}>
       <DialogContent className="max-w-6xl">
         <ImportHeader
           fileName={file.name}

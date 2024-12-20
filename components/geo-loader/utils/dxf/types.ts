@@ -14,6 +14,16 @@ export interface Vector3 {
   z?: number;
 }
 
+export interface DxfHeader {
+  $ACADVER?: string;
+  $INSBASE?: Vector3;
+  $EXTMIN?: Vector3;
+  $EXTMAX?: Vector3;
+  $INSUNITS?: number;
+  $MEASUREMENT?: number;
+  [key: string]: any;
+}
+
 export interface RawLayerData {
   name: string;
   color?: number;
@@ -188,6 +198,7 @@ export type DxfEntity =
   | DxfRayEntity;
 
 export interface DxfData {
+  header?: DxfHeader;
   entities: DxfEntity[];
   blocks?: Record<string, DxfBlock>;
   tables?: {

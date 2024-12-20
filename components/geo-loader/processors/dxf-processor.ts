@@ -1,429 +1,367 @@
-import { BaseProcessor, ProcessorOptions, AnalyzeResult, ProcessorResult } from './base-processor';
-import { 
-  DxfData, 
-  DxfEntity, 
-  Vector3, 
-  isDxfPointEntity, 
-  isDxfLineEntity, 
-  isDxfPolylineEntity, 
-  isDxfCircleEntity 
-} from '../utils/dxf/types';
+import { FeatureCollection } from 'geojson';
+import { BaseProcessor, ProcessorOptions, AnalyzeResult, ProcessorResult, ProcessorRegistry } from './base-processor';
+import { GeoFeature } from '../../../types/geo';
+import { DxfData } from '../utils/dxf/types';
 import { createDxfParser } from '../utils/dxf/core-parser';
-import createDxfAnalyzer from '../utils/dxf/analyzer';
-import { DxfErrorReporter } from '../utils/dxf/error-collector';
-import { DxfConverter } from '../utils/dxf/converter';
-import { CoordinateTransformer, suggestCoordinateSystem } from '../utils/coordinate-utils';
+import { createDxfAnalyzer } from '../utils/dxf/analyzer';
+import { createDxfConverter, DxfConversionOptions } from '../utils/dxf/converters';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
-import { Feature, Geometry, GeometryCollection } from 'geojson';
-import { entityToGeoFeature } from '../utils/dxf/geo-converter';
-import { 
-  ParseError, 
-  ValidationError, 
-  CoordinateTransformationError 
-} from '../utils/errors';
-
-const PREVIEW_CHUNK_SIZE = 1000;
-const SAMPLE_RATE = 5;
-const PROCESS_CHUNK_SIZE = 500;
-
-// Progress phases
-const PROGRESS = {
-  PARSE: { START: 0, END: 0.3 },     // 0-30%
-  ANALYZE: { START: 0.3, END: 0.4 },  // 30-40%
-  CONVERT: { START: 0.4, END: 1.0 }   // 40-100%
-} as const;
+import { ErrorReporter, ErrorReporterOptions, ErrorMessage, Severity, GeoLoaderError } from '../utils/errors';
+import { initializeCoordinateSystems } from '../utils/coordinate-systems';
+import { EventEmitter } from 'events';
 
 /**
- * Type guard for geometries with coordinates
+ * Progress phases for DXF processing
  */
-function hasCoordinates(geometry: Geometry): geometry is Exclude<Geometry, GeometryCollection> {
-  return 'coordinates' in geometry;
+const PROGRESS = {
+  PARSE: { start: 0, end: 0.3 },
+  ANALYZE: { start: 0.3, end: 0.5 },
+  CONVERT: { start: 0.5, end: 1.0 }
+};
+
+/**
+ * Result of DXF analysis
+ */
+interface DxfAnalysisResult {
+  layers: Record<string, any>;
+  coordinateSystem?: CoordinateSystem;
+  warnings: string[];
 }
 
 /**
- * Processor for DXF (Drawing Exchange Format) files
+ * Extended processor options
+ */
+interface DxfProcessorOptions extends ProcessorOptions {
+  onError?: (message: string) => void;
+  onWarning?: (message: string) => void;
+}
+
+/**
+ * Event types for DXF error reporter
+ */
+type DxfErrorEventType = 'error' | 'warning';
+type DxfErrorEventListener = (message: string, code?: string) => void;
+
+interface DxfErrorEvents {
+  error: [message: string, code: string];
+  warning: [message: string];
+}
+
+/**
+ * Custom error reporter for DXF processing
+ */
+class DxfErrorReporter extends ErrorReporter {
+  private emitter = new EventEmitter();
+  private listeners = new Map<DxfErrorEventType, Set<DxfErrorEventListener>>();
+  private disposed = false;
+
+  constructor(options: Required<ErrorReporterOptions>) {
+    super(options);
+    // Initialize listener sets
+    this.listeners.set('error', new Set());
+    this.listeners.set('warning', new Set());
+  }
+
+  /**
+   * Add an event listener for error or warning events
+   * @param event The event type ('error' or 'warning')
+   * @param listener The callback function to handle the event
+   * @throws Error if the reporter has been disposed
+   */
+  on<K extends keyof DxfErrorEvents>(event: K, listener: (...args: DxfErrorEvents[K]) => void): void {
+    if (this.disposed) {
+      throw new Error('Cannot add listener to disposed error reporter');
+    }
+    const listeners = this.listeners.get(event);
+    if (listeners) {
+      listeners.add(listener as DxfErrorEventListener);
+      this.emitter.on(event, listener);
+    }
+  }
+
+  /**
+   * Remove an event listener
+   * @param event The event type ('error' or 'warning')
+   * @param listener The callback function to remove
+   */
+  off<K extends keyof DxfErrorEvents>(event: K, listener: (...args: DxfErrorEvents[K]) => void): void {
+    const listeners = this.listeners.get(event);
+    if (listeners) {
+      listeners.delete(listener as DxfErrorEventListener);
+      this.emitter.off(event, listener);
+    }
+  }
+
+  /**
+   * Remove all event listeners and clean up resources
+   */
+  dispose(): void {
+    if (!this.disposed) {
+      this.removeAllListeners();
+      this.disposed = true;
+    }
+  }
+
+  /**
+   * Remove all event listeners
+   */
+  removeAllListeners(): void {
+    this.listeners.forEach((listeners, event) => {
+      listeners.forEach(listener => {
+        this.emitter.off(event, listener);
+      });
+      listeners.clear();
+    });
+  }
+
+  addError(message: string, code: string, details?: Record<string, unknown>): void {
+    if (this.disposed) {
+      return;
+    }
+    if (!code) {
+      code = 'UNKNOWN_ERROR';
+    }
+    super.addError(message, code, details);
+    this.emitter.emit('error', message, code);
+  }
+
+  addWarning(message: string, code: string, details?: Record<string, unknown>): void {
+    if (this.disposed) {
+      return;
+    }
+    if (!code) {
+      code = 'UNKNOWN_WARNING';
+    }
+    super.addWarning(message, code, details);
+    this.emitter.emit('warning', message);
+  }
+}
+
+/**
+ * Processor for DXF files
  */
 export class DxfProcessor extends BaseProcessor {
   private parser = createDxfParser();
   private analyzer = createDxfAnalyzer();
-  private converter = new DxfConverter();
-  private rawDxfData: DxfData | undefined = undefined;
+  private rawDxfData: DxfData | null = null;
+  private cleanupFn: (() => void) | null = null;
+  protected stats = this.createDefaultStats();
+  protected errorReporter: DxfErrorReporter;
+  protected options: DxfProcessorOptions;
 
-  constructor(options: ProcessorOptions = {}) {
+  constructor(options: DxfProcessorOptions) {
     super(options);
+    this.options = options;
+    this.errorReporter = new DxfErrorReporter({
+      logToConsole: true,
+      minSeverity: Severity.INFO,
+      maxErrors: 100
+    });
+
+    // Subscribe to error reporter events
+    const handleError = (message: string, code: string) => {
+      if (this.options.onError) {
+        this.options.onError(message);
+        this.recordError(this.stats, code, message);
+      }
+    };
+
+    const handleWarning = (message: string) => {
+      if (this.options.onWarning) {
+        this.options.onWarning(message);
+      }
+    };
+
+    this.errorReporter.on('error', handleError);
+    this.errorReporter.on('warning', handleWarning);
+
+    // Clean up event listeners when the processor is destroyed
+    this.cleanupFn = () => {
+      this.errorReporter.off('error', handleError);
+      this.errorReporter.off('warning', handleWarning);
+      this.errorReporter.dispose();
+    };
+
+    // Add cleanup to window unload event
+    if (typeof window !== 'undefined') {
+      window.addEventListener('unload', this.cleanupFn);
+    }
+  }
+
+  dispose(): void {
+    if (this.cleanupFn) {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('unload', this.cleanupFn);
+      }
+      this.cleanupFn();
+      this.cleanupFn = null;
+    }
   }
 
   async canProcess(file: File): Promise<boolean> {
-    return file.name.toLowerCase().endsWith('.dxf');
+    return file.name.toLowerCase().endsWith('dxf');
   }
 
   private async readFileContent(file: File): Promise<string> {
-    try {
-      return await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = () => reject(new Error('Failed to read DXF file'));
+    return new Promise((resolve, reject) => {
+      if (!file) {
+        reject(new Error('No file provided'));
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result !== 'string') {
+          reject(new Error('Invalid file content'));
+          return;
+        }
+        resolve(reader.result);
+      };
+      reader.onerror = () => reject(new Error('Failed to read file'));
+      reader.onabort = () => reject(new Error('File reading aborted'));
+
+      try {
         reader.readAsText(file);
-      });
-    } catch (error) {
-      throw new ParseError(
-        `Failed to read DXF file: ${error instanceof Error ? error.message : String(error)}`,
-        'dxf',
-        file.name,
-        { error: error instanceof Error ? error.message : String(error) }
-      );
-    }
+      } catch (error) {
+        reject(new Error(`Failed to read file: ${error instanceof Error ? error.message : String(error)}`));
+      }
+    });
   }
 
   private async parseDxf(content: string): Promise<DxfData> {
+    const updateProgress = (progress: number) => {
+      const scaledProgress = PROGRESS.PARSE.start + 
+        (PROGRESS.PARSE.end - PROGRESS.PARSE.start) * progress;
+      this.emitProgress(scaledProgress);
+    };
+
     try {
-      const dxfData = await this.parser.parse(content, {
-        validate: true,
-        onProgress: progress => {
-          const scaledProgress = PROGRESS.PARSE.START + 
-            (progress * (PROGRESS.PARSE.END - PROGRESS.PARSE.START));
-          this.emitProgress(scaledProgress);
-        }
-      });
+      const dxfData = await this.parser.parse(content, { onProgress: updateProgress });
       this.rawDxfData = dxfData;
       return dxfData;
     } catch (error) {
-      throw new ParseError(
-        `DXF parsing failed: ${error instanceof Error ? error.message : String(error)}`,
-        'dxf',
-        'parse',
-        { error: error instanceof Error ? error.message : String(error) }
-      );
+      throw new Error(`Failed to parse DXF file: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-
-  private getEntityCoordinates(entity: DxfEntity): Vector3[] {
-    if (isDxfPointEntity(entity)) {
-      return [entity.position];
-    } else if (isDxfLineEntity(entity)) {
-      return [entity.start, entity.end];
-    } else if (isDxfPolylineEntity(entity)) {
-      return entity.vertices;
-    } else if (isDxfCircleEntity(entity)) {
-      return [entity.center];
-    }
-    return [];
-  }
-
-  private detectCoordinateSystem(entities: DxfEntity[]): CoordinateSystem {
-    // Sample coordinates from different entity types
-    const sampleCoords: { x: number, y: number }[] = [];
-    
-    // Collect coordinates from entities
-    for (let i = 0; i < Math.min(entities.length, 100); i++) {
-      const coords = this.getEntityCoordinates(entities[i]);
-      sampleCoords.push(...coords.map(coord => ({ x: coord.x, y: coord.y })));
-      if (sampleCoords.length >= 100) break;
-    }
-
-    if (sampleCoords.length === 0) {
-      this.errorReporter.addWarning(
-        'No coordinates found for detection',
-        'DXF_NO_COORDINATES',
-        { entityCount: entities.length }
-      );
-      return COORDINATE_SYSTEMS.NONE;
-    }
-
-    // Log sample coordinates for debugging
-    this.errorReporter.addInfo(
-      'Sample coordinates for detection',
-      'DXF_COORDINATE_SAMPLES',
-      { samples: sampleCoords.slice(0, 2) }
-    );
-
-    // Use the suggestCoordinateSystem function from coordinate-utils
-    const suggestedSystem = suggestCoordinateSystem(sampleCoords);
-    this.errorReporter.addInfo(
-      'Detected coordinate system',
-      'DXF_COORDINATE_SYSTEM',
-      { system: suggestedSystem }
-    );
-
-    // Test transformation if Swiss LV95
-    if (suggestedSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
-      try {
-        const transformer = new CoordinateTransformer(
-          COORDINATE_SYSTEMS.SWISS_LV95,
-          COORDINATE_SYSTEMS.WGS84,
-          this.errorReporter
-        );
-        const testPoint = sampleCoords[0];
-        const transformed = transformer.transform(testPoint);
-        this.errorReporter.addInfo(
-          'Test transformation successful',
-          'DXF_TRANSFORM_TEST',
-          { input: testPoint, output: transformed }
-        );
-      } catch (error) {
-        this.errorReporter.addWarning(
-          'Test transformation failed',
-          'DXF_TRANSFORM_TEST_FAILED',
-          { error: error instanceof Error ? error.message : String(error) }
-        );
-      }
-    }
-    
-    return suggestedSystem;
   }
 
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
+      // Read and parse the DXF file
       const content = await this.readFileContent(file);
-      const dxf = await this.parseDxf(content);
+      const dxfData = await this.parseDxf(content);
 
-      if (!dxf || !Array.isArray(dxf.entities)) {
-        throw new ValidationError(
-          'Invalid DXF file structure',
-          'dxf_structure',
-          undefined,
-          { dxf }
-        );
+      // Analyze the DXF data
+      const analysisResult = await this.analyzer.analyze(dxfData);
+      const dxfResult = analysisResult as unknown as DxfAnalysisResult;
+      for (const warning of dxfResult.warnings) {
+        this.errorReporter.addWarning('DXF Analysis Warning', 'DXF_ANALYSIS_WARNING', { message: warning });
       }
 
-      // Run comprehensive analysis
-      const analysisResult = await this.analyzer.analyze(dxf);
-      
-      // Process analysis messages
-      const messages = analysisResult.errorReporter.getMessages();
-      
-      // Handle warnings and non-critical errors
-      messages.forEach(message => {
-        if (!message.details?.isCritical) {
-          this.errorReporter.addWarning(
-            message.message,
-            'DXF_ANALYSIS_WARNING',
-            { 
-              type: message.details?.type,
-              entity: message.details?.handle ? {
-                type: message.details.entityType,
-                handle: message.details.handle,
-                layer: message.details.layer
-              } : undefined
-            }
-          );
-        }
-      });
+      // Create a converter for preview features
+      const converter = createDxfConverter(this.errorReporter);
+      const conversionOptions: DxfConversionOptions = {
+        includeStyles: true,
+        layerInfo: dxfResult.layers
+      };
 
-      // Handle critical errors
-      const criticalErrors = messages.filter(m => m.details?.isCritical);
-      if (criticalErrors.length > 0) {
-        throw new ValidationError(
-          'Critical errors found in DXF file',
-          'dxf_critical_errors',
-          undefined,
-          { errors: criticalErrors.map(e => ({ 
-            message: e.message,
-            type: e.details?.type
-          }))}
-        );
-      }
+      // Convert a sample of entities for preview
+      const previewFeatures = converter.convertEntities(
+        dxfData.entities.slice(0, 1000),
+        conversionOptions
+      );
 
-      // Check if analysis was successful
-      if (!analysisResult.isValid) {
-        throw new ValidationError(
-          'DXF analysis failed',
-          'dxf_analysis_failed',
-          undefined,
-          { stats: analysisResult.stats }
-        );
-      }
+      // Calculate bounds from preview features
+      const bounds = this.calculateBounds(previewFeatures);
 
-      // Expand block references for preview
-      const expandedEntities = this.parser.expandBlockReferences(dxf);
-      
-      // Detect coordinate system
-      const detectedSystem = this.detectCoordinateSystem(expandedEntities);
-      
-      // Create transformer if needed
-      let transformer: CoordinateTransformer | undefined;
-      if (detectedSystem !== COORDINATE_SYSTEMS.NONE && detectedSystem !== COORDINATE_SYSTEMS.WGS84) {
+      // Use provided coordinate system or detect from DXF
+      let detectedSystem = this.options.coordinateSystem || 
+        dxfResult.coordinateSystem || 
+        COORDINATE_SYSTEMS.NONE;
+
+      // Initialize coordinate systems if needed and not already initialized
+      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
         try {
-          transformer = new CoordinateTransformer(
-            detectedSystem,
-            COORDINATE_SYSTEMS.WGS84,
-            this.errorReporter
-          );
+          initializeCoordinateSystems();
         } catch (error) {
-          this.errorReporter.addWarning(
-            'Failed to create transformer',
-            'DXF_TRANSFORMER_CREATION_FAILED',
-            { 
-              fromSystem: detectedSystem,
-              toSystem: COORDINATE_SYSTEMS.WGS84,
-              error: error instanceof Error ? error.message : String(error)
-            }
-          );
+          // Log error but don't throw - fall back to NONE coordinate system
+          console.warn('Failed to initialize coordinate systems:', error);
+          detectedSystem = COORDINATE_SYSTEMS.NONE;
         }
       }
-      
-      // Convert to GeoJSON features for preview with progress updates
-      const previewFeatures: Feature[] = [];
-      let processedCount = 0;
-      const totalEntities = expandedEntities.length;
-      
-      for (const entity of expandedEntities) {
-        if (processedCount % SAMPLE_RATE === 0) {
-          try {
-            const feature = entityToGeoFeature(entity, {}, detectedSystem);
-            if (feature && hasCoordinates(feature.geometry)) {
-              previewFeatures.push(feature);
-            }
-          } catch (error) {
-            this.errorReporter.addWarning(
-              'Failed to convert entity to feature',
-              'DXF_PREVIEW_CONVERSION_FAILED',
-              {
-                entityType: entity.type,
-                layer: entity.layer,
-                error: error instanceof Error ? error.message : String(error)
-              }
-            );
-          }
-        }
-        processedCount++;
-        
-        // Update progress (30-40%)
-        const progress = PROGRESS.ANALYZE.START + 
-          (processedCount / totalEntities) * (PROGRESS.ANALYZE.END - PROGRESS.ANALYZE.START);
-        this.emitProgress(progress);
-        
-        if (previewFeatures.length >= PREVIEW_CHUNK_SIZE) {
-          break;
-        }
-      }
-
-      // Calculate bounds from preview features with padding
-      const bounds = this.calculateBounds(previewFeatures, 0.1); // 10% padding
-
-      // Get all available layers
-      const layers = this.parser.getLayers();
 
       return {
-        layers,
+        layers: Object.keys(dxfResult.layers || {}),
         coordinateSystem: detectedSystem,
         bounds,
         preview: {
           type: 'FeatureCollection',
           features: previewFeatures
         },
-        dxfData: this.rawDxfData
+        dxfData
       };
-
     } catch (error) {
-      if (error instanceof ValidationError || error instanceof ParseError) {
+      if (error instanceof GeoLoaderError) {
         throw error;
       }
-      throw new ParseError(
+      throw new GeoLoaderError(
         `DXF analysis failed: ${error instanceof Error ? error.message : String(error)}`,
-        'dxf',
-        'analyze',
-        { error: error instanceof Error ? error.message : String(error) }
+        'DXF_ANALYSIS_ERROR'
       );
     }
   }
 
-  private async processChunk(
-    entities: DxfEntity[],
-    options: ProcessorOptions,
-    startProgress: number,
-    endProgress: number
-  ): Promise<Feature[]> {
-    const features: Feature[] = [];
-    const totalEntities = entities.length;
-
-    for (let i = 0; i < totalEntities; i++) {
-      const entity = entities[i];
-      
-      // Filter by layer and type if specified
-      if (options.selectedLayers?.length && !options.selectedLayers.includes(entity.layer || '0')) {
-        continue;
-      }
-      if (options.selectedTypes?.length && !options.selectedTypes.includes(entity.type)) {
-        continue;
-      }
-
-      try {
-        const feature = entityToGeoFeature(
-          entity,
-          {},
-          options.coordinateSystem || COORDINATE_SYSTEMS.NONE
-        );
-        if (feature) {
-          features.push(feature);
-        }
-      } catch (error) {
-        this.errorReporter.addWarning(
-          `Failed to convert ${entity.type} entity`,
-          'DXF_ENTITY_CONVERSION_FAILED',
-          {
-            entityType: entity.type,
-            layer: entity.layer,
-            error: error instanceof Error ? error.message : String(error)
-          }
-        );
-      }
-
-      // Update progress for this chunk
-      const chunkProgress = startProgress + ((i / totalEntities) * (endProgress - startProgress));
-      this.emitProgress(chunkProgress);
-    }
-
-    return features;
-  }
-
   async process(file: File): Promise<ProcessorResult> {
     try {
-      const content = await this.readFileContent(file);
-      const dxf = await this.parseDxf(content);
-      
-      const statistics = this.createDefaultStats();
-      
-      // Expand all block references
-      const expandedEntities = this.parser.expandBlockReferences(dxf);
-      
-      // Process entities in chunks
-      const chunks: DxfEntity[][] = [];
-      for (let i = 0; i < expandedEntities.length; i += PROCESS_CHUNK_SIZE) {
-        chunks.push(expandedEntities.slice(i, i + PROCESS_CHUNK_SIZE));
-      }
+      // Use cached DXF data if available, otherwise parse the file
+      const dxfData = this.rawDxfData || await this.parseDxf(await this.readFileContent(file));
 
-      const features: Feature[] = [];
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkStartProgress = PROGRESS.CONVERT.START + 
-          (i / chunks.length) * (PROGRESS.CONVERT.END - PROGRESS.CONVERT.START);
-        const chunkEndProgress = PROGRESS.CONVERT.START + 
-          ((i + 1) / chunks.length) * (PROGRESS.CONVERT.END - PROGRESS.CONVERT.START);
-        
-        const chunkFeatures = await this.processChunk(
-          chunks[i],
-          this.options,
-          chunkStartProgress,
-          chunkEndProgress
-        );
-        
+      // Create a converter
+      const converter = createDxfConverter(this.errorReporter);
+      const conversionOptions: DxfConversionOptions = {
+        includeStyles: true,
+        layerInfo: dxfData.tables?.layer?.layers,
+        validateEntities: true,
+        skipInvalidEntities: true
+      };
+
+      // Convert entities in chunks to maintain responsiveness
+      const CHUNK_SIZE = 500;
+      const features: GeoFeature[] = [];
+      const totalChunks = Math.ceil(dxfData.entities.length / CHUNK_SIZE);
+
+      for (let i = 0; i < dxfData.entities.length; i += CHUNK_SIZE) {
+        const chunk = dxfData.entities.slice(i, i + CHUNK_SIZE);
+        const chunkFeatures = converter.convertEntities(chunk, conversionOptions);
         features.push(...chunkFeatures);
-        
-        // Update statistics
-        chunkFeatures.forEach(feature => {
-          if (feature.properties?.entityType) {
-            this.updateStats(statistics, feature.properties.entityType as string);
-          }
-        });
+
+        // Update progress
+        const progress = PROGRESS.CONVERT.start +
+          ((i + chunk.length) / dxfData.entities.length) *
+          (PROGRESS.CONVERT.end - PROGRESS.CONVERT.start);
+        this.emitProgress(progress);
       }
 
-      // Calculate final bounds with padding
-      const bounds = this.calculateBounds(features, 0.1); // 10% padding
+      // Calculate final bounds
+      const bounds = this.calculateBounds(features);
 
-      statistics.layerCount = this.options.selectedLayers?.length || this.parser.getLayers().length;
+      // Get all available layers
+      const layers = Object.keys(dxfData.tables?.layer?.layers || {});
 
-      // Ensure we reach 100%
-      this.emitProgress(1.0);
+      // Determine coordinate system
+      let detectedSystem = this.options.coordinateSystem || 
+        (dxfData.header && this.analyzer.analyze(dxfData).coordinateSystem) || 
+        COORDINATE_SYSTEMS.NONE;
+
+      // Initialize coordinate systems if needed and not already initialized
+      if (detectedSystem !== COORDINATE_SYSTEMS.NONE) {
+        try {
+          initializeCoordinateSystems();
+        } catch (error) {
+          // Log error but don't throw - fall back to NONE coordinate system
+          console.warn('Failed to initialize coordinate systems:', error);
+          detectedSystem = COORDINATE_SYSTEMS.NONE;
+        }
+      }
 
       return {
         features: {
@@ -431,65 +369,44 @@ export class DxfProcessor extends BaseProcessor {
           features
         },
         bounds,
-        layers: this.parser.getLayers(),
-        coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.NONE,
-        statistics,
-        dxfData: this.rawDxfData
+        layers,
+        coordinateSystem: detectedSystem,
+        statistics: this.stats,
+        dxfData
       };
-
     } catch (error) {
-      if (error instanceof ValidationError || error instanceof ParseError) {
+      if (error instanceof GeoLoaderError) {
         throw error;
       }
-      throw new ParseError(
+      throw new GeoLoaderError(
         `DXF processing failed: ${error instanceof Error ? error.message : String(error)}`,
-        'dxf',
-        'process',
-        { error: error instanceof Error ? error.message : String(error) }
+        'DXF_PROCESSING_ERROR'
       );
     }
   }
 
-  private calculateBounds(features: Feature[], padding: number = 0): ProcessorResult['bounds'] {
+  private calculateBounds(features: GeoFeature[]): ProcessorResult['bounds'] {
+    if (features.length === 0) {
+      return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
+    }
+
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    features.forEach(feature => {
+    for (const feature of features) {
       if (feature.bbox) {
         minX = Math.min(minX, feature.bbox[0]);
         minY = Math.min(minY, feature.bbox[1]);
         maxX = Math.max(maxX, feature.bbox[2]);
         maxY = Math.max(maxY, feature.bbox[3]);
       }
-    });
-
-    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-      this.errorReporter.addWarning(
-        'Invalid bounds, using default',
-        'DXF_INVALID_BOUNDS',
-        { minX, minY, maxX, maxY }
-      );
-      return {
-        minX: 0,
-        minY: 0,
-        maxX: 1,
-        maxY: 1
-      };
     }
 
-    // Add padding
-    const width = maxX - minX;
-    const height = maxY - minY;
-    const paddingX = width * padding;
-    const paddingY = height * padding;
-
-    return {
-      minX: minX - paddingX,
-      minY: minY - paddingY,
-      maxX: maxX + paddingX,
-      maxY: maxY + paddingY
-    };
+    return { minX, minY, maxX, maxY };
   }
 }
+
+// Register the processor
+ProcessorRegistry.register('dxf', DxfProcessor);

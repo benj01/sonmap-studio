@@ -1,4 +1,5 @@
-import { GeoFeature, Geometry } from '../../../types/geo';
+import { GeoFeature } from '../../../types/geo';
+import { Geometry } from 'geojson';
 import {
   createPointGeometry,
   createMultiPointGeometry,
@@ -8,6 +9,7 @@ import {
   createMultiPolygonGeometry,
   createFeature
 } from './geometry-utils';
+import { ErrorReporter, ParseError } from './errors';
 
 // Shapefile format specification constants
 export const SHAPE_TYPE = {
@@ -61,25 +63,26 @@ export interface ShapefileHeader {
   };
 }
 
-export interface LoadError {
-  featureIndex: number;
-  error: string;
-  severity: 'warning' | 'error';
-}
 
 type Coordinates2D = [number, number];
 type Coordinates3D = [number, number, number];
 
 export class ShapefileParser {
-  private errors: LoadError[] = [];
   private dbfFields: DBFField[] = [];
+
+  constructor(private errorReporter: ErrorReporter) {}
 
   async readShapefileHeader(buffer: ArrayBuffer): Promise<ShapefileHeader> {
     const view = new DataView(buffer);
     
     const fileCode = view.getInt32(0, false);
     if (fileCode !== 9994) {
-      throw new Error('Invalid shapefile: incorrect file code');
+      throw new ParseError(
+        'Invalid shapefile: incorrect file code',
+        'shapefile',
+        'unknown',
+        { fileCode }
+      );
     }
     
     const fileLength = view.getInt32(24, false) * 2;
@@ -335,14 +338,21 @@ export class ShapefileParser {
         if (geometry) {
           yield createFeature(geometry, {});
         }
-      } catch (err) {
-        const error = err as Error;
-        this.errors.push({
-          featureIndex: count,
-          error: error.message,
-          severity: 'warning'
-        });
-        console.warn(`Error reading feature at offset ${offset}:`, error);
+      } catch (error) {
+        if (error instanceof ParseError) {
+          this.errorReporter.addError(error.message, error.code, error.details);
+        } else {
+          this.errorReporter.addWarning(
+            `Error reading feature at offset ${offset}`,
+            'SHAPEFILE_FEATURE_READ_ERROR',
+            {
+              featureIndex: count,
+              offset,
+              shapeType,
+              error: error instanceof Error ? error.message : String(error)
+            }
+          );
+        }
       }
       
       offset += contentLength * 2 - 4;
@@ -350,8 +360,8 @@ export class ShapefileParser {
     }
   }
 
-  getErrors(): LoadError[] {
-    return this.errors;
+  getErrors(): string[] {
+    return this.errorReporter.getMessages().map(m => m.message);
   }
 
   getDBFFields(): DBFField[] {
@@ -359,4 +369,4 @@ export class ShapefileParser {
   }
 }
 
-export const createShapefileParser = () => new ShapefileParser();
+export const createShapefileParser = (errorReporter: ErrorReporter) => new ShapefileParser(errorReporter);

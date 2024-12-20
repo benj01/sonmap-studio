@@ -2,12 +2,13 @@ import { useCallback } from 'react';
 import { ProcessorOptions, ProcessorStats, createProcessor } from '../../../processors';
 import { CoordinateSystem } from '../../../types/coordinates';
 import { LoaderResult, GeoFeature } from 'types/geo';
-import { CoordinateSystemError, TransformationError } from '../../../utils/coordinate-systems';
+import { GeoLoaderError } from '../../../utils/errors';
 
 interface ImportProcessProps {
   onWarning: (message: string) => void;
   onError: (message: string) => void;
   onProgress: (progress: number) => void;
+  getProcessor: (file: File, options?: Partial<ProcessorOptions>) => Promise<any>;
 }
 
 interface ImportOptions {
@@ -29,21 +30,20 @@ function convertStatistics(stats: ProcessorStats) {
 export function useImportProcess({
   onWarning,
   onError,
-  onProgress
+  onProgress,
+  getProcessor
 }: ImportProcessProps) {
   const importFile = useCallback(async (
     file: File,
     options: ImportOptions
   ): Promise<LoaderResult | null> => {
     try {
-      const processor = await createProcessor(file, {
-        onWarning,
-        onError,
-        onProgress,
+      // Only pass valid ProcessorOptions
+      const processor = await getProcessor(file, {
         coordinateSystem: options.coordinateSystem,
         selectedLayers: options.selectedLayers,
         selectedTypes: options.selectedTemplates
-      } as ProcessorOptions);
+      });
 
       if (!processor) {
         throw new Error(`No processor available for file: ${file.name}`);
@@ -126,16 +126,14 @@ export function useImportProcess({
 
       return result;
     } catch (error) {
-      if (error instanceof CoordinateSystemError) {
-        onError(`Coordinate system error: ${error.message}`);
-      } else if (error instanceof TransformationError) {
-        onError(`Transformation error: ${error.message}`);
+      if (error instanceof GeoLoaderError) {
+        onError(`Import error: ${error.message}`);
       } else {
-        onError(`Import error: ${error instanceof Error ? error.message : String(error)}`);
+        onError(`Failed to import file: ${error instanceof Error ? error.message : String(error)}`);
       }
       return null;
     }
-  }, [onWarning, onError, onProgress]);
+  }, [getProcessor, onWarning, onError, onProgress]);
 
   return {
     importFile

@@ -1,6 +1,7 @@
 import { DxfData, DxfEntity, DxfEntityBase, Vector3, isVector3, isDxfPointEntity, isDxfLineEntity, isDxfPolylineEntity, isDxfCircleEntity, isDxfArcEntity, isDxfTextEntity, isDxfInsertEntity } from './types';
 import { DxfErrorReporter, createDxfErrorReporter } from './error-collector';
 import { ErrorMessage } from '../errors';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
 
 interface AnalysisStats {
   entityCount: number;
@@ -19,12 +20,55 @@ interface AnalysisResult {
   isValid: boolean;
   stats: AnalysisStats;
   errorReporter: DxfErrorReporter;
+  coordinateSystem?: CoordinateSystem;
 }
 
 function isEntityBase(entity: unknown): entity is DxfEntityBase {
   return typeof entity === 'object' && 
          entity !== null && 
          typeof (entity as DxfEntityBase).type === 'string';
+}
+
+function detectCoordinateSystem(dxf: DxfData): CoordinateSystem | undefined {
+  // Check for coordinate system in header variables
+  const header = dxf.header;
+  if (!header) return undefined;
+
+  // Check for common coordinate system indicators
+  if (header.$INSUNITS === 1) {
+    // Scientific and engineering units (meters)
+    // Common for Swiss coordinate systems
+    const extMin = header.$EXTMIN;
+    const extMax = header.$EXTMAX;
+
+    if (extMin && extMax && isVector3(extMin) && isVector3(extMax)) {
+      // Check coordinate ranges for Swiss systems
+      if (extMin.x >= 2000000 && extMin.x <= 3000000 &&
+          extMin.y >= 1000000 && extMin.y <= 2000000) {
+        return COORDINATE_SYSTEMS.SWISS_LV95;
+      }
+      if (extMin.x >= 400000 && extMin.x <= 900000 &&
+          extMin.y >= 50000 && extMin.y <= 400000) {
+        return COORDINATE_SYSTEMS.SWISS_LV03;
+      }
+    }
+  }
+
+  // Check for WGS84 indicators
+  if (header.$INSUNITS === 6) { // Meters
+    const extMin = header.$EXTMIN;
+    const extMax = header.$EXTMAX;
+
+    if (extMin && extMax && isVector3(extMin) && isVector3(extMax)) {
+      // Check if coordinates are in WGS84 range
+      if (Math.abs(extMin.x) <= 180 && Math.abs(extMin.y) <= 90 &&
+          Math.abs(extMax.x) <= 180 && Math.abs(extMax.y) <= 90) {
+        return COORDINATE_SYSTEMS.WGS84;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 export function createDxfAnalyzer() {
@@ -57,6 +101,14 @@ export function createDxfAnalyzer() {
         isCritical: true
       });
       return { isValid: false, stats, errorReporter };
+    }
+
+    // Detect coordinate system
+    const coordinateSystem = detectCoordinateSystem(dxf);
+    if (!coordinateSystem) {
+      errorReporter.addDxfWarning('Could not detect coordinate system, using local coordinates', {
+        type: 'NO_COORDINATE_SYSTEM'
+      });
     }
 
     // Count entities and validate
@@ -243,7 +295,8 @@ export function createDxfAnalyzer() {
         m.details?.isCritical === true
       ),
       stats,
-      errorReporter
+      errorReporter,
+      coordinateSystem
     };
   };
 

@@ -9,8 +9,17 @@ import {
   createErrorReporter 
 } from './errors';
 
-// Create a global error reporter instance for this module
+// Create a global error reporter instance and track initialization state
 const errorReporter = createErrorReporter();
+let isInitialized = false;
+
+/**
+ * Check if coordinate systems are initialized
+ * @returns true if systems are initialized
+ */
+export function areCoordinateSystemsInitialized(): boolean {
+  return isInitialized;
+}
 
 interface TestPoint {
   point: [number, number];
@@ -47,7 +56,10 @@ const TEST_POINTS: Record<CoordinateSystem, TestPoint> = {
  * @throws {CoordinateSystemError} If initialization fails
  * @returns true if initialization is successful
  */
-export function initializeCoordinateSystems(): boolean {
+export function initializeCoordinateSystems(): void {
+  // Skip if already initialized
+  if (isInitialized) return;
+  
   try {
     errorReporter.addInfo(
       'Starting coordinate systems initialization',
@@ -145,7 +157,7 @@ export function initializeCoordinateSystems(): boolean {
       { verifiedSystems: systems }
     );
 
-    return true;
+    isInitialized = true;
   } catch (error) {
     errorReporter.addError(
       'Failed to initialize coordinate systems',
@@ -181,19 +193,9 @@ export interface CoordinatePoint {
  * @returns A CoordinateTransformer instance
  */
 export function createTransformer(fromSystem: string, toSystem: string): CoordinateTransformer {
-  // Initialize systems if not already done
-  if (!proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95)) {
-    errorReporter.addInfo(
-      'Initializing coordinate systems for transformer creation',
-      'TRANSFORMER_INIT_START',
-      { fromSystem, toSystem }
-    );
-    if (!initializeCoordinateSystems()) {
-      throw new GeoLoaderError(
-        'Failed to initialize coordinate systems during transformer creation',
-        'COORDINATE_SYSTEM_INITIALIZATION_ERROR'
-      );
-    }
+  // Initialize systems if needed
+  if (!isInitialized) {
+    initializeCoordinateSystems();
   }
 
   // Handle special case for 'none' coordinate system

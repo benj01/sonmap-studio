@@ -1,14 +1,15 @@
 import { useState, useCallback } from 'react';
 import { CoordinateSystem, COORDINATE_SYSTEMS } from '../../../types/coordinates';
-import { CoordinateSystemError, TransformationError } from '../../../utils/coordinate-systems';
-import { AnalyzeResult, ProcessorOptions, createProcessor } from '../../../processors';
+import { GeoLoaderError, CoordinateTransformationError } from '../../../utils/errors';
+import { AnalyzeResult, ProcessorOptions } from '../../../processors';
 import { PreviewManager } from '../../../preview/preview-manager';
-import { Warning, Analysis } from '../../../types/map';
+import { initializeCoordinateSystems } from '../../../utils/coordinate-systems';
 
 interface CoordinateSystemHookProps {
   onWarning: (message: string) => void;
   onError: (message: string) => void;
   onProgress: (progress: number) => void;
+  getProcessor: (file: File, options?: Partial<ProcessorOptions>) => Promise<any>;
 }
 
 interface CoordinateSystemState {
@@ -17,19 +18,11 @@ interface CoordinateSystemState {
   loading: boolean;
 }
 
-function convertWarningsToAnalysis(warnings: string[] = []): Analysis {
-  return {
-    warnings: warnings.map(message => ({
-      type: 'warning',
-      message
-    }))
-  };
-}
-
 export function useCoordinateSystem({
   onWarning,
   onError,
-  onProgress
+  onProgress,
+  getProcessor
 }: CoordinateSystemHookProps) {
   const [state, setState] = useState<CoordinateSystemState>({
     coordinateSystem: undefined,
@@ -38,16 +31,19 @@ export function useCoordinateSystem({
   });
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
-    // Validate coordinate system
-    if (!Object.values(COORDINATE_SYSTEMS).includes(value as CoordinateSystem)) {
-      onError(`Invalid coordinate system: ${value}`);
-      return;
+    try {
+      // Only update state if it's a valid coordinate system
+      if (Object.values(COORDINATE_SYSTEMS).includes(value as CoordinateSystem)) {
+        setState(prev => ({
+          ...prev,
+          pendingCoordinateSystem: value as CoordinateSystem
+        }));
+      }
+    } catch (error: unknown) {
+      // Silently ignore validation errors to prevent re-render loops
+      console.warn('Coordinate system validation error:', error instanceof Error ? error.message : String(error));
     }
-    setState(prev => ({
-      ...prev,
-      pendingCoordinateSystem: value as CoordinateSystem
-    }));
-  }, [onError]);
+  }, []);
 
   const applyCoordinateSystem = useCallback(async (
     file: File,
@@ -56,45 +52,63 @@ export function useCoordinateSystem({
   ) => {
     if (!state.pendingCoordinateSystem || !file || !analysis) return;
 
+    // Prevent multiple concurrent applications
+    if (state.loading) return;
+
     setState(prev => ({ ...prev, loading: true }));
     try {
-      const processor = await createProcessor(file, {
-        onWarning,
-        onError,
-        onProgress,
+      // Ensure coordinate systems are initialized
+      try {
+        initializeCoordinateSystems();
+      } catch (error) {
+        throw new GeoLoaderError(
+          'Failed to initialize coordinate systems',
+          'COORDINATE_SYSTEM_INIT_ERROR',
+          { originalError: error instanceof Error ? error.message : String(error) }
+        );
+      }
+
+      const processor = await getProcessor(file, {
         coordinateSystem: state.pendingCoordinateSystem
-      } as ProcessorOptions);
+      });
 
       if (!processor) {
-        throw new Error(`No processor available for file: ${file.name}`);
+        throw new GeoLoaderError(
+          'Failed to create processor',
+          'PROCESSOR_CREATION_ERROR'
+        );
       }
 
       const result = await processor.analyze(file);
 
-      // Convert warnings to Analysis format
-      const analysisWithWarnings = convertWarningsToAnalysis(result.warnings);
-
       // Update preview manager
-      if (previewManager && result.preview) {
+      if (previewManager) {
         previewManager.setOptions({
           coordinateSystem: state.pendingCoordinateSystem,
-          analysis: analysisWithWarnings
+          analysis: {
+            warnings: processor.getWarnings().map((message: string) => ({
+              type: 'warning' as const,
+              message
+            }))
+          }
         });
-        previewManager.setFeatures(result.preview);
+
+        if (result.preview) {
+          previewManager.setFeatures(result.preview);
+        }
       }
 
       setState(prev => ({
-        ...prev,
         loading: false,
         coordinateSystem: prev.pendingCoordinateSystem,
         pendingCoordinateSystem: undefined
       }));
 
       return result;
-    } catch (error) {
-      if (error instanceof CoordinateSystemError) {
+    } catch (error: unknown) {
+      if (error instanceof GeoLoaderError) {
         onError(`Coordinate system error: ${error.message}`);
-      } else if (error instanceof TransformationError) {
+      } else if (error instanceof CoordinateTransformationError) {
         onError(`Transformation error: ${error.message}`);
       } else {
         onError(`Failed to apply coordinate system: ${error instanceof Error ? error.message : String(error)}`);
@@ -102,7 +116,7 @@ export function useCoordinateSystem({
       setState(prev => ({ ...prev, loading: false }));
       return null;
     }
-  }, [state.pendingCoordinateSystem, onWarning, onError, onProgress]);
+  }, [state.pendingCoordinateSystem, state.loading, getProcessor, onError]);
 
   const resetCoordinateSystem = useCallback(() => {
     setState({
