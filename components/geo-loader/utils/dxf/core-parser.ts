@@ -1,21 +1,21 @@
 import DxfParser from 'dxf-parser';
 import { DxfData, LayerInfo, DxfBlock, CustomDxfParserLib, ParserContext, ParserResult, DxfEntity, DxfEntityBase } from './types';
-import { DxfEntityParser } from './entity-parser';
 import { TransformUtils } from './transform';
 import { GeoFeature } from '../../../../types/geo';
-import { DxfValidator } from './validator';
 import { DxfErrorReporter, createDxfErrorReporter } from './error-collector';
 import { ErrorMessage } from '../errors';
+import { createDxfConverter } from './converters';
 
-type ParsedEntity = ReturnType<DxfEntityParser['parseEntity']>;
+interface RawDxfEntity {
+  type?: string;
+  [key: string]: any;
+}
 
 class DxfParserLibImpl implements CustomDxfParserLib {
   private parser: DxfParser;
-  private entityParser: DxfEntityParser;
 
   constructor() {
     this.parser = new DxfParser();
-    this.entityParser = new DxfEntityParser();
   }
 
   parseSync(content: string): DxfData {
@@ -68,9 +68,9 @@ class DxfParserLibImpl implements CustomDxfParserLib {
 
     // Convert entities
     if (Array.isArray(parsed.entities)) {
-      result.entities = parsed.entities
-        .map((entity: Record<string, any>) => this.entityParser.parseEntity(entity))
-        .filter((entity: ParsedEntity): entity is DxfEntity => entity !== null);
+      result.entities = parsed.entities.filter((entity: RawDxfEntity): entity is DxfEntity => {
+        return entity && typeof entity === 'object' && typeof entity.type === 'string';
+      });
     }
 
     // Convert blocks
@@ -80,9 +80,9 @@ class DxfParserLibImpl implements CustomDxfParserLib {
           result.blocks![name] = {
             name,
             position: block.position || { x: 0, y: 0, z: 0 },
-            entities: block.entities
-              .map((entity: Record<string, any>) => this.entityParser.parseEntity(entity))
-              .filter((entity: ParsedEntity): entity is DxfEntity => entity !== null),
+            entities: block.entities.filter((entity: RawDxfEntity): entity is DxfEntity => {
+              return entity && typeof entity === 'object' && typeof entity.type === 'string';
+            }),
             layer: block.layer || '0'
           };
         }
@@ -100,17 +100,15 @@ class DxfParserLibImpl implements CustomDxfParserLib {
 
 export class DxfCoreParser {
   private parser: CustomDxfParserLib;
-  private entityParser: DxfEntityParser;
-  private validator: DxfValidator;
   private errorReporter: DxfErrorReporter;
+  private converter;
   private blocks: Record<string, DxfBlock> = {};
   private layers: Map<string, LayerInfo> = new Map();
 
   constructor() {
     this.parser = new DxfParserLibImpl();
-    this.entityParser = new DxfEntityParser();
-    this.validator = new DxfValidator();
     this.errorReporter = createDxfErrorReporter();
+    this.converter = createDxfConverter(this.errorReporter);
   }
 
   async parse(content: string, context?: ParserContext): Promise<DxfData> {
@@ -133,24 +131,26 @@ export class DxfCoreParser {
       this.blocks = this.extractBlocks(dxf);
       this.layers = this.extractLayers(dxf);
 
-      // Validate each entity
-      dxf.entities.forEach((entity: DxfEntityBase, index: number) => {
-        if (!this.validator.validateEntity(entity as DxfEntity)) {
-          const errors = this.validator.getErrors();
-          errors.forEach(error => {
-            this.errorReporter.addEntityError(
+      // Validate each entity using the new converter system
+      if (ctx.validate) {
+        dxf.entities.forEach((entity: DxfEntityBase, index: number) => {
+          const feature = this.converter.convertEntity(entity, {
+            validateEntities: true,
+            skipInvalidEntities: true
+          });
+          if (!feature) {
+            this.errorReporter.addEntityWarning(
               entity.type || 'UNKNOWN',
-              entity.handle,
-              `Entity ${index}: ${error.message}`,
+              entity.handle || 'unknown',
+              `Entity ${index} validation failed`,
               {
                 type: 'VALIDATION_ERROR',
-                entityIndex: index,
-                validatorErrors: errors
+                entityIndex: index
               }
             );
-          });
-        }
-      });
+          }
+        });
+      }
 
       // Report progress if callback provided
       if (ctx.onProgress) {
@@ -227,9 +227,11 @@ export class DxfCoreParser {
   }
 
   entityToGeoFeature(entity: DxfEntity): GeoFeature | null {
-    return this.entityParser.entityToGeoFeature(entity, {
-      color: 7,
-      visible: true
+    return this.converter.convertEntity(entity, {
+      includeStyles: true,
+      includeMetadata: true,
+      validateEntities: true,
+      skipInvalidEntities: true
     });
   }
 
@@ -320,8 +322,6 @@ export class DxfCoreParser {
 
   clear() {
     this.errorReporter.clear();
-    this.validator.clear();
-    this.entityParser.clear();
   }
 }
 

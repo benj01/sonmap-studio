@@ -1,3 +1,23 @@
+/**
+ * @deprecated This validator is deprecated in favor of the new converter system.
+ * The validation logic has been moved to individual entity converters in the new system.
+ * 
+ * TODO: The following entity types still need to be migrated to the new system:
+ * - 3DFACE
+ * - INSERT
+ * - HATCH
+ * - SOLID/3DSOLID
+ * - DIMENSION
+ * - LEADER/MLEADER
+ * - RAY/XLINE
+ * 
+ * Use the new converter system from './converters' instead:
+ * ```typescript
+ * import { createDxfConverter } from './converters';
+ * const converter = createDxfConverter(errorReporter);
+ * ```
+ */
+
 import { 
   DxfEntity, 
   DxfEntityBase,
@@ -26,10 +46,17 @@ interface ValidationContext {
   handle?: string;
 }
 
+/**
+ * @deprecated Use the new converter system from './converters' instead
+ */
 export class DxfValidator {
   private errorReporter: DxfErrorReporter;
 
   constructor() {
+    console.warn(
+      'DxfValidator is deprecated. Use the new converter system from ./converters instead.\n' +
+      'See the class documentation for migration instructions.'
+    );
     this.errorReporter = createDxfErrorReporter();
   }
 
