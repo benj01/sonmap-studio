@@ -221,47 +221,69 @@ types/
 
 ## Next Steps
 
-1. Testing and Verification
+1. Component Updates and Integration
+   - Review and update existing components to use new processor system:
+     - ✅ coordinate-system-select.tsx
+       * Updated to use new CoordinateSystem type
+       * Integrated with ICoordinateTransformer for validation
+       * Added coordinate range validation
+       * Enhanced error handling and user feedback
+       * Added sample point validation support
+       * Improved status messages with icons
+     - ✅ dxf-structure-view.tsx
+       * Updated to use new DxfData structure
+       * Integrated with LayerManager for layer handling
+       * Added support for all geometry types including HATCH, DIMENSION, etc.
+       * Improved entity counting with Map data structures
+       * Added validation error handling and UI indicators
+       * Enhanced block processing with nested entity support
+       * Added memoization for better performance
+       * Improved type safety with strict TypeScript types
+     - ✅ format-settings.tsx
+       * Updated to use new ProcessorOptions with format-specific types
+       * Added comprehensive validation system with error reporting
+       * Improved type safety with TextFileOptions and DxfOptions
+       * Enhanced UI with validation feedback
+       * Added memoization for better performance
+       * Integrated with ErrorReporter interface
+     - ✅ preview-map.tsx
+       * Updated to use new ProcessorResult type
+       * Integrated with feature cache system for viewport filtering
+       * Added streaming support with progress indicator
+       * Added cache hit rate monitoring
+       * Improved type safety with MapFeature and MapEvent types
+       * Enhanced error handling and loading states
+       * Removed dependency on coordinate-systems utils
+       * Updated to use coordinateSystemManager for transformations
+       * Added async coordinate transformation support
+       * Improved error handling with detailed messages
+
+2. Component Structure Reorganization
+   - geo-import/ directory:
+     - Update hooks to use new processor registry
+     - Integrate with new streaming capabilities
+     - Implement memory-efficient processing
+   - map/ directory:
+     - Consider expanding map-layers.ts for better visualization
+     - Add support for new geometry types
+   - Consider creating new components for:
+     - Processor status visualization
+     - Memory usage monitoring
+     - Error reporting UI
+
+3. Testing and Verification
    - Run comprehensive tests on all processors
    - Verify coordinate transformations
    - Test memory usage under load
    - Validate error handling
+   - Test component integration with new architecture
 
-2. DXF Implementation Migration
-   1. ✅ Matrix Transformation System
-      - Migrated matrix.ts utilities to matrix-transformer.ts
-      - Implemented coordinate transformations in block-manager.ts
-      - Added scale and rotation support
-      - Added combined transformation support
-
-   2. ⏳ Advanced Geometry Support
-      - ✅ Migrated SPLINE implementation with NURBS support
-      - ✅ Implemented ELLIPSE converter with transformation support
-      - ✅ Added SOLID converter with degenerate case handling
-      - ✅ Added FACE3D converter with planarity detection
-      - ✅ Added HATCH converter with boundary support
-      - ✅ Added TEXT/MTEXT converter with styling support
-      - ✅ Added DIMENSION converter with hybrid approach
-      - ✅ All geometry types implemented
-      - Next steps:
-        1. Begin legacy code cleanup
-
-   3. ✅ Block System Enhancements
-      - Completed entity-to-feature conversion using GeometryConverterRegistry
-      - Implemented array pattern support
-      - Added nested block transformation handling
-      - Optimized block caching
-
-   4. ✅ Legacy Code Cleanup
-      - ✅ Removed old processor implementations
-      - ✅ Removed old utility files
-      - ✅ Migration complete!
-
-3. Documentation Updates
+4. Documentation Updates
    - Add API documentation
    - Update usage examples
    - Document migration notes
    - Update architecture diagrams
+   - Document component integration patterns
 
 ## Notes on GeoJSON and Layer Information
 

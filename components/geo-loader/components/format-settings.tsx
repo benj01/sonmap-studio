@@ -1,20 +1,52 @@
-// components/geo-loader/components/format-settings.tsx
-
-import React from 'react';
+import React, { useMemo } from 'react';
 import { Card, CardContent } from 'components/ui/card';
 import { Input } from 'components/ui/input';
 import { Label } from 'components/ui/label';
 import { Checkbox } from 'components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'components/ui/select';
 import { Switch } from 'components/ui/switch';
-import type { LoaderOptions } from '../../../types/geo';
+import { Alert, AlertDescription } from 'components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
+import { ProcessorOptions } from '../core/processors/base/types';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
+import { ErrorReporter } from '../core/errors/types';
+import { FormatOptions, TextFileOptions, DxfOptions } from '../types/format-options';
+
+interface AnalyzeResult {
+  layers: string[];
+  coordinateSystem?: CoordinateSystem;
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  preview: {
+    type: 'FeatureCollection';
+    features: Array<{
+      type: 'Feature';
+      geometry: any;
+      properties?: Record<string, any>;
+    }>;
+  };
+  dxfData?: any;
+}
 
 interface FormatSettingsProps {
   fileType: string;
-  analysis: any;
-  options: LoaderOptions;
-  onOptionsChange: (options: LoaderOptions) => void;
+  analysis: AnalyzeResult;
+  options: FormatOptions;
+  onOptionsChange: (options: FormatOptions) => void;
+  /** Optional error reporter instance */
+  errorReporter?: ErrorReporter;
+}
+
+interface ValidationResult {
+  isValid: boolean;
+  errors: Array<{
+    field: string;
+    message: string;
+  }>;
 }
 
 export function FormatSettings({
@@ -22,8 +54,73 @@ export function FormatSettings({
   analysis,
   options,
   onOptionsChange,
+  errorReporter
 }: FormatSettingsProps) {
-  const updateOptions = (updates: Partial<LoaderOptions>) => {
+  // Get typed options based on file type
+  const typedOptions = useMemo(() => {
+    if (['csv', 'xyz', 'txt'].includes(fileType)) {
+      return options as TextFileOptions;
+    }
+    if (fileType === 'dxf') {
+      return options as DxfOptions;
+    }
+    return options as ProcessorOptions;
+  }, [fileType, options]);
+
+  // Validate options based on file type
+  const validation = useMemo((): ValidationResult => {
+    const errors: Array<{ field: string; message: string }> = [];
+
+    // Validate coordinate system
+    if (!typedOptions.coordinateSystem) {
+      errors.push({
+        field: 'coordinateSystem',
+        message: 'Coordinate system is required'
+      });
+    }
+
+    // Validate CSV/XYZ/TXT specific options
+    if (['csv', 'xyz', 'txt'].includes(fileType)) {
+      const textOptions = typedOptions as TextFileOptions;
+      if (!textOptions.delimiter) {
+        errors.push({
+          field: 'delimiter',
+          message: 'Delimiter is required for text files'
+        });
+      }
+      if (textOptions.skipRows && textOptions.skipRows < 0) {
+        errors.push({
+          field: 'skipRows',
+          message: 'Skip rows must be non-negative'
+        });
+      }
+      if (textOptions.skipColumns && textOptions.skipColumns < 0) {
+        errors.push({
+          field: 'skipColumns',
+          message: 'Skip columns must be non-negative'
+        });
+      }
+    }
+
+    return {
+      isValid: errors.length === 0,
+      errors
+    };
+  }, [fileType, typedOptions]);
+
+  // Report validation errors
+  React.useEffect(() => {
+    if (errorReporter) {
+      errorReporter.clear();
+      validation.errors.forEach(error => {
+        errorReporter.addError(error.message, 'VALIDATION_ERROR', {
+          field: error.field
+        });
+      });
+    }
+  }, [validation, errorReporter]);
+
+  const updateOptions = (updates: Partial<FormatOptions>) => {
     const newOptions = { ...options, ...updates };
     console.debug('Updating format options:', {
       previous: options,
@@ -49,8 +146,9 @@ export function FormatSettings({
       updateOptions({
         selectedLayers: newSelectedLayers
       });
-    } else {
-      const allVisible = analysis.layers.length === (options.visibleLayers || []).length;
+    } else if (fileType === 'dxf') {
+      const dxfOptions = typedOptions as DxfOptions;
+      const allVisible = analysis.layers.length === (dxfOptions.visibleLayers || []).length;
       const newVisibleLayers = allVisible ? [] : [...analysis.layers];
       console.debug('Toggling all layer visibility:', {
         wasAllVisible: allVisible,
@@ -65,6 +163,22 @@ export function FormatSettings({
   return (
     <Card>
       <CardContent className="space-y-4 pt-4">
+        {/* Validation Errors */}
+        {validation.errors.length > 0 && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              <ul className="list-disc pl-4">
+                {validation.errors.map((error, index) => (
+                  <li key={index} className="text-sm">
+                    {error.message}
+                  </li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
+        )}
+
         {/* Coordinate System Settings - Common for all formats */}
         <div className="space-y-2">
           <Label>Coordinate System</Label>
@@ -119,7 +233,7 @@ export function FormatSettings({
                 <div className="flex items-center space-x-2">
                   <Switch
                     id="show-all"
-                    checked={analysis.layers.length === (options.visibleLayers || []).length}
+                    checked={analysis.layers.length === ((typedOptions as DxfOptions).visibleLayers || []).length}
                     onCheckedChange={() => handleSelectAll('visibility')}
                   />
                   <label
@@ -161,11 +275,12 @@ export function FormatSettings({
                   </div>
                   <Switch
                     id={`visibility-${layer}`}
-                    checked={options.visibleLayers?.includes(layer)}
+                    checked={(typedOptions as DxfOptions).visibleLayers?.includes(layer)}
                     onCheckedChange={(checked) => {
+                      const dxfOptions = typedOptions as DxfOptions;
                       const newVisibleLayers = checked
-                        ? [...(options.visibleLayers || []), layer]
-                        : (options.visibleLayers || []).filter((l) => l !== layer);
+                        ? [...(dxfOptions.visibleLayers || []), layer]
+                        : (dxfOptions.visibleLayers || []).filter((l) => l !== layer);
                       console.debug('Toggling layer visibility:', {
                         layer,
                         checked,
@@ -186,9 +301,10 @@ export function FormatSettings({
             <div className="space-y-2">
               <Label>Delimiter</Label>
               <Input
-                value={options.delimiter || ''}
+                value={(typedOptions as TextFileOptions).delimiter || ''}
                 onChange={(e) => updateOptions({ delimiter: e.target.value })}
                 placeholder="Enter delimiter (e.g., ',' or ';')"
+                className={validation.errors.some(e => e.field === 'delimiter') ? 'border-destructive' : ''}
               />
             </div>
 
@@ -197,8 +313,9 @@ export function FormatSettings({
               <Input
                 type="number"
                 min="0"
-                value={options.skipRows || 0}
+                value={(typedOptions as TextFileOptions).skipRows || 0}
                 onChange={(e) => updateOptions({ skipRows: parseInt(e.target.value) })}
+                className={validation.errors.some(e => e.field === 'skipRows') ? 'border-destructive' : ''}
               />
             </div>
 
@@ -207,31 +324,29 @@ export function FormatSettings({
               <Input
                 type="number"
                 min="0"
-                value={options.skipColumns || 0}
+                value={(typedOptions as TextFileOptions).skipColumns || 0}
                 onChange={(e) => updateOptions({ skipColumns: parseInt(e.target.value) })}
+                className={validation.errors.some(e => e.field === 'skipColumns') ? 'border-destructive' : ''}
               />
             </div>
-          </>
-        )}
 
-        {/* Point Cloud Optimization Settings */}
-        {['xyz', 'csv', 'txt'].includes(fileType) && (
-          <div className="space-y-2">
-            <Label>Point Cloud Optimization</Label>
-            <Input
-              type="number"
-              min="0"
-              max="100"
-              value={options.simplificationTolerance || 0}
-              onChange={(e) => updateOptions({
-                simplificationTolerance: parseFloat(e.target.value),
-              })}
-              placeholder="Simplification tolerance (0 = no simplification)"
-            />
-            <p className="text-sm text-gray-500">
-              Higher values will reduce point density. 0 means no simplification.
-            </p>
-          </div>
+            <div className="space-y-2">
+              <Label>Point Cloud Optimization</Label>
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                value={(typedOptions as TextFileOptions).simplificationTolerance || 0}
+                onChange={(e) => updateOptions({
+                  simplificationTolerance: parseFloat(e.target.value),
+                })}
+                placeholder="Simplification tolerance (0 = no simplification)"
+              />
+              <p className="text-sm text-muted-foreground">
+                Higher values will reduce point density. 0 means no simplification.
+              </p>
+            </div>
+          </>
         )}
 
         {/* Shapefile-specific settings */}

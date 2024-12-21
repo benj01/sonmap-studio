@@ -2,25 +2,31 @@ import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { Map, Source, Layer, AttributionControl, ViewStateChangeEvent, MapRef } from 'react-map-gl';
 import { COORDINATE_SYSTEMS, isSwissSystem } from '../types/coordinates';
 import { layerStyles } from './map/map-layers';
-import { PreviewMapProps } from '../types/map';
+import { PreviewMapProps, ViewState, MapFeature, MapEvent, CacheStats, PreviewOptions } from '../types/map';
 import { useMapView } from '../hooks/use-map-view';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import { createPreviewManager, PreviewManager } from '../preview/preview-manager';
+import { cacheManager } from '../core/cache-manager';
+import { ProcessorResult } from '../core/processors/base/types';
+import { Progress } from 'components/ui/progress';
+import { Loader2 } from 'lucide-react';
 import bboxPolygon from '@turf/bbox-polygon';
 import booleanIntersects from '@turf/boolean-intersects';
-import { FeatureCollection, Feature } from 'geojson';
-import { createPreviewManager, PreviewManager } from '../preview/preview-manager';
+import type { 
+  Feature, 
+  FeatureCollection, 
+  Point, 
+  LineString, 
+  Polygon, 
+  MultiLineString, 
+  MultiPolygon,
+  GeoJsonProperties 
+} from 'geojson';
+import 'mapbox-gl/dist/mapbox-gl.css';
 
-/**
- * Updated PreviewMap:
- * 
- * Instead of using `useFeatureProcessing`, we directly use a `PreviewManager` to get features.
- * We also apply viewport filtering here manually if required. This ensures we only show features
- * in the current viewport. For large data sets, you could incorporate the `FeatureSampler` or 
- * other strategies.
- */
 const VIEWPORT_PADDING = 50;
 const CLUSTER_RADIUS = 50;
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
+const CACHE_KEY_PREFIX = 'preview-map';
 
 export function PreviewMap({
   preview,
@@ -32,8 +38,10 @@ export function PreviewMap({
 }: PreviewMapProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [hoveredFeature, setHoveredFeature] = useState<any>(null);
+  const [hoveredFeature, setHoveredFeature] = useState<MapFeature | null>(null);
   const [mouseCoords, setMouseCoords] = useState<{ lng: number; lat: number } | null>(null);
+  const [cacheStats, setCacheStats] = useState<CacheStats>({ hits: 0, misses: 0, hitRate: 0 });
+  const [streamProgress, setStreamProgress] = useState<number>(0);
   const mapRef = React.useRef<MapRef>(null);
 
   const {
@@ -44,31 +52,67 @@ export function PreviewMap({
     getViewportBounds
   } = useMapView(bounds, coordinateSystem);
 
-  // Initialize preview manager
+  // Initialize preview manager with caching
   const previewManagerRef = React.useRef<PreviewManager | null>(null);
 
   useEffect(() => {
-    // Create or update the preview manager whenever preview or visibleLayers changes
-    const pm = createPreviewManager({
+    const options: PreviewOptions = {
       maxFeatures: 5000,
       visibleLayers,
       analysis,
-      coordinateSystem
-    });
+      coordinateSystem,
+      enableCaching: true,
+      onProgress: (progress: number): void => setStreamProgress(progress * 100),
+      viewportBounds: getViewportBounds()
+    };
+
+    const pm = createPreviewManager(options);
 
     if (preview) {
       console.debug('Setting preview features:', {
-        featureCount: preview.features.length,
+        featureCount: preview.features.features.length,
         coordinateSystem,
-        isSwiss: isSwissSystem(coordinateSystem),
-        sampleFeature: preview.features[0]
+        isSwiss: isSwissSystem(coordinateSystem)
       });
-      pm.setFeatures(preview);
+
+      // Use cached preview if available
+      const cacheKey = `${CACHE_KEY_PREFIX}:${preview.statistics.featureCount}:${visibleLayers.join(',')}`;
+      const cached = cacheManager.getCachedPreview(cacheKey, {
+        visibleLayers,
+        coordinateSystem
+      });
+
+      if (cached) {
+        pm.setFeatures(cached.features);
+        setCacheStats(prev => ({
+          hits: prev.hits + 1,
+          misses: prev.misses,
+          hitRate: (prev.hits + 1) / (prev.hits + prev.misses + 1)
+        }));
+      } else {
+        pm.setFeatures(preview.features);
+        // Cache the processed features
+        cacheManager.cachePreview(cacheKey, {
+          visibleLayers,
+          coordinateSystem
+        }, {
+          features: preview.features,
+          bounds: preview.bounds,
+          layers: preview.layers,
+          featureCount: preview.statistics.featureCount,
+          coordinateSystem: preview.coordinateSystem
+        });
+        setCacheStats(prev => ({
+          hits: prev.hits,
+          misses: prev.misses + 1,
+          hitRate: prev.hits / (prev.hits + prev.misses + 1)
+        }));
+      }
     }
 
     previewManagerRef.current = pm;
     setIsLoading(false);
-  }, [preview, visibleLayers, analysis, coordinateSystem]);
+  }, [preview, visibleLayers, analysis, coordinateSystem, getViewportBounds]);
 
   // Initial zoom to bounds
   useEffect(() => {
@@ -140,7 +184,30 @@ export function PreviewMap({
 
       const collections = await previewManagerRef.current.getPreviewCollections();
       
-      // If viewport filtering is desired, filter features here:
+      // Try to get filtered features from cache first
+      const cacheKey = `${CACHE_KEY_PREFIX}:viewport:${viewportBounds?.join(',')}`;
+      const cached = cacheManager.getCachedPreview(cacheKey, {
+        viewportBounds,
+        visibleLayers
+      });
+
+      if (cached) {
+        setPreviewState({
+          points: cached.features as FeatureCollection,
+          lines: cached.features as FeatureCollection,
+          polygons: cached.features as FeatureCollection,
+          totalCount: collections.totalCount,
+          visibleCount: cached.featureCount
+        });
+        setCacheStats(prev => ({
+          hits: prev.hits + 1,
+          misses: prev.misses,
+          hitRate: (prev.hits + 1) / (prev.hits + prev.misses + 1)
+        }));
+        return;
+      }
+
+      // Filter features by viewport
       const filterByViewport = (fc: FeatureCollection) => {
         if (!viewportPolygon) return fc;
         const filtered = fc.features.filter((f: Feature) => booleanIntersects(f, viewportPolygon));
@@ -156,6 +223,30 @@ export function PreviewMap({
         filteredLines.features.length + 
         filteredPolygons.features.length;
 
+      // Cache filtered features
+      cacheManager.cachePreview(cacheKey, {
+        viewportBounds,
+        visibleLayers
+      }, {
+        features: {
+          type: 'FeatureCollection',
+          features: [
+            ...filteredPoints.features,
+            ...filteredLines.features,
+            ...filteredPolygons.features
+          ]
+        },
+        bounds: viewportBounds ? {
+          minX: viewportBounds[0],
+          minY: viewportBounds[1],
+          maxX: viewportBounds[2],
+          maxY: viewportBounds[3]
+        } : preview.bounds,
+        layers: visibleLayers,
+        featureCount: filteredVisibleCount,
+        coordinateSystem
+      });
+
       setPreviewState({
         points: filteredPoints,
         lines: filteredLines,
@@ -163,10 +254,16 @@ export function PreviewMap({
         totalCount: collections.totalCount,
         visibleCount: filteredVisibleCount
       });
+
+      setCacheStats(prev => ({
+        hits: prev.hits,
+        misses: prev.misses + 1,
+        hitRate: prev.hits / (prev.hits + prev.misses + 1)
+      }));
     }
 
     updatePreviewCollections();
-  }, [viewportPolygon, previewManagerRef.current]);
+  }, [viewportPolygon, viewportBounds, visibleLayers, preview.bounds, coordinateSystem]);
 
   const { points, lines, polygons, totalCount, visibleCount } = previewState;
 
@@ -248,11 +345,10 @@ export function PreviewMap({
     return components;
   }, [points, lines, polygons]);
 
-  const handleMouseMove = useCallback((event: any) => {
+  const handleMouseMove = useCallback((event: MapEvent) => {
     const features = event.features || [];
     setHoveredFeature(features[0]);
     
-    // Update coordinates from the event's lngLat
     if (event.lngLat) {
       setMouseCoords({
         lng: event.lngLat.lng,
@@ -270,9 +366,18 @@ export function PreviewMap({
     <div className="h-full w-full relative">
       {isLoading && (
         <div className="absolute inset-0 bg-background/50 z-50 flex items-center justify-center">
-          <div className="text-sm text-muted-foreground">
-            Loading preview...
+          <div className="flex flex-col items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <div className="text-sm text-muted-foreground">
+              Loading preview...
+            </div>
           </div>
+        </div>
+      )}
+
+      {streamProgress > 0 && streamProgress < 100 && (
+        <div className="absolute top-0 left-0 right-0 z-50">
+          <Progress value={streamProgress} className="h-1" />
         </div>
       )}
 
@@ -320,6 +425,9 @@ export function PreviewMap({
                 Zoom in to view individual points
               </div>
             )}
+            <div className="text-muted-foreground">
+              Cache hit rate: {(cacheStats.hitRate * 100).toFixed(1)}%
+            </div>
           </div>
 
           {mouseCoords && (

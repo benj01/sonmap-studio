@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ScrollArea } from 'components/ui/scroll-area';
 import { Switch } from 'components/ui/switch';
 import { Label } from 'components/ui/label';
+import { Alert } from 'components/ui/alert';
+import { cn } from 'utils/cn';
 import { 
   ChevronRight, 
   ChevronDown,
@@ -19,19 +21,41 @@ import {
   Layout,
   Database,
   Eye,
-  Download
+  Download,
+  AlertTriangle
 } from 'lucide-react';
-import { DxfData } from '../utils/dxf/types';
+import { 
+  DxfStructure,
+  DxfEntity,
+  DxfEntityType,
+  DxfLayer,
+  DxfBlock
+} from '../core/processors/implementations/dxf/types';
+import { LayerManager } from '../core/processors/implementations/dxf/utils/layer-manager';
 
 interface DxfStructureViewProps {
-  dxfData: DxfData;
+  structure: DxfStructure;
   selectedLayers: string[];
   onLayerToggle: (layer: string, enabled: boolean) => void;
   visibleLayers: string[];
   onLayerVisibilityToggle: (layer: string, visible: boolean) => void;
-  selectedTemplates: string[];
-  onTemplateSelect: (template: string, enabled: boolean) => void;
-  onElementSelect?: (elementInfo: { type: string, layer: string }) => void;
+  selectedEntityTypes: DxfEntityType[];
+  onEntityTypeSelect: (type: DxfEntityType, enabled: boolean) => void;
+  onElementSelect?: (elementInfo: { type: DxfEntityType, layer: string }) => void;
+  /** Optional error callback */
+  onError?: (error: string) => void;
+}
+
+interface EntityCount {
+  total: number;
+  byLayer: Record<string, number>;
+}
+
+interface EntityTypeInfo {
+  label: string;
+  description: string;
+  icon: React.ReactNode;
+  count: EntityCount;
 }
 
 interface TreeNodeProps {
@@ -41,93 +65,132 @@ interface TreeNodeProps {
   count?: number;
   children?: React.ReactNode;
   onClick?: () => void;
+  error?: string;
 }
 
-interface EntityTypeInfo {
-  label: string;
-  description?: string;
-  icon: React.ReactNode;
-}
-
-const getEntityTypeInfo = (type: string): EntityTypeInfo => {
+const getEntityTypeInfo = (type: DxfEntityType, count: EntityCount): EntityTypeInfo => {
   switch (type) {
     case 'POINT':
       return {
         label: 'Points',
         description: 'Single point locations',
-        icon: <Circle className="h-4 w-4" />
+        icon: <Circle className="h-4 w-4" />,
+        count
       };
     case 'LINE':
       return {
         label: 'Lines',
         description: 'Simple line segments',
-        icon: <Box className="h-4 w-4" />
+        icon: <Box className="h-4 w-4" />,
+        count
       };
     case 'POLYLINE':
     case 'LWPOLYLINE':
       return {
         label: 'Polylines',
         description: 'Connected line segments',
-        icon: <Box className="h-4 w-4" />
+        icon: <Box className="h-4 w-4" />,
+        count
       };
     case 'CIRCLE':
       return {
         label: 'Circles',
         description: 'Perfect circles with radius',
-        icon: <Circle className="h-4 w-4" />
+        icon: <Circle className="h-4 w-4" />,
+        count
       };
     case 'ARC':
       return {
         label: 'Arcs',
         description: 'Partial circular segments',
-        icon: <Circle className="h-4 w-4" />
+        icon: <Circle className="h-4 w-4" />,
+        count
       };
     case 'TEXT':
     case 'MTEXT':
       return {
         label: 'Text',
         description: 'Text annotations',
-        icon: <Type className="h-4 w-4" />
+        icon: <Type className="h-4 w-4" />,
+        count
       };
-    case '3DFACE':
+    case 'FACE3D':
       return {
         label: '3D Faces',
         description: '3D surface elements',
-        icon: <Box className="h-4 w-4" />
+        icon: <Box className="h-4 w-4" />,
+        count
       };
     case 'ELLIPSE':
       return {
         label: 'Ellipses',
         description: 'Oval shapes',
-        icon: <Circle className="h-4 w-4" />
+        icon: <Circle className="h-4 w-4" />,
+        count
       };
     case 'INSERT':
       return {
         label: 'Block References',
         description: 'Inserted block instances',
-        icon: <Database className="h-4 w-4" />
+        icon: <Database className="h-4 w-4" />,
+        count
       };
     case 'SPLINE':
       return {
         label: 'Splines',
         description: 'Smooth curves',
-        icon: <Box className="h-4 w-4" />
+        icon: <Box className="h-4 w-4" />,
+        count
+      };
+    case 'HATCH':
+      return {
+        label: 'Hatches',
+        description: 'Fill patterns and boundaries',
+        icon: <Grid className="h-4 w-4" />,
+        count
+      };
+    case 'SOLID':
+      return {
+        label: 'Solids',
+        description: '3D solid objects',
+        icon: <Box className="h-4 w-4" />,
+        count
+      };
+    case 'DIMENSION':
+      return {
+        label: 'Dimensions',
+        description: 'Measurement annotations',
+        icon: <Tag className="h-4 w-4" />,
+        count
       };
     default:
       return {
         label: type,
-        icon: <Box className="h-4 w-4" />
+        description: 'Other entity type',
+        icon: <Box className="h-4 w-4" />,
+        count
       };
   }
 };
 
-function TreeNode({ label, defaultExpanded = false, icon, count, children, onClick }: TreeNodeProps) {
+function TreeNode({ 
+  label, 
+  defaultExpanded = false, 
+  icon, 
+  count, 
+  children, 
+  onClick,
+  error
+}: TreeNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
   return (
     <div className="space-y-1">
       <div 
-        className="flex items-center gap-2 hover:bg-accent hover:text-accent-foreground rounded-sm cursor-pointer p-1"
+        className={cn(
+          "flex items-center gap-2 hover:bg-accent hover:text-accent-foreground rounded-sm cursor-pointer p-1",
+          error && "border-l-2 border-destructive"
+        )}
         onClick={(e) => {
           if (onClick) {
             onClick();
@@ -154,87 +217,126 @@ function TreeNode({ label, defaultExpanded = false, icon, count, children, onCli
   );
 }
 
-function calculateTotalCount(elements: Record<string, number>): number {
-  return Object.values(elements).reduce((a, b) => a + b, 0);
-}
-
 export function DxfStructureView({ 
-  dxfData, 
+  structure,
   selectedLayers = [],
   onLayerToggle,
   visibleLayers = [],
   onLayerVisibilityToggle,
-  selectedTemplates = [],
-  onTemplateSelect,
-  onElementSelect
+  selectedEntityTypes = [],
+  onEntityTypeSelect,
+  onElementSelect,
+  onError
 }: DxfStructureViewProps) {
-  // Extract styles and counts
-  const lineTypes = new Set<string>();
-  const textStyles = new Set<string>();
-  const entityCounts: Record<string, number> = {};
-  const elementsByLayer: Record<string, Record<string, number>> = {};
+  // Initialize layer manager
+  const [layerManager] = useState(() => new LayerManager());
+  const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // Process entities and calculate counts including INSERT entities
-  function processEntities(entities: any[], parentLayer?: string) {
-    entities.forEach(entity => {
-      const layer = parentLayer || entity.layer;
-      
-      // Count entities by type
-      entityCounts[entity.type] = (entityCounts[entity.type] || 0) + 1;
-
-      // Count entities by layer and type
-      if (layer) {
-        if (!elementsByLayer[layer]) {
-          elementsByLayer[layer] = {};
-        }
-        elementsByLayer[layer][entity.type] = 
-          (elementsByLayer[layer][entity.type] || 0) + 1;
-      }
-
-      // Collect styles
-      if (entity.lineType) lineTypes.add(entity.lineType);
-      if ((entity.type === 'TEXT' || entity.type === 'MTEXT') && entity.style) {
-        textStyles.add(entity.style);
-      }
-
-      // Process block references (INSERT entities)
-      if (entity.type === 'INSERT' && entity.block && dxfData.blocks?.[entity.block]) {
-        processEntities(dxfData.blocks[entity.block].entities, layer);
+  // Setup layer manager when structure changes
+  useEffect(() => {
+    layerManager.clear();
+    structure.layers.forEach(layer => {
+      try {
+        layerManager.addLayer(layer);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid layer';
+        setValidationErrors(prev => ({
+          ...prev,
+          [layer.name]: message
+        }));
+        onError?.(message);
       }
     });
-  }
+  }, [structure, layerManager, onError]);
 
-  processEntities(dxfData.entities);
+  // Calculate styles and counts
+  const [styles, entityCounts, elementsByLayer] = useMemo(() => {
+    const lineTypes = new Set<string>();
+    const textStyles = new Set<string>();
+    const counts = new Map<DxfEntityType, EntityCount>();
+    const byLayer = new Map<string, Map<DxfEntityType, number>>();
 
-  // Get all available layers
-  const allLayers = Object.keys(dxfData.tables?.layer?.layers || {});
+    // Process all entities including those in blocks
+    const processEntities = (entities: DxfEntity[], parentLayer?: string) => {
+      entities.forEach(entity => {
+        const layer = parentLayer || entity.attributes.layer || '0';
+        
+        // Collect styles
+        if (entity.attributes.lineType) {
+          lineTypes.add(entity.attributes.lineType);
+        }
+        if ((entity.type === 'TEXT' || entity.type === 'MTEXT') && entity.data.style) {
+          textStyles.add(entity.data.style);
+        }
+
+        // Update entity type counts
+        const typeCount = counts.get(entity.type) || { total: 0, byLayer: {} };
+        typeCount.total++;
+        typeCount.byLayer[layer] = (typeCount.byLayer[layer] || 0) + 1;
+        counts.set(entity.type, typeCount);
+
+        // Update layer counts
+        let layerCounts = byLayer.get(layer);
+        if (!layerCounts) {
+          layerCounts = new Map();
+          byLayer.set(layer, layerCounts);
+        }
+        layerCounts.set(entity.type, (layerCounts.get(entity.type) || 0) + 1);
+
+        // Process nested blocks
+        if (entity.type === 'INSERT' && entity.blockName) {
+          const block = structure.blocks.find(b => b.name === entity.blockName);
+          if (block) {
+            processEntities(block.entities, layer);
+          }
+        }
+      });
+    };
+
+    // Process all blocks
+    structure.blocks.forEach(block => {
+      processEntities(block.entities);
+    });
+
+    return [{ lineTypes, textStyles }, counts, byLayer];
+  }, [structure]);
+
+  // Get all available layers and entity types
+  const allLayers = structure.layers.map(l => l.name);
+  const allEntityTypes = Array.from(entityCounts.keys());
   
   // Handle toggle all layers visibility
   const handleToggleAllLayers = (visible: boolean) => {
     allLayers.forEach(layer => {
-      onLayerVisibilityToggle(layer, visible);
+      if (!validationErrors[layer]) {
+        onLayerVisibilityToggle(layer, visible);
+      }
     });
   };
 
   // Handle toggle all layers import
   const handleToggleAllLayersImport = (enabled: boolean) => {
     allLayers.forEach(layer => {
-      onLayerToggle(layer, enabled);
+      if (!validationErrors[layer]) {
+        onLayerToggle(layer, enabled);
+      }
     });
   };
 
-  // Handle toggle all templates
-  const handleToggleAllTemplates = (enabled: boolean) => {
-    Object.keys(entityCounts).forEach(type => {
-      onTemplateSelect(type, enabled);
+  // Handle toggle all entity types
+  const handleToggleAllEntityTypes = (enabled: boolean) => {
+    allEntityTypes.forEach(type => {
+      onEntityTypeSelect(type, enabled);
     });
   };
 
-  // Check if all layers/templates are visible/selected
-  const allLayersVisible = allLayers.length > 0 && allLayers.every(layer => visibleLayers.includes(layer));
-  const allLayersSelected = allLayers.length > 0 && allLayers.every(layer => selectedLayers.includes(layer));
-  const allTemplatesSelected = Object.keys(entityCounts).length > 0 && 
-    Object.keys(entityCounts).every(type => selectedTemplates.includes(type));
+  // Check if all layers/entity types are visible/selected
+  const allLayersVisible = allLayers.length > 0 && 
+    allLayers.every(layer => !validationErrors[layer] && visibleLayers.includes(layer));
+  const allLayersSelected = allLayers.length > 0 && 
+    allLayers.every(layer => !validationErrors[layer] && selectedLayers.includes(layer));
+  const allEntityTypesSelected = allEntityTypes.length > 0 && 
+    allEntityTypes.every(type => selectedEntityTypes.includes(type));
 
   return (
     <ScrollArea className="h-[400px] w-full rounded-md border p-2">
@@ -243,14 +345,14 @@ export function DxfStructureView({
         <TreeNode 
           label="Detailing Symbol Styles" 
           icon={<Palette />}
-          count={lineTypes.size + textStyles.size}
+          count={styles.lineTypes.size + styles.textStyles.size}
         >
           <TreeNode 
             label="Line Styles" 
             icon={<Box />}
-            count={lineTypes.size}
+            count={styles.lineTypes.size}
           >
-            {Array.from(lineTypes).map(lineType => (
+            {Array.from(styles.lineTypes).map(lineType => (
               <TreeNode key={lineType} label={lineType} />
             ))}
           </TreeNode>
@@ -258,9 +360,9 @@ export function DxfStructureView({
           <TreeNode 
             label="Text Styles" 
             icon={<Type />}
-            count={textStyles.size}
+            count={styles.textStyles.size}
           >
-            {Array.from(textStyles).map(style => (
+            {Array.from(styles.textStyles).map(style => (
               <TreeNode key={style} label={style} />
             ))}
           </TreeNode>
@@ -270,7 +372,7 @@ export function DxfStructureView({
         <TreeNode 
           label="Layers" 
           icon={<Layers />}
-          count={Object.keys(dxfData.tables?.layer?.layers || {}).length}
+          count={structure.layers.length}
           defaultExpanded
         >
           {/* Add master toggles for all layers */}
@@ -299,44 +401,47 @@ export function DxfStructureView({
             </div>
           </div>
 
-          {dxfData.tables?.layer?.layers && Object.entries(dxfData.tables.layer.layers).map(([name, layer]) => (
-            <div key={name} className="space-y-1">
+          {structure.layers.map(layer => (
+            <div key={layer.name} className="space-y-1">
               <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
                 <div className="flex items-center gap-2">
                   <Layers className="h-4 w-4" />
-                  <span className="text-xs">{name}</span>
+                  <span className="text-xs">{layer.name}</span>
                   <span className="text-xs text-muted-foreground">
-                    ({calculateTotalCount(elementsByLayer[name] || {})})
+                    ({Array.from(elementsByLayer.get(layer.name)?.values() || []).reduce((a, b) => a + b, 0)})
                   </span>
+                  {validationErrors[layer.name] && (
+                    <AlertTriangle className="h-4 w-4 text-destructive" />
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1">
                     <Eye className="h-3 w-3" />
                     <Switch
-                      checked={visibleLayers.includes(name)}
-                      onCheckedChange={(checked) => onLayerVisibilityToggle(name, checked)}
+                      checked={visibleLayers.includes(layer.name)}
+                      onCheckedChange={(checked) => onLayerVisibilityToggle(layer.name, checked)}
                       className="scale-75"
                     />
                   </div>
                   <div className="flex items-center gap-1">
                     <Download className="h-3 w-3" />
                     <Switch
-                      checked={selectedLayers.includes(name)}
-                      onCheckedChange={(checked) => onLayerToggle(name, checked)}
+                      checked={selectedLayers.includes(layer.name)}
+                      onCheckedChange={(checked) => onLayerToggle(layer.name, checked)}
                       className="scale-75"
                     />
                   </div>
                 </div>
               </div>
-              {elementsByLayer[name] && (
+              {elementsByLayer.get(layer.name) && (
                 <div className="ml-6 space-y-1">
-                  {Object.entries(elementsByLayer[name]).map(([type, count]) => {
-                    const typeInfo = getEntityTypeInfo(type);
+                  {Array.from(elementsByLayer.get(layer.name)!.entries()).map(([type, count]) => {
+                    const typeInfo = getEntityTypeInfo(type, entityCounts.get(type) || { total: 0, byLayer: {} });
                     return (
                       <div 
                         key={type} 
                         className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                        onClick={() => onElementSelect?.({ type, layer: name })}
+                        onClick={() => onElementSelect?.({ type, layer: layer.name })}
                       >
                         {typeInfo.icon}
                         <span>{typeInfo.label}</span>
@@ -351,16 +456,16 @@ export function DxfStructureView({
         </TreeNode>
 
         {/* Models */}
-        {dxfData.blocks && Object.keys(dxfData.blocks).length > 0 && (
+        {structure.blocks.length > 0 && (
           <TreeNode 
             label="Models" 
             icon={<Layout />}
-            count={Object.keys(dxfData.blocks).length}
+            count={structure.blocks.length}
           >
-            {Object.entries(dxfData.blocks).map(([name, block]) => (
+            {structure.blocks.map(block => (
               <TreeNode 
-                key={name} 
-                label={name}
+                key={block.name} 
+                label={block.name}
                 icon={<Database />}
                 count={block.entities.length}
               >
@@ -368,14 +473,14 @@ export function DxfStructureView({
                   block.entities.reduce((acc, entity) => {
                     acc[entity.type] = (acc[entity.type] || 0) + 1;
                     return acc;
-                  }, {} as Record<string, number>)
+                  }, {} as Record<DxfEntityType, number>)
                 ).map(([type, count]) => {
-                  const typeInfo = getEntityTypeInfo(type);
+                  const typeInfo = getEntityTypeInfo(type as DxfEntityType, entityCounts.get(type as DxfEntityType) || { total: 0, byLayer: {} });
                   return (
                     <div 
                       key={type} 
                       className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                      onClick={() => onElementSelect?.({ type, layer: name })}
+                      onClick={() => onElementSelect?.({ type: type as DxfEntityType, layer: block.name })}
                     >
                       {typeInfo.icon}
                       <span>{typeInfo.label}</span>
@@ -392,10 +497,10 @@ export function DxfStructureView({
         <TreeNode 
           label="Entity Types" 
           icon={<Grid />}
-          count={Object.keys(entityCounts).length}
+          count={entityCounts.size}
           defaultExpanded
         >
-          {/* Add master toggle for all templates */}
+          {/* Add master toggle for all entity types */}
           <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
             <div className="flex items-center gap-2">
               <Grid className="h-4 w-4" />
@@ -404,15 +509,15 @@ export function DxfStructureView({
             <div className="flex items-center gap-1">
               <Download className="h-3 w-3" />
               <Switch
-                checked={allTemplatesSelected}
-                onCheckedChange={handleToggleAllTemplates}
+                checked={allEntityTypesSelected}
+                onCheckedChange={handleToggleAllEntityTypes}
                 className="scale-75"
               />
             </div>
           </div>
 
-          {Object.entries(entityCounts).map(([type, count]) => {
-            const typeInfo = getEntityTypeInfo(type);
+          {Array.from(entityCounts.entries()).map(([type, count]) => {
+            const typeInfo = getEntityTypeInfo(type, count);
             return (
               <div 
                 key={type} 
@@ -422,7 +527,7 @@ export function DxfStructureView({
                   <div className="h-4 w-4">{typeInfo.icon}</div>
                   <div>
                     <Label className="text-xs cursor-pointer">
-                      {typeInfo.label} ({count})
+                      {typeInfo.label} ({count.total})
                     </Label>
                     {typeInfo.description && (
                       <p className="text-xs text-muted-foreground hidden group-hover:block">
@@ -432,8 +537,8 @@ export function DxfStructureView({
                   </div>
                 </div>
                 <Switch
-                  checked={selectedTemplates.includes(type)}
-                  onCheckedChange={(checked) => onTemplateSelect(type, checked)}
+                  checked={selectedEntityTypes.includes(type)}
+                  onCheckedChange={(checked) => onEntityTypeSelect(type, checked)}
                   className="scale-75"
                 />
               </div>

@@ -1,3 +1,4 @@
+
 import { Feature, FeatureCollection, Point, GeoJsonProperties } from 'geojson';
 import { FeatureManager } from '../core/feature-manager';
 import { cacheManager } from '../core/cache-manager';
@@ -7,7 +8,7 @@ import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
 import { calculateFeatureBounds, Bounds } from '../utils/geometry-utils';
 import { GeoFeature } from '../../../types/geo';
-import { createTransformer } from '../utils/coordinate-systems';
+
 
 export interface PreviewOptions {
   /** Maximum number of features to include in preview */
@@ -286,29 +287,28 @@ export class PreviewManager {
 
         // Transform all geometry types, not just points
         if (feature.geometry && 'coordinates' in feature.geometry) {
-          const transformer = createTransformer(
-            preview.coordinateSystem,
-            targetSystem
-          );
-
           // Deep clone the geometry to avoid modifying the original
           const transformedGeometry = JSON.parse(JSON.stringify(feature.geometry));
           
           // Recursively transform coordinates
-          const transformCoordinates = (coords: any): any => {
+          const transformCoordinates = async (coords: any): Promise<any> => {
             if (Array.isArray(coords)) {
               if (coords.length === 2 && typeof coords[0] === 'number') {
                 // This is a coordinate pair
-                const transformed = transformer.transform({ x: coords[0], y: coords[1] });
+                const transformed = await coordinateSystemManager.transform(
+                  { x: coords[0], y: coords[1] },
+                  preview.coordinateSystem,
+                  targetSystem
+                );
                 return [transformed.x, transformed.y];
               }
               // This is an array of coordinates or arrays
-              return coords.map(transformCoordinates);
+              return Promise.all(coords.map(transformCoordinates));
             }
             return coords;
           };
 
-          transformedGeometry.coordinates = transformCoordinates(transformedGeometry.coordinates);
+          transformedGeometry.coordinates = await transformCoordinates(transformedGeometry.coordinates);
 
           transformedFeature = {
             type: 'Feature',

@@ -1,42 +1,79 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Label } from 'components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'components/ui/select';
-import { COORDINATE_SYSTEMS } from '../types/coordinates';
+import { 
+  COORDINATE_SYSTEMS, 
+  CoordinateSystem, 
+  isSwissSystem, 
+  isWGS84System,
+  isValidPoint,
+  isWGS84Range
+} from '../types/coordinates';
+import { ICoordinateTransformer } from '../core/processors/base/interfaces';
 import { cn } from 'utils/cn';
-import { Info } from 'lucide-react';
+import { Info, AlertTriangle } from 'lucide-react';
 
 interface CoordinateSystemSelectProps {
-  value: string;
-  defaultValue?: string;
-  onChange: (value: string) => void;
-  highlightValue?: string;
+  value: CoordinateSystem;
+  defaultValue?: CoordinateSystem;
+  onChange: (value: CoordinateSystem) => void;
+  highlightValue?: CoordinateSystem;
+  transformer?: ICoordinateTransformer;
+  /** Sample point to validate coordinate system (optional) */
+  samplePoint?: { x: number; y: number };
+  /** Called when validation status changes */
+  onValidationChange?: (isValid: boolean) => void;
 }
 
 export function CoordinateSystemSelect({
   value,
   defaultValue,
   onChange,
-  highlightValue
+  highlightValue,
+  transformer,
+  samplePoint,
+  onValidationChange
 }: CoordinateSystemSelectProps) {
-  // Set initial value if defaultValue is provided
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  // Validate coordinate system when it changes
   useEffect(() => {
-    if (defaultValue && !value) {
-      console.log('Setting initial coordinate system:', defaultValue);
-      onChange(defaultValue);
+    async function validateSystem() {
+      if (!transformer || !samplePoint) return;
+
+      setIsValidating(true);
+      setValidationError(null);
+
+      try {
+        // Basic point validation
+        if (!isValidPoint(samplePoint)) {
+          throw new Error('Invalid coordinate point format');
+        }
+
+        // Range validation for WGS84
+        if (isWGS84System(value) && !isWGS84Range(samplePoint)) {
+          throw new Error('Coordinates out of WGS84 range');
+        }
+
+        // Transformation validation
+        if (transformer) {
+          await transformer.transformPoint(samplePoint);
+        }
+
+        onValidationChange?.(true);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Validation failed';
+        setValidationError(message);
+        onValidationChange?.(false);
+      } finally {
+        setIsValidating(false);
+      }
     }
-  }, [defaultValue, value, onChange]);
 
-  // Log prop changes
-  useEffect(() => {
-    console.log('CoordinateSystemSelect props:', {
-      value,
-      defaultValue,
-      highlightValue
-    });
-  }, [value, defaultValue, highlightValue]);
+    validateSystem();
+  }, [value, transformer, samplePoint, onValidationChange]);
 
-  const currentValue = value || defaultValue || '';
-  console.log('Current coordinate system value:', currentValue);
+  const currentValue = value || defaultValue || COORDINATE_SYSTEMS.NONE;
 
   return (
     <div className="space-y-2">
@@ -51,11 +88,8 @@ export function CoordinateSystemSelect({
       </div>
       <Select
         value={currentValue}
-        onValueChange={(newValue) => {
-          console.log('Coordinate system changed:', {
-            from: currentValue,
-            to: newValue
-          });
+        onValueChange={(newValue: CoordinateSystem) => {
+          setValidationError(null);
           onChange(newValue);
         }}
       >
@@ -140,14 +174,27 @@ export function CoordinateSystemSelect({
         </div>
       )}
 
-      {/* Show when coordinate system was detected */}
+      {/* Validation and detection messages */}
+      {isValidating && (
+        <div className="text-sm text-muted-foreground">
+          Validating coordinate system...
+        </div>
+      )}
+      {validationError && (
+        <div className="text-sm text-destructive flex items-center gap-1">
+          <AlertTriangle className="h-3 w-3" />
+          {validationError}
+        </div>
+      )}
       {highlightValue && highlightValue === currentValue && (
-        <div className="text-sm text-primary">
+        <div className="text-sm text-primary flex items-center gap-1">
+          <Info className="h-3 w-3" />
           This coordinate system was automatically detected based on the data.
         </div>
       )}
       {highlightValue && highlightValue !== currentValue && (
-        <div className="text-sm text-warning">
+        <div className="text-sm text-warning flex items-center gap-1">
+          <AlertTriangle className="h-3 w-3" />
           You've selected a different system than what was detected. Make sure this is intended.
         </div>
       )}
