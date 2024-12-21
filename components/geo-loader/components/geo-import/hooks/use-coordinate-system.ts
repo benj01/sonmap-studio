@@ -1,9 +1,10 @@
 import { useState, useCallback, useEffect } from 'react';
 import { CoordinateSystem, COORDINATE_SYSTEMS } from '../../../types/coordinates';
-import { CoordinateSystemError, CoordinateTransformationError } from '../../../utils/errors';
-import { AnalyzeResult, ProcessorOptions } from '../../../processors';
+import { GeoLoaderError } from '../../../core/errors/types';
+import { AnalyzeResult } from '../../../core/processors/base/types';
+import { ProcessorOptions } from '../../../core/processors/base/types';
 import { PreviewManager } from '../../../preview/preview-manager';
-import { initializeCoordinateSystems, areCoordinateSystemsInitialized } from '../../../utils/coordinate-systems';
+import { coordinateSystemManager } from '../../../core/coordinate-system-manager';
 
 interface CoordinateSystemHookProps {
   onWarning: (message: string) => void;
@@ -16,7 +17,6 @@ interface CoordinateSystemState {
   coordinateSystem?: CoordinateSystem;
   pendingCoordinateSystem?: CoordinateSystem;
   loading: boolean;
-  initialized: boolean;
 }
 
 export function useCoordinateSystem({
@@ -25,40 +25,26 @@ export function useCoordinateSystem({
   onProgress,
   getProcessor
 }: CoordinateSystemHookProps) {
-  const [state, setState] = useState<CoordinateSystemState>(() => {
-    const isInitialized = areCoordinateSystemsInitialized();
-    console.log('Initial coordinate system state:', { isInitialized });
-    return {
-      coordinateSystem: undefined,
-      pendingCoordinateSystem: undefined,
-      loading: false,
-      initialized: isInitialized
-    };
+  const [state, setState] = useState<CoordinateSystemState>({
+    coordinateSystem: undefined,
+    pendingCoordinateSystem: undefined,
+    loading: false
   });
 
-  // Initialize coordinate systems immediately on mount
+  // Initialize coordinate system manager on mount
   useEffect(() => {
-    const initializeSystems = async () => {
-      console.log('Checking coordinate system initialization:', { 
-        currentState: state.initialized,
-        areSystemsInitialized: areCoordinateSystemsInitialized()
-      });
-
-      if (!state.initialized) {
+    const initializeManager = async () => {
+      if (!coordinateSystemManager.isInitialized()) {
         try {
-          console.log('Attempting to initialize coordinate systems...');
-          if (initializeCoordinateSystems()) {
-            console.log('Coordinate systems initialized successfully');
-            setState(prev => ({ ...prev, initialized: true }));
-          }
+          await coordinateSystemManager.initialize();
         } catch (error) {
-          console.error('Failed to initialize coordinate systems:', error);
+          console.error('Failed to initialize coordinate system manager:', error);
           onError(`Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     };
-    initializeSystems();
-  }, [state.initialized, onError]);
+    initializeManager();
+  }, [onError]);
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
     try {
@@ -104,14 +90,15 @@ export function useCoordinateSystem({
       });
 
       if (!processor) {
-        throw new CoordinateSystemError(
-          'Failed to create processor'
+        throw new GeoLoaderError(
+          'Failed to create processor',
+          'PROCESSOR_CREATION_ERROR'
         );
       }
 
       const result = await processor.analyze(file);
 
-      // Update preview manager
+      // Update preview manager with streaming support
       if (previewManager) {
         previewManager.setOptions({
           coordinateSystem: state.pendingCoordinateSystem,
@@ -124,24 +111,30 @@ export function useCoordinateSystem({
         });
 
         if (result.preview) {
-          previewManager.setFeatures(result.preview);
+          if (Symbol.asyncIterator in result.preview) {
+            // Stream features
+            await previewManager.generatePreview(
+              result.preview[Symbol.asyncIterator](),
+              file.name
+            );
+          } else {
+            // Fallback for non-streaming preview
+            previewManager.setFeatures(result.preview);
+          }
         }
       }
 
       setState(prev => ({
         loading: false,
         coordinateSystem: prev.pendingCoordinateSystem,
-        pendingCoordinateSystem: prev.pendingCoordinateSystem,
-        initialized: true
+        pendingCoordinateSystem: prev.pendingCoordinateSystem
       }));
 
       console.log('Successfully applied coordinate system');
       return result;
     } catch (error: unknown) {
-      if (error instanceof CoordinateSystemError) {
+      if (error instanceof GeoLoaderError) {
         onError(`Coordinate system error: ${error.message}`);
-      } else if (error instanceof CoordinateTransformationError) {
-        onError(`Transformation error: ${error.message}`);
       } else {
         onError(`Failed to apply coordinate system: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -155,10 +148,9 @@ export function useCoordinateSystem({
     setState({
       coordinateSystem: undefined,
       pendingCoordinateSystem: undefined,
-      loading: false,
-      initialized: state.initialized
+      loading: false
     });
-  }, [state.initialized]);
+  }, []);
 
   const initializeCoordinateSystem = useCallback((system?: CoordinateSystem) => {
     if (system && Object.values(COORDINATE_SYSTEMS).includes(system)) {

@@ -6,7 +6,7 @@ import { geoErrorManager } from '../core/error-manager';
 import { ErrorSeverity } from '../../../types/errors';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
-import { calculateFeatureBounds, Bounds } from '../utils/geometry-utils';
+import { calculateFeatureBounds, Bounds } from '../core/feature-manager/bounds';
 import { GeoFeature } from '../../../types/geo';
 
 

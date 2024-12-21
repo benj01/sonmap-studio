@@ -1,8 +1,11 @@
 import { useCallback } from 'react';
-import { ProcessorOptions, ProcessorStats, createProcessor } from '../../../processors';
+import { ProcessorOptions } from '../../../core/processors/base/types';
+import { ProcessorStats } from '../../../core/processors/base/types';
 import { CoordinateSystem } from '../../../types/coordinates';
-import { LoaderResult, GeoFeature } from 'types/geo';
-import { GeoLoaderError } from '../../../utils/errors';
+import { LoaderResult, GeoFeature } from '../../../../../types/geo';
+import { GeoLoaderError } from '../../../core/errors/types';
+import { FeatureManager } from '../../../core/feature-manager';
+import { FeatureCollection } from 'geojson';
 
 interface ImportProcessProps {
   onWarning: (message: string) => void;
@@ -49,16 +52,42 @@ export function useImportProcess({
         throw new Error(`No processor available for file: ${file.name}`);
       }
 
+      // Create feature manager for streaming support
+      const featureManager = new FeatureManager({
+        chunkSize: 1000,
+        maxMemoryMB: 512
+      });
+
+      // Process file with streaming support
       const processorResult = await processor.process(file);
+      const features: GeoFeature[] = [];
+
+      // Handle streaming or direct features
+      if (processorResult.features && 
+          typeof processorResult.features === 'object' && 
+          Symbol.asyncIterator in processorResult.features) {
+        for await (const feature of processorResult.features[Symbol.asyncIterator]()) {
+          await featureManager.addFeature(feature);
+          features.push(feature as GeoFeature);
+        }
+      } else {
+        for (const feature of processorResult.features.features) {
+          await featureManager.addFeature(feature);
+          features.push(feature as GeoFeature);
+        }
+      }
 
       // Convert ProcessorResult to LoaderResult
       const result: LoaderResult = {
-        features: processorResult.features.features as GeoFeature[],
+        features,
         bounds: processorResult.bounds,
         layers: processorResult.layers || [],
         coordinateSystem: processorResult.coordinateSystem,
         statistics: convertStatistics(processorResult.statistics)
       };
+
+      // Clean up
+      featureManager.clear();
 
       // Log import statistics
       const importLogs: { message: string; type: 'info' | 'warning' | 'error' }[] = [];
@@ -98,7 +127,7 @@ export function useImportProcess({
         }
 
         if (result.statistics.errors && result.statistics.errors.length > 0) {
-          result.statistics.errors.forEach(error => {
+          result.statistics.errors.forEach((error: { type: string; message?: string; count: number }) => {
             importLogs.push({
               message: error.message ?
                 `${error.type}: ${error.message} (${error.count} occurrence${error.count > 1 ? 's' : ''})` :

@@ -1,10 +1,15 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { AnalyzeResult, ProcessorOptions } from '../../../processors';
+import { AnalyzeResult } from '../../../core/processors/base/types';
+import { ProcessorOptions } from '../../../core/processors/base/types';
 import { CoordinateSystem } from '../../../types/coordinates';
 import { PreviewManager, createPreviewManager } from '../../../preview/preview-manager';
-import { GeoLoaderError } from '../../../utils/errors';
-import { Warning } from '../../../types/map';
-import { initializeCoordinateSystems } from '../../../utils/coordinate-systems';
+import { GeoLoaderError } from '../../../core/errors/types';
+import { coordinateSystemManager } from '../../../core/coordinate-system-manager';
+
+interface Warning {
+  type: string;
+  message: string;
+}
 
 interface FileAnalysisProps {
   file: File | null;
@@ -60,15 +65,17 @@ export function useFileAnalysis({
     setState(prev => ({ ...prev, loading: true }));
 
     try {
-      // Ensure coordinate systems are initialized
-      try {
-        initializeCoordinateSystems();
-      } catch (error) {
-        throw new GeoLoaderError(
-          'Failed to initialize coordinate systems',
-          'COORDINATE_SYSTEM_INIT_ERROR',
-          { originalError: error instanceof Error ? error.message : String(error) }
-        );
+      // Ensure coordinate system manager is initialized
+      if (!coordinateSystemManager.isInitialized()) {
+        try {
+          await coordinateSystemManager.initialize();
+        } catch (error) {
+          throw new GeoLoaderError(
+            'Failed to initialize coordinate systems',
+            'COORDINATE_SYSTEM_INIT_ERROR',
+            { originalError: error instanceof Error ? error.message : String(error) }
+          );
+        }
       }
 
       const processor = await getProcessor(file);
@@ -85,19 +92,30 @@ export function useFileAnalysis({
       // Initialize layers
       const layers = result.layers || [];
 
-      // Initialize preview manager with warnings from processor
+      // Initialize preview manager with streaming support
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
         visibleLayers: layers,
         analysis: {
           warnings: convertWarningsToAnalysis(processor.getWarnings())
         },
-        coordinateSystem: result.coordinateSystem
+        coordinateSystem: result.coordinateSystem,
+        enableCaching: true,
+        smartSampling: true
       });
 
-      // Set preview features if available
+      // Generate preview using streaming if available
       if (result.preview) {
-        previewManager.setFeatures(result.preview);
+        if (Symbol.asyncIterator in result.preview) {
+          // Stream features
+          await previewManager.generatePreview(
+            result.preview[Symbol.asyncIterator](),
+            file.name
+          );
+        } else {
+          // Fallback for non-streaming preview
+          previewManager.setFeatures(result.preview);
+        }
       }
 
       setState({

@@ -1,19 +1,25 @@
 import { useRef, useCallback } from 'react';
-import { ProcessorOptions, createProcessor } from '../../../processors';
-import { GeoLoaderError } from '../../../utils/errors';
+import { ProcessorRegistry } from '../../../core/processors/base/registry';
+import { ProcessorOptions } from '../../../core/processors/base/types';
+import { createErrorReporter } from '../../../core/errors/reporter';
+import { IProcessor, IProcessorEvents } from '../../../core/processors/base/interfaces';
+import { ValidationError } from '../../../core/errors/types';
+import { CoordinateSystem } from '../../../types/coordinates';
 
-interface ProcessorHookProps {
-  onWarning: (message: string) => void;
-  onError: (message: string) => void;
-  onProgress: (progress: number) => void;
+interface ProcessorHookProps extends IProcessorEvents {
+  coordinateSystem?: CoordinateSystem;
+  cacheTTL?: number;
 }
 
 export function useProcessor({
   onWarning,
   onError,
-  onProgress
+  onProgress,
+  coordinateSystem,
+  cacheTTL = 300000 // 5 minutes default TTL
 }: ProcessorHookProps) {
-  const processorRef = useRef<any>(null);
+  const processorRef = useRef<IProcessor | null>(null);
+  const errorReporter = createErrorReporter();
 
   const getProcessor = useCallback(async (file: File, options: Partial<ProcessorOptions> = {}) => {
     try {
@@ -22,36 +28,67 @@ export function useProcessor({
         return processorRef.current;
       }
 
-      // Create new processor
-      const processor = await createProcessor(file, {
-        onWarning,
-        onError,
-        onProgress,
+      // Configure processor options
+      const processorOptions: ProcessorOptions = {
+        errorReporter,
+        coordinateSystem,
         ...options
-      } as ProcessorOptions);
+      };
+
+      // Create processor using registry
+      const processor = await ProcessorRegistry.getProcessor(file, processorOptions);
+
+      // Configure event handlers
+      if (processor) {
+        const events: IProcessorEvents = {
+          onWarning: (message: string, details?: Record<string, unknown>) => {
+            onWarning(message, details);
+            errorReporter.addWarning(message, 'PROCESSOR_WARNING', details);
+          },
+          onError: (message: string, details?: Record<string, unknown>) => {
+            onError(message, details);
+            errorReporter.addError(message, 'PROCESSOR_ERROR', details);
+          },
+          onProgress
+        };
+        Object.assign(processor, events);
+      }
 
       if (!processor) {
-        throw new Error(`No processor available for file: ${file.name}`);
+        const error = new ValidationError(
+          `No processor available for file: ${file.name}`,
+          'UNSUPPORTED_FILE_TYPE'
+        );
+        error.details = { fileName: file.name };
+        throw error;
       }
 
       processorRef.current = processor;
       return processor;
     } catch (error: unknown) {
-      if (error instanceof GeoLoaderError) {
-        onError(`Processor error: ${error.message}`);
+      if (error instanceof ValidationError) {
+        onError(error.message, error.details);
       } else {
-        onError(`Failed to create processor: ${error instanceof Error ? error.message : String(error)}`);
+        onError(
+          `Failed to create processor: ${error instanceof Error ? error.message : String(error)}`,
+          { error: error instanceof Error ? error.message : String(error) }
+        );
       }
       return null;
     }
-  }, [onWarning, onError, onProgress]);
+  }, [onWarning, onError, onProgress, coordinateSystem, cacheTTL, errorReporter]);
 
   const resetProcessor = useCallback(() => {
-    processorRef.current = null;
+    if (processorRef.current) {
+      processorRef.current.clear();
+      processorRef.current = null;
+    }
   }, []);
 
   return {
     getProcessor,
-    resetProcessor
+    resetProcessor,
+    errors: errorReporter.getErrors(),
+    warnings: errorReporter.getWarnings()
   };
 }
