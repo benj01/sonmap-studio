@@ -89,15 +89,127 @@ export class DxfParser {
   }
 
   /**
-   * Parse DXF entities
+   * Parse DXF entities from text content
    */
-  private async parseEntities(
+  async parseEntities(
     text: string,
     options: DxfParseOptions
   ): Promise<DxfEntity[]> {
-    // TODO: Implement actual DXF entity parsing
-    // For now, return an empty array
-    return [];
+    const entities: DxfEntity[] = [];
+    const entityRegex = /^0\s+(\w+)\s+([\s\S]*?)(?=^0\s+\w+|\Z)/gm;
+    
+    let match;
+    let count = 0;
+    while ((match = entityRegex.exec(text)) !== null) {
+      try {
+        const [, type, entityContent] = match;
+        if (this.isValidEntityType(type)) {
+          const groupCodes = this.parseGroupCodes(entityContent);
+          const entityType = type as DxfEntityType;
+          
+          // Skip if entity type is not in options
+          if (options.entityTypes && !options.entityTypes.includes(entityType)) {
+            continue;
+          }
+
+          // Skip text entities if not requested
+          if (!options.parseText && (entityType === 'TEXT' || entityType === 'MTEXT')) {
+            continue;
+          }
+
+          // Skip dimensions if not requested
+          if (!options.parseDimensions && entityType === 'DIMENSION') {
+            continue;
+          }
+
+          const entity: DxfEntity = {
+            type: entityType,
+            attributes: this.parseEntityAttributes(groupCodes),
+            data: this.parseEntityData(groupCodes, entityType)
+          };
+
+          entities.push(entity);
+          count++;
+
+          // Stop if we've reached maxEntities
+          if (options.maxEntities && count >= options.maxEntities) {
+            break;
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to parse entity:', error);
+      }
+    }
+
+    return entities;
+  }
+
+  /**
+   * Parse entity data based on type
+   */
+  private parseEntityData(
+    groupCodes: Array<[number, string]>,
+    type: DxfEntityType
+  ): Record<string, unknown> {
+    const data: Record<string, unknown> = {};
+
+    groupCodes.forEach(([code, value]) => {
+      switch (code) {
+        case 10: // X coordinate
+          data.x = parseFloat(value);
+          break;
+        case 20: // Y coordinate
+          data.y = parseFloat(value);
+          break;
+        case 30: // Z coordinate
+          data.z = parseFloat(value);
+          break;
+        case 11: // X2 coordinate (for lines)
+          data.x2 = parseFloat(value);
+          break;
+        case 21: // Y2 coordinate (for lines)
+          data.y2 = parseFloat(value);
+          break;
+        case 31: // Z2 coordinate (for lines)
+          data.z2 = parseFloat(value);
+          break;
+        case 40: // Radius (for circles/arcs)
+          data.radius = parseFloat(value);
+          break;
+        case 50: // Start angle (for arcs)
+          data.startAngle = parseFloat(value);
+          break;
+        case 51: // End angle (for arcs)
+          data.endAngle = parseFloat(value);
+          break;
+        case 70: // Flags
+          if (type === 'POLYLINE' || type === 'LWPOLYLINE') {
+            data.closed = (parseInt(value) & 1) === 1;
+          }
+          break;
+      }
+    });
+
+    return data;
+  }
+
+  /**
+   * Check if entity type is valid
+   */
+  private isValidEntityType(type: string): type is DxfEntityType {
+    return [
+      'POINT',
+      'LINE',
+      'POLYLINE',
+      'LWPOLYLINE',
+      'CIRCLE',
+      'ARC',
+      'ELLIPSE',
+      'INSERT',
+      'TEXT',
+      'MTEXT',
+      'DIMENSION'
+    ].includes(type.toUpperCase());
   }
 
   /**

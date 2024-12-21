@@ -5,12 +5,20 @@ import { StreamProcessorResult } from '../../stream/types';
 import { DxfParser } from './parser';
 import { DxfProcessorOptions, DxfParseOptions } from './types';
 import { ValidationError } from '../../../errors/types';
+import { StreamReader } from './utils/stream-reader';
+import { BlockManager } from './utils/block-manager';
+import { LayerManager } from './utils/layer-manager';
+import { EntityParser } from './utils/entity-parser';
 
 /**
  * Processor for DXF files
  */
 export class DxfProcessor extends StreamProcessor {
   private parser: DxfParser;
+  private blockManager: BlockManager;
+  private layerManager: LayerManager;
+  private entityParser: EntityParser;
+  private streamReader: StreamReader | null = null;
   private bounds: ProcessorResult['bounds'] = {
     minX: Infinity,
     minY: Infinity,
@@ -18,11 +26,22 @@ export class DxfProcessor extends StreamProcessor {
     maxY: -Infinity
   };
   private layers: string[] = [];
-  private features: Feature[] = [];
 
   constructor(options: DxfProcessorOptions = {}) {
     super(options);
+    this.blockManager = new BlockManager({ maxCacheSize: 100 });
+    this.layerManager = new LayerManager();
     this.parser = new DxfParser();
+    this.entityParser = new EntityParser(
+      this.layerManager,
+      this.blockManager,
+      {
+        validateGeometry: options.validateGeometry,
+        preserveColors: options.preserveColors,
+        preserveLineWeights: options.preserveLineWeights,
+        coordinateSystem: options.coordinateSystem
+      }
+    );
   }
 
   /**
@@ -96,6 +115,13 @@ export class DxfProcessor extends StreamProcessor {
     try {
       this.resetState();
 
+      // Initialize stream reader with memory management
+      this.streamReader = new StreamReader(file, {
+        chunkSize: 64 * 1024, // 64KB chunks
+        maxBuffers: 3,
+        memoryLimit: 100 * 1024 * 1024 // 100MB
+      });
+
       // Configure parsing options
       const parseOptions: DxfParseOptions = {
         entityTypes: (this.options as DxfProcessorOptions).entityTypes,
@@ -105,20 +131,34 @@ export class DxfProcessor extends StreamProcessor {
         validate: (this.options as DxfProcessorOptions).validateGeometry
       };
 
-      // Parse features
-      this.features = await this.parser.parseFeatures(file, parseOptions);
+      // Process file in chunks
+      let chunkIndex = 0;
+      for await (const chunk of this.streamReader.readChunks()) {
+        try {
+          // Parse entities from chunk
+          const entities = await this.parser.parseEntities(chunk, parseOptions);
+          
+          // Convert entities to features
+          const features = await this.entityParser.convertToFeatures(entities);
 
-      // Process features in chunks
-      const chunkSize = 1000;
-      for (let i = 0; i < this.features.length; i += chunkSize) {
-        const chunk = this.features.slice(i, i + chunkSize);
-        const processedChunk = await this.processChunk(chunk, i / chunkSize);
-        
-        // Update bounds
-        this.updateBounds(processedChunk);
-        
-        // Update progress
-        this.updateProgress(i / this.features.length);
+          if (features.length > 0) {
+            // Process features
+            const processedFeatures = await this.processChunk(features, chunkIndex++);
+            
+            // Update bounds
+            this.updateBounds(processedFeatures);
+            
+            // Emit chunk
+            this.handleChunk(processedFeatures, chunkIndex);
+          }
+        } catch (error) {
+          console.warn('Failed to process chunk:', error);
+          continue;
+        }
+
+        // Update progress based on bytes read
+        const stats = this.streamReader.getStats();
+        this.updateProgress(stats.bytesRead / stats.totalBytes);
       }
 
       return {
@@ -132,6 +172,12 @@ export class DxfProcessor extends StreamProcessor {
         success: false,
         error: `Failed to process DXF file: ${message}`
       };
+    } finally {
+      // Clean up
+      this.streamReader?.clear();
+      this.streamReader = null;
+      this.blockManager.clearCache();
+      this.layerManager.clear();
     }
   }
 
@@ -174,8 +220,11 @@ export class DxfProcessor extends StreamProcessor {
       maxX: -Infinity,
       maxY: -Infinity
     };
-    this.layers = [];
-    this.features = [];
+    this.blockManager.clearCache();
+    this.layerManager.clear();
+    if (this.streamReader) {
+      this.streamReader.clear();
+    }
   }
 
   /**

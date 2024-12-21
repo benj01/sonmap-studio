@@ -45,7 +45,46 @@ export interface DxfEntity {
   /** Entity attributes */
   attributes: DxfEntityAttributes;
   /** Entity geometry data */
-  data: Record<string, unknown>;
+  data: {
+    /** Coordinates */
+    x?: number;
+    y?: number;
+    z?: number;
+    x2?: number;
+    y2?: number;
+    z2?: number;
+    /** Dimensions */
+    radius?: number;
+    /** Angles */
+    angle?: number;
+    startAngle?: number;
+    endAngle?: number;
+    /** Polyline specific */
+    vertices?: Array<{
+      x: number;
+      y: number;
+      z?: number;
+    }>;
+    closed?: boolean;
+    /** Other properties */
+    [key: string]: unknown;
+  };
+  /** Block name (for INSERT entities) */
+  blockName?: string;
+  /** Insertion point (for INSERT entities) */
+  insertionPoint?: [number, number, number];
+  /** Scale factors (for INSERT entities) */
+  scale?: [number, number, number];
+  /** Rotation angle in degrees (for INSERT entities) */
+  rotation?: number;
+  /** Column count (for INSERT entities) */
+  columnCount?: number;
+  /** Row count (for INSERT entities) */
+  rowCount?: number;
+  /** Column spacing (for INSERT entities) */
+  columnSpacing?: number;
+  /** Row spacing (for INSERT entities) */
+  rowSpacing?: number;
 }
 
 /**
@@ -80,6 +119,14 @@ export interface DxfBlock {
   entities: DxfEntity[];
   /** Block attributes */
   attributes?: Record<string, unknown>;
+  /** Layer name */
+  layer?: string;
+  /** Block description */
+  description?: string;
+  /** Block origin */
+  origin?: [number, number, number];
+  /** Block units */
+  units?: string;
 }
 
 /**
