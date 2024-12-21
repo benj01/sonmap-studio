@@ -3,7 +3,7 @@ import { ViewStateChangeEvent } from 'react-map-gl';
 import { Feature, BBox } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds, DEFAULT_CENTER } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
-import { CoordinateTransformer } from '../utils/coordinate-utils';
+import { coordinateSystemManager } from '../core/coordinate-system-manager';
 import proj4 from 'proj4';
 
 // Padding for bounds (in degrees for WGS84)
@@ -19,10 +19,25 @@ export function useMapView(
     pitch: 0
   });
 
-  // Verify coordinate system is registered
+  // Initialize coordinate system manager
   useEffect(() => {
-    if (coordinateSystem && !proj4.defs(coordinateSystem)) {
-      console.error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
+    coordinateSystemManager.initialize().catch(error => {
+      console.error('Failed to initialize coordinate system manager:', error);
+      // Set default view of Aarau
+      setViewState(prev => ({
+        ...prev,
+        ...DEFAULT_CENTER
+      }));
+    });
+  }, []);
+
+  // Verify coordinate system is supported
+  useEffect(() => {
+    if (!coordinateSystemManager.isInitialized()) return;
+    
+    const supportedSystems = coordinateSystemManager.getSupportedSystems();
+    if (coordinateSystem && !supportedSystems.includes(coordinateSystem)) {
+      console.error(`Coordinate system ${coordinateSystem} is not supported`);
       // Set default view of Aarau
       setViewState(prev => ({
         ...prev,
@@ -31,7 +46,7 @@ export function useMapView(
     }
   }, [coordinateSystem]);
 
-  const calculateBoundsFromFeatures = useCallback((features: Feature[]): Bounds | null => {
+  const calculateBoundsFromFeatures = useCallback(async (features: Feature[]): Promise<Bounds | null> => {
     if (!features.length) return null;
 
     let minX = Infinity;
@@ -39,20 +54,21 @@ export function useMapView(
     let maxX = -Infinity;
     let maxY = -Infinity;
 
-    const updateBounds = (coords: [number, number]) => {
+    const updateBounds = async (coords: [number, number]): Promise<void> => {
       // Transform coordinates to WGS84 if needed
       let lon = coords[0];
       let lat = coords[1];
 
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
         try {
-          const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-          const transformed = transformer.transform({ x: coords[0], y: coords[1] });
-          if (transformed) {
-            // Transformer handles coordinate order
-            lon = transformed.x;
-            lat = transformed.y;
-          }
+          const transformed = await coordinateSystemManager.transform(
+            { x: coords[0], y: coords[1] },
+            coordinateSystem,
+            COORDINATE_SYSTEMS.WGS84
+          );
+          // Manager handles coordinate order
+          lon = transformed.x;
+          lat = transformed.y;
         } catch (error) {
           console.error('Failed to transform coordinates:', error);
           return;
@@ -67,20 +83,22 @@ export function useMapView(
       }
     };
 
-    const processCoordinates = (coords: any): void => {
+    const processCoordinates = async (coords: any): Promise<void> => {
       if (!Array.isArray(coords)) return;
       if (typeof coords[0] === 'number' && coords.length >= 2) {
-        updateBounds(coords as [number, number]);
+        await updateBounds(coords as [number, number]);
       } else {
-        coords.forEach(c => processCoordinates(c));
+        for (const c of coords) {
+          await processCoordinates(c);
+        }
       }
     };
 
-    features.forEach(feature => {
+    for (const feature of features) {
       if (feature.geometry && 'coordinates' in feature.geometry) {
-        processCoordinates(feature.geometry.coordinates);
+        await processCoordinates(feature.geometry.coordinates);
       }
-    });
+    }
 
     if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
       console.warn('Invalid bounds calculated, using default center');
@@ -95,7 +113,7 @@ export function useMapView(
     return { minX, minY, maxX, maxY };
   }, [coordinateSystem]);
 
-  const updateViewFromBounds = useCallback((bounds: Bounds) => {
+  const updateViewFromBounds = useCallback(async (bounds: Bounds): Promise<void> => {
     try {
       // Validate bounds first
       if (!bounds || 
@@ -108,9 +126,14 @@ export function useMapView(
         return;
       }
 
-      // Verify coordinate system is registered before attempting transformation
-      if (coordinateSystem && !proj4.defs(coordinateSystem)) {
-        throw new Error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
+      // Verify coordinate system is supported before attempting transformation
+      if (!coordinateSystemManager.isInitialized()) {
+        throw new Error('Coordinate system manager not initialized');
+      }
+
+      const supportedSystems = coordinateSystemManager.getSupportedSystems();
+      if (coordinateSystem && !supportedSystems.includes(coordinateSystem)) {
+        throw new Error(`Coordinate system ${coordinateSystem} is not supported`);
       }
 
       let transformedBounds = bounds;
@@ -118,14 +141,24 @@ export function useMapView(
       // Only transform if we're not already in WGS84
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
         try {
-          const transformer = new CoordinateTransformer(coordinateSystem, COORDINATE_SYSTEMS.WGS84);
-          const result = transformer.transformBounds(bounds);
-          if (!result) {
-            throw new Error(`Failed to transform bounds from ${coordinateSystem} to WGS84`);
-          }
+          // Transform each corner of the bounds
+          const minPoint = await coordinateSystemManager.transform(
+            { x: bounds.minX, y: bounds.minY },
+            coordinateSystem,
+            COORDINATE_SYSTEMS.WGS84
+          );
+          const maxPoint = await coordinateSystemManager.transform(
+            { x: bounds.maxX, y: bounds.maxY },
+            coordinateSystem,
+            COORDINATE_SYSTEMS.WGS84
+          );
 
-          // Transformer handles coordinate order
-          transformedBounds = result;
+          transformedBounds = {
+            minX: minPoint.x,
+            minY: minPoint.y,
+            maxX: maxPoint.x,
+            maxY: maxPoint.y
+          };
 
           console.debug('Bounds transformation:', {
             original: bounds,
@@ -191,10 +224,10 @@ export function useMapView(
     }
   }, [coordinateSystem]);
 
-  const focusOnFeatures = useCallback((features: Feature[], padding: number = 50) => {
-    const bounds = calculateBoundsFromFeatures(features);
+  const focusOnFeatures = useCallback(async (features: Feature[], padding: number = 50): Promise<void> => {
+    const bounds = await calculateBoundsFromFeatures(features);
     if (bounds) {
-      updateViewFromBounds(bounds);
+      await updateViewFromBounds(bounds);
     }
   }, [calculateBoundsFromFeatures, updateViewFromBounds]);
 
@@ -222,7 +255,10 @@ export function useMapView(
   // Initialize view when bounds change
   useEffect(() => {
     if (initialBounds) {
-      updateViewFromBounds(initialBounds);
+      updateViewFromBounds(initialBounds).catch(error => {
+        console.error('Failed to update view from initial bounds:', error);
+        setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
+      });
     }
   }, [initialBounds, updateViewFromBounds]);
 

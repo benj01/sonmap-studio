@@ -1,4 +1,5 @@
-import { FeatureCollection } from 'geojson';
+import { FeatureCollection, Feature, BBox } from 'geojson';
+import { ViewStateChangeEvent } from 'react-map-gl';
 import { CoordinateSystem } from './coordinates';
 import { ProcessorResult } from '../core/processors/base/types';
 
@@ -90,4 +91,12 @@ export interface CacheStats {
   hits: number;
   misses: number;
   hitRate: number;
+}
+
+export interface UseMapViewResult {
+  viewState: ViewState;
+  onMove: (evt: ViewStateChangeEvent) => void;
+  updateViewFromBounds: (bounds: { minX: number; minY: number; maxX: number; maxY: number }) => Promise<void>;
+  focusOnFeatures: (features: Feature[], padding?: number) => Promise<void>;
+  getViewportBounds: () => BBox | undefined;
 }

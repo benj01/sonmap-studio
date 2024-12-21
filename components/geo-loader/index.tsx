@@ -1,8 +1,9 @@
 import { 
-  initializeCoordinateSystems, 
   CoordinateSystemError,
-  CoordinateTransformationError 
-} from './utils/coordinate-systems';
+  CoordinateTransformationError,
+  InvalidCoordinateError
+} from './core/errors/types';
+import { coordinateSystemManager } from './core/coordinate-system-manager';
 import { 
   COORDINATE_SYSTEMS,
   CoordinateSystem,
@@ -17,18 +18,25 @@ import {
   pointToPosition
 } from './types/coordinates';
 
-// Initialize coordinate systems immediately
-try {
-  initializeCoordinateSystems();
-} catch (error) {
-  // Re-throw with proper error type
-  if (error instanceof CoordinateSystemError || error instanceof CoordinateTransformationError) {
-    throw error;
+// Initialize coordinate system manager immediately
+(async () => {
+  try {
+    await coordinateSystemManager.initialize();
+  } catch (error) {
+    // Re-throw with proper error type
+    if (error instanceof CoordinateSystemError || 
+        error instanceof CoordinateTransformationError || 
+        error instanceof InvalidCoordinateError) {
+      throw error;
+    }
+    throw new CoordinateSystemError(
+      `Failed to initialize coordinate system manager: ${error instanceof Error ? error.message : String(error)}`,
+      { error: error instanceof Error ? error.message : String(error) }
+    );
   }
-  throw new CoordinateSystemError(
-    `Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`
-  );
-}
+})().catch(error => {
+  console.error('Failed to initialize coordinate system manager:', error);
+});
 
 // Import new processors to ensure they're registered
 import './core/processors';
@@ -56,9 +64,10 @@ export {
   pointToPosition
 };
 
-// Coordinate transformation utilities
+// Error and transformation utilities
 export {
-  createTransformer,
   CoordinateSystemError,
-  CoordinateTransformationError as TransformationError
-} from './utils/coordinate-systems';
+  CoordinateTransformationError as TransformationError,
+  InvalidCoordinateError
+} from './core/errors/types';
+export { coordinateSystemManager } from './core/coordinate-system-manager';

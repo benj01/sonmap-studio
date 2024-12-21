@@ -8,7 +8,7 @@ import {
   CoordinateSystemError,
   CoordinateTransformationError,
   InvalidCoordinateError
-} from '../utils/errors';
+} from './errors/types';
 import proj4 from 'proj4';
 
 export interface CoordinateSystemDefinition {
@@ -83,51 +83,61 @@ export class CoordinateSystemManager {
     if (this.initialized) return;
 
     try {
-      // Register built-in coordinate systems
-      this.registerSystem({
-        code: COORDINATE_SYSTEMS.WGS84,
-        proj4def: '+proj=longlat +datum=WGS84 +no_defs +type=crs',
-        bounds: {
-          minX: -180,
-          minY: -90,
-          maxX: 180,
-          maxY: 90
+      // First register all coordinate systems with proj4
+      const systems = [
+        {
+          code: COORDINATE_SYSTEMS.WGS84,
+          proj4def: '+proj=longlat +datum=WGS84 +no_defs +type=crs',
+          bounds: {
+            minX: -180,
+            minY: -90,
+            maxX: 180,
+            maxY: 90
+          },
+          units: 'degrees',
+          description: 'WGS84 Geographic Coordinate System'
         },
-        units: 'degrees',
-        description: 'WGS84 Geographic Coordinate System'
-      });
-
-      this.registerSystem({
-        code: COORDINATE_SYSTEMS.SWISS_LV95,
-        proj4def: '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 ' +
-                 '+x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 ' +
-                 '+units=m +no_defs +type=crs',
-        bounds: {
-          minX: 2485000,
-          minY: 1075000,
-          maxX: 2835000,
-          maxY: 1295000
+        {
+          code: COORDINATE_SYSTEMS.SWISS_LV95,
+          proj4def: '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 ' +
+                   '+x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 ' +
+                   '+units=m +no_defs +type=crs',
+          bounds: {
+            minX: 2485000,
+            minY: 1075000,
+            maxX: 2835000,
+            maxY: 1295000
+          },
+          units: 'meters',
+          description: 'Swiss LV95 / EPSG:2056'
         },
-        units: 'meters',
-        description: 'Swiss LV95 / EPSG:2056'
-      });
+        {
+          code: COORDINATE_SYSTEMS.SWISS_LV03,
+          proj4def: '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 ' +
+                   '+x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 ' +
+                   '+units=m +no_defs +type=crs',
+          bounds: {
+            minX: 485000,
+            minY: 75000,
+            maxX: 835000,
+            maxY: 295000
+          },
+          units: 'meters',
+          description: 'Swiss LV03 / EPSG:21781'
+        }
+      ];
 
-      this.registerSystem({
-        code: COORDINATE_SYSTEMS.SWISS_LV03,
-        proj4def: '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 ' +
-                 '+x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 ' +
-                 '+units=m +no_defs +type=crs',
-        bounds: {
-          minX: 485000,
-          minY: 75000,
-          maxX: 835000,
-          maxY: 295000
-        },
-        units: 'meters',
-        description: 'Swiss LV03 / EPSG:21781'
-      });
+      // Register all systems first
+      for (const system of systems) {
+        proj4.defs(system.code, system.proj4def);
+        this.systems.set(system.code, system);
+      }
 
-      // Verify all systems
+      // Clear any cached transformers
+      this.transformers.clear();
+      this.clearCache();
+
+      // Then verify all systems
       await this.verifyAllSystems();
 
       this.initialized = true;

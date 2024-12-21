@@ -235,6 +235,8 @@ components/geo-loader/core/
 └── cache-manager.ts           (Cache management)
 ```
 
+For detailed information about the coordinate system implementation, including initialization flow, error handling, and performance optimizations, see [COORDINATE_SYSTEM_IMPLEMENTATION.md](./COORDINATE_SYSTEM_IMPLEMENTATION.md).
+
 ### Type Definitions
 ```
 types/
