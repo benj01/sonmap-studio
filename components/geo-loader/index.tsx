@@ -30,8 +30,8 @@ try {
   );
 }
 
-// Import processors to ensure they're registered
-import './processors';
+// Import new processors to ensure they're registered
+import './core/processors';
 
 // Component exports
 export { default as GeoImportDialog } from './components/geo-import';
