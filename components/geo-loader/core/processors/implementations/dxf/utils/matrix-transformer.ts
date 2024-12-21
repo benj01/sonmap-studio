@@ -1,8 +1,14 @@
-import { Vector3 } from './types';
+import { Vector3 } from '../types';
 
 export type Matrix4 = number[][];
 
+/**
+ * Handles matrix transformations for DXF entities and blocks
+ */
 export class MatrixTransformer {
+  /**
+   * Create a 4x4 identity matrix
+   */
   static createIdentityMatrix(): Matrix4 {
     return [
       [1, 0, 0, 0],
@@ -12,6 +18,9 @@ export class MatrixTransformer {
     ];
   }
 
+  /**
+   * Create a translation matrix
+   */
   static createTranslationMatrix(x: number, y: number, z: number): Matrix4 {
     return [
       [1, 0, 0, x],
@@ -21,6 +30,9 @@ export class MatrixTransformer {
     ];
   }
 
+  /**
+   * Create a rotation matrix around Z axis
+   */
   static createRotationMatrix(angleInDegrees: number): Matrix4 {
     const angle = (angleInDegrees * Math.PI) / 180;
     const cos = Math.cos(angle);
@@ -33,6 +45,9 @@ export class MatrixTransformer {
     ];
   }
 
+  /**
+   * Create a scale matrix
+   */
   static createScaleMatrix(x: number, y: number, z: number): Matrix4 {
     return [
       [x, 0, 0, 0],
@@ -42,6 +57,9 @@ export class MatrixTransformer {
     ];
   }
 
+  /**
+   * Combine two 4x4 matrices
+   */
   static combineMatrices(a: Matrix4, b: Matrix4): Matrix4 {
     const result: Matrix4 = [
       [0, 0, 0, 0],
@@ -61,6 +79,9 @@ export class MatrixTransformer {
     return result;
   }
 
+  /**
+   * Apply matrix transformation to a point
+   */
   static applyMatrix(matrix: Matrix4, point: [number, number, number, number]): [number, number, number] {
     const result: [number, number, number, number] = [0, 0, 0, 0];
     
@@ -82,6 +103,9 @@ export class MatrixTransformer {
     ];
   }
 
+  /**
+   * Transform a point using a matrix
+   */
   static transformPoint(point: Vector3, matrix: Matrix4): Vector3 | null {
     if (!point || typeof point.x !== 'number' || typeof point.y !== 'number' || 
         !isFinite(point.x) || !isFinite(point.y)) {
@@ -102,6 +126,9 @@ export class MatrixTransformer {
     return { x: px, y: py, z: pz };
   }
 
+  /**
+   * Get scale factor from transformation matrix
+   */
   static getScaleFactor(matrix: Matrix4): number {
     const scaleX = Math.sqrt(
       matrix[0][0] * matrix[0][0] + 
@@ -116,12 +143,18 @@ export class MatrixTransformer {
     return (scaleX + scaleY) / 2;
   }
 
+  /**
+   * Transform angle based on transformation matrix
+   */
   static transformAngle(angle: number, matrix: Matrix4): number {
     const rotationRad = Math.atan2(matrix[1][0], matrix[0][0]);
     const rotationDeg = (rotationRad * 180) / Math.PI;
     return (angle + rotationDeg) % 360;
   }
 
+  /**
+   * Calculate block transformation matrix
+   */
   static calculateBlockTransform(position: Vector3, rotation?: number, scale?: Vector3): Matrix4 {
     let matrix = this.createIdentityMatrix();
     

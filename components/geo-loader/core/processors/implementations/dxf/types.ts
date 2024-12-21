@@ -1,6 +1,15 @@
 import { ProcessorOptions } from '../../../processors/base/types';
 
 /**
+ * 3D vector representation
+ */
+export interface Vector3 {
+  x: number;
+  y: number;
+  z?: number;
+}
+
+/**
  * DXF entity types
  */
 export type DxfEntityType = 
@@ -14,7 +23,11 @@ export type DxfEntityType =
   | 'INSERT'
   | 'TEXT'
   | 'MTEXT'
-  | 'DIMENSION';
+  | 'DIMENSION'
+  | 'SPLINE'
+  | 'HATCH'
+  | 'SOLID'
+  | 'FACE3D';
 
 /**
  * DXF entity attributes
@@ -39,6 +52,94 @@ export interface DxfEntityAttributes {
 /**
  * DXF entity definition
  */
+/** Hatch boundary path types */
+export type HatchBoundaryType = 
+  | 'POLYLINE'
+  | 'CIRCLE'
+  | 'ELLIPSE'
+  | 'SPLINE';
+
+/** Hatch boundary path definition */
+export interface HatchBoundary {
+  /** Boundary type */
+  type: HatchBoundaryType;
+  /** Whether boundary is external */
+  isExternal: boolean;
+  /** Boundary data */
+  data: {
+    /** Polyline vertices */
+    vertices?: Array<{ x: number; y: number }>;
+    /** Circle center and radius */
+    center?: { x: number; y: number };
+    radius?: number;
+    /** Ellipse parameters */
+    majorAxis?: { x: number; y: number };
+    ratio?: number;
+    /** Spline data */
+    controlPoints?: Array<{ x: number; y: number }>;
+    knots?: number[];
+    weights?: number[];
+  };
+}
+
+/** Text alignment types */
+export type TextAlignment = 
+  | 'LEFT'
+  | 'CENTER'
+  | 'RIGHT'
+  | 'ALIGNED'
+  | 'MIDDLE'
+  | 'FIT';
+
+/** Text vertical alignment types */
+export type TextVerticalAlignment =
+  | 'BASELINE'
+  | 'BOTTOM'
+  | 'MIDDLE'
+  | 'TOP';
+
+/** Dimension types */
+export type DimensionType =
+  | 'LINEAR'
+  | 'ALIGNED'
+  | 'ANGULAR'
+  | 'DIAMETER'
+  | 'RADIUS'
+  | 'ORDINATE';
+
+/** Dimension measurement data */
+export interface DimensionMeasurement {
+  /** Actual measurement value */
+  value: number;
+  /** Measurement unit */
+  unit?: string;
+  /** Prefix text */
+  prefix?: string;
+  /** Suffix text */
+  suffix?: string;
+  /** Override text (if different from calculated) */
+  override?: string;
+}
+
+/** Dimension geometry points */
+export interface DimensionGeometry {
+  /** Definition points */
+  defPoint?: Vector3;
+  defPoint2?: Vector3;
+  defPoint3?: Vector3;
+  defPoint4?: Vector3;
+  /** Text midpoint */
+  textMid?: Vector3;
+  /** Extension line points */
+  ext1Start?: Vector3;
+  ext1End?: Vector3;
+  ext2Start?: Vector3;
+  ext2End?: Vector3;
+  /** Arrow points */
+  arrow1?: Vector3;
+  arrow2?: Vector3;
+}
+
 export interface DxfEntity {
   /** Entity type */
   type: DxfEntityType;
@@ -66,6 +167,40 @@ export interface DxfEntity {
       z?: number;
     }>;
     closed?: boolean;
+    /** Hatch specific */
+    isSolid?: boolean;
+    elevation?: number;
+    boundaries?: HatchBoundary[];
+    pattern?: {
+      name: string;
+      angle: number;
+      scale: number;
+      double: boolean;
+    };
+    /** Text specific */
+    text?: string;
+    height?: number;
+    width?: number;
+    style?: string;
+    alignment?: TextAlignment;
+    verticalAlignment?: TextVerticalAlignment;
+    isBackward?: boolean;
+    isUpsideDown?: boolean;
+    oblique?: number;
+    generation?: {
+      isBox?: boolean;
+      isMirrored?: boolean;
+    };
+    /** Dimension specific */
+    dimType?: DimensionType;
+    measurement?: DimensionMeasurement;
+    geometry?: DimensionGeometry;
+    dimStyle?: string;
+    dimScale?: number;
+    dimRotation?: number;
+    dimArrowSize?: number;
+    dimLineGap?: number;
+    dimExtension?: number;
     /** Other properties */
     [key: string]: unknown;
   };

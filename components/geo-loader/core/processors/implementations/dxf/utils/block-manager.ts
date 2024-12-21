@@ -1,6 +1,8 @@
 import { Feature } from 'geojson';
-import { DxfBlock, DxfEntity, DxfEntityType } from '../types';
+import { DxfBlock, DxfEntity, DxfEntityType, Vector3 } from '../types';
 import { ValidationError } from '../../../../errors/types';
+import { MatrixTransformer, Matrix4 } from './matrix-transformer';
+import { GeometryConverterRegistry } from './geometry';
 
 interface BlockCache {
   definition: DxfBlock;
@@ -156,8 +158,11 @@ export class BlockManager {
           );
           features.push(...nestedFeatures);
         } else {
-          // Convert entity to feature and transform
-          // TODO: Implement entity to feature conversion
+          // Convert entity to feature using appropriate converter
+          const feature = GeometryConverterRegistry.convertEntity(entity);
+          if (feature) {
+            features.push(feature);
+          }
         }
       }
 
@@ -174,19 +179,125 @@ export class BlockManager {
    * Transform features based on insertion parameters
    */
   private transformFeatures(features: Feature[], insert: DxfEntity): Feature[] {
-    return features.map(feature => {
-      // Deep clone the feature
-      const transformed = JSON.parse(JSON.stringify(feature)) as Feature;
+    // Calculate transformation matrix
+    const position: Vector3 = {
+      x: insert.insertionPoint?.[0] ?? 0,
+      y: insert.insertionPoint?.[1] ?? 0,
+      z: insert.insertionPoint?.[2] ?? 0
+    };
 
-      // Apply transformations based on insertion parameters
-      // TODO: Implement coordinate transformations
-      // - Translation (insertion point)
-      // - Scaling
-      // - Rotation
-      // - Arrays (if specified)
+    const scale: Vector3 | undefined = insert.scale ? {
+      x: insert.scale[0],
+      y: insert.scale[1],
+      z: insert.scale[2]
+    } : undefined;
 
-      return transformed;
-    });
+    const matrix = MatrixTransformer.calculateBlockTransform(
+      position,
+      insert.rotation,
+      scale
+    );
+
+    // Handle array patterns if specified
+    if (insert.columnCount && insert.columnCount > 1 || 
+        insert.rowCount && insert.rowCount > 1) {
+      return this.createArrayPattern(
+        features,
+        matrix,
+        insert.columnCount ?? 1,
+        insert.rowCount ?? 1,
+        insert.columnSpacing ?? 0,
+        insert.rowSpacing ?? 0
+      );
+    }
+
+    // Transform single instance
+    return features.map(feature => this.transformFeature(feature, matrix));
+  }
+
+  /**
+   * Transform a single feature using transformation matrix
+   */
+  private transformFeature(feature: Feature, matrix: Matrix4): Feature {
+    // Deep clone the feature
+    const transformed = JSON.parse(JSON.stringify(feature)) as Feature;
+
+    if (!transformed.geometry) return transformed;
+
+    // Transform coordinates based on geometry type
+    switch (transformed.geometry.type) {
+      case 'Point':
+        transformed.geometry.coordinates = this.transformPoint(
+          transformed.geometry.coordinates,
+          matrix
+        );
+        break;
+
+      case 'LineString':
+        transformed.geometry.coordinates = transformed.geometry.coordinates.map(
+          point => this.transformPoint(point, matrix)
+        );
+        break;
+
+      case 'Polygon':
+        transformed.geometry.coordinates = transformed.geometry.coordinates.map(
+          ring => ring.map(point => this.transformPoint(point, matrix))
+        );
+        break;
+    }
+
+    return transformed;
+  }
+
+  /**
+   * Transform a point using transformation matrix
+   */
+  private transformPoint(point: number[], matrix: Matrix4): number[] {
+    const vector: Vector3 = {
+      x: point[0],
+      y: point[1],
+      z: point[2] ?? 0
+    };
+
+    const transformed = MatrixTransformer.transformPoint(vector, matrix);
+    if (!transformed) return point;
+
+    return [transformed.x, transformed.y, transformed.z ?? 0];
+  }
+
+  /**
+   * Create array pattern of transformed features
+   */
+  private createArrayPattern(
+    features: Feature[],
+    baseMatrix: Matrix4,
+    columns: number,
+    rows: number,
+    columnSpacing: number,
+    rowSpacing: number
+  ): Feature[] {
+    const pattern: Feature[] = [];
+
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < columns; col++) {
+        // Calculate offset matrix for this array element
+        const offsetMatrix = MatrixTransformer.createTranslationMatrix(
+          col * columnSpacing,
+          row * rowSpacing,
+          0
+        );
+
+        // Combine base transformation with offset
+        const matrix = MatrixTransformer.combineMatrices(baseMatrix, offsetMatrix);
+
+        // Transform features with combined matrix
+        features.forEach(feature => {
+          pattern.push(this.transformFeature(feature, matrix));
+        });
+      }
+    }
+
+    return pattern;
   }
 
   /**
