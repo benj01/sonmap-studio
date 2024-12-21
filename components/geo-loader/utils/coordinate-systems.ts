@@ -13,12 +13,37 @@ import {
 const errorReporter = createErrorReporter();
 let isInitialized = false;
 
-// Register default proj4 definitions
-proj4.defs([
+// Register EPSG definitions first
+const PROJ4_DEFS = new Map([
   ['EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs +type=crs'],
   ['EPSG:2056', '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs'],
   ['EPSG:21781', '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs']
 ]);
+
+// Register EPSG definitions
+PROJ4_DEFS.forEach((def, code) => {
+  if (!proj4.defs(code)) {
+    proj4.defs(code, def);
+    console.log(`[DEBUG] Registered EPSG definition: ${code}`);
+  }
+});
+
+// Map our coordinate systems to EPSG codes
+const SYSTEM_TO_EPSG = new Map([
+  [COORDINATE_SYSTEMS.WGS84, 'EPSG:4326'],
+  [COORDINATE_SYSTEMS.SWISS_LV95, 'EPSG:2056'],
+  [COORDINATE_SYSTEMS.SWISS_LV03, 'EPSG:21781'],
+  [COORDINATE_SYSTEMS.NONE, 'EPSG:4326']
+]);
+
+// Register our coordinate systems by copying EPSG definitions
+SYSTEM_TO_EPSG.forEach((epsgCode, system) => {
+  const def = proj4.defs(epsgCode);
+  if (def && !proj4.defs(system)) {
+    proj4.defs(system, def);
+    console.log(`[DEBUG] Registered system definition: ${system} from ${epsgCode}`);
+  }
+});
 
 /**
  * Check if coordinate systems are initialized
@@ -66,12 +91,12 @@ const TEST_POINTS: Record<CoordinateSystem, TestPoint> = {
 export function initializeCoordinateSystems(): boolean {
   // Skip if already initialized
   if (isInitialized) {
-    console.log('Coordinate systems already initialized');
+    console.log('[DEBUG] Coordinate systems already initialized');
     return true;
   }
   
   try {
-    console.log('Starting coordinate systems initialization');
+    console.log('[DEBUG] Starting coordinate systems initialization');
     errorReporter.addInfo(
       'Starting coordinate systems initialization',
       'COORDINATE_SYSTEM_INIT_START'
@@ -92,7 +117,7 @@ export function initializeCoordinateSystems(): boolean {
         throw new CoordinateSystemError(`EPSG definition not found: ${epsg}`);
       }
       proj4.defs(system, def);
-      console.log(`Registered coordinate system: ${system} from ${epsg}`);
+      console.log(`[DEBUG] Registered coordinate system: ${system} from ${epsg}`);
     });
 
     // Log registration of each system
@@ -120,7 +145,7 @@ export function initializeCoordinateSystems(): boolean {
 
     // Verify transformations for each test point
     for (const [system, testData] of Object.entries(TEST_POINTS)) {
-      console.log(`Testing transformation for ${system}`);
+      console.log(`[DEBUG] Testing transformation for ${system}`);
       const result = proj4(system as CoordinateSystem, COORDINATE_SYSTEMS.WGS84, testData.point);
       const [lon, lat] = result;
       const [expectedLon, expectedLat] = testData.expectedWGS84;
@@ -149,7 +174,7 @@ export function initializeCoordinateSystems(): boolean {
           details
         );
       }
-      console.log(`Transformation test passed for ${system}`);
+      console.log(`[DEBUG] Transformation test passed for ${system}`);
     }
 
     errorReporter.addInfo(
@@ -159,7 +184,7 @@ export function initializeCoordinateSystems(): boolean {
     );
 
     isInitialized = true;
-    console.log('Coordinate systems initialization complete');
+    console.log('[DEBUG] Coordinate systems initialization complete');
     return true;
   } catch (error) {
     console.error('Failed to initialize coordinate systems:', error);

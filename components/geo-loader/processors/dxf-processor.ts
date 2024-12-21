@@ -28,7 +28,7 @@ const PROGRESS = {
  */
 interface DxfAnalysisResult {
   layers: Record<string, any>;
-  coordinateSystem: CoordinateSystem; // Changed to required
+  coordinateSystem: CoordinateSystem;
   warnings: string[];
 }
 
@@ -66,12 +66,6 @@ class DxfErrorReporter extends ErrorReporter {
     this.listeners.set('warning', new Set());
   }
 
-  /**
-   * Add an event listener for error or warning events
-   * @param event The event type ('error' or 'warning')
-   * @param listener The callback function to handle the event
-   * @throws Error if the reporter has been disposed
-   */
   on<K extends keyof DxfErrorEvents>(event: K, listener: (...args: DxfErrorEvents[K]) => void): void {
     if (this.disposed) {
       throw new Error('Cannot add listener to disposed error reporter');
@@ -83,11 +77,6 @@ class DxfErrorReporter extends ErrorReporter {
     }
   }
 
-  /**
-   * Remove an event listener
-   * @param event The event type ('error' or 'warning')
-   * @param listener The callback function to remove
-   */
   off<K extends keyof DxfErrorEvents>(event: K, listener: (...args: DxfErrorEvents[K]) => void): void {
     const listeners = this.listeners.get(event);
     if (listeners) {
@@ -96,9 +85,6 @@ class DxfErrorReporter extends ErrorReporter {
     }
   }
 
-  /**
-   * Remove all event listeners and clean up resources
-   */
   dispose(): void {
     if (!this.disposed) {
       this.removeAllListeners();
@@ -106,9 +92,6 @@ class DxfErrorReporter extends ErrorReporter {
     }
   }
 
-  /**
-   * Remove all event listeners
-   */
   removeAllListeners(): void {
     this.listeners.forEach((listeners, event) => {
       listeners.forEach(listener => {
@@ -209,25 +192,66 @@ export class DxfProcessor extends BaseProcessor {
   private async readFileContent(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
       if (!file) {
-        reject(new Error('No file provided'));
+        const error = new Error('No file provided');
+        this.errorReporter.addError('File reading error', 'NO_FILE_PROVIDED');
+        reject(error);
         return;
       }
 
+      console.log('[DEBUG] Starting to read file:', {
+        name: file.name,
+        size: file.size,
+        type: file.type
+      });
+
       const reader = new FileReader();
+      
       reader.onload = () => {
         if (typeof reader.result !== 'string') {
-          reject(new Error('Invalid file content'));
+          const error = new Error('Invalid file content');
+          this.errorReporter.addError('File reading error', 'INVALID_CONTENT_TYPE');
+          reject(error);
           return;
         }
-        resolve(reader.result);
+        
+        const content = reader.result;
+        console.log('[DEBUG] File read complete:', {
+          contentLength: content.length,
+          firstChars: content.substring(0, 100)
+        });
+        
+        if (content.trim().length === 0) {
+          const error = new Error('File is empty');
+          this.errorReporter.addError('File reading error', 'EMPTY_FILE');
+          reject(error);
+          return;
+        }
+
+        resolve(content);
       };
-      reader.onerror = () => reject(new Error('Failed to read file'));
-      reader.onabort = () => reject(new Error('File reading aborted'));
+
+      reader.onerror = () => {
+        const error = new Error('Failed to read file');
+        this.errorReporter.addError('File reading error', 'READ_ERROR', {
+          readerError: reader.error
+        });
+        reject(error);
+      };
+
+      reader.onabort = () => {
+        const error = new Error('File reading aborted');
+        this.errorReporter.addError('File reading error', 'READ_ABORTED');
+        reject(error);
+      };
 
       try {
         reader.readAsText(file);
       } catch (error) {
-        reject(new Error(`Failed to read file: ${error instanceof Error ? error.message : String(error)}`));
+        const message = error instanceof Error ? error.message : String(error);
+        this.errorReporter.addError('File reading error', 'READ_EXCEPTION', {
+          error: message
+        });
+        reject(new Error(`Failed to read file: ${message}`));
       }
     });
   }
@@ -269,13 +293,24 @@ export class DxfProcessor extends BaseProcessor {
 
       // Analyze the DXF data
       const analysisResult = await this.analyzer.analyze(dxfData);
-      const dxfResult = analysisResult as unknown as DxfAnalysisResult;
-      for (const warning of dxfResult.warnings) {
-        this.errorReporter.addWarning('DXF Analysis Warning', 'DXF_ANALYSIS_WARNING', { message: warning });
-      }
+      
+      // Forward all messages from the analyzer's error reporter to our error reporter
+      analysisResult.errorReporter.getMessages().forEach(message => {
+        switch (message.severity) {
+          case Severity.ERROR:
+            this.errorReporter.addError(message.message, message.code, message.details);
+            break;
+          case Severity.WARNING:
+            this.errorReporter.addWarning(message.message, message.code, message.details);
+            break;
+          case Severity.INFO:
+            this.errorReporter.addInfo(message.message, message.code, message.details);
+            break;
+        }
+      });
 
-      // Use provided coordinate system or detected system
-      let coordinateSystem = dxfResult.coordinateSystem || COORDINATE_SYSTEMS.NONE;
+      // Use detected coordinate system from analysis
+      let coordinateSystem = analysisResult.coordinateSystem || COORDINATE_SYSTEMS.NONE;
       
       // Log coordinate system detection result
       this.errorReporter.addInfo(
@@ -283,8 +318,8 @@ export class DxfProcessor extends BaseProcessor {
         'COORDINATE_SYSTEM_DETECTION',
         { 
           system: coordinateSystem,
-          confidence: dxfResult.coordinateSystem ? 'high' : 'fallback',
-          source: dxfResult.coordinateSystem ? 'analysis' : 'default'
+          confidence: analysisResult.coordinateSystem ? 'high' : 'fallback',
+          source: analysisResult.coordinateSystem ? 'analysis' : 'default'
         }
       );
 
@@ -311,7 +346,7 @@ export class DxfProcessor extends BaseProcessor {
       const converter = createDxfConverter(this.errorReporter);
       const conversionOptions: DxfConversionOptions = {
         includeStyles: true,
-        layerInfo: dxfResult.layers,
+        layerInfo: dxfData.tables?.layer?.layers || {},
         coordinateSystem: coordinateSystem,
         validateEntities: true,
         skipInvalidEntities: true
@@ -336,7 +371,7 @@ export class DxfProcessor extends BaseProcessor {
       const bounds = this.calculateBounds(previewFeatures);
 
       const result: AnalyzeResult = {
-        layers: Object.keys(dxfResult.layers || {}),
+        layers: Object.keys(dxfData.tables?.layer?.layers || {}),
         coordinateSystem: coordinateSystem,
         bounds,
         preview: {

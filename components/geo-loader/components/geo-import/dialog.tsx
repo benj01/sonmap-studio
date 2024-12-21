@@ -37,7 +37,7 @@ export function GeoImportDialog({
 }: GeoImportDialogProps) {
   const [currentPhase, setCurrentPhase] = useState<keyof typeof PROGRESS_PHASES | null>(null);
 
-  // Initialize hooks
+  // Initialize hooks with enhanced error handling
   const {
     logs,
     hasErrors,
@@ -46,6 +46,23 @@ export function GeoImportDialog({
     onInfo,
     clearLogs
   } = useImportLogs();
+
+  // Listen for error state changes
+  useEffect(() => {
+    const handleErrorStateChange = () => {
+      console.log('[DEBUG] Dialog detected error state change, logs:', logs);
+    };
+    window.addEventListener('error-state-changed', handleErrorStateChange);
+    return () => window.removeEventListener('error-state-changed', handleErrorStateChange);
+  }, [logs]);
+
+  // Force log updates when file changes
+  useEffect(() => {
+    if (file) {
+      console.log('[DEBUG] Dialog received new file:', file.name);
+      onInfo(`Processing file: ${file.name}`);
+    }
+  }, [file, onInfo]);
 
   const onProgress = useCallback((progress: number) => {
     // Determine current phase based on progress

@@ -15,14 +15,22 @@ export function useImportLogs() {
 
   const addLogs = useCallback((newLogs: { message: string; type: LogType }[]) => {
     const timestamp = new Date();
+    
+    // Force immediate UI update for errors
+    if (newLogs.some(log => log.type === 'error')) {
+      console.log('[DEBUG] Processing error logs:', newLogs);
+    }
+    
     setState((prevState) => {
       const uniqueLogs = newLogs.filter(log => {
         const logId = `${log.type}:${log.message}`;
-        if (processedLogsRef.current.has(logId)) {
-          return false;
+        const isDuplicate = processedLogsRef.current.has(logId);
+        if (!isDuplicate) {
+          processedLogsRef.current.add(logId);
+          // Log non-duplicate messages for debugging
+          console.log(`[DEBUG] New log: ${log.type.toUpperCase()} - ${log.message}`);
         }
-        processedLogsRef.current.add(logId);
-        return true;
+        return !isDuplicate;
       });
 
       if (uniqueLogs.length === 0) {
@@ -38,6 +46,14 @@ export function useImportLogs() {
       ];
 
       const hasErrors = prevState.hasErrors || uniqueLogs.some(log => log.type === 'error');
+
+      // Force re-render on error state change
+      if (hasErrors !== prevState.hasErrors) {
+        console.log('[DEBUG] Error state changed:', hasErrors);
+        setTimeout(() => {
+          window.dispatchEvent(new Event('error-state-changed'));
+        }, 0);
+      }
 
       return {
         logs: updatedLogs,

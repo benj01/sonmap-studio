@@ -19,16 +19,38 @@ class DxfParserLibImpl implements CustomDxfParserLib {
   }
 
   parseSync(content: string): DxfData {
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      throw new Error('Invalid or empty DXF content');
+    }
+
+    console.log('[DEBUG] Starting DXF parsing, content length:', content.length);
+    
     try {
       const parsed = this.parser.parseSync(content);
+      console.log('[DEBUG] Raw parse result:', {
+        hasData: !!parsed,
+        type: typeof parsed,
+        hasEntities: parsed && Array.isArray(parsed.entities),
+        entityCount: parsed?.entities?.length
+      });
+
       if (!parsed || typeof parsed !== 'object') {
         throw new Error('Parsed DXF data is not an object');
       }
       if (!Array.isArray(parsed.entities)) {
         throw new Error('DXF data has no valid entities array');
       }
-      return this.convertParsedData(parsed);
+
+      const result = this.convertParsedData(parsed);
+      console.log('[DEBUG] Converted parse result:', {
+        entityCount: result.entities.length,
+        hasBlocks: !!result.blocks,
+        hasLayers: !!result.tables?.layer?.layers
+      });
+
+      return result;
     } catch (error: any) {
+      console.error('[DEBUG] DXF parsing error:', error);
       throw new Error(`Failed to parse DXF content: ${error?.message || error}`);
     }
   }
