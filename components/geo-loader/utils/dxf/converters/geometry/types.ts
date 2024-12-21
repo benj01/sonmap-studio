@@ -4,8 +4,10 @@ export interface Point2D {
   y: number;
 }
 
-export interface Point3D extends Point2D {
-  z: number;
+export interface Point3D {
+  x: number;
+  y: number;
+  z?: number;
 }
 
 // Style properties interface
@@ -106,36 +108,69 @@ export interface SplineEntity extends DxfEntityBase {
   fitPoints?: Point3D[];
 }
 
-// Type guards
+// Helper functions for coordinate validation
+export function isValidPoint2D(point: unknown): point is Point2D {
+  if (!point || typeof point !== 'object') return false;
+  const p = point as any;
+  return typeof p.x === 'number' && isFinite(p.x) &&
+         typeof p.y === 'number' && isFinite(p.y);
+}
+
+export function isValidPoint3D(point: unknown): point is Point3D {
+  if (!isValidPoint2D(point)) return false;
+  const p = point as any;
+  return typeof p.z === 'undefined' || (typeof p.z === 'number' && isFinite(p.z));
+}
+
+export function isValidPoints3D(points: unknown): points is Point3D[] {
+  return Array.isArray(points) && points.every(isValidPoint3D);
+}
+
+// Type guards with enhanced validation
 export function isCircleEntity(entity: DxfEntityBase): entity is CircleEntity {
-  return entity.type === 'CIRCLE' && 'center' in entity && 'radius' in entity;
+  return entity.type === 'CIRCLE' &&
+    'center' in entity && isValidPoint3D(entity.center) &&
+    'radius' in entity && typeof entity.radius === 'number' && isFinite(entity.radius) && entity.radius > 0;
 }
 
 export function isArcEntity(entity: DxfEntityBase): entity is ArcEntity {
-  return entity.type === 'ARC' && 'center' in entity && 'radius' in entity &&
-    'startAngle' in entity && 'endAngle' in entity;
+  return entity.type === 'ARC' &&
+    'center' in entity && isValidPoint3D(entity.center) &&
+    'radius' in entity && typeof entity.radius === 'number' && isFinite(entity.radius) && entity.radius > 0 &&
+    'startAngle' in entity && typeof entity.startAngle === 'number' && isFinite(entity.startAngle) &&
+    'endAngle' in entity && typeof entity.endAngle === 'number' && isFinite(entity.endAngle);
 }
 
 export function isEllipseEntity(entity: DxfEntityBase): entity is EllipseEntity {
-  return entity.type === 'ELLIPSE' && 'center' in entity && 
-    'majorAxis' in entity && 'minorAxisRatio' in entity &&
-    'startAngle' in entity && 'endAngle' in entity;
+  return entity.type === 'ELLIPSE' &&
+    'center' in entity && isValidPoint3D(entity.center) &&
+    'majorAxis' in entity && isValidPoint3D(entity.majorAxis) &&
+    'minorAxisRatio' in entity && typeof entity.minorAxisRatio === 'number' &&
+    isFinite(entity.minorAxisRatio) && entity.minorAxisRatio > 0 &&
+    'startAngle' in entity && typeof entity.startAngle === 'number' && isFinite(entity.startAngle) &&
+    'endAngle' in entity && typeof entity.endAngle === 'number' && isFinite(entity.endAngle);
 }
 
 export function isPolylineEntity(entity: DxfEntityBase): entity is PolylineEntity | LWPolylineEntity {
   return (entity.type === 'POLYLINE' || entity.type === 'LWPOLYLINE') &&
-    'vertices' in entity && Array.isArray(entity.vertices);
+    'vertices' in entity && Array.isArray(entity.vertices) &&
+    entity.vertices.length > 0 && entity.vertices.every(isValidPoint3D);
 }
 
 export function isTextEntity(entity: DxfEntityBase): entity is TextEntity | MTextEntity {
   return (entity.type === 'TEXT' || entity.type === 'MTEXT') &&
-    'position' in entity && 'text' in entity;
+    'position' in entity && isValidPoint3D(entity.position) &&
+    'text' in entity && typeof entity.text === 'string' &&
+    (!('height' in entity) || (typeof entity.height === 'number' && isFinite(entity.height)));
 }
 
 export function isSplineEntity(entity: DxfEntityBase): entity is SplineEntity {
-  return entity.type === 'SPLINE' && 
-    'controlPoints' in entity && Array.isArray(entity.controlPoints) &&
-    'degree' in entity;
+  return entity.type === 'SPLINE' &&
+    'controlPoints' in entity && isValidPoints3D(entity.controlPoints) &&
+    'degree' in entity && typeof entity.degree === 'number' && entity.degree >= 1 &&
+    (!('knots' in entity) || (Array.isArray(entity.knots) && entity.knots.every(k => typeof k === 'number' && isFinite(k)))) &&
+    (!('weights' in entity) || (Array.isArray(entity.weights) && entity.weights.every(w => typeof w === 'number' && isFinite(w)))) &&
+    (!('fitPoints' in entity) || isValidPoints3D(entity.fitPoints));
 }
 
 // Common types

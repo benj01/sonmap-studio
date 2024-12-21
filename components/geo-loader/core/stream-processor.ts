@@ -12,8 +12,8 @@ export interface ProcessingContext {
   errors: number;
   warnings: number;
   memoryUsage: {
-    heapUsed: number;
-    heapTotal: number;
+    heapUsed: number | null;
+    heapTotal: number | null;
   };
 }
 
@@ -42,6 +42,7 @@ export abstract class StreamProcessor extends BaseProcessor {
   private lastProgressUpdate: number = 0;
   private lastMemoryCheck: number = 0;
   private processingCancelled: boolean = false;
+  private featureCount: number = 0;
 
   constructor(options: StreamProcessorOptions = {}) {
     super(options);
@@ -63,8 +64,8 @@ export abstract class StreamProcessor extends BaseProcessor {
       errors: 0,
       warnings: 0,
       memoryUsage: {
-        heapUsed: 0,
-        heapTotal: 0
+        heapUsed: null,
+        heapTotal: null
       }
     };
   }
@@ -109,13 +110,25 @@ export abstract class StreamProcessor extends BaseProcessor {
     const now = Date.now();
     if (now - this.lastMemoryCheck < this.MEMORY_CHECK_INTERVAL) return;
 
-    const memoryUsage = process.memoryUsage();
-    const usedMemoryMB = memoryUsage.heapUsed / 1024 / 1024;
+    // Try to get memory usage from Chrome's non-standard API
+    const memory = (performance as any).memory;
+    let usedMemoryMB = 0;
 
-    this.context.memoryUsage = {
-      heapUsed: memoryUsage.heapUsed,
-      heapTotal: memoryUsage.heapTotal
-    };
+    if (memory && typeof memory.usedJSHeapSize === 'number') {
+      usedMemoryMB = memory.usedJSHeapSize / 1024 / 1024;
+      this.context.memoryUsage = {
+        heapUsed: memory.usedJSHeapSize,
+        heapTotal: memory.totalJSHeapSize
+      };
+    } else {
+      // Fallback: estimate memory based on feature count and bytes processed
+      // Assume average feature size of 1KB
+      usedMemoryMB = (this.featureCount * 1) / 1024;
+      this.context.memoryUsage = {
+        heapUsed: usedMemoryMB * 1024 * 1024,
+        heapTotal: null
+      };
+    }
 
     if (this.options.maxMemoryMB && usedMemoryMB > this.options.maxMemoryMB) {
       geoErrorManager.addError(
@@ -123,7 +136,12 @@ export abstract class StreamProcessor extends BaseProcessor {
         'MEMORY_LIMIT_EXCEEDED',
         `Memory usage (${Math.round(usedMemoryMB)}MB) exceeds limit (${this.options.maxMemoryMB}MB)`,
         ErrorSeverity.CRITICAL,
-        { memoryUsage, limit: this.options.maxMemoryMB }
+        { 
+          memoryUsage: usedMemoryMB,
+          limit: this.options.maxMemoryMB,
+          featureCount: this.featureCount,
+          bytesProcessed: this.context.bytesProcessed
+        }
       );
       throw new Error('Memory limit exceeded');
     }
@@ -148,6 +166,7 @@ export abstract class StreamProcessor extends BaseProcessor {
     this.context = this.createContext();
     this.context.totalBytes = file.size;
     this.processingCancelled = false;
+    this.featureCount = 0;
 
     const reader = this.createReadStream(file, options)
       .getReader();
@@ -168,6 +187,7 @@ export abstract class StreamProcessor extends BaseProcessor {
         const features = await this.processChunk(chunk, this.context);
         for (const feature of features) {
           if (this.processingCancelled) break;
+          this.featureCount++;
           yield feature;
         }
 

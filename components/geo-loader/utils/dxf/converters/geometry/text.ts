@@ -1,5 +1,5 @@
 import { Geometry } from 'geojson';
-import { BaseGeometryConverter, geometryConverterRegistry } from './base';
+import { BaseGeometryConverter } from './base';
 import { ErrorReporter } from '../../../errors';
 import { createPointGeometry } from '../../../geometry-utils';
 import {
@@ -34,16 +34,7 @@ export class TextGeometryConverter extends BaseGeometryConverter {
     entityInfo: ReturnType<typeof this.entityInfo>
   ): Geometry | null {
     // Validate position coordinates
-    if (!isFinite(entity.position.x) || !isFinite(entity.position.y)) {
-      errorReporter.addWarning(
-        'Invalid text position coordinates',
-        'INVALID_TEXT_POSITION',
-        {
-          entityType: entityInfo.type,
-          handle: entityInfo.handle,
-          position: entity.position
-        }
-      );
+    if (!this.validateCoordinates(entity.position, errorReporter, entityInfo, 'text position')) {
       return null;
     }
 
@@ -53,11 +44,49 @@ export class TextGeometryConverter extends BaseGeometryConverter {
         'Empty text content',
         'EMPTY_TEXT_CONTENT',
         {
-          entityType: entityInfo.type,
-          handle: entityInfo.handle
+          ...entityInfo,
+          text: entity.text
         }
       );
       return null;
+    }
+
+    // Validate text height if present
+    if ('height' in entity && !this.validateNumber(entity.height, errorReporter, entityInfo, 'text height', { nonZero: true })) {
+      return null;
+    }
+
+    // Validate rotation if present
+    if ('rotation' in entity && !this.validateNumber(entity.rotation, errorReporter, entityInfo, 'text rotation')) {
+      return null;
+    }
+
+    // Validate width if present
+    if ('width' in entity && !this.validateNumber(entity.width, errorReporter, entityInfo, 'text width', { nonZero: true })) {
+      return null;
+    }
+
+    // For MText entities, validate additional properties
+    if (entity.type === 'MTEXT') {
+      // Validate attachment point if present
+      if ('attachmentPoint' in entity && !this.validateNumber(entity.attachmentPoint, errorReporter, entityInfo, 'text attachment point')) {
+        return null;
+      }
+
+      // Validate drawing direction if present
+      if ('drawingDirection' in entity && !this.validateNumber(entity.drawingDirection, errorReporter, entityInfo, 'text drawing direction')) {
+        return null;
+      }
+
+      // Validate line spacing style if present
+      if ('lineSpacingStyle' in entity && !this.validateNumber(entity.lineSpacingStyle, errorReporter, entityInfo, 'text line spacing style')) {
+        return null;
+      }
+
+      // Validate line spacing factor if present
+      if ('lineSpacingFactor' in entity && !this.validateNumber(entity.lineSpacingFactor, errorReporter, entityInfo, 'text line spacing factor', { nonZero: true })) {
+        return null;
+      }
     }
 
     // For text entities, we create a point geometry at the text's position
@@ -69,6 +98,3 @@ export class TextGeometryConverter extends BaseGeometryConverter {
     );
   }
 }
-
-// Register the converter
-geometryConverterRegistry.register(new TextGeometryConverter());

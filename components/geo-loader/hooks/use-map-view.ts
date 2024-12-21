@@ -97,6 +97,17 @@ export function useMapView(
 
   const updateViewFromBounds = useCallback((bounds: Bounds) => {
     try {
+      // Validate bounds first
+      if (!bounds || 
+          bounds.minX === null || bounds.minY === null || 
+          bounds.maxX === null || bounds.maxY === null ||
+          !isFinite(bounds.minX) || !isFinite(bounds.minY) ||
+          !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
+        console.warn('Invalid bounds provided, using default center');
+        setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
+        return;
+      }
+
       // Verify coordinate system is registered before attempting transformation
       if (coordinateSystem && !proj4.defs(coordinateSystem)) {
         throw new Error(`Coordinate system ${coordinateSystem} is not registered with proj4`);
@@ -177,7 +188,6 @@ export function useMapView(
       console.error('Error setting map view state:', error);
       // Default to Aarau view
       setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
-      throw error;
     }
   }, [coordinateSystem]);
 

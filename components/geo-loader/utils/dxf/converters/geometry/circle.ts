@@ -1,5 +1,5 @@
 import { Geometry } from 'geojson';
-import { BaseGeometryConverter, geometryConverterRegistry } from './base';
+import { BaseGeometryConverter } from './base';
 import { ErrorReporter } from '../../../errors';
 import { createLineStringGeometry, createPolygonGeometry } from '../../../geometry-utils';
 import {
@@ -44,6 +44,16 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
     errorReporter: ErrorReporter,
     entityInfo: ReturnType<typeof this.entityInfo>
   ): Geometry | null {
+    // Validate center coordinates
+    if (!this.validateCoordinates(entity.center, errorReporter, entityInfo, 'circle center')) {
+      return null;
+    }
+
+    // Validate radius
+    if (!this.validateNumber(entity.radius, errorReporter, entityInfo, 'circle radius', { nonZero: true })) {
+      return null;
+    }
+
     const circleCoords: [number, number][] = [];
     
     for (let i = 0; i <= CircleGeometryConverter.CIRCLE_SEGMENTS; i++) {
@@ -56,11 +66,9 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
           'Invalid circle point calculation',
           'INVALID_CIRCLE_POINT',
           {
-            entityType: entityInfo.type,
-            handle: entityInfo.handle,
-            center: entity.center,
-            radius: entity.radius,
-            angle: angle
+            ...entityInfo,
+            angle,
+            point: { x, y }
           }
         );
         return null;
@@ -77,6 +85,24 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
     errorReporter: ErrorReporter,
     entityInfo: ReturnType<typeof this.entityInfo>
   ): Geometry | null {
+    // Validate center coordinates
+    if (!this.validateCoordinates(entity.center, errorReporter, entityInfo, 'arc center')) {
+      return null;
+    }
+
+    // Validate radius
+    if (!this.validateNumber(entity.radius, errorReporter, entityInfo, 'arc radius', { nonZero: true })) {
+      return null;
+    }
+
+    // Validate angles
+    if (!this.validateNumber(entity.startAngle, errorReporter, entityInfo, 'arc start angle')) {
+      return null;
+    }
+    if (!this.validateNumber(entity.endAngle, errorReporter, entityInfo, 'arc end angle')) {
+      return null;
+    }
+
     const arcCoords: [number, number][] = [];
     let startAngle = (entity.startAngle * Math.PI) / 180;
     let endAngle = (entity.endAngle * Math.PI) / 180;
@@ -97,11 +123,9 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
           'Invalid arc point calculation',
           'INVALID_ARC_POINT',
           {
-            entityType: entityInfo.type,
-            handle: entityInfo.handle,
-            center: entity.center,
-            radius: entity.radius,
-            angle: angle
+            ...entityInfo,
+            angle,
+            point: { x, y }
           }
         );
         return null;
@@ -118,7 +142,29 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
     errorReporter: ErrorReporter,
     entityInfo: ReturnType<typeof this.entityInfo>
   ): Geometry | null {
-    const ellipseCoords: [number, number][] = [];
+    // Validate center coordinates
+    if (!this.validateCoordinates(entity.center, errorReporter, entityInfo, 'ellipse center')) {
+      return null;
+    }
+
+    // Validate major axis
+    if (!this.validateCoordinates(entity.majorAxis, errorReporter, entityInfo, 'ellipse major axis')) {
+      return null;
+    }
+
+    // Validate minor axis ratio
+    if (!this.validateNumber(entity.minorAxisRatio, errorReporter, entityInfo, 'ellipse minor axis ratio', { nonZero: true })) {
+      return null;
+    }
+
+    // Validate angles
+    if (!this.validateNumber(entity.startAngle, errorReporter, entityInfo, 'ellipse start angle')) {
+      return null;
+    }
+    if (!this.validateNumber(entity.endAngle, errorReporter, entityInfo, 'ellipse end angle')) {
+      return null;
+    }
+
     const majorLength = Math.sqrt(
       entity.majorAxis.x * entity.majorAxis.x +
       entity.majorAxis.y * entity.majorAxis.y
@@ -126,11 +172,10 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
 
     if (!isFinite(majorLength) || majorLength === 0) {
       errorReporter.addWarning(
-        'Invalid major axis length for ELLIPSE',
+        'Invalid major axis length for ellipse',
         'INVALID_ELLIPSE_AXIS',
         {
-          entityType: entityInfo.type,
-          handle: entityInfo.handle,
+          ...entityInfo,
           majorAxis: entity.majorAxis,
           majorLength
         }
@@ -147,6 +192,7 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
     }
     
     const angleIncrement = (endA - startA) / CircleGeometryConverter.CIRCLE_SEGMENTS;
+    const ellipseCoords: [number, number][] = [];
 
     for (let i = 0; i <= CircleGeometryConverter.CIRCLE_SEGMENTS; i++) {
       const angle = startA + (i * angleIncrement);
@@ -164,11 +210,8 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
           'Invalid ellipse point calculation',
           'INVALID_ELLIPSE_POINT',
           {
-            entityType: entityInfo.type,
-            handle: entityInfo.handle,
-            center: entity.center,
-            majorAxis: entity.majorAxis,
-            angle: angle,
+            ...entityInfo,
+            angle,
             point: { x: finalX, y: finalY }
           }
         );
@@ -181,6 +224,3 @@ export class CircleGeometryConverter extends BaseGeometryConverter {
     return createLineStringGeometry(ellipseCoords);
   }
 }
-
-// Register the converter
-geometryConverterRegistry.register(new CircleGeometryConverter());

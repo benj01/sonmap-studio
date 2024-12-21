@@ -1,10 +1,13 @@
-import { Feature, FeatureCollection, Point } from 'geojson';
+import { Feature, FeatureCollection, Point, GeoJsonProperties } from 'geojson';
 import { FeatureManager } from '../core/feature-manager';
 import { cacheManager } from '../core/cache-manager';
 import { geoErrorManager } from '../core/error-manager';
 import { ErrorSeverity } from '../../../types/errors';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
+import { calculateFeatureBounds, Bounds } from '../utils/geometry-utils';
+import { GeoFeature } from '../../../types/geo';
+import { createTransformer } from '../utils/coordinate-systems';
 
 export interface PreviewOptions {
   /** Maximum number of features to include in preview */
@@ -42,7 +45,7 @@ export interface PreviewResult {
 }
 
 interface SamplingStrategy {
-  shouldIncludeFeature(feature: Feature, index: number): boolean;
+  shouldIncludeFeature(feature: Feature<any, { [key: string]: any; layer?: string; type?: string }>, index: number): boolean;
 }
 
 /**
@@ -55,6 +58,32 @@ export const createPreviewManager = (options: PreviewOptions = {}) => {
 export class PreviewManager {
   private readonly DEFAULT_MAX_FEATURES = 1000;
   private readonly BOUNDS_PADDING = 0.1; // 10% padding
+
+  private ensureValidBounds(bounds: Bounds | null): Required<Bounds> {
+    // Check if bounds are valid
+    if (!bounds || 
+        !isFinite(bounds.minX) || !isFinite(bounds.minY) ||
+        !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
+      // Return default bounds centered around 0,0 with some extent
+      return { minX: -1, minY: -1, maxX: 1, maxY: 1 };
+    }
+    return bounds;
+  }
+
+  private addPaddingToBounds(bounds: Required<Bounds>): Required<Bounds> {
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+    const paddingX = width * this.BOUNDS_PADDING;
+    const paddingY = height * this.BOUNDS_PADDING;
+
+    return {
+      minX: bounds.minX - paddingX,
+      minY: bounds.minY - paddingY,
+      maxX: bounds.maxX + paddingX,
+      maxY: bounds.maxY + paddingY
+    };
+  }
+
   private featureManager: FeatureManager;
   private options: Required<PreviewOptions>;
 
@@ -79,7 +108,7 @@ export class PreviewManager {
    * Generate preview from feature stream
    */
   public async generatePreview(
-    stream: AsyncGenerator<Feature>,
+    stream: AsyncGenerator<Feature<any, { [key: string]: any; layer?: string; type?: string }>>,
     fileId: string
   ): Promise<PreviewResult> {
     // Check cache first
@@ -94,16 +123,15 @@ export class PreviewManager {
     const layers = new Set<string>();
     let featureCount = 0;
     let previewCount = 0;
-    let minX = Infinity, minY = Infinity;
-    let maxX = -Infinity, maxY = -Infinity;
+    let bounds: Bounds | null = null;
 
     try {
       for await (const feature of stream) {
         featureCount++;
 
         // Track layers
-        const layer = feature.properties?.layer;
-        if (layer) layers.add(layer);
+        const layer = feature.properties?.layer || '';
+        layers.add(layer);
 
         // Apply sampling strategy
         if (!samplingStrategy.shouldIncludeFeature(feature, featureCount)) {
@@ -117,16 +145,33 @@ export class PreviewManager {
         }
 
         // Update bounds
-        if (feature.geometry.type === 'Point') {
-          const [x, y] = feature.geometry.coordinates;
-          minX = Math.min(minX, x);
-          minY = Math.min(minY, y);
-          maxX = Math.max(maxX, x);
-          maxY = Math.max(maxY, y);
+        const featureBounds = calculateFeatureBounds(feature);
+        if (featureBounds) {
+          if (!bounds) {
+            bounds = featureBounds;
+          } else {
+            bounds = {
+              minX: Math.min(bounds.minX, featureBounds.minX),
+              minY: Math.min(bounds.minY, featureBounds.minY),
+              maxX: Math.max(bounds.maxX, featureBounds.maxX),
+              maxY: Math.max(bounds.maxY, featureBounds.maxY)
+            };
+          }
         }
 
+        // Ensure feature has valid properties object
+        const geoFeature: GeoFeature = {
+          type: 'Feature',
+          geometry: feature.geometry,
+          properties: {
+            ...feature.properties,
+            layer: feature.properties?.layer || '',
+            type: feature.properties?.type || feature.geometry.type
+          }
+        };
+
         // Store feature
-        await this.featureManager.addFeature(feature);
+        await this.featureManager.addFeature(geoFeature);
         previewCount++;
 
         // Check preview size limit
@@ -135,23 +180,16 @@ export class PreviewManager {
         }
       }
 
-      // Add padding to bounds
-      const width = maxX - minX;
-      const height = maxY - minY;
-      const paddingX = width * this.BOUNDS_PADDING;
-      const paddingY = height * this.BOUNDS_PADDING;
+      // Ensure bounds are valid and add padding
+      const validBounds = this.ensureValidBounds(bounds);
+      const paddedBounds = this.addPaddingToBounds(validBounds);
 
       const result: PreviewResult = {
         features: {
           type: 'FeatureCollection',
           features: []
         },
-        bounds: {
-          minX: minX - paddingX,
-          minY: minY - paddingY,
-          maxX: maxX + paddingX,
-          maxY: maxY + paddingY
-        },
+        bounds: paddedBounds,
         layers: Array.from(layers),
         featureCount,
         coordinateSystem: this.options.coordinateSystem
@@ -239,56 +277,103 @@ export class PreviewManager {
       await coordinateSystemManager.initialize();
     }
 
-    const transformedFeatures: Feature[] = [];
-    let minX = Infinity, minY = Infinity;
-    let maxX = -Infinity, maxY = -Infinity;
+    try {
+      const transformedFeatures: Feature[] = [];
+      let bounds: Bounds | null = null;
 
-    for (const feature of preview.features.features) {
-      if (feature.geometry.type === 'Point') {
-        const [x, y] = feature.geometry.coordinates;
-        const transformed = await coordinateSystemManager.transform(
-          { x, y },
-          preview.coordinateSystem,
-          targetSystem
-        );
+      for (const feature of preview.features.features) {
+        let transformedFeature: GeoFeature;
 
-        transformedFeatures.push({
-          ...feature,
-          geometry: {
-            ...feature.geometry,
-            coordinates: [transformed.x, transformed.y]
+        // Transform all geometry types, not just points
+        if (feature.geometry && 'coordinates' in feature.geometry) {
+          const transformer = createTransformer(
+            preview.coordinateSystem,
+            targetSystem
+          );
+
+          // Deep clone the geometry to avoid modifying the original
+          const transformedGeometry = JSON.parse(JSON.stringify(feature.geometry));
+          
+          // Recursively transform coordinates
+          const transformCoordinates = (coords: any): any => {
+            if (Array.isArray(coords)) {
+              if (coords.length === 2 && typeof coords[0] === 'number') {
+                // This is a coordinate pair
+                const transformed = transformer.transform({ x: coords[0], y: coords[1] });
+                return [transformed.x, transformed.y];
+              }
+              // This is an array of coordinates or arrays
+              return coords.map(transformCoordinates);
+            }
+            return coords;
+          };
+
+          transformedGeometry.coordinates = transformCoordinates(transformedGeometry.coordinates);
+
+          transformedFeature = {
+            type: 'Feature',
+            geometry: transformedGeometry,
+            properties: {
+              ...feature.properties,
+              layer: feature.properties?.layer || '',
+              type: feature.properties?.type || feature.geometry.type
+            }
+          };
+        } else {
+          transformedFeature = {
+            type: 'Feature',
+            geometry: feature.geometry,
+            properties: {
+              ...feature.properties,
+              layer: feature.properties?.layer || '',
+              type: feature.properties?.type || feature.geometry.type
+            }
+          };
+        }
+
+        transformedFeatures.push(transformedFeature);
+
+        // Update bounds
+        const featureBounds = calculateFeatureBounds(transformedFeature);
+        if (featureBounds) {
+          if (!bounds) {
+            bounds = featureBounds;
+          } else {
+            bounds = {
+              minX: Math.min(bounds.minX, featureBounds.minX),
+              minY: Math.min(bounds.minY, featureBounds.minY),
+              maxX: Math.max(bounds.maxX, featureBounds.maxX),
+              maxY: Math.max(bounds.maxY, featureBounds.maxY)
+            };
           }
-        });
-
-        minX = Math.min(minX, transformed.x);
-        minY = Math.min(minY, transformed.y);
-        maxX = Math.max(maxX, transformed.x);
-        maxY = Math.max(maxY, transformed.y);
-      } else {
-        transformedFeatures.push(feature);
+        }
       }
+
+      // Log transformation results
+      console.debug('Preview transformation complete:', {
+        fromSystem: preview.coordinateSystem,
+        toSystem: targetSystem,
+        featureCount: transformedFeatures.length,
+        bounds
+      });
+
+      // Ensure bounds are valid and add padding
+      const validBounds = this.ensureValidBounds(bounds);
+      const paddedBounds = this.addPaddingToBounds(validBounds);
+
+      return {
+        ...preview,
+        features: {
+          type: 'FeatureCollection',
+          features: transformedFeatures
+        },
+        bounds: paddedBounds,
+        coordinateSystem: targetSystem
+      };
+    } catch (error) {
+      console.error('Preview transformation failed:', error);
+      throw new Error(`Failed to transform preview: ${error instanceof Error ? error.message : String(error)}`);
     }
-
-    // Add padding to bounds
-    const width = maxX - minX;
-    const height = maxY - minY;
-    const paddingX = width * this.BOUNDS_PADDING;
-    const paddingY = height * this.BOUNDS_PADDING;
-
-    return {
-      ...preview,
-      features: {
-        type: 'FeatureCollection',
-        features: transformedFeatures
-      },
-      bounds: {
-        minX: minX - paddingX,
-        minY: minY - paddingY,
-        maxX: maxX + paddingX,
-        maxY: maxY + paddingY
-      },
-      coordinateSystem: targetSystem
-    };
   }
 
   /**
@@ -319,7 +404,16 @@ export class PreviewManager {
       : features.features;
 
     for (const feature of featureArray) {
-      this.featureManager.addFeature(feature);
+      const geoFeature: GeoFeature = {
+        type: 'Feature',
+        geometry: feature.geometry,
+        properties: {
+          ...feature.properties,
+          layer: feature.properties?.layer || '',
+          type: feature.properties?.type || feature.geometry.type
+        }
+      };
+      this.featureManager.addFeature(geoFeature);
     }
   }
 

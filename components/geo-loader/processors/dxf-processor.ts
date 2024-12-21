@@ -324,9 +324,14 @@ export class DxfProcessor extends BaseProcessor {
       );
 
       // Initialize coordinate systems if needed
-      if (coordinateSystem !== COORDINATE_SYSTEMS.NONE) {
+      if (coordinateSystem !== COORDINATE_SYSTEMS.NONE && !areCoordinateSystemsInitialized()) {
         try {
           initializeCoordinateSystems();
+          this.errorReporter.addInfo(
+            'Initialized coordinate systems',
+            'COORDINATE_SYSTEM_INITIALIZATION',
+            { system: coordinateSystem }
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           this.errorReporter.addWarning(
@@ -337,12 +342,44 @@ export class DxfProcessor extends BaseProcessor {
               error: error instanceof Error ? error.stack : undefined
             }
           );
-          // Don't throw - we'll continue with NONE coordinate system
           coordinateSystem = COORDINATE_SYSTEMS.NONE;
         }
       }
 
-      // Create a converter for preview features
+      // Log coordinate system state before conversion
+      try {
+        // Test coordinate transformations to verify system state
+        const testTransforms = {
+          LV95: coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 && areCoordinateSystemsInitialized() ? 
+            createTransformer(COORDINATE_SYSTEMS.SWISS_LV95, COORDINATE_SYSTEMS.WGS84) : null,
+          LV03: coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV03 && areCoordinateSystemsInitialized() ? 
+            createTransformer(COORDINATE_SYSTEMS.SWISS_LV03, COORDINATE_SYSTEMS.WGS84) : null
+        };
+
+        this.errorReporter.addInfo(
+          'Coordinate system state',
+          'COORDINATE_SYSTEM_STATE',
+          {
+            system: coordinateSystem,
+            isInitialized: areCoordinateSystemsInitialized(),
+            transformsAvailable: {
+              LV95: !!testTransforms.LV95,
+              LV03: !!testTransforms.LV03
+            }
+          }
+        );
+      } catch (error) {
+        this.errorReporter.addWarning(
+          'Failed to verify coordinate system state',
+          'COORDINATE_SYSTEM_STATE_WARNING',
+          {
+            system: coordinateSystem,
+            error: error instanceof Error ? error.message : String(error)
+          }
+        );
+      }
+
+      // Create and initialize converter for preview features
       const converter = createDxfConverter(this.errorReporter);
       const conversionOptions: DxfConversionOptions = {
         includeStyles: true,
@@ -352,23 +389,123 @@ export class DxfProcessor extends BaseProcessor {
         skipInvalidEntities: true
       };
 
+      // Log first entity details for debugging
+      const firstEntity = dxfData.entities[0];
+      this.errorReporter.addInfo(
+        'First entity details',
+        'ENTITY_DETAILS',
+        {
+          entityType: firstEntity?.type,
+          layer: firstEntity?.layer,
+          handle: firstEntity?.handle,
+          hasPosition: firstEntity && 'position' in firstEntity,
+          hasVertices: firstEntity && 'vertices' in firstEntity,
+          position: firstEntity && 'position' in firstEntity ? firstEntity.position : undefined,
+          vertices: firstEntity && 'vertices' in firstEntity ? firstEntity.vertices : undefined,
+          properties: firstEntity ? Object.keys(firstEntity) : []
+        }
+      );
+
+      // Log conversion setup
       this.errorReporter.addInfo(
         'Starting preview conversion',
         'PREVIEW_CONVERSION_START',
         {
-          coordinateSystem: coordinateSystem,
-          options: conversionOptions
+          entityCount: dxfData.entities.length,
+          coordinateSystem,
+          options: conversionOptions,
+          layerInfo: Object.keys(dxfData.tables?.layer?.layers || {})
         }
       );
 
-      // Convert a sample of entities for preview
-      const previewFeatures = converter.convertEntities(
-        dxfData.entities.slice(0, 1000),
-        conversionOptions
+      // Convert entities one by one for better error tracking
+      const entitiesToConvert = dxfData.entities.slice(0, 1000);
+      const previewFeatures: GeoFeature[] = [];
+      let conversionErrors = 0;
+
+      for (const entity of entitiesToConvert) {
+        try {
+          const feature = converter.convertEntity(entity, conversionOptions);
+          if (feature) {
+            previewFeatures.push(feature);
+          } else {
+            conversionErrors++;
+          }
+        } catch (error) {
+          conversionErrors++;
+          this.errorReporter.addWarning(
+            'Entity conversion failed',
+            'ENTITY_CONVERSION_ERROR',
+            {
+              entityType: entity.type,
+              layer: entity.layer,
+              handle: entity.handle,
+              error: error instanceof Error ? error.message : String(error)
+            }
+          );
+        }
+      }
+
+      // Log conversion results
+      this.errorReporter.addInfo(
+        'Entity conversion results',
+        'CONVERSION_RESULTS',
+        {
+          totalEntities: entitiesToConvert.length,
+          convertedFeatures: previewFeatures.length,
+          conversionErrors,
+          successRate: `${((previewFeatures.length / entitiesToConvert.length) * 100).toFixed(1)}%`
+        }
       );
 
       // Calculate bounds from preview features
       const bounds = this.calculateBounds(previewFeatures);
+
+      // Log detailed conversion results
+      this.errorReporter.addInfo(
+        'Preview conversion details',
+        'PREVIEW_CONVERSION_DETAILS',
+        {
+          inputEntityCount: entitiesToConvert.length,
+          outputFeatureCount: previewFeatures.length,
+          bounds,
+          coordinateSystem,
+          firstInputEntity: entitiesToConvert[0] ? {
+            type: entitiesToConvert[0].type,
+            layer: entitiesToConvert[0].layer,
+            handle: entitiesToConvert[0].handle
+          } : null,
+          firstOutputFeature: previewFeatures[0] ? {
+            type: previewFeatures[0].geometry.type,
+            bbox: previewFeatures[0].bbox,
+            properties: previewFeatures[0].properties
+          } : null
+        }
+      );
+
+      // Log any potential conversion issues
+      if (entitiesToConvert.length > 0 && previewFeatures.length === 0) {
+        this.errorReporter.addWarning(
+          'No features generated from entities',
+          'PREVIEW_CONVERSION_WARNING',
+          {
+            inputEntityCount: entitiesToConvert.length,
+            coordinateSystem,
+            conversionOptions
+          }
+        );
+      }
+
+      // Log preview conversion results
+      this.errorReporter.addInfo(
+        'Preview conversion complete',
+        'PREVIEW_CONVERSION_COMPLETE',
+        {
+          featureCount: previewFeatures.length,
+          bounds,
+          coordinateSystem
+        }
+      );
 
       const result: AnalyzeResult = {
         layers: Object.keys(dxfData.tables?.layer?.layers || {}),
@@ -621,6 +758,17 @@ export class DxfProcessor extends BaseProcessor {
     }
   }
 
+  private ensureValidBounds(bounds: ProcessorResult['bounds']): ProcessorResult['bounds'] {
+    // Check if bounds are valid
+    if (!bounds || 
+        !isFinite(bounds.minX) || !isFinite(bounds.minY) ||
+        !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
+      // Return default bounds centered around 0,0 with some extent
+      return { minX: -1, minY: -1, maxX: 1, maxY: 1 };
+    }
+    return bounds;
+  }
+
   private calculateBounds(features: GeoFeature[]): ProcessorResult['bounds'] {
     if (features.length === 0) {
       return { minX: 0, minY: 0, maxX: 1, maxY: 1 };
@@ -630,17 +778,27 @@ export class DxfProcessor extends BaseProcessor {
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
+    let hasValidBounds = false;
 
     for (const feature of features) {
       if (feature.bbox) {
-        minX = Math.min(minX, feature.bbox[0]);
-        minY = Math.min(minY, feature.bbox[1]);
-        maxX = Math.max(maxX, feature.bbox[2]);
-        maxY = Math.max(maxY, feature.bbox[3]);
+        const [bboxMinX, bboxMinY, bboxMaxX, bboxMaxY] = feature.bbox;
+        if (isFinite(bboxMinX) && isFinite(bboxMinY) && 
+            isFinite(bboxMaxX) && isFinite(bboxMaxY)) {
+          minX = Math.min(minX, bboxMinX);
+          minY = Math.min(minY, bboxMinY);
+          maxX = Math.max(maxX, bboxMaxX);
+          maxY = Math.max(maxY, bboxMaxY);
+          hasValidBounds = true;
+        }
       }
     }
 
-    return { minX, minY, maxX, maxY };
+    if (!hasValidBounds) {
+      return { minX: -1, minY: -1, maxX: 1, maxY: 1 };
+    }
+
+    return this.ensureValidBounds({ minX, minY, maxX, maxY });
   }
 }
 

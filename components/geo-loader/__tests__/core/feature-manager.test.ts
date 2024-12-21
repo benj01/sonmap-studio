@@ -117,22 +117,43 @@ describe('FeatureManager', () => {
       expect(manager.isEmpty()).toBe(true);
     });
 
-    it('should report memory usage', async () => {
+    it('should report memory usage or estimate', async () => {
       const features = Array.from({ length: 1000 }, (_, i) => createTestFeature(i));
       await manager.addFeatures(features);
 
       const memoryUsage = manager.getMemoryUsageMB();
-      expect(memoryUsage).toBeGreaterThan(0);
+      // Memory usage should either be a real value from performance.memory
+      // or an estimate based on feature count (1KB per feature)
+      expect(memoryUsage).toBeGreaterThanOrEqual(1); // At least 1MB for 1000 features
     });
 
-    it('should provide feature statistics', async () => {
+    it('should provide feature statistics with nullable memory values', async () => {
       const features = Array.from({ length: 25 }, (_, i) => createTestFeature(i));
       await manager.addFeatures(features);
 
       const stats = manager.getStats();
       expect(stats.totalFeatures).toBe(25);
       expect(stats.chunkCount).toBeGreaterThan(0);
-      expect(stats.memoryUsage.heapUsed).toBeGreaterThan(0);
+      
+      // Memory values might be null in environments without performance.memory
+      if (stats.memoryUsage.heapUsed !== null) {
+        expect(stats.memoryUsage.heapUsed).toBeGreaterThan(0);
+      }
+      // heapTotal might be null even if heapUsed is available
+      if (stats.memoryUsage.heapTotal !== null) {
+        expect(stats.memoryUsage.heapTotal).toBeGreaterThan(0);
+      }
+    });
+
+    it('should handle memory monitoring being disabled', async () => {
+      manager = new FeatureManager({
+        chunkSize: 10,
+        maxMemoryMB: 256,
+        monitorMemory: false
+      });
+
+      const features = Array.from({ length: 1000 }, (_, i) => createTestFeature(i));
+      await expect(manager.addFeatures(features)).resolves.not.toThrow();
     });
   });
 

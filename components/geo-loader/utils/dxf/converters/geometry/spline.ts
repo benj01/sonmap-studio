@@ -1,11 +1,12 @@
 import { Geometry } from 'geojson';
-import { BaseGeometryConverter, geometryConverterRegistry } from './base';
+import { BaseGeometryConverter } from './base';
 import { ErrorReporter } from '../../../errors';
 import { createLineStringGeometry, createPolygonGeometry } from '../../../geometry-utils';
 import {
   DxfEntityBase,
   SplineEntity,
-  isSplineEntity
+  isSplineEntity,
+  Point3D
 } from './types';
 
 /**
@@ -33,51 +34,83 @@ export class SplineGeometryConverter extends BaseGeometryConverter {
     errorReporter: ErrorReporter,
     entityInfo: ReturnType<typeof this.entityInfo>
   ): Geometry | null {
-    // Validate control points
-    if (!entity.controlPoints || entity.controlPoints.length < 2) {
-      errorReporter.addWarning(
-        'Spline has insufficient control points',
-        'INVALID_SPLINE_POINTS',
-        {
-          entityType: entityInfo.type,
-          handle: entityInfo.handle,
-          pointCount: entity.controlPoints?.length ?? 0
-        }
-      );
+    // Validate degree
+    if (!this.validateNumber(entity.degree, errorReporter, entityInfo, 'spline degree', { min: 1 })) {
       return null;
     }
 
-    // Convert control points to coordinates
-    const coordinates = entity.controlPoints.map(p => {
-      if (!isFinite(p.x) || !isFinite(p.y)) {
-        errorReporter.addWarning(
-          'Invalid spline control point coordinates',
-          'INVALID_SPLINE_POINT',
-          {
-            entityType: entityInfo.type,
-            handle: entityInfo.handle,
-            point: p
-          }
-        );
+    // Create a point validator closure
+    const validatePoint = (point: unknown): point is Point3D => {
+      const index = entity.controlPoints.indexOf(point as any);
+      return this.validateCoordinates(point, errorReporter, entityInfo, `control point ${index}`);
+    };
+
+    // Validate control points
+    if (!this.validateArray<Point3D>(
+      entity.controlPoints,
+      validatePoint,
+      errorReporter,
+      entityInfo,
+      'spline control points',
+      { minLength: 2 }
+    )) {
+      return null;
+    }
+
+    // Validate knots if present
+    if (entity.knots) {
+      const validateKnot = (knot: unknown): knot is number => {
+        const index = entity.knots!.indexOf(knot as any);
+        return this.validateNumber(knot, errorReporter, entityInfo, `knot ${index}`);
+      };
+
+      if (!this.validateArray<number>(
+        entity.knots,
+        validateKnot,
+        errorReporter,
+        entityInfo,
+        'spline knots',
+        { minLength: entity.controlPoints.length + entity.degree + 1 }
+      )) {
         return null;
       }
-      return [p.x, p.y] as [number, number];
-    });
+    }
 
-    // Filter out any invalid coordinates
-    const validCoordinates = coordinates.filter((coord): coord is [number, number] => coord !== null);
+    // Validate weights if present
+    if (entity.weights) {
+      const validateWeight = (weight: unknown): weight is number => {
+        const index = entity.weights!.indexOf(weight as any);
+        return this.validateNumber(weight, errorReporter, entityInfo, `weight ${index}`, { nonZero: true });
+      };
 
-    if (validCoordinates.length < 2) {
-      errorReporter.addWarning(
-        'Spline has insufficient valid control points',
-        'INVALID_SPLINE_POINTS',
-        {
-          entityType: entityInfo.type,
-          handle: entityInfo.handle,
-          validPointCount: validCoordinates.length
-        }
-      );
-      return null;
+      if (!this.validateArray<number>(
+        entity.weights,
+        validateWeight,
+        errorReporter,
+        entityInfo,
+        'spline weights',
+        { minLength: entity.controlPoints.length }
+      )) {
+        return null;
+      }
+    }
+
+    // Validate fit points if present
+    if (entity.fitPoints) {
+      const validateFitPoint = (point: unknown): point is Point3D => {
+        const index = entity.fitPoints!.indexOf(point as any);
+        return this.validateCoordinates(point, errorReporter, entityInfo, `fit point ${index}`);
+      };
+
+      if (!this.validateArray<Point3D>(
+        entity.fitPoints,
+        validateFitPoint,
+        errorReporter,
+        entityInfo,
+        'spline fit points'
+      )) {
+        return null;
+      }
     }
 
     // Add a warning about using linear approximation
@@ -85,32 +118,32 @@ export class SplineGeometryConverter extends BaseGeometryConverter {
       'Using linear approximation for spline',
       'SPLINE_LINEAR_APPROXIMATION',
       {
-        entityType: entityInfo.type,
-        handle: entityInfo.handle,
+        ...entityInfo,
         degree: entity.degree,
         hasKnots: !!entity.knots,
         hasWeights: !!entity.weights,
-        hasFitPoints: !!entity.fitPoints
+        hasFitPoints: !!entity.fitPoints,
+        controlPointCount: entity.controlPoints.length
       }
     );
 
+    // Convert control points to coordinates
+    const coordinates: [number, number][] = entity.controlPoints.map(p => [p.x, p.y]);
+
     // Handle closed splines
-    if (entity.closed && validCoordinates.length >= 3) {
-      const first = validCoordinates[0];
-      const last = validCoordinates[validCoordinates.length - 1];
+    if (entity.closed && coordinates.length >= 3) {
+      const first = coordinates[0];
+      const last = coordinates[coordinates.length - 1];
       
       // If the spline isn't already closed, close it by adding the first point again
       if (first[0] !== last[0] || first[1] !== last[1]) {
-        validCoordinates.push([first[0], first[1]]);
+        coordinates.push([first[0], first[1]]);
       }
       
-      return createPolygonGeometry([validCoordinates]);
+      return createPolygonGeometry([coordinates]);
     }
 
     // For open splines, create a LineString
-    return createLineStringGeometry(validCoordinates);
+    return createLineStringGeometry(coordinates);
   }
 }
-
-// Register the converter
-geometryConverterRegistry.register(new SplineGeometryConverter());

@@ -3,8 +3,135 @@
 import { Feature, Geometry, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, Position, GeometryCollection } from 'geojson';
 import { GeoFeature } from '../../../types/geo';
 
+export interface Bounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
 type Coordinate2D = Position;
 type Coordinate3D = Position;
+
+/**
+ * Calculate bounds for a single coordinate.
+ */
+function updateBoundsWithCoordinate(bounds: Bounds | null, coord: Position): Bounds {
+  if (!isValid2DCoordinate(coord) && !isValid3DCoordinate(coord)) {
+    throw new Error('Invalid coordinate for bounds calculation');
+  }
+
+  if (!bounds) {
+    return {
+      minX: coord[0],
+      minY: coord[1],
+      maxX: coord[0],
+      maxY: coord[1]
+    };
+  }
+
+  return {
+    minX: Math.min(bounds.minX, coord[0]),
+    minY: Math.min(bounds.minY, coord[1]),
+    maxX: Math.max(bounds.maxX, coord[0]),
+    maxY: Math.max(bounds.maxY, coord[1])
+  };
+}
+
+/**
+ * Calculate bounds for an array of coordinates.
+ */
+function calculateCoordinateArrayBounds(coords: Position[]): Bounds | null {
+  if (!Array.isArray(coords) || coords.length === 0) {
+    return null;
+  }
+
+  return coords.reduce((bounds: Bounds | null, coord) => {
+    return updateBoundsWithCoordinate(bounds, coord);
+  }, null);
+}
+
+/**
+ * Calculate bounds for a geometry object.
+ */
+export function calculateGeometryBounds(geometry: Geometry): Bounds | null {
+  if (!geometry || !geometry.type) {
+    return null;
+  }
+
+  switch (geometry.type) {
+    case 'Point':
+      return updateBoundsWithCoordinate(null, geometry.coordinates);
+
+    case 'LineString':
+    case 'MultiPoint':
+      return calculateCoordinateArrayBounds(geometry.coordinates);
+
+    case 'Polygon':
+    case 'MultiLineString':
+      return geometry.coordinates.reduce((bounds: Bounds | null, ring) => {
+        const ringBounds = calculateCoordinateArrayBounds(ring);
+        if (!ringBounds) return bounds;
+        if (!bounds) return ringBounds;
+        return {
+          minX: Math.min(bounds.minX, ringBounds.minX),
+          minY: Math.min(bounds.minY, ringBounds.minY),
+          maxX: Math.max(bounds.maxX, ringBounds.maxX),
+          maxY: Math.max(bounds.maxY, ringBounds.maxY)
+        };
+      }, null);
+
+    case 'MultiPolygon':
+      return geometry.coordinates.reduce((bounds: Bounds | null, polygon) => {
+        const polygonBounds = polygon.reduce((polyBounds: Bounds | null, ring) => {
+          const ringBounds = calculateCoordinateArrayBounds(ring);
+          if (!ringBounds) return polyBounds;
+          if (!polyBounds) return ringBounds;
+          return {
+            minX: Math.min(polyBounds.minX, ringBounds.minX),
+            minY: Math.min(polyBounds.minY, ringBounds.minY),
+            maxX: Math.max(polyBounds.maxX, ringBounds.maxX),
+            maxY: Math.max(polyBounds.maxY, ringBounds.maxY)
+          };
+        }, null);
+        if (!polygonBounds) return bounds;
+        if (!bounds) return polygonBounds;
+        return {
+          minX: Math.min(bounds.minX, polygonBounds.minX),
+          minY: Math.min(bounds.minY, polygonBounds.minY),
+          maxX: Math.max(bounds.maxX, polygonBounds.maxX),
+          maxY: Math.max(bounds.maxY, polygonBounds.maxY)
+        };
+      }, null);
+
+    case 'GeometryCollection':
+      return geometry.geometries.reduce((bounds: Bounds | null, geom) => {
+        const geomBounds = calculateGeometryBounds(geom);
+        if (!geomBounds) return bounds;
+        if (!bounds) return geomBounds;
+        return {
+          minX: Math.min(bounds.minX, geomBounds.minX),
+          minY: Math.min(bounds.minY, geomBounds.minY),
+          maxX: Math.max(bounds.maxX, geomBounds.maxX),
+          maxY: Math.max(bounds.maxY, geomBounds.maxY)
+        };
+      }, null);
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * Calculate bounds for a GeoJSON feature.
+ */
+export function calculateFeatureBounds(feature: GeoFeature): Bounds | null {
+  if (!feature || !feature.geometry) {
+    return null;
+  }
+  return calculateGeometryBounds(feature.geometry);
+}
+
 
 /**
  * Validate a 2D coordinate.

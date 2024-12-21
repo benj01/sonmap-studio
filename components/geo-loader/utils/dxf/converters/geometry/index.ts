@@ -1,4 +1,10 @@
-// Export base types and interfaces
+import { geometryConverterRegistry } from './base';
+import { CircleGeometryConverter } from './circle';
+import { PolylineGeometryConverter } from './polyline';
+import { TextGeometryConverter } from './text';
+import { SplineGeometryConverter } from './spline';
+
+// Export types and interfaces
 export * from './types';
 export * from './base';
 
@@ -8,12 +14,53 @@ export * from './polyline';
 export * from './text';
 export * from './spline';
 
-// Re-export the registry instance
-export { geometryConverterRegistry } from './base';
+let initialized = false;
 
-// Export a function to initialize all converters
+/**
+ * Initialize all geometry converters synchronously
+ */
 export function initializeGeometryConverters(): void {
-  // The imports above will trigger the registration of each converter
-  // This function exists mainly to ensure the registration code is executed
-  // when the converters are needed
+  if (initialized) {
+    return;
+  }
+
+  try {
+    // Register circle converter for circles and arcs
+    const circleConverter = new CircleGeometryConverter();
+    geometryConverterRegistry.register(circleConverter);
+
+    // Register polyline converter for polylines and lines
+    const polylineConverter = new PolylineGeometryConverter();
+    geometryConverterRegistry.register(polylineConverter);
+
+    // Register text converter for text entities
+    const textConverter = new TextGeometryConverter();
+    geometryConverterRegistry.register(textConverter);
+
+    // Register spline converter
+    const splineConverter = new SplineGeometryConverter();
+    geometryConverterRegistry.register(splineConverter);
+
+    initialized = true;
+    console.log('[DEBUG] Geometry converters initialized');
+  } catch (error) {
+    console.error('[ERROR] Failed to initialize geometry converters:', error);
+    throw error;
+  }
+}
+
+/**
+ * Check if geometry converters are initialized
+ */
+export function areGeometryConvertersInitialized(): boolean {
+  return initialized;
+}
+
+/**
+ * Ensure geometry converters are initialized
+ */
+export function ensureGeometryConvertersInitialized(): void {
+  if (!initialized) {
+    initializeGeometryConverters();
+  }
 }

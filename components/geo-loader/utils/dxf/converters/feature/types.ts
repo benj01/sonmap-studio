@@ -13,6 +13,10 @@ export interface FeatureConversionOptions {
   includeStyles?: boolean;
   // Source coordinate system for transformations
   coordinateSystem?: string;
+  // Whether to validate entities during conversion
+  validateEntities?: boolean;
+  // Whether to skip invalid entities instead of failing
+  skipInvalidEntities?: boolean;
 }
 
 /**
@@ -70,21 +74,3 @@ export abstract class BaseFeatureConverter implements FeatureConverter {
   abstract convert(entity: DxfEntityBase, options?: FeatureConversionOptions): GeoFeature | null;
   abstract canHandle(entityType: string): boolean;
 }
-
-/**
- * Registry for feature converters
- */
-export class FeatureConverterRegistry {
-  private converters: FeatureConverter[] = [];
-
-  register(converter: FeatureConverter): void {
-    this.converters.push(converter);
-  }
-
-  findConverter(entityType: string): FeatureConverter | null {
-    return this.converters.find(c => c.canHandle(entityType)) || null;
-  }
-}
-
-// Create and export a singleton instance
-export const featureConverterRegistry = new FeatureConverterRegistry();

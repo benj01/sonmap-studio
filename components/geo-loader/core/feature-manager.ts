@@ -15,8 +15,8 @@ export interface FeatureStats {
   totalFeatures: number;
   chunkCount: number;
   memoryUsage: {
-    heapUsed: number;
-    heapTotal: number;
+    heapUsed: number | null;
+    heapTotal: number | null;
   };
 }
 
@@ -91,8 +91,17 @@ export class FeatureManager {
   }
 
   private async checkMemoryUsage(): Promise<void> {
-    const memoryUsage = process.memoryUsage();
-    const usedMemoryMB = memoryUsage.heapUsed / 1024 / 1024;
+    // Try to get memory usage from Chrome's non-standard API
+    const memory = (performance as any).memory;
+    let usedMemoryMB = 0;
+
+    if (memory && typeof memory.usedJSHeapSize === 'number') {
+      usedMemoryMB = memory.usedJSHeapSize / 1024 / 1024;
+    } else {
+      // Fallback: estimate memory based on feature count
+      // Assume average feature size of 1KB
+      usedMemoryMB = (this.totalFeatures * 1) / 1024;
+    }
 
     if (usedMemoryMB > this.options.maxMemoryMB) {
       geoErrorManager.addError(
@@ -101,7 +110,7 @@ export class FeatureManager {
         `Memory usage (${Math.round(usedMemoryMB)}MB) exceeds limit (${this.options.maxMemoryMB}MB)`,
         ErrorSeverity.CRITICAL,
         { 
-          memoryUsage,
+          memoryUsage: usedMemoryMB,
           limit: this.options.maxMemoryMB,
           totalFeatures: this.totalFeatures,
           chunkCount: this.chunks.length
@@ -142,12 +151,22 @@ export class FeatureManager {
    * Get current statistics
    */
   public getStats(): FeatureStats {
+    // Try to get memory usage from Chrome's non-standard API
+    const memory = (performance as any).memory;
+    let heapUsed = null;
+    let heapTotal = null;
+
+    if (memory && typeof memory.usedJSHeapSize === 'number') {
+      heapUsed = memory.usedJSHeapSize;
+      heapTotal = memory.totalJSHeapSize;
+    }
+
     return {
       totalFeatures: this.totalFeatures,
       chunkCount: this.chunks.length + (this.currentChunk.length > 0 ? 1 : 0),
       memoryUsage: {
-        heapUsed: process.memoryUsage().heapUsed,
-        heapTotal: process.memoryUsage().heapTotal
+        heapUsed,
+        heapTotal
       }
     };
   }
@@ -193,6 +212,11 @@ export class FeatureManager {
    * Get memory usage in MB
    */
   public getMemoryUsageMB(): number {
-    return process.memoryUsage().heapUsed / 1024 / 1024;
+    const memory = (performance as any).memory;
+    if (memory && typeof memory.usedJSHeapSize === 'number') {
+      return memory.usedJSHeapSize / 1024 / 1024;
+    }
+    // Fallback: estimate based on feature count
+    return (this.totalFeatures * 1) / 1024; // Assume 1KB per feature
   }
 }
