@@ -79,15 +79,19 @@ export class CoordinateSystemManager {
     this.transformationCache.set(this.getCacheKey(key), point);
   }
 
-  public async initialize(): Promise<void> {
+
+  /**
+   * Initialize coordinate systems synchronously (registration only)
+   */
+  public initSync(): void {
     if (this.initialized) return;
 
     try {
       // First register all coordinate systems with proj4
       const systems = [
         {
-          code: COORDINATE_SYSTEMS.WGS84,
-          proj4def: '+proj=longlat +datum=WGS84 +no_defs +type=crs',
+          code: 'EPSG:4326',  // COORDINATE_SYSTEMS.WGS84
+          proj4def: '+proj=longlat +datum=WGS84 +no_defs',
           bounds: {
             minX: -180,
             minY: -90,
@@ -98,10 +102,10 @@ export class CoordinateSystemManager {
           description: 'WGS84 Geographic Coordinate System'
         },
         {
-          code: COORDINATE_SYSTEMS.SWISS_LV95,
-          proj4def: '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 ' +
+          code: 'EPSG:2056',  // COORDINATE_SYSTEMS.SWISS_LV95
+          proj4def: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 ' +
                    '+x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 ' +
-                   '+units=m +no_defs +type=crs',
+                   '+units=m +no_defs',
           bounds: {
             minX: 2485000,
             minY: 1075000,
@@ -112,10 +116,10 @@ export class CoordinateSystemManager {
           description: 'Swiss LV95 / EPSG:2056'
         },
         {
-          code: COORDINATE_SYSTEMS.SWISS_LV03,
-          proj4def: '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 ' +
+          code: 'EPSG:21781', // COORDINATE_SYSTEMS.SWISS_LV03
+          proj4def: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 ' +
                    '+x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 ' +
-                   '+units=m +no_defs +type=crs',
+                   '+units=m +no_defs',
           bounds: {
             minX: 485000,
             minY: 75000,
@@ -137,9 +141,7 @@ export class CoordinateSystemManager {
       this.transformers.clear();
       this.clearCache();
 
-      // Then verify all systems
-      await this.verifyAllSystems();
-
+      // Mark as initialized - verification will happen asynchronously
       this.initialized = true;
     } catch (error) {
       this.initialized = false;
@@ -148,6 +150,17 @@ export class CoordinateSystemManager {
         { error: error instanceof Error ? error.message : String(error) }
       );
     }
+  }
+
+  /**
+   * Initialize coordinate systems with verification
+   */
+  public async initialize(): Promise<void> {
+    if (!this.initialized) {
+      this.initSync();
+    }
+    // Verify systems after sync initialization
+    await this.verifyAllSystems();
   }
 
   public registerSystem(definition: CoordinateSystemDefinition): void {
@@ -176,12 +189,12 @@ export class CoordinateSystemManager {
 
   private async verifyAllSystems(): Promise<void> {
     const testPoints: Record<string, TestPoint> = {
-      [COORDINATE_SYSTEMS.SWISS_LV95]: {
+      'EPSG:2056': {  // SWISS_LV95
         point: [2645021, 1249991],
         expectedWGS84: [8.0, 47.4],
         tolerance: 0.5
       },
-      [COORDINATE_SYSTEMS.SWISS_LV03]: {
+      'EPSG:21781': {  // SWISS_LV03
         point: [645021, 249991],
         expectedWGS84: [8.0, 47.4],
         tolerance: 0.5
@@ -192,8 +205,8 @@ export class CoordinateSystemManager {
       try {
         const transformed = await this.transform(
           { x: test.point[0], y: test.point[1] },
-          system as CoordinateSystem,
-          COORDINATE_SYSTEMS.WGS84
+          system,
+          'EPSG:4326'  // WGS84
         );
 
         const lonDiff = Math.abs(transformed.x - test.expectedWGS84[0]);

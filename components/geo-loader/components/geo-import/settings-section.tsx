@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from 'components/ui/button';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
 import { DxfStructureView } from '../dxf-structure-view';
+import { DxfEntityType, DxfStructure } from '../../core/processors/implementations/dxf/types';
 import { CoordinateSystemSelect } from '../coordinate-system-select';
 import { SettingsSectionProps } from './types';
 import { useState } from 'react';
@@ -61,7 +62,7 @@ export function SettingsSection({
 
         {/* Coordinate System Selection */}
         <CoordinateSystemSelect
-          value={pendingCoordinateSystem || options.coordinateSystem || ''}
+          value={pendingCoordinateSystem || options.coordinateSystem || COORDINATE_SYSTEMS.WGS84}
           defaultValue={analysis?.coordinateSystem}
           onChange={onCoordinateSystemChange}
           highlightValue={detectedSystem}
@@ -92,13 +93,13 @@ export function SettingsSection({
             </div>
           </div>
           <DxfStructureView
-            dxfData={dxfData}
+            structure={dxfData}
             selectedLayers={selectedLayers}
             onLayerToggle={onLayerToggle}
             visibleLayers={visibleLayers}
             onLayerVisibilityToggle={onLayerVisibilityToggle}
-            selectedTemplates={selectedTemplates}
-            onTemplateSelect={onTemplateSelect}
+            selectedEntityTypes={selectedTemplates as DxfEntityType[]}
+            onEntityTypeSelect={(type, enabled) => onTemplateSelect(type as string, enabled)}
           />
         </div>
       )}

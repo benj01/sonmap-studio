@@ -18,32 +18,50 @@ import {
   pointToPosition
 } from './types/coordinates';
 
-// Initialize coordinate system manager immediately
-(async () => {
+// Import processors synchronously
+import './core/processors';
+
+// Initialize coordinate systems
+const initPromise = (async () => {
   try {
+    // Perform synchronous initialization first
+    coordinateSystemManager.initSync();
+    
+    // Then start async verification
     await coordinateSystemManager.initialize();
   } catch (error) {
-    // Re-throw with proper error type
-    if (error instanceof CoordinateSystemError || 
-        error instanceof CoordinateTransformationError || 
-        error instanceof InvalidCoordinateError) {
-      throw error;
-    }
-    throw new CoordinateSystemError(
-      `Failed to initialize coordinate system manager: ${error instanceof Error ? error.message : String(error)}`,
-      { error: error instanceof Error ? error.message : String(error) }
-    );
+    console.error('Failed to initialize coordinate systems:', error);
+    throw error;
   }
-})().catch(error => {
-  console.error('Failed to initialize coordinate system manager:', error);
+})();
+
+// Export initialization helpers
+export const initialize = () => initPromise;
+export const isInitialized = () => coordinateSystemManager.isInitialized();
+
+// Create a proxy to ensure initialization before any coordinate system operations
+const wrappedManager = new Proxy(coordinateSystemManager, {
+  get(target: typeof coordinateSystemManager, prop: keyof typeof coordinateSystemManager) {
+    const value = target[prop];
+    if (typeof value === 'function' && prop !== 'isInitialized' && prop !== 'initSync') {
+      return async (...args: unknown[]) => {
+        await initPromise;
+        return (value as Function).apply(target, args);
+      };
+    }
+    return value;
+  }
 });
 
-// Import new processors to ensure they're registered
-import './core/processors';
+// Export the wrapped manager as the only instance
+export { wrappedManager as coordinateSystemManager };
+
+// Remove the original export to avoid duplicates
 
 // Component exports
 export { default as GeoImportDialog } from './components/geo-import';
 export { PreviewMap } from './components/preview-map';
+export { DxfStructureView } from './components/dxf-structure-view';
 
 // Type exports
 export type {
@@ -70,4 +88,3 @@ export {
   CoordinateTransformationError as TransformationError,
   InvalidCoordinateError
 } from './core/errors/types';
-export { coordinateSystemManager } from './core/coordinate-system-manager';

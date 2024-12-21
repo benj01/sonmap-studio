@@ -12,12 +12,26 @@ The coordinate system management is built around a singleton `coordinateSystemMa
 
 ## Initialization Flow
 
-### 1. Entry Points
-- **Primary**: index.tsx initializes coordinateSystemManager on module load
-- **Secondary**: useCoordinateSystem hook ensures initialization in component context
-- Both paths ensure proper initialization before any transformations
+### 1. Two-Phase Initialization
+- **Phase 1 (Synchronous)**: Immediate registration during module load
+  * Register coordinate systems with proj4
+  * Set up initial state and configurations
+  * Fast, non-blocking operation
+  * Enables webpack module loading
+- **Phase 2 (Asynchronous)**: Verification after load
+  * Validate transformations with test points
+  * Ensure accuracy within tolerance
+  * Comprehensive error reporting
+  * Non-blocking verification
 
-### 2. Registration Process
+### 2. Proxy Protection
+- Type-safe proxy wraps coordinateSystemManager
+- Ensures verification completes before any operation
+- Preserves method types and contexts
+- Handles async/sync method calls appropriately
+- Prevents premature usage of transformation methods
+
+### 3. Registration Process
 - All coordinate systems registered with proj4 first
 - Systems stored in manager's internal Map with metadata:
   - Bounds
@@ -25,7 +39,7 @@ The coordinate system management is built around a singleton `coordinateSystemMa
   - Description
   - Proj4 definition
 - Cached transformers cleared to ensure clean state
-- System verification performed with test points
+- Initialization state tracked for safety
 
 ### 3. Verification Process
 - Each system verified against WGS84 using known test points:

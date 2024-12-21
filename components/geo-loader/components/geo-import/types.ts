@@ -1,9 +1,8 @@
 import { LoaderResult, LoaderOptions } from 'types/geo';
 import { CoordinateSystem } from '../../types/coordinates';
-import { DxfData } from '../../utils/dxf/types';
+import { DxfStructure } from '../../core/processors/implementations/dxf/types';
 import { PreviewManager } from '../../preview/preview-manager';
-import { Analysis } from '../../types/map';
-import { AnalyzeResult } from '../../processors';
+import { AnalyzeResult, ProcessorResult } from '../../core/processors/base/types';
 
 export interface LogDetails {
   source?: 'points' | 'header' | 'fallback';
@@ -28,7 +27,6 @@ export interface LogEntry {
 
 export type LogType = LogEntry['type'];
 
-// Make ImportOptions extend LoaderOptions to ensure compatibility
 export interface ImportOptions extends LoaderOptions {
   selectedLayers: string[];
   visibleLayers: string[];
@@ -44,6 +42,15 @@ export interface ImportState {
   selectedTemplates: string[];
 }
 
+export interface PreviewAnalysis {
+  warnings: Array<{
+    type: string;
+    message: string;
+  }>;
+  statistics?: ProcessorResult['statistics'];
+  coordinateSystem?: CoordinateSystem;
+}
+
 export interface PreviewSectionProps {
   previewManager: PreviewManager;
   bounds: {
@@ -54,13 +61,13 @@ export interface PreviewSectionProps {
   };
   coordinateSystem?: CoordinateSystem;
   visibleLayers: string[];
-  analysis?: Analysis;
+  analysis?: PreviewAnalysis;
 }
 
 export interface SettingsSectionProps {
   file: File;
-  dxfData: DxfData | undefined;
-  analysis: AnalyzeResult | undefined;  // Changed from any to AnalyzeResult
+  dxfData: DxfStructure | undefined;
+  analysis: AnalyzeResult | undefined;
   options: ImportOptions;
   selectedLayers: string[];
   visibleLayers: string[];

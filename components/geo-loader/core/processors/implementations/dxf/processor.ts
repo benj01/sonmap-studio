@@ -88,14 +88,35 @@ export class DxfProcessor extends StreamProcessor {
       // Calculate preview bounds
       const bounds = this.calculateBoundsFromFeatures(previewFeatures);
 
+      // Detect coordinate system based on bounds
+      let detectedSystem = this.options.coordinateSystem;
+      if (!detectedSystem && bounds) {
+        // Check for Swiss LV95 coordinates (typical range around 2.6M, 1.2M)
+        if (bounds.minX > 2000000 && bounds.minX < 3000000 &&
+            bounds.minY > 1000000 && bounds.minY < 1400000) {
+          detectedSystem = 'EPSG:2056'; // Swiss LV95
+        }
+        // Check for Swiss LV03 coordinates (typical range around 600k, 200k)
+        else if (bounds.minX > 400000 && bounds.minX < 900000 &&
+                bounds.minY > 0 && bounds.minY < 400000) {
+          detectedSystem = 'EPSG:21781'; // Swiss LV03
+        }
+        // Check for WGS84 coordinates
+        else if (Math.abs(bounds.minX) <= 180 && Math.abs(bounds.maxX) <= 180 &&
+                Math.abs(bounds.minY) <= 90 && Math.abs(bounds.maxY) <= 90) {
+          detectedSystem = 'EPSG:4326'; // WGS84
+        }
+      }
+
       return {
         layers: this.layers,
-        coordinateSystem: this.options.coordinateSystem,
+        coordinateSystem: detectedSystem,
         bounds,
         preview: {
           type: 'FeatureCollection',
           features: previewFeatures
-        }
+        },
+        dxfData: result.structure // Include the DXF structure data
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
