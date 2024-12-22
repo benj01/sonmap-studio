@@ -3,19 +3,17 @@
 ## Current Status
 
 ### Active Issues
-1. DXF Parser Refactoring (Critical)
-   - Entity parser module structure being reorganized
-   - TypeScript module export issues
-   - Validation chain implementation needed
-   - Error context improvements required
-   - See bug_track/active/dxf-parser-refactoring.md
+1. DXF Parser Integration (Critical)
+   - Integrating dxf-parser library as standard parser
+   - Type system implementation in progress
+   - Entity parsing and feature conversion needs improvement
+   - Test infrastructure set up
+   - See bug_track/active/dxf-parser-integration.md
 
-2. DXF Import and Preview (Critical)
-   - Entity parsing fails due to strict regex patterns
-   - Different DXF file formats not properly handled
-   - Line ending normalization needed
-   - Multiple validation points causing silent failures
-   - Error context missing in conversion process
+2. DXF Import and Preview (Pending)
+   - Will be addressed after parser integration
+   - Need to verify preview generation with new parser
+   - Update validation points for new parser output
    - See bug_track/active/dxf-preview-generation.md
 
 3. Preview Generation
@@ -25,19 +23,19 @@
    - Empty feature collections in UI
 
 ### Required Actions
-1. Parser Refactoring
-   - Complete module reorganization
-   - Fix TypeScript type exports
-   - Implement validation chain
-   - Add error context
-   - Update module documentation
+1. DXF Parser Integration
+   - Complete type definitions
+   - Improve entity extraction from blocks
+   - Enhance feature conversion
+   - Add comprehensive tests
+   - Update documentation
 
-2. DXF Import Enhancement
-   - Update DXF parsing patterns to handle varying formats
-   - Add line ending normalization
-   - Review and consolidate validation points
-   - Add error context throughout conversion chain
-   - Improve debug logging for parsing and conversion
+2. DXF Import Enhancement (After Integration)
+   - Verify preview generation with new parser
+   - Update validation points
+   - Test with various DXF formats
+   - Update error handling for new parser
+   - Document new parsing flow
 
 3. Investigation Areas
    - DXF file format variations
@@ -49,18 +47,17 @@
 
 ### Progress Tracking
 - [x] Initial investigation complete
-- [x] Issue documented in bug tracker
-- [x] Flow diagrams updated
-- [x] Debug logging added
-- [x] Entity parser modularization completed
-- [x] Type export issues fixed
-- [x] Validation chain implemented
-- [x] DXF parsing patterns fixed
-- [x] Line ending handling improved
-- [x] Feature conversion fixed
-- [ ] Preview generation working
-- [ ] Tests added
-- [ ] Documentation updated
+- [x] Selected dxf-parser library
+- [x] Created wrapper implementation
+- [x] Added test infrastructure
+- [x] Added debug logging
+- [x] Created type definitions
+- [ ] Complete type system
+- [ ] Improve entity handling
+- [ ] Enhance feature conversion
+- [ ] Add comprehensive tests
+- [ ] Update documentation
+- [ ] Verify preview generation
 
 ## Version History
 
