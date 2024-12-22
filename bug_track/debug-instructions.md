@@ -135,7 +135,7 @@ When user provides an issue report:
 ### During Debug Sessions
 [Previous content about suggesting changes remains the same]
 
-### When Issue is Resolved
+### When Issue is Resolved (ask user if that's the case!)
 1. Ensure all discoveries and corrections are clearly documented
 2. Add final summary of actual root cause and solution
 3. Document any remaining uncertainties or potential future issues

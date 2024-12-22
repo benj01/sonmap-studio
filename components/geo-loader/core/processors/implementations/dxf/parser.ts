@@ -144,6 +144,7 @@ export class DxfParser {
     text: string,
     options: DxfParseOptions
   ): Promise<DxfEntity[]> {
+    console.log('[DEBUG] Starting entity parsing');
     const entities: DxfEntity[] = [];
     const entityRegex = /^0\s+(\w+)\s+([\s\S]*?)(?=^0\s+\w+|\Z)/gm;
     
@@ -152,9 +153,10 @@ export class DxfParser {
     while ((match = entityRegex.exec(text)) !== null) {
       try {
         const [, type, entityContent] = match;
-        if (this.isValidEntityType(type)) {
-          const groupCodes = this.parseGroupCodes(entityContent);
-          const entityType = type as DxfEntityType;
+        const upperType = type.toUpperCase();
+        
+        if (this.isValidEntityType(upperType)) {
+          const entityType = upperType as DxfEntityType;
           
           // Skip if entity type is not in options
           if (options.entityTypes && !options.entityTypes.includes(entityType)) {
@@ -171,18 +173,33 @@ export class DxfParser {
             continue;
           }
 
-          const entity: DxfEntity = {
-            type: entityType,
-            attributes: this.parseEntityAttributes(groupCodes),
-            data: this.parseEntityData(groupCodes, entityType)
-          };
+          const groupCodes = this.parseGroupCodes(entityContent);
+          const attributes = this.parseEntityAttributes(groupCodes);
+          const data = this.parseEntityData(groupCodes, entityType);
 
-          entities.push(entity);
-          count++;
+          // Only create entity if we have valid data
+          if (data && Object.keys(data).length > 0) {
+            const entity: DxfEntity = {
+              type: entityType,
+              attributes: attributes || {},
+              data: data
+            };
 
-          // Stop if we've reached maxEntities
-          if (options.maxEntities && count >= options.maxEntities) {
-            break;
+            // Add block-specific properties for INSERT entities
+            if (entityType === 'INSERT') {
+              const blockName = groupCodes.find(([code]) => code === 2)?.[1];
+              if (blockName) {
+                entity.blockName = blockName;
+              }
+            }
+
+            entities.push(entity);
+            count++;
+
+            // Stop if we've reached maxEntities
+            if (options.maxEntities && count >= options.maxEntities) {
+              break;
+            }
           }
         }
       } catch (error) {
@@ -190,6 +207,7 @@ export class DxfParser {
       }
     }
 
+    console.log('[DEBUG] Parsed entities:', entities.length);
     return entities;
   }
 

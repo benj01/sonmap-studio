@@ -54,10 +54,25 @@ export class DxfProcessor extends StreamProcessor {
   /**
    * Convert DXF entities to GeoJSON features
    */
-  async convertToFeatures(entities: any[]): Promise<Feature[]> {
-    console.log('[DEBUG] Converting DXF entities to features:', entities.length);
+  async convertToFeatures(entities: unknown): Promise<Feature[]> {
+    console.log('[DEBUG] Converting DXF entities to features');
     try {
-      const features = await this.entityParser.convertToFeatures(entities);
+      // Validate entities is an array
+      if (!Array.isArray(entities)) {
+        console.error('Entities is not an array:', entities);
+        return [];
+      }
+
+      // Validate each entity has required structure
+      const validEntities = entities.filter(entity => {
+        return entity && typeof entity === 'object' && 
+               'type' in entity && 
+               'attributes' in entity && 
+               'data' in entity;
+      });
+
+      console.log('[DEBUG] Valid entities to convert:', validEntities.length);
+      const features = await this.entityParser.convertToFeatures(validEntities);
       console.log('[DEBUG] Converted to features:', features.length);
       return features;
     } catch (error) {
@@ -72,16 +87,24 @@ export class DxfProcessor extends StreamProcessor {
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
       console.log('[DEBUG] Starting DXF analysis for:', file.name);
-      const result = await this.parser.analyzeStructure(file, {
-        previewEntities: (this.options as DxfProcessorOptions).previewEntities,
+      
+      // Parse DXF structure
+      const parseResult = await this.parser.analyzeStructure(file, {
+        previewEntities: (this.options as DxfProcessorOptions).previewEntities || 1000,
         parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
         parseText: (this.options as DxfProcessorOptions).importText,
         parseDimensions: (this.options as DxfProcessorOptions).importDimensions
       });
-      console.log('[DEBUG] Analysis structure:', result.structure);
+      
+      console.log('[DEBUG] Analysis structure:', {
+        layers: parseResult.structure.layers.length,
+        blocks: parseResult.structure.blocks.length,
+        entityTypes: parseResult.structure.entityTypes,
+        previewEntities: parseResult.preview.length
+      });
 
       // Report any issues found during analysis
-      result.issues?.forEach(issue => {
+      parseResult.issues?.forEach(issue => {
         this.errorReporter.addWarning(
           issue.message,
           issue.type,
@@ -91,11 +114,29 @@ export class DxfProcessor extends StreamProcessor {
 
       // Convert preview entities to features
       console.log('[DEBUG] Converting preview entities...');
-      const previewFeatures = await this.convertToFeatures(result.preview);
-      console.log('[DEBUG] Preview features:', previewFeatures.length);
+      if (!Array.isArray(parseResult.preview)) {
+        console.error('[DEBUG] Preview entities is not an array:', parseResult.preview);
+        parseResult.preview = [];
+      }
+      
+      const previewFeatures = await this.convertToFeatures(parseResult.preview);
+      console.log('[DEBUG] Preview features:', {
+        input: parseResult.preview.length,
+        converted: previewFeatures.length,
+        types: new Set(previewFeatures.map(f => f.geometry.type))
+      });
+
+      if (previewFeatures.length === 0) {
+        console.warn('[DEBUG] No preview features generated from entities');
+        this.errorReporter.addWarning(
+          'No preview features could be generated',
+          'PREVIEW_GENERATION',
+          { entityCount: parseResult.preview.length }
+        );
+      }
 
       // Update layers
-      this.layers = result.structure.layers.map(layer => layer.name);
+      this.layers = parseResult.structure.layers.map(layer => layer.name);
       console.log('[DEBUG] Detected layers:', this.layers);
 
       // Calculate preview bounds
@@ -109,21 +150,25 @@ export class DxfProcessor extends StreamProcessor {
         if (bounds.minX > 2000000 && bounds.minX < 3000000 &&
             bounds.minY > 1000000 && bounds.minY < 1400000) {
           detectedSystem = 'EPSG:2056'; // Swiss LV95
+          console.log('[DEBUG] Detected Swiss LV95 coordinates');
         }
         // Check for Swiss LV03 coordinates (typical range around 600k, 200k)
         else if (bounds.minX > 400000 && bounds.minX < 900000 &&
                 bounds.minY > 0 && bounds.minY < 400000) {
           detectedSystem = 'EPSG:21781'; // Swiss LV03
+          console.log('[DEBUG] Detected Swiss LV03 coordinates');
         }
         // Check for WGS84 coordinates
         else if (Math.abs(bounds.minX) <= 180 && Math.abs(bounds.maxX) <= 180 &&
                 Math.abs(bounds.minY) <= 90 && Math.abs(bounds.maxY) <= 90) {
           detectedSystem = 'EPSG:4326'; // WGS84
+          console.log('[DEBUG] Detected WGS84 coordinates');
+        } else {
+          console.warn('[DEBUG] Could not detect coordinate system from bounds:', bounds);
         }
       }
-      console.log('[DEBUG] Detected coordinate system:', detectedSystem);
 
-      return {
+      const analyzeResult: AnalyzeResult = {
         layers: this.layers,
         coordinateSystem: detectedSystem,
         bounds,
@@ -131,8 +176,19 @@ export class DxfProcessor extends StreamProcessor {
           type: 'FeatureCollection',
           features: previewFeatures
         },
-        dxfData: result.structure // Include the DXF structure data
+        dxfData: parseResult.structure
       };
+
+      // Log analysis results
+      console.log('[DEBUG] Analysis complete:', {
+        layers: this.layers.length,
+        features: previewFeatures.length,
+        featureTypes: Array.from(new Set(previewFeatures.map(f => f.geometry.type))),
+        coordinateSystem: detectedSystem,
+        hasBounds: !!bounds
+      });
+
+      return analyzeResult;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       console.error('[DEBUG] Analysis error:', message);
@@ -268,20 +324,28 @@ export class DxfProcessor extends StreamProcessor {
    * Update bounds with new features
    */
   private updateBounds(features: Feature[]): void {
+    const updateBoundsWithCoord = (coord: number[]) => {
+      this.bounds.minX = Math.min(this.bounds.minX, coord[0]);
+      this.bounds.minY = Math.min(this.bounds.minY, coord[1]);
+      this.bounds.maxX = Math.max(this.bounds.maxX, coord[0]);
+      this.bounds.maxY = Math.max(this.bounds.maxY, coord[1]);
+    };
+
+    const processCoordinates = (coords: any) => {
+      if (Array.isArray(coords)) {
+        if (coords.length === 2 && typeof coords[0] === 'number') {
+          // This is a coordinate pair
+          updateBoundsWithCoord(coords);
+        } else {
+          // This is an array of coordinates or arrays
+          coords.forEach(processCoordinates);
+        }
+      }
+    };
+
     features.forEach(feature => {
-      if (feature.geometry.type === 'Point') {
-        const coords = feature.geometry.coordinates;
-        this.bounds.minX = Math.min(this.bounds.minX, coords[0]);
-        this.bounds.minY = Math.min(this.bounds.minY, coords[1]);
-        this.bounds.maxX = Math.max(this.bounds.maxX, coords[0]);
-        this.bounds.maxY = Math.max(this.bounds.maxY, coords[1]);
-      } else if (feature.geometry.type === 'LineString') {
-        feature.geometry.coordinates.forEach(coords => {
-          this.bounds.minX = Math.min(this.bounds.minX, coords[0]);
-          this.bounds.minY = Math.min(this.bounds.minY, coords[1]);
-          this.bounds.maxX = Math.max(this.bounds.maxX, coords[0]);
-          this.bounds.maxY = Math.max(this.bounds.maxY, coords[1]);
-        });
+      if (feature.geometry && 'coordinates' in feature.geometry) {
+        processCoordinates(feature.geometry.coordinates);
       }
     });
   }
@@ -297,23 +361,43 @@ export class DxfProcessor extends StreamProcessor {
       maxY: -Infinity
     };
 
+    const updateBoundsWithCoord = (coord: number[]) => {
+      bounds.minX = Math.min(bounds.minX, coord[0]);
+      bounds.minY = Math.min(bounds.minY, coord[1]);
+      bounds.maxX = Math.max(bounds.maxX, coord[0]);
+      bounds.maxY = Math.max(bounds.maxY, coord[1]);
+    };
+
+    const processCoordinates = (coords: any) => {
+      if (Array.isArray(coords)) {
+        if (coords.length === 2 && typeof coords[0] === 'number') {
+          // This is a coordinate pair
+          updateBoundsWithCoord(coords);
+        } else {
+          // This is an array of coordinates or arrays
+          coords.forEach(processCoordinates);
+        }
+      }
+    };
+
     features.forEach(feature => {
-      if (feature.geometry.type === 'Point') {
-        const coords = feature.geometry.coordinates;
-        bounds.minX = Math.min(bounds.minX, coords[0]);
-        bounds.minY = Math.min(bounds.minY, coords[1]);
-        bounds.maxX = Math.max(bounds.maxX, coords[0]);
-        bounds.maxY = Math.max(bounds.maxY, coords[1]);
-      } else if (feature.geometry.type === 'LineString') {
-        feature.geometry.coordinates.forEach(coords => {
-          bounds.minX = Math.min(bounds.minX, coords[0]);
-          bounds.minY = Math.min(bounds.minY, coords[1]);
-          bounds.maxX = Math.max(bounds.maxX, coords[0]);
-          bounds.maxY = Math.max(bounds.maxY, coords[1]);
-        });
+      if (feature.geometry && 'coordinates' in feature.geometry) {
+        processCoordinates(feature.geometry.coordinates);
       }
     });
 
+    // If no valid coordinates were found, return default bounds
+    if (bounds.minX === Infinity) {
+      console.warn('[DEBUG] No valid coordinates found for bounds calculation');
+      return {
+        minX: -1,
+        minY: -1,
+        maxX: 1,
+        maxY: 1
+      };
+    }
+
+    console.log('[DEBUG] Calculated bounds:', bounds);
     return bounds;
   }
 }

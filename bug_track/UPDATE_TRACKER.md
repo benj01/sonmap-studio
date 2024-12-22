@@ -2,7 +2,27 @@
 
 ## Version History
 
-### v0.4.2 (Latest)
+### v0.4.3 (Latest)
+- Enhanced DXF Parser Implementation
+  - Fixed "entities is not iterable" error with proper type checking
+  - Added validation for entity structure and required properties
+  - Improved error handling and logging
+  - Added comprehensive debug logging throughout parser
+
+- Improved Preview Generation
+  - Enhanced bounds calculation to handle all geometry types
+  - Added recursive coordinate processing for complex geometries
+  - Added default bounds when no coordinates are found
+  - Made updateBounds consistent with calculateBoundsFromFeatures
+  - Fixed preview map display issues
+
+- Enhanced Error Recovery
+  - Added better error state handling in import dialog
+  - Improved error message clarity and context
+  - Added validation for parsed data
+  - Enhanced error recovery mechanisms
+
+### v0.4.2
 - Unified error handling system
   - Connected all error handlers through ErrorReporter
   - Added structured error types and codes
