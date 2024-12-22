@@ -52,16 +52,33 @@ export class DxfProcessor extends StreamProcessor {
   }
 
   /**
+   * Convert DXF entities to GeoJSON features
+   */
+  async convertToFeatures(entities: any[]): Promise<Feature[]> {
+    console.log('[DEBUG] Converting DXF entities to features:', entities.length);
+    try {
+      const features = await this.entityParser.convertToFeatures(entities);
+      console.log('[DEBUG] Converted to features:', features.length);
+      return features;
+    } catch (error) {
+      console.error('Failed to convert entities to features:', error);
+      return [];
+    }
+  }
+
+  /**
    * Analyze DXF file
    */
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
+      console.log('[DEBUG] Starting DXF analysis for:', file.name);
       const result = await this.parser.analyzeStructure(file, {
         previewEntities: (this.options as DxfProcessorOptions).previewEntities,
         parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
         parseText: (this.options as DxfProcessorOptions).importText,
         parseDimensions: (this.options as DxfProcessorOptions).importDimensions
       });
+      console.log('[DEBUG] Analysis structure:', result.structure);
 
       // Report any issues found during analysis
       result.issues?.forEach(issue => {
@@ -73,20 +90,17 @@ export class DxfProcessor extends StreamProcessor {
       });
 
       // Convert preview entities to features
-      const previewFeatures = await this.parser.parseFeatures(file, {
-        entityTypes: (this.options as DxfProcessorOptions).entityTypes,
-        parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
-        parseText: (this.options as DxfProcessorOptions).importText,
-        parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
-        validate: (this.options as DxfProcessorOptions).validateGeometry,
-        maxEntities: 100
-      });
+      console.log('[DEBUG] Converting preview entities...');
+      const previewFeatures = await this.convertToFeatures(result.preview);
+      console.log('[DEBUG] Preview features:', previewFeatures.length);
 
       // Update layers
       this.layers = result.structure.layers.map(layer => layer.name);
+      console.log('[DEBUG] Detected layers:', this.layers);
 
       // Calculate preview bounds
       const bounds = this.calculateBoundsFromFeatures(previewFeatures);
+      console.log('[DEBUG] Calculated bounds:', bounds);
 
       // Detect coordinate system based on bounds
       let detectedSystem = this.options.coordinateSystem;
@@ -107,6 +121,7 @@ export class DxfProcessor extends StreamProcessor {
           detectedSystem = 'EPSG:4326'; // WGS84
         }
       }
+      console.log('[DEBUG] Detected coordinate system:', detectedSystem);
 
       return {
         layers: this.layers,
@@ -120,6 +135,7 @@ export class DxfProcessor extends StreamProcessor {
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error('[DEBUG] Analysis error:', message);
       throw new ValidationError(
         `Failed to analyze DXF file: ${message}`,
         'DXF_ANALYSIS_ERROR',
@@ -160,7 +176,7 @@ export class DxfProcessor extends StreamProcessor {
           const entities = await this.parser.parseEntities(chunk, parseOptions);
           
           // Convert entities to features
-          const features = await this.entityParser.convertToFeatures(entities);
+          const features = await this.convertToFeatures(entities);
 
           if (features.length > 0) {
             // Process features

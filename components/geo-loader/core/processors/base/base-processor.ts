@@ -1,3 +1,4 @@
+import { Feature } from 'geojson';
 import { IProcessor } from './interfaces';
 import { ProcessorOptions, ProcessorResult, ProcessorStats, AnalyzeResult } from './types';
 import { ErrorReporter, ValidationError } from '../../errors/types';
@@ -18,6 +19,7 @@ export abstract class BaseProcessor implements IProcessor {
   abstract canProcess(file: File): Promise<boolean>;
   abstract analyze(file: File): Promise<AnalyzeResult>;
   abstract process(file: File): Promise<ProcessorResult>;
+  abstract convertToFeatures(entities: any[]): Promise<Feature[]>;
 
   protected emitProgress(progress: number) {
     this.options.onProgress?.(Math.min(1, Math.max(0, progress)));

@@ -65,6 +65,8 @@ export function useFileAnalysis({
     setState(prev => ({ ...prev, loading: true }));
 
     try {
+      console.log('[DEBUG] Starting file analysis:', file.name);
+
       // Ensure coordinate system manager is initialized
       if (!coordinateSystemManager.isInitialized()) {
         try {
@@ -87,12 +89,16 @@ export function useFileAnalysis({
         );
       }
 
+      console.log('[DEBUG] Analyzing file with processor:', processor.constructor.name);
       const result = await processor.analyze(file);
+      console.log('[DEBUG] Analysis result:', result);
 
       // Initialize layers
       const layers = result.layers || [];
+      console.log('[DEBUG] Detected layers:', layers);
 
       // Initialize preview manager with streaming support
+      console.log('[DEBUG] Creating preview manager...');
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
         visibleLayers: layers,
@@ -104,20 +110,21 @@ export function useFileAnalysis({
         smartSampling: true
       });
 
-      // Generate preview using streaming if available
-      if (result.preview) {
-        if (Symbol.asyncIterator in result.preview) {
-          // Stream features
-          await previewManager.generatePreview(
-            result.preview[Symbol.asyncIterator](),
-            file.name
-          );
-        } else {
-          // Fallback for non-streaming preview
-          previewManager.setFeatures(result.preview);
-        }
+      // Convert preview entities to features
+      console.log('[DEBUG] Converting preview entities to features...');
+      const features = await processor.convertToFeatures(result.preview);
+      console.log('[DEBUG] Generated features:', features.length);
+
+      // Set features in preview manager
+      if (features.length > 0) {
+        console.log('[DEBUG] Setting features in preview manager...');
+        previewManager.setFeatures({
+          type: 'FeatureCollection',
+          features: features
+        });
       }
 
+      console.log('[DEBUG] Analysis complete, updating state...');
       setState({
         loading: false,
         analysis: result,
@@ -143,6 +150,7 @@ export function useFileAnalysis({
 
   // Handle layer selection
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
+    console.log('[DEBUG] Toggle layer:', layer, enabled);
     setState(prev => ({
       ...prev,
       selectedLayers: enabled 
@@ -152,6 +160,7 @@ export function useFileAnalysis({
   }, []);
 
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
+    console.log('[DEBUG] Toggle layer visibility:', layer, visible);
     setState(prev => {
       const newVisibleLayers = visible
         ? [...prev.visibleLayers, layer]

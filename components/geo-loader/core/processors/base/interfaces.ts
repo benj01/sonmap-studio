@@ -1,5 +1,6 @@
 import { File } from '@web-std/file';
 import { ProcessorOptions, ProcessorResult, AnalyzeResult } from './types';
+import { Feature } from 'geojson';
 
 /**
  * Core processor interface that all format processors must implement
@@ -20,6 +21,11 @@ export interface IProcessor {
    * Process file and convert to GeoJSON
    */
   process(file: File): Promise<ProcessorResult>;
+
+  /**
+   * Convert format-specific entities to GeoJSON features
+   */
+  convertToFeatures(entities: any[]): Promise<Feature[]>;
 
   /**
    * Get all errors from this processor

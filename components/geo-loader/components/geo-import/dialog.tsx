@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Dialog, DialogContent } from 'components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from 'components/ui/dialog';
 import { GeoImportDialogProps } from './types';
 import { ImportHeader } from './components/import-header';
 import { ImportContent } from './components/import-content';
@@ -235,6 +235,11 @@ export function GeoImportDialog({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClearAndClose()}>
       <DialogContent className="max-w-6xl">
+        <DialogTitle className="sr-only">Import {file.name}</DialogTitle>
+        <DialogDescription className="sr-only">
+          Import dialog for processing and analyzing {file.name} with coordinate system and layer selection options
+        </DialogDescription>
+        
         <ImportHeader
           fileName={file.name}
           hasErrors={hasErrors}
