@@ -148,10 +148,91 @@ export class EntityParser {
       const groupCodes = parseGroupCodes(lines);
       const context = createParsingContext(type, content);
 
+      const attributes = {
+        layer: groupCodes.find(gc => gc.code === 8)?.value || '0',
+        color: parseInt(groupCodes.find(gc => gc.code === 62)?.value || '0'),
+        lineType: groupCodes.find(gc => gc.code === 6)?.value
+      };
+
       switch (type) {
         case 'LWPOLYLINE':
           return processLwpolyline(groupCodes, context);
-        // Add other entity type handlers as needed
+
+        case 'LINE': {
+          const x = parseFloat(groupCodes.find(gc => gc.code === 10)?.value || '0');
+          const y = parseFloat(groupCodes.find(gc => gc.code === 20)?.value || '0');
+          const z = parseFloat(groupCodes.find(gc => gc.code === 30)?.value || '0');
+          const x2 = parseFloat(groupCodes.find(gc => gc.code === 11)?.value || '0');
+          const y2 = parseFloat(groupCodes.find(gc => gc.code === 21)?.value || '0');
+          const z2 = parseFloat(groupCodes.find(gc => gc.code === 31)?.value || '0');
+
+          console.log('[DEBUG] Parsing LINE entity:', {
+            start: { x, y, z },
+            end: { x: x2, y: y2, z: z2 },
+            groupCodes: groupCodes.map(gc => `${gc.code}: ${gc.value}`)
+          });
+
+          return {
+            type: 'LINE',
+            attributes,
+            data: { x, y, z, x2, y2, z2 }
+          };
+        }
+
+        case 'CIRCLE': {
+          const x = parseFloat(groupCodes.find(gc => gc.code === 10)?.value || '0');
+          const y = parseFloat(groupCodes.find(gc => gc.code === 20)?.value || '0');
+          const z = parseFloat(groupCodes.find(gc => gc.code === 30)?.value || '0');
+          const radius = parseFloat(groupCodes.find(gc => gc.code === 40)?.value || '0');
+
+          console.log('[DEBUG] Parsing CIRCLE entity:', {
+            center: { x, y, z },
+            radius,
+            groupCodes: groupCodes.map(gc => `${gc.code}: ${gc.value}`)
+          });
+
+          return {
+            type: 'CIRCLE',
+            attributes,
+            data: { x, y, z, radius }
+          };
+        }
+
+        case 'ARC': {
+          const x = parseFloat(groupCodes.find(gc => gc.code === 10)?.value || '0');
+          const y = parseFloat(groupCodes.find(gc => gc.code === 20)?.value || '0');
+          const z = parseFloat(groupCodes.find(gc => gc.code === 30)?.value || '0');
+          const radius = parseFloat(groupCodes.find(gc => gc.code === 40)?.value || '0');
+          const startAngle = parseFloat(groupCodes.find(gc => gc.code === 50)?.value || '0');
+          const endAngle = parseFloat(groupCodes.find(gc => gc.code === 51)?.value || '0');
+
+          console.log('[DEBUG] Parsing ARC entity:', {
+            center: { x, y, z },
+            radius,
+            angles: { start: startAngle, end: endAngle },
+            groupCodes: groupCodes.map(gc => `${gc.code}: ${gc.value}`)
+          });
+
+          return {
+            type: 'ARC',
+            attributes,
+            data: { x, y, z, radius, startAngle, endAngle }
+          };
+        }
+        case 'POINT':
+          return {
+            type: 'POINT',
+            attributes: {
+              layer: groupCodes.find(gc => gc.code === 8)?.value || '0',
+              color: parseInt(groupCodes.find(gc => gc.code === 62)?.value || '0'),
+              lineType: groupCodes.find(gc => gc.code === 6)?.value
+            },
+            data: {
+              x: parseFloat(groupCodes.find(gc => gc.code === 10)?.value || '0'),
+              y: parseFloat(groupCodes.find(gc => gc.code === 20)?.value || '0'),
+              z: parseFloat(groupCodes.find(gc => gc.code === 30)?.value || '0')
+            }
+          };
         default:
           console.warn('[DEBUG] Unsupported entity type:', type);
           return null;

@@ -30,20 +30,65 @@ export class LayerManager {
    */
   async parseLayers(content: string): Promise<DxfLayer[]> {
     const layers: DxfLayer[] = [];
-    const layerRegex = /^0\s+LAYER\s+([\s\S]*?)(?=^0\s+\w+)/gm;
     
-    let match;
-    while ((match = layerRegex.exec(content)) !== null) {
-      try {
-        const layerContent = match[1];
-        const layer = this.parseLayerDefinition(layerContent);
-        if (layer) {
-          layers.push(layer);
-          this.addLayer(layer);
-        }
-      } catch (error) {
-        console.warn('Failed to parse layer:', error);
+    try {
+      // Find TABLES section first
+      const tablesMatch = content.match(/0[\s\r\n]*SECTION[\s\r\n]*2[\s\r\n]*TABLES([\s\S]*?)0[\s\r\n]*ENDSEC/i);
+      if (!tablesMatch) {
+        console.warn('[DEBUG] No TABLES section found in content:', {
+          contentLength: content.length,
+          sample: content.substring(0, 200)
+        });
+        return layers;
       }
+
+      // Find LAYER table
+      const layerTableMatch = tablesMatch[1].match(/0[\s\r\n]*TABLE[\s\r\n]*2[\s\r\n]*LAYER([\s\S]*?)0[\s\r\n]*ENDTAB/i);
+      if (!layerTableMatch) {
+        console.warn('[DEBUG] No LAYER table found');
+        return layers;
+      }
+
+      const layerContent = layerTableMatch[1];
+      console.log('[DEBUG] Found LAYER table content:', {
+        length: layerContent.length,
+        sample: layerContent.substring(0, 200)
+      });
+
+      // Find all layer definitions using regex
+      const layerPattern = /0[\s\r\n]*LAYER[\s\r\n]*((?:(?!0[\s\r\n]*(?:LAYER|ENDTAB))[\s\S])*)/g;
+      let match;
+      while ((match = layerPattern.exec(layerContent)) !== null) {
+        try {
+          const layerDef = match[1];
+          console.log('[DEBUG] Processing layer definition:', {
+            length: layerDef.length,
+            preview: layerDef.substring(0, 100).replace(/\n/g, '\\n')
+          });
+
+          const layer = this.parseLayerDefinition(layerDef.trim());
+          if (layer) {
+            console.log('[DEBUG] Successfully parsed layer:', layer);
+            layers.push(layer);
+            this.addLayer(layer);
+          }
+        } catch (error) {
+          console.warn('[DEBUG] Failed to parse layer:', {
+            error: error instanceof Error ? error.message : String(error),
+            matchContent: match[0].substring(0, 100)
+          });
+        }
+      }
+
+      console.log('[DEBUG] Total layers parsed:', {
+        count: layers.length,
+        names: layers.map(l => l.name)
+      });
+    } catch (error) {
+      console.error('[DEBUG] Error parsing layers:', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
     }
 
     return layers;
@@ -53,6 +98,10 @@ export class LayerManager {
    * Parse a single layer definition
    */
   private parseLayerDefinition(content: string): DxfLayer | null {
+    console.log('[DEBUG] Parsing layer definition:', {
+      content: content.substring(0, 100)
+    });
+
     const lines = content.split('\n').map(line => line.trim());
     const layer: Partial<DxfLayer> = {};
 
@@ -60,7 +109,10 @@ export class LayerManager {
       const code = parseInt(lines[i]);
       const value = lines[i + 1];
       
-      if (isNaN(code)) continue;
+      if (isNaN(code)) {
+        console.warn('[DEBUG] Invalid group code:', lines[i]);
+        continue;
+      }
       
       switch (code) {
         case 2: // Layer name

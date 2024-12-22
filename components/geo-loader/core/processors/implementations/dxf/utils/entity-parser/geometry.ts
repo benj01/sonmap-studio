@@ -5,24 +5,38 @@ import { DxfEntity } from './types';
  * Convert point entity to GeoJSON geometry
  */
 export function pointToGeometry(entity: DxfEntity): Point | null {
+  console.log('[DEBUG] Converting POINT to geometry:', {
+    data: entity.data,
+    attributes: entity.attributes
+  });
+
   const x = entity.data.x ?? 0;
   const y = entity.data.y ?? 0;
   const z = entity.data.z ?? 0;
 
   if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') {
+    console.warn('[DEBUG] Invalid POINT coordinates:', { x, y, z });
     return null;
   }
 
-  return {
-    type: 'Point',
+  const geometry = {
+    type: 'Point' as const,
     coordinates: [x, y, z]
   };
+
+  console.log('[DEBUG] Created POINT geometry:', geometry);
+  return geometry;
 }
 
 /**
  * Convert line entity to GeoJSON geometry
  */
 export function lineToGeometry(entity: DxfEntity): LineString | null {
+  console.log('[DEBUG] Converting LINE to geometry:', {
+    data: entity.data,
+    attributes: entity.attributes
+  });
+
   const x1 = entity.data.x ?? 0;
   const y1 = entity.data.y ?? 0;
   const z1 = entity.data.z ?? 0;
@@ -34,16 +48,28 @@ export function lineToGeometry(entity: DxfEntity): LineString | null {
     typeof x1 !== 'number' || typeof y1 !== 'number' || typeof z1 !== 'number' ||
     typeof x2 !== 'number' || typeof y2 !== 'number' || typeof z2 !== 'number'
   ) {
+    console.warn('[DEBUG] Invalid LINE coordinates:', {
+      start: { x: x1, y: y1, z: z1 },
+      end: { x: x2, y: y2, z: z2 }
+    });
     return null;
   }
-  
-  return {
-    type: 'LineString',
+
+  const geometry = {
+    type: 'LineString' as const,
     coordinates: [
       [x1, y1, z1],
       [x2, y2, z2]
     ]
   };
+
+  console.log('[DEBUG] Created LINE geometry:', {
+    type: geometry.type,
+    start: geometry.coordinates[0],
+    end: geometry.coordinates[1]
+  });
+
+  return geometry;
 }
 
 /**
@@ -128,6 +154,11 @@ export function polylineToGeometry(entity: DxfEntity): LineString | Polygon | nu
  * Convert circle entity to GeoJSON geometry
  */
 export function circleToGeometry(entity: DxfEntity): Polygon | null {
+  console.log('[DEBUG] Converting CIRCLE to geometry:', {
+    data: entity.data,
+    attributes: entity.attributes
+  });
+
   const x = entity.data.x ?? 0;
   const y = entity.data.y ?? 0;
   const z = entity.data.z ?? 0;
@@ -137,6 +168,7 @@ export function circleToGeometry(entity: DxfEntity): Polygon | null {
     typeof x !== 'number' || typeof y !== 'number' || 
     typeof z !== 'number' || typeof radius !== 'number'
   ) {
+    console.warn('[DEBUG] Invalid CIRCLE parameters:', { x, y, z, radius });
     return null;
   }
 
@@ -152,16 +184,30 @@ export function circleToGeometry(entity: DxfEntity): Polygon | null {
     ]);
   }
 
-  return {
-    type: 'Polygon',
+  const geometry = {
+    type: 'Polygon' as const,
     coordinates: [coordinates]
   };
+
+  console.log('[DEBUG] Created CIRCLE geometry:', {
+    type: geometry.type,
+    center: [x, y, z],
+    radius,
+    vertexCount: coordinates.length
+  });
+
+  return geometry;
 }
 
 /**
  * Convert arc entity to GeoJSON geometry
  */
 export function arcToGeometry(entity: DxfEntity): LineString | null {
+  console.log('[DEBUG] Converting ARC to geometry:', {
+    data: entity.data,
+    attributes: entity.attributes
+  });
+
   const x = entity.data.x ?? 0;
   const y = entity.data.y ?? 0;
   const z = entity.data.z ?? 0;
@@ -174,6 +220,11 @@ export function arcToGeometry(entity: DxfEntity): LineString | null {
     typeof z !== 'number' || typeof radius !== 'number' ||
     typeof startAngle !== 'number' || typeof endAngle !== 'number'
   ) {
+    console.warn('[DEBUG] Invalid ARC parameters:', {
+      center: { x, y, z },
+      radius,
+      angles: { start: startAngle, end: endAngle }
+    });
     return null;
   }
 
@@ -190,8 +241,18 @@ export function arcToGeometry(entity: DxfEntity): LineString | null {
     ]);
   }
 
-  return {
-    type: 'LineString',
+  const geometry = {
+    type: 'LineString' as const,
     coordinates
   };
+
+  console.log('[DEBUG] Created ARC geometry:', {
+    type: geometry.type,
+    center: [x, y, z],
+    radius,
+    angles: { start: startAngle, end: endAngle },
+    vertexCount: coordinates.length
+  });
+
+  return geometry;
 }

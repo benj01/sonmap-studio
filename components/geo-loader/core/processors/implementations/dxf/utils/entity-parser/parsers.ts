@@ -58,14 +58,15 @@ export function processLwpolyline(
       layer: '0' // Default layer
     },
     data: {
-      vertices: [],
+      vertices: [] as Vertex[],
       closed: false
     }
   };
 
   let currentVertex: Partial<Vertex> = {};
 
-  for (const { code, value } of groupCodes) {
+  for (const groupCode of groupCodes) {
+    const { code, value } = groupCode;
     if (!validateGroupCode({ code, value })) {
       console.warn('[DEBUG] Invalid group code:', { code, value });
       continue;

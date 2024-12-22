@@ -133,19 +133,36 @@ export class DxfProcessor extends StreamProcessor {
     try {
       console.log('[DEBUG] Starting DXF analysis for:', file.name);
       
-      // Parse DXF structure
+      // Read file content
+      const text = await file.text();
+      console.log('[DEBUG] File content length:', text.length);
+
+      // Parse layers first
+      const layers = await this.layerManager.parseLayers(text);
+      console.log('[DEBUG] Parsed layers:', {
+        count: layers.length,
+        names: layers.map(l => l.name)
+      });
+
+      // Parse DXF structure and features
       const parseResult = await this.parser.analyzeStructure(file, {
         previewEntities: (this.options as DxfProcessorOptions).previewEntities || 1000,
         parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
         parseText: (this.options as DxfProcessorOptions).importText,
         parseDimensions: (this.options as DxfProcessorOptions).importDimensions
       });
+
+      // Update layer manager with parsed layers
+      parseResult.structure.layers.forEach(layer => {
+        this.layerManager.addLayer(layer);
+      });
       
       console.log('[DEBUG] Analysis structure:', {
         layers: parseResult.structure.layers.length,
         blocks: parseResult.structure.blocks.length,
         entityTypes: parseResult.structure.entityTypes,
-        previewEntities: parseResult.preview.length
+        previewEntities: parseResult.preview.length,
+        parsedLayers: layers.length
       });
 
       // Report any issues found during analysis
@@ -269,34 +286,27 @@ export class DxfProcessor extends StreamProcessor {
         validate: (this.options as DxfProcessorOptions).validateGeometry
       };
 
-      // Process file in chunks
-      let chunkIndex = 0;
-      for await (const chunk of this.streamReader.readChunks()) {
-        try {
-          // Parse entities from chunk
-          const entities = await this.parser.parseEntities(chunk, parseOptions);
-          
-          // Convert entities to features
-          const features = await this.convertToFeatures(entities);
+      // Process entire file at once since streaming isn't working well with DXF
+      const fileContent = await file.text();
+      try {
+        // Parse features
+        const features = await this.parser.parseFeatures(file, parseOptions);
 
-          if (features.length > 0) {
-            // Process features
-            const processedFeatures = await this.processChunk(features, chunkIndex++);
-            
-            // Update bounds
-            this.updateBounds(processedFeatures);
-            
-            // Emit chunk
-            this.handleChunk(processedFeatures, chunkIndex);
-          }
-        } catch (error) {
-          console.warn('Failed to process chunk:', error);
-          continue;
+        if (features.length > 0) {
+          // Process features
+          const processedFeatures = await this.processChunk(features, 0);
+          
+          // Update bounds
+          this.updateBounds(processedFeatures);
+          
+          // Emit chunk
+          this.handleChunk(processedFeatures, 0);
         }
 
-        // Update progress based on bytes read
-        const stats = this.streamReader.getStats();
-        this.updateProgress(stats.bytesRead / stats.totalBytes);
+        // Update progress
+        this.updateProgress(1);
+      } catch (error) {
+        console.warn('Failed to process file:', error);
       }
 
       return {

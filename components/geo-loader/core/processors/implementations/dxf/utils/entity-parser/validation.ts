@@ -1,42 +1,107 @@
-import { Point, LineString, Polygon, Position, DxfEntityType, GroupCode } from './types';
+import { Feature, Point, LineString, Polygon, Position, GeoJsonTypes, Geometry } from 'geojson';
+import { DxfEntityType, GroupCode } from './types';
+
+type ValidGeometry = Point | LineString | Polygon;
+
+// Type guards for GeoJSON types
+function isPoint(geom: Geometry): geom is Point {
+  return geom.type === 'Point';
+}
+
+function isLineString(geom: Geometry): geom is LineString {
+  return geom.type === 'LineString';
+}
+
+function isPolygon(geom: Geometry): geom is Polygon {
+  return geom.type === 'Polygon';
+}
 
 /**
  * Validate geometry coordinates
  */
-export function validateGeometry(geometry: Point | LineString | Polygon): boolean {
-  if (!geometry || !geometry.coordinates) return false;
+export function validateGeometry(geometry: ValidGeometry | null | undefined): boolean {
+  console.log('[DEBUG] Validating geometry:', {
+    type: geometry?.type,
+    hasCoordinates: !!geometry?.coordinates,
+    coordinates: geometry?.coordinates
+  });
+
+  if (!geometry || !geometry.coordinates) {
+    console.warn('[DEBUG] Invalid geometry: missing geometry or coordinates');
+    return false;
+  }
 
   const validateCoordinate = (coord: number[]): boolean => {
-    return (
-      Array.isArray(coord) &&
+    const isValid = Array.isArray(coord) &&
       coord.length >= 2 &&
-      coord.every(n => typeof n === 'number' && !isNaN(n))
-    );
+      coord.every(n => typeof n === 'number' && !isNaN(n));
+
+    if (!isValid) {
+      console.warn('[DEBUG] Invalid coordinate:', {
+        coord,
+        values: coord?.map(n => ({ value: n, type: typeof n, isNaN: isNaN(n) }))
+      });
+    }
+
+    return isValid;
   };
 
-  switch (geometry.type) {
-    case 'Point':
-      return validateCoordinate(geometry.coordinates);
-    case 'LineString':
-      return (
-        Array.isArray(geometry.coordinates) &&
-        geometry.coordinates.length >= 2 &&
-        geometry.coordinates.every(validateCoordinate)
-      );
-    case 'Polygon':
-      return (
-        Array.isArray(geometry.coordinates) &&
-        geometry.coordinates.length > 0 &&
-        geometry.coordinates.every((ring: Position[]) =>
-          Array.isArray(ring) &&
+  if (isPoint(geometry)) {
+    const isValidPoint = validateCoordinate(geometry.coordinates);
+    if (!isValidPoint) {
+      console.warn('[DEBUG] Invalid Point geometry:', geometry.coordinates);
+    }
+    return isValidPoint;
+  }
+
+  if (isLineString(geometry)) {
+    const isValidLineString = Array.isArray(geometry.coordinates) &&
+      geometry.coordinates.length >= 2 &&
+      geometry.coordinates.every(validateCoordinate);
+    
+    if (!isValidLineString) {
+      console.warn('[DEBUG] Invalid LineString geometry:', {
+        isArray: Array.isArray(geometry.coordinates),
+        length: geometry.coordinates?.length,
+        coordinates: geometry.coordinates
+      });
+    }
+    return isValidLineString;
+  }
+
+  if (isPolygon(geometry)) {
+    const isValidPolygon = Array.isArray(geometry.coordinates) &&
+      geometry.coordinates.length > 0 &&
+      geometry.coordinates.every((ring: Position[]) => {
+        const isValidRing = Array.isArray(ring) &&
           ring.length >= 4 &&
           ring.every(validateCoordinate) &&
-          JSON.stringify(ring[0]) === JSON.stringify(ring[ring.length - 1])
-        )
-      );
-    default:
-      return false;
+          JSON.stringify(ring[0]) === JSON.stringify(ring[ring.length - 1]);
+        
+        if (!isValidRing) {
+          console.warn('[DEBUG] Invalid Polygon ring:', {
+            isArray: Array.isArray(ring),
+            length: ring?.length,
+            isClosed: ring && ring.length >= 2 && 
+              JSON.stringify(ring[0]) === JSON.stringify(ring[ring.length - 1]),
+            ring
+          });
+        }
+        return isValidRing;
+      });
+
+    if (!isValidPolygon) {
+      console.warn('[DEBUG] Invalid Polygon geometry:', {
+        isArray: Array.isArray(geometry.coordinates),
+        length: geometry.coordinates?.length,
+        coordinates: geometry.coordinates
+      });
+    }
+    return isValidPolygon;
   }
+
+  console.warn('[DEBUG] Unknown geometry type:', geometry.type);
+  return false;
 }
 
 /**
