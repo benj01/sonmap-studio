@@ -86,28 +86,55 @@ File Selection ──> GeoImportDialog ─────────────�
 2. TypeScript module export issues
 ```
 
-### Entity Parser Module Structure (New)
+### DXF Parser Module Structure (Updated)
 Last Updated: [Current Date]
 Status: Current
 
 ```
-EntityParser (index.ts)
+DxfParser (parser.ts)
        │
        ├─────────────┬─────────────┬──────────────┬───────────────┐
        │             │             │              │               │
-    types.ts     parsers.ts    geometry.ts   validation.ts    converters.ts
+header-parser.ts  layer-parser.ts  block-parser.ts  entity-parser.ts  regex-patterns.ts
        │             │             │              │               │
        v             v             v              v               v
-  Type Definitions   │        Geometry Types   Validation    Conversion Logic
-       │             │             │           Functions          │
-       │             v             │              │               │
-       │      Parsing Functions    │              │               │
+Header Section   Layer Section   Block Section  Entity Section  Shared Utilities
+Parsing          Parsing         Parsing        Parsing         & Patterns
        │             │             │              │               │
-       └─────────────┴─────────────┴──────────────┴───────────┬───┘
-                                                              │
-                                                              v
-                                                    Feature Generation
+       │             │             │              │               │
+       └─────────────┴─────────────┴──────────────┴───────────────┘
+                                  │
+                                  v
+                        structure-validator.ts
+                                  │
+                                  v
+                          Validated Structure
 ```
+
+Key Points:
+1. Module Organization:
+   - Each parser focused on specific DXF section
+   - Shared regex patterns and utilities
+   - Centralized validation
+   - Clear module boundaries
+
+2. Data Flow:
+   - File content cleaned and normalized
+   - Each section parsed independently
+   - Results validated centrally
+   - Structure assembled by coordinator
+
+3. Error Handling:
+   - Each parser handles section-specific errors
+   - Validation at module boundaries
+   - Error context preserved throughout
+   - Clear error propagation chain
+
+Notes:
+- Each parser module is self-contained
+- Regex patterns centralized for consistency
+- Validation consolidated in one place
+- Error handling improved throughout
 
 Key Points:
 1. Module Organization:

@@ -52,12 +52,12 @@
 - [x] Issue documented in bug tracker
 - [x] Flow diagrams updated
 - [x] Debug logging added
-- [x] Entity parser modularization started
-- [ ] Type export issues fixed
-- [ ] Validation chain implemented
-- [ ] DXF parsing patterns fixed
-- [ ] Line ending handling improved
-- [ ] Feature conversion fixed
+- [x] Entity parser modularization completed
+- [x] Type export issues fixed
+- [x] Validation chain implemented
+- [x] DXF parsing patterns fixed
+- [x] Line ending handling improved
+- [x] Feature conversion fixed
 - [ ] Preview generation working
 - [ ] Tests added
 - [ ] Documentation updated
@@ -65,12 +65,16 @@
 ## Version History
 
 ### v0.4.4 (In Progress)
-- Entity Parser Refactoring
+- Entity Parser Refactoring ✓
   - Split monolithic implementation into focused modules
   - Improved code organization and maintainability
   - Added comprehensive validation chain
   - Enhanced error context and reporting
   - Improved type safety and module boundaries
+  - Centralized regex patterns with improved handling
+  - Added optional comments cleanup
+  - Enhanced group code parsing with batching
+  - Added proper error context throughout chain
 
 ### v0.4.3
 - Enhanced DXF Parser Implementation

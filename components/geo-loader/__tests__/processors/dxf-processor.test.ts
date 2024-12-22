@@ -1,7 +1,7 @@
-import { DxfProcessor } from '../../processors/dxf-processor';
-import { ProcessorOptions } from '../../processors/base-processor';
+import { DxfProcessor } from '../../core/processors/implementations/dxf/processor';
+import { ProcessorOptions } from '../../core/processors/base/types';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
-import { ValidationError, ParseError } from '../../utils/errors';
+import { ValidationError, ParseError } from '../../core/errors/types';
 import { Feature, Geometry, Position, Point, LineString, Polygon } from 'geojson';
 
 // Helper functions for type checking
@@ -50,6 +50,48 @@ describe('DxfProcessor', () => {
     test('should handle empty DXF file', async () => {
       const file = new File([''], 'test.dxf');
       await expect(processor.analyze(file)).rejects.toThrow(ValidationError);
+    });
+
+    test('should handle indented DXF content', async () => {
+      const content = `  0\n  SECTION\n  2\n  ENTITIES\n  0\n  POINT\n  10\n  1\n  20\n  2\n  0\n  ENDSEC\n  0\n  EOF\n`;
+      const file = new File([content], 'test.dxf');
+      
+      const result = await processor.analyze(file);
+      expect(result.preview.features).toHaveLength(1);
+      
+      const geometry = result.preview.features[0].geometry;
+      expect(isPoint(geometry)).toBe(true);
+      if (isPoint(geometry)) {
+        expect(geometry.coordinates).toEqual([1, 2]);
+      }
+    });
+
+    test('should handle empty lines between group codes', async () => {
+      const content = `0\n\nSECTION\n\n2\n\nENTITIES\n\n0\n\nPOINT\n\n10\n\n1\n\n20\n\n2\n\n0\n\nENDSEC\n\n0\n\nEOF\n`;
+      const file = new File([content], 'test.dxf');
+      
+      const result = await processor.analyze(file);
+      expect(result.preview.features).toHaveLength(1);
+      
+      const geometry = result.preview.features[0].geometry;
+      expect(isPoint(geometry)).toBe(true);
+      if (isPoint(geometry)) {
+        expect(geometry.coordinates).toEqual([1, 2]);
+      }
+    });
+
+    test('should handle mixed line endings', async () => {
+      const content = `0\r\nSECTION\r2\nENTITIES\n0\rPOINT\r\n10\n1\r20\r\n2\n0\rENDSEC\r\n0\nEOF`;
+      const file = new File([content], 'test.dxf');
+      
+      const result = await processor.analyze(file);
+      expect(result.preview.features).toHaveLength(1);
+      
+      const geometry = result.preview.features[0].geometry;
+      expect(isPoint(geometry)).toBe(true);
+      if (isPoint(geometry)) {
+        expect(geometry.coordinates).toEqual([1, 2]);
+      }
     });
   });
 

@@ -63,30 +63,43 @@ export function polylineToGeometry(entity: DxfEntity): LineString | Polygon | nu
     return null;
   }
 
-  // Convert vertices to coordinates, properly handling zero values
+  // Convert vertices to coordinates, preserving exact values
   const coordinates: Position[] = vertices.map((v, index) => {
-    // Use explicit type checking to handle zero values correctly
-    const x = typeof v.x === 'number' ? v.x : 0;
-    const y = typeof v.y === 'number' ? v.y : 0;
-    const z = typeof v.z === 'number' ? v.z : 0;
+    // Check if values are valid numbers (including zero)
+    if (typeof v.x !== 'number' || typeof v.y !== 'number') {
+      console.warn('[DEBUG] Invalid vertex coordinates:', {
+        index,
+        vertex: v,
+        x_type: typeof v.x,
+        y_type: typeof v.y
+      });
+      return [0, 0, 0]; // Fallback for invalid coordinates
+    }
 
-    const coord: Position = [x, y, z];
+    // Use exact values, including zeros
+    const coord: Position = [
+      v.x,
+      v.y,
+      typeof v.z === 'number' ? v.z : 0
+    ];
+
     console.log('[DEBUG] Vertex coordinate:', {
       index,
       original: v,
       converted: coord,
-      x_type: typeof v.x,
-      y_type: typeof v.y,
-      z_type: typeof v.z
+      x_exact: v.x.toFixed(8),
+      y_exact: v.y.toFixed(8),
+      z_exact: v.z?.toFixed(8)
     });
+
     return coord;
   });
 
   console.log('[DEBUG] All polyline coordinates:', {
     count: coordinates.length,
-    first: coordinates[0],
-    last: coordinates[coordinates.length - 1],
-    allCoords: coordinates
+    first: coordinates[0]?.map(v => v.toFixed(8)),
+    last: coordinates[coordinates.length - 1]?.map(v => v.toFixed(8)),
+    allCoords: coordinates.map(coord => coord.map(v => v.toFixed(8)))
   });
 
   // Check if polyline is closed

@@ -6,16 +6,41 @@ import { validateGroupCode, validateVertex } from './validation';
  */
 export function parseGroupCodes(lines: string[]): GroupCode[] {
   const groupCodes: GroupCode[] = [];
+  let currentCode: number | null = null;
   
-  for (let i = 0; i < lines.length - 1; i += 2) {
-    const code = parseInt(lines[i].trim());
-    const value = lines[i + 1].trim();
+  console.log('[DEBUG] Parsing group codes from lines:', {
+    lineCount: lines.length,
+    firstLines: lines.slice(0, 4)
+  });
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
     
-    if (!isNaN(code) && value) {
-      groupCodes.push({ code, value });
-      console.log('[DEBUG] Group code:', { code, value });
+    if (currentCode === null) {
+      // Try to parse as code
+      const code = parseInt(line);
+      if (!isNaN(code)) {
+        currentCode = code;
+        console.log('[DEBUG] Found group code:', code);
+      }
+    } else {
+      // This line should be the value
+      groupCodes.push({ code: currentCode, value: line });
+      console.log('[DEBUG] Added group code pair:', {
+        code: currentCode,
+        value: line,
+        pairIndex: groupCodes.length - 1
+      });
+      currentCode = null;
     }
   }
+
+  console.log('[DEBUG] Parsed group codes:', {
+    count: groupCodes.length,
+    firstCodes: groupCodes.slice(0, 3),
+    lastCodes: groupCodes.slice(-3)
+  });
 
   return groupCodes;
 }
@@ -64,16 +89,8 @@ export function processLwpolyline(
       case 10: // X coordinate
         const x = parseFloat(value);
         if (!isNaN(x)) {
-          currentVertex = { x };
-          console.log('[DEBUG] New vertex with X:', x);
-        }
-        break;
-
-      case 20: // Y coordinate
-        if (currentVertex.x !== undefined) {
-          const y = parseFloat(value);
-          if (!isNaN(y)) {
-            currentVertex.y = y;
+          // If we have a complete vertex, save it
+          if (currentVertex.x !== undefined && currentVertex.y !== undefined) {
             if (validateVertex(currentVertex as Vertex)) {
               context.vertices.push(currentVertex as Vertex);
               context.vertexCount++;
@@ -81,7 +98,32 @@ export function processLwpolyline(
                 ...currentVertex,
                 vertexCount: context.vertexCount
               });
-              currentVertex = {};
+            }
+          }
+          // Start new vertex with X
+          currentVertex = { x };
+          console.log('[DEBUG] Started new vertex with X:', x);
+        }
+        break;
+
+      case 20: // Y coordinate
+        const y = parseFloat(value);
+        if (!isNaN(y)) {
+          currentVertex.y = y;
+          console.log('[DEBUG] Added Y to vertex:', {
+            ...currentVertex,
+            newY: y
+          });
+          // If we now have both X and Y, add the vertex
+          if (currentVertex.x !== undefined) {
+            if (validateVertex(currentVertex as Vertex)) {
+              context.vertices.push(currentVertex as Vertex);
+              context.vertexCount++;
+              console.log('[DEBUG] Added complete vertex:', {
+                ...currentVertex,
+                vertexCount: context.vertexCount
+              });
+              currentVertex = {}; // Reset for next vertex
             }
           }
         }

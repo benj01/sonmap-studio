@@ -41,23 +41,55 @@ export class EntityParser {
       // Normalize line endings first
       content = content.replace(/\r\n?/g, '\n');
       
-      // Find ENTITIES section with more flexible pattern
-      const entitiesMatch = content.match(/0\s*SECTION\s*2\s*ENTITIES([\s\S]*?)0\s*ENDSEC/m);
-      if (!entitiesMatch) {
-        console.warn('[DEBUG] No ENTITIES section found in content:', content.substring(0, 200));
+      // Find ENTITIES section with line-based pattern
+      const lines = content.split('\n');
+      let inEntitiesSection = false;
+      let entitiesContent = '';
+      
+      console.log('[DEBUG] Scanning for ENTITIES section:', {
+        totalLines: lines.length,
+        firstLines: lines.slice(0, 5)
+      });
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        
+        if (!inEntitiesSection) {
+          // Look for section start
+          if (line === '0' && 
+              lines[i + 1]?.trim() === 'SECTION' &&
+              lines[i + 2]?.trim() === '2' &&
+              lines[i + 3]?.trim() === 'ENTITIES') {
+            inEntitiesSection = true;
+            i += 3; // Skip to after ENTITIES
+            console.log('[DEBUG] Found ENTITIES section start at line:', i);
+            continue;
+          }
+        } else {
+          // Look for section end
+          if (line === '0' && lines[i + 1]?.trim() === 'ENDSEC') {
+            console.log('[DEBUG] Found ENTITIES section end at line:', i);
+            break;
+          }
+          entitiesContent += line + '\n';
+        }
+      }
+
+      if (!inEntitiesSection || !entitiesContent) {
+        console.warn('[DEBUG] No valid ENTITIES section found');
         return entities;
       }
+
+      // Parse entities with line-based pattern
+      const entityRegex = /[\s\r\n]*0[\s\r\n]+([^\s\r\n]+)[\s\r\n]+((?:(?![\s\r\n]*0[\s\r\n]+(?:[^\s\r\n]+|ENDSEC))[\s\S])*)/gm;
       
-      // Parse entities with more flexible pattern
-      const entityRegex = /0\s*(\w+)\s*([\s\S]*?)(?=0\s*(?:\w+|ENDSEC)|\Z)/gm;
-      const entitiesContent = entitiesMatch[1];
-      
-      console.log('[DEBUG] Found ENTITIES section, content:', {
+      console.log('[DEBUG] Processing ENTITIES section:', {
         length: entitiesContent.length,
         sample: entitiesContent.substring(0, 100) + '...',
         rawContent: entitiesContent.split('\n').slice(0, 5),
-        firstMatch: entitiesContent.match(/0[\s\r\n]+(\w+)/)?.[1],
-        groupCodes: entitiesContent.match(/^\d+/gm)?.slice(0, 5)
+        firstMatch: entitiesContent.match(/0[\s\r\n]+([^\s\r\n]+)/)?.[1],
+        groupCodes: entitiesContent.match(/^\s*\d+\s*$/gm)?.slice(0, 5),
+        lineCount: entitiesContent.split('\n').length
       });
       
       let match: RegExpExecArray | null;
