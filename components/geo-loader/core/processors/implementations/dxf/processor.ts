@@ -57,20 +57,51 @@ export class DxfProcessor extends StreamProcessor {
   async convertToFeatures(entities: unknown): Promise<Feature[]> {
     console.log('[DEBUG] Converting DXF entities to features');
     try {
-      // Ensure entities is an array
+      // Ensure entities is an array and log its contents
       const entityArray = Array.isArray(entities) ? entities : [];
-      console.log('[DEBUG] Entity array length:', entityArray.length);
+      console.log('[DEBUG] Entity array:', {
+        length: entityArray.length,
+        sample: entityArray[0],
+        allEntities: entityArray
+      });
 
-      // Validate each entity has required structure
+      // Validate and log each entity
       const validEntities = entityArray.filter((entity): entity is DxfEntity => {
-        const isValid = entity && 
-                       typeof entity === 'object' && 
-                       'type' in entity && 
-                       'attributes' in entity && 
-                       'data' in entity;
-        
+        // Enhanced validation with detailed logging
+        if (!entity || typeof entity !== 'object') {
+          console.warn('[DEBUG] Invalid entity (not an object):', entity);
+          return false;
+        }
+
+        const validation = {
+          hasType: 'type' in entity,
+          hasAttributes: 'attributes' in entity && typeof entity.attributes === 'object',
+          hasData: 'data' in entity && typeof entity.data === 'object',
+          hasVertices: entity.type === 'LWPOLYLINE' ? 
+            'data' in entity && 
+            typeof entity.data === 'object' && 
+            Array.isArray(entity.data.vertices) : true
+        };
+
+        // Log detailed validation results
+        console.log('[DEBUG] Entity validation:', {
+          type: entity.type,
+          validation,
+          entityData: {
+            attributes: entity.attributes,
+            dataKeys: entity.data ? Object.keys(entity.data) : [],
+            vertexCount: entity.type === 'LWPOLYLINE' && entity.data?.vertices?.length
+          }
+        });
+
+        const isValid = Object.values(validation).every(v => v);
         if (!isValid) {
-          console.warn('[DEBUG] Invalid entity structure:', entity);
+          console.warn('[DEBUG] Invalid entity structure:', {
+            type: entity.type,
+            failedChecks: Object.entries(validation)
+              .filter(([, v]) => !v)
+              .map(([k]) => k)
+          });
         }
         
         return isValid;
@@ -400,18 +431,54 @@ export class DxfProcessor extends StreamProcessor {
       }
     });
 
-    // If no valid coordinates were found, return default bounds
+    // Check if we found any valid coordinates
     if (bounds.minX === Infinity) {
       console.warn('[DEBUG] No valid coordinates found for bounds calculation');
-      return {
-        minX: -1,
-        minY: -1,
-        maxX: 1,
-        maxY: 1
-      };
+      // Use more appropriate default bounds based on coordinate system
+      const defaultBounds = this.getDefaultBounds(this.options.coordinateSystem);
+      console.log('[DEBUG] Using default bounds:', defaultBounds);
+      return defaultBounds;
     }
 
     console.log('[DEBUG] Calculated bounds:', bounds);
     return bounds;
+  }
+
+  /**
+   * Get default bounds based on coordinate system
+   */
+  private getDefaultBounds(coordinateSystem?: string): ProcessorResult['bounds'] {
+    // Default bounds based on common coordinate systems
+    switch (coordinateSystem) {
+      case 'EPSG:2056': // Swiss LV95
+        return {
+          minX: 2485000,
+          minY: 1075000,
+          maxX: 2835000,
+          maxY: 1295000
+        };
+      case 'EPSG:21781': // Swiss LV03
+        return {
+          minX: 485000,
+          minY: 75000,
+          maxX: 835000,
+          maxY: 295000
+        };
+      case 'EPSG:4326': // WGS84
+        return {
+          minX: 5.9,
+          minY: 45.8,
+          maxX: 10.5,
+          maxY: 47.8
+        };
+      default:
+        // Generic bounds that work for most cases
+        return {
+          minX: -1,
+          minY: -1,
+          maxX: 1,
+          maxY: 1
+        };
+    }
   }
 }

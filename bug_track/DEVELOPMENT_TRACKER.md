@@ -3,26 +3,45 @@
 ## Current Status
 
 ### Active Issues
-1. Feature Conversion Chain (Critical)
-   - Entity parsing succeeds but feature conversion fails
+1. DXF Parser Refactoring (Critical)
+   - Entity parser module structure being reorganized
+   - TypeScript module export issues
+   - Validation chain implementation needed
+   - Error context improvements required
+   - See bug_track/active/dxf-parser-refactoring.md
+
+2. DXF Import and Preview (Critical)
+   - Entity parsing fails due to strict regex patterns
+   - Different DXF file formats not properly handled
+   - Line ending normalization needed
    - Multiple validation points causing silent failures
    - Error context missing in conversion process
    - See bug_track/active/dxf-preview-generation.md
 
-2. Preview Generation
+3. Preview Generation
    - No features reaching preview manager
    - Bounds calculation never runs
    - Layer visibility controls non-functional
    - Empty feature collections in UI
 
 ### Required Actions
-1. Immediate Fixes
-   - Add error context to feature conversion
-   - Review and consolidate validation points
-   - Improve error reporting in conversion chain
-   - Add debug logging throughout process
+1. Parser Refactoring
+   - Complete module reorganization
+   - Fix TypeScript type exports
+   - Implement validation chain
+   - Add error context
+   - Update module documentation
 
-2. Investigation Areas
+2. DXF Import Enhancement
+   - Update DXF parsing patterns to handle varying formats
+   - Add line ending normalization
+   - Review and consolidate validation points
+   - Add error context throughout conversion chain
+   - Improve debug logging for parsing and conversion
+
+3. Investigation Areas
+   - DXF file format variations
+   - Line ending handling
    - Feature validation criteria
    - Coordinate transformation logic
    - Bounds calculation process
@@ -33,6 +52,11 @@
 - [x] Issue documented in bug tracker
 - [x] Flow diagrams updated
 - [x] Debug logging added
+- [x] Entity parser modularization started
+- [ ] Type export issues fixed
+- [ ] Validation chain implemented
+- [ ] DXF parsing patterns fixed
+- [ ] Line ending handling improved
 - [ ] Feature conversion fixed
 - [ ] Preview generation working
 - [ ] Tests added
@@ -40,7 +64,15 @@
 
 ## Version History
 
-### v0.4.3 (Latest)
+### v0.4.4 (In Progress)
+- Entity Parser Refactoring
+  - Split monolithic implementation into focused modules
+  - Improved code organization and maintainability
+  - Added comprehensive validation chain
+  - Enhanced error context and reporting
+  - Improved type safety and module boundaries
+
+### v0.4.3
 - Enhanced DXF Parser Implementation
   - Fixed "entities is not iterable" error with proper type checking
   - Added validation for entity structure and required properties
@@ -140,14 +172,21 @@ See version_history.md for earlier versions
 ## Known Issues
 
 ### Critical
-1. DXF Import and Preview
-   - Feature conversion fails silently in entity parser
-   - Preview map receives no features despite successful parsing
-   - Multiple validation points may cause silent failures
+1. DXF Parser Module Structure
+   - TypeScript module export issues
+   - Validation chain incomplete
+   - Error context missing in conversion chain
+   - See bug_track/active/dxf-parser-refactoring.md
+
+2. DXF Import and Preview
+   - Entity parsing fails due to strict regex patterns
+   - Different DXF file formats not properly handled
+   - Line ending normalization needed
+   - Multiple validation points causing silent failures
    - Error context missing in conversion chain
    - See bug_track/active/dxf-preview-generation.md
 
-2. Coordinate System Detection
+3. Coordinate System Detection
    - Simple DXF files may not detect coordinate system due to strict thresholds
    - Multiple error handlers causing fragmented error reporting
    - Component communication and state management problems
@@ -172,25 +211,33 @@ See version_history.md for earlier versions
 
 ## Next Development Phase
 
-### 1. Feature Conversion Enhancement
-- Add error context to conversion chain
-- Review validation criteria
-- Improve error reporting
-- Add debug logging points
+### 1. Parser Module Completion
+- Fix TypeScript type exports
+- Complete validation chain
+- Add error context
+- Update documentation
+- Add tests
 
-### 2. Preview Generation
+### 2. DXF Import Enhancement
+- Update parsing patterns for different formats
+- Add line ending normalization
+- Review validation criteria
+- Add error context throughout chain
+- Improve debug logging
+
+### 3. Preview Generation
 - Verify feature manager integration
 - Enhance preview collection categorization
 - Add feature validation logging
 - Improve bounds calculation reliability
 
-### 3. Testing Infrastructure
+### 4. Testing Infrastructure
 - Add conversion test suite
 - Test error scenarios
 - Verify preview generation
 - Test coordinate handling
 
-### 4. Documentation Updates
+### 5. Documentation Updates
 - Document feature conversion flow
 - Update error handling guide
 - Add debugging instructions

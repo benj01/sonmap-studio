@@ -80,105 +80,61 @@ File Selection ──> GeoImportDialog ─────────────�
                     │
                     v
              [Generated Features]
+
+[!] Current failure points:
+1. Feature conversion fails silently
+2. TypeScript module export issues
 ```
 
-[!] Current failure point: Feature conversion fails silently
-# System Flow Diagrams
+### Entity Parser Module Structure (New)
+Last Updated: [Current Date]
+Status: Current
 
-## Purpose
-This document maintains high-level flow diagrams for complex system interactions. It serves as a living document that evolves as our understanding of the system grows. The diagrams help:
-- Visualize data and control flow between components
-- Document complex interactions and state changes
-- Track system behavior discoveries
-- Provide quick orientation for developers
-
-## How to Use This Document
-
-### When to Add/Update Diagrams
-1. When implementing new complex features
-2. When discovering previously unknown system interactions
-3. When making architectural changes
-4. When fixing bugs that reveal new flow patterns
-
-### Diagram Guidelines
-1. Use ASCII/Unicode diagrams for version control compatibility
-2. Include:
-   - Component interactions
-   - Data flow direction
-   - State changes
-   - Key decision points
-   - Error paths
-3. Add comments to explain:
-   - Non-obvious interactions
-   - Important state changes
-   - Critical validation points
-   - Error handling strategies
-
-### Format
 ```
-Title: [Feature/Flow Name]
-Last Updated: [Date]
-Status: [Current/Outdated]
-
-[ASCII Diagram]
+EntityParser (index.ts)
+       │
+       ├─────────────┬─────────────┬──────────────┬───────────────┐
+       │             │             │              │               │
+    types.ts     parsers.ts    geometry.ts   validation.ts    converters.ts
+       │             │             │              │               │
+       v             v             v              v               v
+  Type Definitions   │        Geometry Types   Validation    Conversion Logic
+       │             │             │           Functions          │
+       │             v             │              │               │
+       │      Parsing Functions    │              │               │
+       │             │             │              │               │
+       └─────────────┴─────────────┴──────────────┴───────────┬───┘
+                                                              │
+                                                              v
+                                                    Feature Generation
+```
 
 Key Points:
-1. [Important interaction or behavior]
-2. [Critical decision point]
-3. [Error handling strategy]
+1. Module Organization:
+   - Clear separation of concerns
+   - Focused responsibility per module
+   - Type-safe boundaries
+   - Explicit exports
 
-Notes:
-- [Additional context]
-- [Known limitations]
-- [Future considerations]
-```
-
-## Current Flows
-
-
-Key Points:
-1. File Analysis Chain:
-   - DxfProcessor analyzes file structure
-   - Converts entities to features
-   - Detects coordinate system
-   - Generates preview
-
-2. Validation Points:
-   - Entity structure validation in convertToFeatures
-   - Coordinate validation in bounds calculation
-   - Feature validation before preview generation
+2. Data Flow:
+   - Types shared across modules
+   - Parsing independent of geometry
+   - Validation at each step
+   - Conversion isolated from parsing
 
 3. Error Handling:
-   - Unified error reporting through ErrorReporter
-   - Recovery mechanisms at each stage
-   - Default fallbacks for missing data
-
-Key Points:
-1. File Analysis Chain:
-   - DxfProcessor analyzes file structure
-   - Converts entities to features
-   - Detects coordinate system
-   - Generates preview
-
-2. Validation Points:
-   - Entity structure validation in convertToFeatures
-   - Coordinate validation in bounds calculation
-   - Feature validation before preview generation
-
-3. Error Handling:
-   - Unified error reporting through ErrorReporter
-   - Recovery mechanisms at each stage
-   - Default fallbacks for missing data
+   - Validation at module boundaries
+   - Error context preserved
+   - Type safety enforced
+   - Clear error propagation
 
 Notes:
-- Entity parsing succeeds but feature conversion fails
-- Feature validation may be too strict
-- Preview generation receives no features to display
-- Error handling needs improvement in conversion chain
-- Coordinate system detection works but may need validation
-- Bounds calculation never runs due to missing features
+- Module exports need proper TypeScript configuration
+- Validation chain implementation in progress
+- Error context being added throughout
+- Testing needed for each module
 
-### Feature Conversion Flow
+### Feature Conversion Flow (Updated)
 Last Updated: [Current Date]
 Status: Current
 
@@ -197,7 +153,7 @@ Transform Coords    Add Feature Properties     Update Bounds
      v                      v                           v
 [LineString/Polygon] ──> Feature Manager ──────> Preview Manager
 
-[!] Potential validation failure point
+[!] Validation chain being implemented
 ```
 
 Key Points:
@@ -218,7 +174,9 @@ Key Points:
    - Bounds validation
 
 Notes:
-- Multiple validation points may cause silent failures
+- Multiple validation points being consolidated
+- Error context being added
+- Property mapping under review
 - Coordinate transformation needs verification
 - Property mapping needs review
 - Error context needed at each step
