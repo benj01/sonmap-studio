@@ -1,0 +1,1080 @@
+core/processors/base/base-processor.ts
+Purpose: Base class for all file processors that handle geospatial data conversion.
+Key Functions:
+
+
+canProcess(file: File): Checks if processor can handle file type
+analyze(file: File): Analyzes file structure
+process(file: File): Converts file to GeoJSON features
+convertToFeatures(entities): Transforms raw data to GeoJSON
+Dependencies: ErrorReporter, ProcessorOptions
+Config: None
+
+
+core/processors/base/registry.ts
+Purpose: Registry for managing and accessing different file processors
+Key Functions:
+
+
+register(extension, processor): Registers processor for file type
+getProcessor(file, options): Gets appropriate processor for file
+Dependencies: base-processor.ts
+Important: Central to file type handling
+
+
+core/processors/base/interfaces.ts
+Purpose: Defines core interfaces for processor system
+Key Interfaces:
+
+
+IProcessor: Main processor interface
+IFileParser: File parsing interface
+ICoordinateTransformer: Coordinate conversion interface
+Dependencies: None
+Important: Defines processor contract
+
+
+core/processors/base/types.ts
+Purpose: Type definitions for processor system
+Key Types:
+
+
+ProcessorOptions: Configuration options
+ProcessorResult: Processing output format
+AnalyzeResult: File analysis results
+Dependencies: GeoJSON types
+Important: Shared types across processors
+
+
+core/processors/stream/stream-processor.ts
+Purpose: Handles large file processing via streaming
+Key Functions:
+
+
+processStream(): Streams file processing
+processChunk(): Processes data chunks
+updateProgress(): Handles progress updates
+Dependencies: base-processor.ts
+Config: Chunk size, memory limits
+Important: Critical for large file handling
+
+
+core/processors/stream/types.ts
+Purpose: Defines streaming-specific types
+Key Types:
+
+
+StreamProcessorOptions: Stream config options
+StreamProcessorEvents: Event definitions
+StreamProcessorState: Processing state tracking
+Dependencies: ProcessorOptions
+Important: Stream processing configuration
+
+These files form the foundation of the geo data processing system. The main workflow is:
+
+File received -> Registry finds appropriate processor
+Processor analyzes file structure
+Processor converts data to GeoJSON via streaming
+Results cached and returned
+
+
+core/processors/implementations/dxf/processor.ts
+Purpose: DXF (CAD file) processing implementation
+Key Functions:
+
+
+analyzeStructure(): Analyzes DXF file structure
+parseFeatures(): Converts DXF entities to GeoJSON
+handleBlockReference(): Processes CAD blocks
+Dependencies: DXF parser, coordinate system manager
+Important: Core DXF conversion logic
+
+
+core/processors/implementations/dxf/parser.ts
+Purpose: Parses raw DXF file content
+Key Functions:
+
+
+parseEntities(): Extracts DXF entities
+parseBlocks(): Processes CAD blocks
+parseLayers(): Extracts layer information
+Dependencies: DXF types, validation utils
+Config: Parser options
+
+
+core/processors/implementations/dxf/types.ts
+Purpose: DXF-specific type definitions
+Key Types:
+
+
+DxfEntity: DXF entity structure
+DxfBlock: Block definition
+DxfLayer: Layer properties
+Dependencies: None
+Important: DXF data structures
+
+
+core/processors/implementations/dxf/utils/*.ts (Multiple utility files)
+Purpose: Various DXF processing utilities
+Key Components:
+
+
+Matrix transformations
+Geometry conversion
+Layer management
+Block handling
+Dependencies: DXF types
+Important: Support functions for DXF processing
+
+
+core/processors/implementations/csv/processor.ts
+Purpose: CSV/XYZ file processing
+Key Functions:
+
+
+processData(): Parses CSV data
+convertToFeatures(): Creates GeoJSON from CSV
+Dependencies: CSV parser, coordinate transformer
+Config: Delimiter, column mapping
+
+
+core/processors/implementations/shapefile/processor.ts
+Purpose: Shapefile processing implementation
+Key Functions:
+
+
+processShapefile(): Handles .shp files
+readDbf(): Reads attribute data
+transformCoordinates(): Converts coordinates
+Dependencies: DBF reader, SHX reader
+Config: Shapefile options
+
+These implementations work together to handle different geospatial file formats. The processors share common base functionality while implementing format-specific parsing and conversion logic.
+
+
+components/geo-loader/components/geo-import/dialog.tsx
+Purpose: Main import dialog UI component
+Key Functions:
+
+
+GeoImportDialog: Handles file import workflow
+Progress tracking
+Error handling
+Dependencies: React, UI components
+Important: Main user interface for imports
+
+
+components/geo-loader/components/geo-import/components/*.tsx
+Purpose: Import dialog subcomponents
+Key Components:
+
+
+ImportHeader: Dialog header
+ImportContent: Main content area
+ImportControls: Action buttons
+Dependencies: UI components
+Config: Import options
+
+
+components/geo-loader/components/preview-map.tsx
+Purpose: Map preview component
+Key Functions:
+
+
+Data visualization
+Layer management
+Interactive preview
+Dependencies: Mapbox GL, React
+Config: Map settings
+
+
+components/geo-loader/components/coordinate-system-select.tsx
+Purpose: Coordinate system selection UI
+Key Functions:
+
+
+System selection
+Validation
+Auto-detection
+Dependencies: UI components
+Important: User coordinate system control
+
+
+components/geo-loader/hooks/*.ts
+Purpose: React hooks for geo functionality
+Key Hooks:
+
+
+useMapView: Map view management
+useFileAnalysis: File analysis
+useCoordinateSystem: Coordinate system management
+Dependencies: React, geo processing utilities
+Important: Core functionality hooks
+
+
+components/geo-loader/core/cache-manager.ts
+Purpose: Caching system
+Key Functions:
+
+
+Result caching
+Memory management
+Cache invalidation
+Dependencies: None
+Config: Cache sizes, TTL
+
+
+components/geo-loader/core/error-manager.ts
+Purpose: Error handling system
+Key Functions:
+
+
+Error tracking
+Error aggregation
+Severity management
+Dependencies: Error types
+Important: Central error handling
+
+These components form the user interface and interaction layer of the geo-loader system. They provide:
+
+File import interface
+Data preview
+Coordinate system management
+Error handling
+Caching
+
+The UI components rely heavily on the processors and utilities for actual data handling while providing user feedback and control.
+
+
+components/geo-loader/utils/*.ts
+Purpose: Shared utility functions
+Key Functions:
+
+
+Coordinate validation
+File type detection
+Data conversion helpers
+Dependencies: Core types
+Important: Common utilities
+
+
+components/geo-loader/types/*.ts
+Purpose: Type definitions
+Key Types:
+
+
+Coordinate systems
+File formats
+Processing options
+Error types
+Dependencies: None
+Important: Type system foundation
+
+
+components/geo-loader/converters/*.ts
+Purpose: Data conversion utilities
+Key Functions:
+
+
+Format conversion
+Coordinate transformation
+Feature generation
+Dependencies: Types, coordinate systems
+Important: Data transformation
+
+
+components/geo-loader/core/feature-manager/*.ts
+Purpose: Feature handling system
+Key Functions:
+
+
+Feature storage
+Memory management
+Feature streaming
+Dependencies: GeoJSON types
+Config: Memory limits
+
+
+components/geo-loader/core/validation/*.ts
+Purpose: Data validation
+Key Functions:
+
+
+Coordinate validation
+Feature validation
+File format validation
+Dependencies: Types
+Important: Data integrity
+
+Key Relationships and Architecture:
+The system is organized in layers:
+
+Core Processing (processors/)
+UI Components (components/)
+Data Management (core/)
+Utilities (utils/)
+
+Central Files:
+
+coordinate-system-manager.ts
+processor registry
+cache-manager.ts
+error-manager.ts
+
+Areas Needing Attention:
+
+Memory management documentation
+Error handling documentation
+Coordinate system conversion edge cases
+Large file processing optimization
+
+The system provides a complete solution for:
+
+Loading various geo data formats
+Converting between coordinate systems
+Previewing and validating data
+Managing memory and performance
+Handling errors gracefully
+
+
+core/processors/implementations/dxf/utils/geometry/dimension.ts
+Purpose: Handles DXF dimension entity conversion
+Key Functions:
+
+
+convert(): Converts dimension entities to GeoJSON
+extractDimensionData(): Extracts measurement data
+createDimensionComponents(): Creates visual components
+Dependencies: DXF types, validation utils
+Important: Dimension visualization
+
+
+core/processors/implementations/dxf/utils/geometry/ellipse.ts
+Purpose: Ellipse entity conversion
+Key Functions:
+
+
+convert(): Converts ellipse to GeoJSON polygon
+calculateEllipsePoints(): Generates points along ellipse
+Dependencies: MatrixTransformer
+Important: Ellipse geometry handling
+
+
+core/processors/implementations/dxf/utils/geometry/face3d.ts
+Purpose: 3D face entity conversion
+Key Functions:
+
+
+convert(): Converts 3D faces to GeoJSON
+validateVertices(): Validates face geometry
+createRing(): Creates polygon rings
+Dependencies: ValidationError, Vector3 types
+
+
+core/processors/implementations/dxf/utils/geometry/hatch.ts
+Purpose: Hatch pattern conversion
+Key Functions:
+
+
+convert(): Converts hatch to GeoJSON
+validateBoundaries(): Validates hatch boundaries
+convertBoundariesToRings(): Creates boundary polygons
+Dependencies: HatchBoundary types
+
+
+core/processors/implementations/dxf/utils/geometry/solid.ts
+Purpose: Solid entity conversion
+Key Functions:
+
+
+convert(): Converts solid to GeoJSON polygon
+validateVertices(): Validates solid geometry
+isDegenerate(): Checks for invalid solids
+Dependencies: ValidationError
+
+
+core/processors/implementations/dxf/utils/geometry/spline.ts
+Purpose: Spline entity conversion
+Key Functions:
+
+
+convert(): Converts splines to GeoJSON
+interpolateSpline(): Calculates spline points
+evaluateNURBS(): NURBS curve evaluation
+Dependencies: SplineData types
+Important: Complex curve handling
+
+
+core/processors/implementations/dxf/utils/geometry/text.ts
+Purpose: Text entity conversion
+Key Functions:
+
+
+convert(): Converts DXF text to GeoJSON points
+formatMText(): Handles multiline text formatting
+getTextAnchor(): Calculates text positioning
+Dependencies: TextAlignment types
+
+
+core/processors/implementations/dxf/utils/layer-manager.ts
+Purpose: DXF layer management
+Key Functions:
+
+
+addLayer(): Manages layer registration
+shouldProcessEntity(): Layer filtering
+getLayerProperties(): Layer attribute access
+Dependencies: DxfLayer types
+
+
+core/processors/implementations/dxf/utils/matrix-transformer.ts
+Purpose: Matrix transformations for DXF entities
+Key Functions:
+
+
+createTransformationMatrix(): Matrix generation
+transformPoint(): Point transformation
+combineMatrices(): Matrix operations
+Dependencies: Vector3 types
+
+
+core/processors/implementations/dxf/utils/regex-patterns.ts
+Purpose: DXF content parsing patterns
+Key Functions:
+
+
+cleanupContent(): Content normalization
+findSection(): Section extraction
+parseGroupCodes(): Group code parsing
+Dependencies: None
+
+
+core/processors/implementations/dxf/utils/stream-reader.ts
+Purpose: DXF file streaming
+Key Functions:
+
+
+readChunks(): Streaming file reading
+calculateMemoryUsage(): Memory monitoring
+getProgress(): Progress tracking
+Dependencies: ValidationError
+
+
+core/processors/implementations/dxf/utils/validation/structure-validator.ts
+Purpose: DXF structure validation
+Key Functions:
+
+
+validateStructure(): Structure checking
+validateBlock(): Block validation
+validateEntityData(): Entity validation
+Dependencies: DXF types
+
+
+core/processors/implementations/shapefile/utils/dbf-reader.ts
+Purpose: DBF file parsing
+Key Functions:
+
+
+readHeader(): DBF header parsing
+readFields(): Field extraction
+readRecords(): Record reading
+Dependencies: DbfHeader types
+
+
+core/processors/implementations/shapefile/utils/prj-reader.ts
+Purpose: PRJ file parsing
+Key Functions:
+
+
+detectCoordinateSystem(): System detection
+parseWKT(): WKT string parsing
+Dependencies: CoordinateSystem types
+
+
+core/processors/implementations/shapefile/utils/shx-reader.ts
+Purpose: SHX index file handling
+Key Functions:
+
+
+readOffsets(): Offset reading
+getRecordCount(): Record counting
+getRecordLocation(): Record location
+Dependencies: None
+
+
+components/geo-loader/components/format-settings.tsx
+Purpose: Format-specific settings UI
+Key Functions:
+
+
+FormatSettings: Settings component
+validateOptions(): Options validation
+handleSelectAll(): Bulk selection
+Dependencies: UI components
+
+I'll continue with more files in the next response.
+Continuing with more component files:
+
+components/geo-loader/components/geo-import/components/import-content.tsx
+Purpose: Import dialog content
+Key Functions:
+
+
+ImportContent: Main content layout
+File preview
+Settings management
+Dependencies: PreviewSection, SettingsSection
+
+
+components/geo-loader/components/geo-import/components/import-controls.tsx
+Purpose: Import action controls
+Key Functions:
+
+
+ImportControls: Control buttons
+Action handling
+Dependencies: Button components
+
+
+components/geo-loader/components/geo-import/components/import-header.tsx
+Purpose: Import dialog header
+Key Functions:
+
+
+ImportHeader: Header display
+Error status display
+Dependencies: DialogHeader
+
+
+components/geo-loader/components/dxf-structure-view.tsx
+Purpose: DXF structure visualization
+Key Functions:
+
+
+DxfStructureView: Structure tree
+Layer management
+Entity type filtering
+Dependencies: TreeNode components
+
+
+components/geo-loader/components/map/map-layers.ts
+Purpose: Map layer styling
+Key Functions:
+
+
+Layer style definitions
+Expression handling
+Style calculations
+Dependencies: Mapbox types
+
+
+components/geo-loader/hooks/use-map-view.ts
+Purpose: Map view management
+Key Functions:
+
+
+useMapView: View state management
+Bounds calculation
+View updates
+Dependencies: ViewState types
+
+
+components/geo-loader/hooks/use-coordinate-system.ts
+Purpose: Coordinate system management
+Key Functions:
+
+
+useCoordinateSystem: System state
+System initialization
+Transformation handling
+Dependencies: CoordinateSystem types
+
+
+components/geo-loader/hooks/use-file-analysis.ts
+Purpose: File analysis management
+Key Functions:
+
+
+useFileAnalysis: File analysis
+Preview generation
+Layer detection
+Dependencies: AnalyzeResult types
+
+
+components/geo-loader/hooks/use-import-logs.ts
+Purpose: Import log management
+Key Functions:
+
+
+useImportLogs: Log state
+Log filtering
+Error tracking
+Dependencies: LogEntry types
+
+
+components/geo-loader/hooks/use-import-process.ts
+Purpose: Import process management
+Key Functions:
+
+
+useImportProcess: Import workflow
+Process monitoring
+Result handling
+Dependencies: ImportOptions types
+
+I'll continue with the remaining files in the next response.
+Continuing with more files:
+
+components/geo-loader/hooks/use-processor.ts
+Purpose: Processor management hook
+Key Functions:
+
+
+useProcessor: Processor lifecycle
+Error handling
+Processor caching
+Dependencies: ProcessorRegistry
+
+
+components/geo-loader/core/cache/manager.ts
+Purpose: Cache management
+Key Functions:
+
+
+cacheResult(): Result caching
+getCachedResult(): Cache retrieval
+enforceLimits(): Cache size management
+Dependencies: CacheStorage
+
+
+components/geo-loader/core/cache/types.ts
+Purpose: Cache type definitions
+Key Types:
+
+
+CacheEntry: Cache entry structure
+CacheOptions: Cache configuration
+CacheStorage: Storage interface
+Dependencies: None
+
+
+components/geo-loader/core/coordinates/manager.ts
+Purpose: Coordinate system management
+Key Functions:
+
+
+registerSystem(): System registration
+transform(): Coordinate transformation
+validateSystem(): System validation
+Dependencies: CoordinateTransformer
+
+
+components/geo-loader/core/coordinates/transformer.ts
+Purpose: Coordinate transformation
+Key Functions:
+
+
+transform(): Transform coordinates
+createTransformOperation(): Operation creation
+validateCoordinates(): Coordinate validation
+Dependencies: proj4
+
+
+components/geo-loader/core/coordinates/types.ts
+Purpose: Coordinate type definitions
+Key Types:
+
+
+CoordinateSystem: System definition
+TransformResult: Transform result
+TransformOperation: Transform operation
+Dependencies: None
+
+
+components/geo-loader/core/feature-manager/bounds.ts
+Purpose: Feature bounds calculation
+Key Functions:
+
+
+calculateBounds(): Bounds computation
+updateBounds(): Bounds updating
+validateBounds(): Bounds validation
+Dependencies: GeoJSON types
+
+
+components/geo-loader/core/feature-manager/optimization.ts
+Purpose: Feature optimization
+Key Functions:
+
+
+optimizePoints(): Point reduction
+optimizeFeaturesStream(): Streaming optimization
+Dependencies: Feature types
+
+
+components/geo-loader/core/feature-manager/processing.ts
+Purpose: Feature processing
+Key Functions:
+
+
+processFeatures(): Feature processing
+transformCoordinates(): Coordinate transformation
+simplifyGeometry(): Geometry simplification
+Dependencies: CoordinateSystem
+
+
+components/geo-loader/core/stream-processor.ts
+Purpose: Stream processing base
+Key Functions:
+
+
+processStream(): Stream handling
+checkMemoryUsage(): Memory monitoring
+updateProgress(): Progress tracking
+Dependencies: BaseProcessor
+
+I'll continue with the remaining files in the next response.
+Continuing with the remaining files:
+
+components/geo-loader/types/coordinates.ts
+Purpose: Coordinate system types
+Key Types:
+
+
+COORDINATE_SYSTEMS: System constants
+CoordinatePoint: Point structure
+Bounds: Bounds structure
+Dependencies: None
+
+
+components/geo-loader/types/errors.ts
+Purpose: Error type definitions
+Key Types:
+
+
+ErrorSeverity: Error levels
+BaseError: Error structure
+ContextualError: Detailed errors
+Dependencies: None
+
+
+components/geo-loader/types/format-options.ts
+Purpose: Format options types
+Key Types:
+
+
+TextFileOptions: Text file settings
+DxfOptions: DXF settings
+FormatOptions: Combined options
+Dependencies: ProcessorOptions
+
+
+components/geo-loader/types/map.ts
+Purpose: Map type definitions
+Key Types:
+
+
+ViewState: Map view state
+MapFeature: Map feature structure
+MapEvent: Map event types
+Dependencies: GeoJSON types
+
+
+components/geo-loader/preview/feature-sampler.ts
+Purpose: Feature sampling
+Key Functions:
+
+
+sampleFeatures(): Feature subset selection
+calculateBounds(): Bounds calculation
+isOnBoundary(): Boundary detection
+Dependencies: Feature types
+
+
+components/geo-loader/preview/preview-manager.ts
+Purpose: Preview management
+Key Functions:
+
+
+generatePreview(): Preview creation
+transformPreview(): Preview transformation
+getPreviewCollections(): Collection management
+Dependencies: PreviewOptions types
+
+
+components/geo-loader/components/geo-import/settings-section.tsx
+Purpose: Import settings UI
+Key Components:
+
+
+Settings form
+Coordinate system selection
+Layer management
+Dependencies: UI components
+
+
+components/geo-loader/components/geo-import/preview-section.tsx
+Purpose: Preview UI
+Key Components:
+
+
+Map preview
+Feature display
+Layer visibility
+Dependencies: PreviewMap
+
+
+components/geo-loader/components/geo-import/logs-section.tsx
+Purpose: Log display UI
+Key Components:
+
+
+Log listing
+Error display
+Warning display
+Dependencies: UI components
+
+
+components/geo-loader/components/geo-import/types.ts
+Purpose: Import types
+Key Types:
+
+
+ImportOptions: Import settings
+ImportState: Import state
+LogEntry: Log structure
+Dependencies: None
+
+
+components/geo-loader/core/processors/implementations/shapefile/types.ts
+Purpose: Shapefile type definitions
+Key Types:
+
+
+ShapeType: Shapefile geometry types
+ShapefileHeader: File header structure
+ShapefileRecord: Record structure
+Dependencies: None
+
+
+components/geo-loader/core/processors/implementations/csv/types.ts
+Purpose: CSV type definitions
+Key Types:
+
+
+CsvColumn: Column definition
+CsvStructure: File structure
+CsvParseOptions: Parsing options
+Dependencies: None
+
+
+components/geo-loader/core/processors/implementations/csv/processor.ts
+Purpose: CSV processing
+Key Functions:
+
+
+processFile(): CSV processing
+parseColumns(): Column parsing
+convertToFeatures(): Feature conversion
+Dependencies: CsvParser
+
+
+components/geo-loader/core/processors/stream/types.ts
+Purpose: Stream processing types
+Key Types:
+
+
+StreamProcessorOptions: Stream options
+StreamProcessorEvents: Stream events
+StreamProcessorState: Process state
+Dependencies: ProcessorOptions
+
+
+components/geo-loader/core/processors/base/interfaces.ts
+Purpose: Base processor interfaces
+Key Interfaces:
+
+
+IProcessor: Processor interface
+IFileParser: Parser interface
+ICoordinateTransformer: Transform interface
+Dependencies: None
+
+
+components/geo-loader/converters/to-geojson.ts
+Purpose: GeoJSON conversion
+Key Functions:
+
+
+convert(): Convert to GeoJSON
+validateGeometry(): Geometry validation
+createGeometry(): Geometry creation
+Dependencies: GeoJSON types
+
+
+components/geo-loader/core/stream/stream-processor.ts
+Purpose: Stream processing base
+Key Functions:
+
+
+processStream(): Stream handling
+processChunk(): Chunk processing
+updateProgress(): Progress tracking
+Dependencies: BaseProcessor
+
+
+components/geo-loader/core/stream/types.ts
+Purpose: Stream type definitions
+Key Types:
+
+
+StreamProcessorOptions: Stream options
+StreamProcessorEvents: Stream events
+StreamProcessorState: Stream state
+Dependencies: ProcessorOptions
+
+
+components/geo-loader/core/validation/structure-validator.ts
+Purpose: Structure validation
+Key Functions:
+
+
+validateStructure(): Structure validation
+validateBlock(): Block validation
+validateEntityData(): Entity validation
+Dependencies: ValidationIssue types
+
+
+components/geo-loader/core/validation/types.ts
+Purpose: Validation types
+Key Types:
+
+
+ValidationIssue: Validation problem
+ValidationResult: Validation result
+ValidationOptions: Validation options
+Dependencies: None
+
+
+File Processing (processors/)
+Type Definitions (types/)
+UI Components (components/)
+Core Utilities (core/)
+Validation (validation/)
+
+Key Integration Points:
+
+Processor Registry
+Coordinate System Manager
+Cache Manager
+Error Manager
+Stream Processor Base
+
+Areas for Attention:
+
+Memory Management Documentation
+Stream Processing Optimization
+Error Handling Documentation
+Coordinate System Edge Cases
+Large File Performance
+
+
+components/geo-loader/core/feature-manager/index.ts
+Purpose: Feature management exports
+Key Functions:
+
+
+Exports all feature management functionality
+Type exports
+Utility exports
+Dependencies: Feature types, bounds, optimization
+
+
+components/geo-loader/core/processors/index.ts
+Purpose: Processor registration and exports
+Key Functions:
+
+
+Registers all processors
+Exports processor types
+Configures processor registry
+Dependencies: All processor implementations
+Important: Central processor configuration
+
+
+components/geo-loader/components/geo-import/index.ts
+Purpose: Import component exports
+Key Functions:
+
+
+Exports dialog components
+Exports hooks
+Exports types
+Dependencies: Import components and types
+
+
+components/geo-loader/core/errors/index.ts
+Purpose: Error handling exports
+Key Functions:
+
+
+Error types export
+Error utility exports
+Error manager configuration
+Dependencies: Error types and manager
+
+
+components/geo-loader/core/cache/index.ts
+Purpose: Cache system exports
+Key Functions:
+
+
+Cache manager exports
+Cache type exports
+Cache utility exports
+Dependencies: Cache types and manager
+
+
+components/geo-loader/core/coordinates/index.ts
+Purpose: Coordinate system exports
+Key Functions:
+
+
+Coordinate system exports
+Transformation exports
+Type exports
+Dependencies: Coordinate types and manager
+
+
+components/geo-loader/core/validation/index.ts
+Purpose: Validation system exports
+Key Functions:
+
+
+Validation utility exports
+Validation type exports
+Validator configuration
+Dependencies: Validation types and utilities
+
+
+components/geo-loader/utils/index.ts
+Purpose: Utility exports
+Key Functions:
+
+
+Common utility exports
+Helper function exports
+Type exports
+Dependencies: Utility functions
+
+
+components/geo-loader/types/index.ts
+Purpose: Type system exports
+Key Functions:
+
+
+Core type exports
+Interface exports
+Constant exports
+Dependencies: All type definitions
