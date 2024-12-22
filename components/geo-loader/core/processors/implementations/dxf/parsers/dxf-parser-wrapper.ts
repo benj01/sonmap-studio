@@ -25,34 +25,93 @@ function isValidPoint(point: any): point is { x: number; y: number; z?: number }
  * Wrapper for dxf-parser library to maintain compatibility with our system
  */
 export class DxfParserWrapper {
-  private parser: any;
+  private parser: any | null = null;
+  private static instance: DxfParserWrapper | null = null;
 
-  constructor() {
+  private constructor() {
+    // Private constructor for singleton pattern
+  }
+
+  /**
+   * Get singleton instance of DxfParserWrapper
+   */
+  public static getInstance(): DxfParserWrapper {
+    if (!DxfParserWrapper.instance) {
+      DxfParserWrapper.instance = new DxfParserWrapper();
+    }
+    return DxfParserWrapper.instance;
+  }
+
+  /**
+   * Initialize the parser
+   */
+  private async initializeParser(): Promise<void> {
+    if (this.parser) return;
+
     try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const DxfParser = require('dxf-parser');
+      // Check if we're in browser environment
+      if (typeof window === 'undefined') {
+        throw new Error('DXF parser can only be used in browser environment');
+      }
+
+      // Dynamic import for Next.js compatibility
+      const DxfParser = await new Promise<any>((resolve, reject) => {
+        // Use dynamic import with webpack magic comments
+        import(/* webpackChunkName: "dxf-parser" */ 'dxf-parser')
+          .then(module => resolve(module.default || module))
+          .catch(error => {
+            console.error('[DEBUG] Failed to load dxf-parser module:', error);
+            reject(new Error('Failed to load DXF parser module'));
+          });
+      });
+      
+      if (typeof DxfParser !== 'function') {
+        throw new Error('Invalid DXF parser module');
+      }
+
       this.parser = new DxfParser();
-      console.log('[DEBUG] DxfParserWrapper initialized with dxf-parser library');
+      console.log('[DEBUG] DxfParserWrapper initialized with parser instance:', {
+        parserType: typeof this.parser,
+        hasParseSync: typeof this.parser.parseSync === 'function'
+      });
     } catch (error) {
-      console.error('[DEBUG] Failed to initialize DxfParser:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[DEBUG] Failed to initialize DxfParser:', {
+        error: message,
+        environment: typeof window !== 'undefined' ? 'browser' : 'server',
+        errorStack: error instanceof Error ? error.stack : undefined
+      });
       throw new ValidationError(
-        'Failed to initialize DXF parser',
+        `Failed to initialize DXF parser: ${message}`,
         'DXF_PARSER_INIT_ERROR',
         undefined,
-        { error: String(error) }
+        { 
+          error: message,
+          environment: typeof window !== 'undefined' ? 'browser' : 'server'
+        }
       );
     }
   }
 
   /**
-   * Parse DXF content with enhanced validation
+   * Parse DXF content with enhanced error handling
    */
   async parse(content: string): Promise<DxfStructure> {
+    // Ensure parser is initialized
+    await this.initializeParser();
     try {
       console.log('[DEBUG] Parsing content length:', content.length);
       console.log('[DEBUG] Content preview:', content.substring(0, 200));
       
+      if (!this.parser || typeof this.parser.parseSync !== 'function') {
+        throw new Error('Parser not properly initialized');
+      }
+
       const dxf = this.parser.parseSync(content);
+      
+      if (!dxf || typeof dxf !== 'object') {
+        throw new Error('Parser returned invalid data');
+      }
       console.log('[DEBUG] Raw DXF structure:', {
         header: dxf.header ? Object.keys(dxf.header).length : 0,
         tables: dxf.tables ? Object.keys(dxf.tables).length : 0,

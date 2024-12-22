@@ -13,10 +13,20 @@ import { DxfParserWrapper } from './parsers/dxf-parser-wrapper';
  * Handles DXF file parsing using dxf-parser library
  */
 export class DxfParser {
-  private wrapper: DxfParserWrapper;
+  private wrapper: DxfParserWrapper | null = null;
 
   constructor() {
-    this.wrapper = new DxfParserWrapper();
+    // Wrapper will be initialized on first use
+  }
+
+  /**
+   * Get or initialize the parser wrapper
+   */
+  private getWrapper(): DxfParserWrapper {
+    if (!this.wrapper) {
+      this.wrapper = DxfParserWrapper.getInstance();
+    }
+    return this.wrapper;
   }
 
   /**
@@ -36,7 +46,7 @@ export class DxfParser {
       const cleanedText = cleanupContent(text);
       
       // Parse file using dxf-parser
-      const structure = await this.wrapper.parse(cleanedText);
+      const structure = await this.getWrapper().parse(cleanedText);
       
       // Get preview entities
       console.log('[DEBUG] Parsing preview entities...');
@@ -72,7 +82,7 @@ export class DxfParser {
       const text = await file.text();
       const cleanedText = cleanupContent(text);
       const entities = await this.parseEntities(cleanedText, options);
-      return this.wrapper.convertToFeatures(entities);
+      return this.getWrapper().convertToFeatures(entities);
     } catch (error) {
       throw new ValidationError(
         `Failed to parse DXF file: ${error instanceof Error ? error.message : String(error)}`,
@@ -90,10 +100,10 @@ export class DxfParser {
   ): Promise<DxfEntity[]> {
     try {
       // Parse entire file to get structure
-      const structure = await this.wrapper.parse(content);
+      const structure = await this.getWrapper().parse(content);
       
       // Filter entities based on options
-      let entities = structure.blocks.flatMap(block => block.entities);
+      let entities = structure.blocks.flatMap(block => block.entities || []);
       
       // Apply entity type filter
       if (options.entityTypes) {
