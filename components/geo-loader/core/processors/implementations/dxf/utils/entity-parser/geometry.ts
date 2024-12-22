@@ -2,6 +2,18 @@ import { Point, LineString, Polygon, Position } from './types';
 import { DxfEntity } from './types';
 
 /**
+ * Parse coordinate value more leniently
+ */
+function parseCoord(value: unknown): number {
+  if (typeof value === 'number' && !isNaN(value)) return value;
+  if (typeof value === 'string') {
+    const num = parseFloat(value);
+    if (!isNaN(num)) return num;
+  }
+  return 0;
+}
+
+/**
  * Convert point entity to GeoJSON geometry
  */
 export function pointToGeometry(entity: DxfEntity): Point | null {
@@ -10,14 +22,14 @@ export function pointToGeometry(entity: DxfEntity): Point | null {
     attributes: entity.attributes
   });
 
-  const x = entity.data.x ?? 0;
-  const y = entity.data.y ?? 0;
-  const z = entity.data.z ?? 0;
+  const x = parseCoord(entity.data.x);
+  const y = parseCoord(entity.data.y);
+  const z = parseCoord(entity.data.z);
 
-  if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number') {
-    console.warn('[DEBUG] Invalid POINT coordinates:', { x, y, z });
-    return null;
-  }
+  console.log('[DEBUG] Parsed POINT coordinates:', {
+    original: { x: entity.data.x, y: entity.data.y, z: entity.data.z },
+    parsed: { x, y, z }
+  });
 
   const geometry = {
     type: 'Point' as const,
@@ -37,23 +49,24 @@ export function lineToGeometry(entity: DxfEntity): LineString | null {
     attributes: entity.attributes
   });
 
-  const x1 = entity.data.x ?? 0;
-  const y1 = entity.data.y ?? 0;
-  const z1 = entity.data.z ?? 0;
-  const x2 = entity.data.x2 ?? 0;
-  const y2 = entity.data.y2 ?? 0;
-  const z2 = entity.data.z2 ?? 0;
+  // Parse coordinates more leniently
+  const x1 = parseCoord(entity.data.x);
+  const y1 = parseCoord(entity.data.y);
+  const z1 = parseCoord(entity.data.z);
+  const x2 = parseCoord(entity.data.x2);
+  const y2 = parseCoord(entity.data.y2);
+  const z2 = parseCoord(entity.data.z2);
 
-  if (
-    typeof x1 !== 'number' || typeof y1 !== 'number' || typeof z1 !== 'number' ||
-    typeof x2 !== 'number' || typeof y2 !== 'number' || typeof z2 !== 'number'
-  ) {
-    console.warn('[DEBUG] Invalid LINE coordinates:', {
+  console.log('[DEBUG] Parsed LINE coordinates:', {
+    original: {
+      start: { x: entity.data.x, y: entity.data.y, z: entity.data.z },
+      end: { x: entity.data.x2, y: entity.data.y2, z: entity.data.z2 }
+    },
+    parsed: {
       start: { x: x1, y: y1, z: z1 },
       end: { x: x2, y: y2, z: z2 }
-    });
-    return null;
-  }
+    }
+  });
 
   const geometry = {
     type: 'LineString' as const,
@@ -91,23 +104,21 @@ export function polylineToGeometry(entity: DxfEntity): LineString | Polygon | nu
 
   // Convert vertices to coordinates, preserving exact values
   const coordinates: Position[] = vertices.map((v, index) => {
-    // Check if values are valid numbers (including zero)
-    if (typeof v.x !== 'number' || typeof v.y !== 'number') {
-      console.warn('[DEBUG] Invalid vertex coordinates:', {
-        index,
-        vertex: v,
-        x_type: typeof v.x,
-        y_type: typeof v.y
-      });
-      return [0, 0, 0]; // Fallback for invalid coordinates
-    }
-
-    // Use exact values, including zeros
+    // Parse vertex coordinates more leniently
     const coord: Position = [
-      v.x,
-      v.y,
-      typeof v.z === 'number' ? v.z : 0
+      parseCoord(v.x),
+      parseCoord(v.y),
+      parseCoord(v.z)
     ];
+
+    console.log('[DEBUG] Parsed vertex coordinate:', {
+      index,
+      original: v,
+      parsed: coord,
+      x_exact: coord[0].toFixed(8),
+      y_exact: coord[1].toFixed(8),
+      z_exact: coord[2].toFixed(8)
+    });
 
     console.log('[DEBUG] Vertex coordinate:', {
       index,
@@ -159,18 +170,21 @@ export function circleToGeometry(entity: DxfEntity): Polygon | null {
     attributes: entity.attributes
   });
 
-  const x = entity.data.x ?? 0;
-  const y = entity.data.y ?? 0;
-  const z = entity.data.z ?? 0;
-  const radius = entity.data.radius ?? 0;
+  // Parse circle parameters more leniently
+  const x = parseCoord(entity.data.x);
+  const y = parseCoord(entity.data.y);
+  const z = parseCoord(entity.data.z);
+  const radius = parseCoord(entity.data.radius);
 
-  if (
-    typeof x !== 'number' || typeof y !== 'number' || 
-    typeof z !== 'number' || typeof radius !== 'number'
-  ) {
-    console.warn('[DEBUG] Invalid CIRCLE parameters:', { x, y, z, radius });
-    return null;
-  }
+  console.log('[DEBUG] Parsed CIRCLE parameters:', {
+    original: {
+      x: entity.data.x,
+      y: entity.data.y,
+      z: entity.data.z,
+      radius: entity.data.radius
+    },
+    parsed: { x, y, z, radius }
+  });
 
   const segments = 32; // Number of segments to approximate circle
   const coordinates: Position[] = [];
@@ -208,25 +222,26 @@ export function arcToGeometry(entity: DxfEntity): LineString | null {
     attributes: entity.attributes
   });
 
-  const x = entity.data.x ?? 0;
-  const y = entity.data.y ?? 0;
-  const z = entity.data.z ?? 0;
-  const radius = entity.data.radius ?? 0;
-  const startAngle = (entity.data.startAngle ?? 0) * (Math.PI / 180);
-  const endAngle = (entity.data.endAngle ?? 0) * (Math.PI / 180);
+  // Parse arc parameters more leniently
+  const x = parseCoord(entity.data.x);
+  const y = parseCoord(entity.data.y);
+  const z = parseCoord(entity.data.z);
+  const radius = parseCoord(entity.data.radius);
+  const startAngle = parseCoord(entity.data.startAngle) * (Math.PI / 180);
+  const endAngle = parseCoord(entity.data.endAngle) * (Math.PI / 180);
 
-  if (
-    typeof x !== 'number' || typeof y !== 'number' || 
-    typeof z !== 'number' || typeof radius !== 'number' ||
-    typeof startAngle !== 'number' || typeof endAngle !== 'number'
-  ) {
-    console.warn('[DEBUG] Invalid ARC parameters:', {
+  console.log('[DEBUG] Parsed ARC parameters:', {
+    original: {
+      center: { x: entity.data.x, y: entity.data.y, z: entity.data.z },
+      radius: entity.data.radius,
+      angles: { start: entity.data.startAngle, end: entity.data.endAngle }
+    },
+    parsed: {
       center: { x, y, z },
       radius,
       angles: { start: startAngle, end: endAngle }
-    });
-    return null;
-  }
+    }
+  });
 
   const segments = 32; // Number of segments to approximate arc
   const coordinates: Position[] = [];

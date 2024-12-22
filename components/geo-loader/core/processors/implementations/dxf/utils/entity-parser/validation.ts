@@ -3,43 +3,58 @@ import { DxfEntityType, GroupCode } from './types';
 
 type ValidGeometry = Point | LineString | Polygon;
 
-// Type guards for GeoJSON types
+// Type guards for GeoJSON types with proper validation
 function isPoint(geom: Geometry): geom is Point {
-  return geom.type === 'Point';
+  return geom.type === 'Point' && 
+         Array.isArray(geom.coordinates) && 
+         geom.coordinates.length >= 2;
 }
 
 function isLineString(geom: Geometry): geom is LineString {
-  return geom.type === 'LineString';
+  return geom.type === 'LineString' && 
+         Array.isArray(geom.coordinates) && 
+         geom.coordinates.length >= 2;
 }
 
 function isPolygon(geom: Geometry): geom is Polygon {
-  return geom.type === 'Polygon';
+  return geom.type === 'Polygon' && 
+         Array.isArray(geom.coordinates) && 
+         geom.coordinates.length > 0;
 }
 
 /**
  * Validate geometry coordinates
  */
-export function validateGeometry(geometry: ValidGeometry | null | undefined): boolean {
+export function validateGeometry(geometry: Geometry | null | undefined): boolean {
   console.log('[DEBUG] Validating geometry:', {
     type: geometry?.type,
-    hasCoordinates: !!geometry?.coordinates,
-    coordinates: geometry?.coordinates
+    hasCoordinates: 'coordinates' in (geometry || {}),
+    coordinates: geometry && 'coordinates' in geometry ? geometry.coordinates : undefined
   });
 
-  if (!geometry || !geometry.coordinates) {
+  if (!geometry || !('coordinates' in geometry)) {
     console.warn('[DEBUG] Invalid geometry: missing geometry or coordinates');
     return false;
   }
 
   const validateCoordinate = (coord: number[]): boolean => {
+    // More lenient coordinate validation
     const isValid = Array.isArray(coord) &&
       coord.length >= 2 &&
-      coord.every(n => typeof n === 'number' && !isNaN(n));
+      coord.slice(0, 2).every(n => {
+        const num = typeof n === 'number' ? n : parseFloat(String(n));
+        return !isNaN(num) && isFinite(num);
+      });
 
     if (!isValid) {
       console.warn('[DEBUG] Invalid coordinate:', {
         coord,
-        values: coord?.map(n => ({ value: n, type: typeof n, isNaN: isNaN(n) }))
+        values: coord?.map(n => ({
+          value: n,
+          parsed: parseFloat(String(n)),
+          type: typeof n,
+          isNaN: isNaN(parseFloat(String(n)))
+        }))
       });
     }
 
@@ -47,54 +62,82 @@ export function validateGeometry(geometry: ValidGeometry | null | undefined): bo
   };
 
   if (isPoint(geometry)) {
-    const isValidPoint = validateCoordinate(geometry.coordinates);
+    // Allow any numeric values that can be parsed
+    const coords = geometry.coordinates.map(n => 
+      typeof n === 'number' ? n : parseFloat(String(n))
+    );
+    const isValidPoint = coords.slice(0, 2).every(n => !isNaN(n) && isFinite(n));
+    
     if (!isValidPoint) {
-      console.warn('[DEBUG] Invalid Point geometry:', geometry.coordinates);
+      console.warn('[DEBUG] Invalid Point geometry:', {
+        original: geometry.coordinates,
+        parsed: coords
+      });
     }
     return isValidPoint;
   }
 
   if (isLineString(geometry)) {
-    const isValidLineString = Array.isArray(geometry.coordinates) &&
-      geometry.coordinates.length >= 2 &&
-      geometry.coordinates.every(validateCoordinate);
+    // More lenient LineString validation
+    const isValidLineString = geometry.coordinates.length >= 2 &&
+      geometry.coordinates.every(coord => {
+        const nums = coord.map(n => 
+          typeof n === 'number' ? n : parseFloat(String(n))
+        );
+        return nums.slice(0, 2).every(n => !isNaN(n) && isFinite(n));
+      });
     
     if (!isValidLineString) {
       console.warn('[DEBUG] Invalid LineString geometry:', {
-        isArray: Array.isArray(geometry.coordinates),
         length: geometry.coordinates?.length,
-        coordinates: geometry.coordinates
+        coordinates: geometry.coordinates.map(coord => 
+          coord.map(n => ({
+            original: n,
+            parsed: parseFloat(String(n))
+          }))
+        )
       });
     }
     return isValidLineString;
   }
 
   if (isPolygon(geometry)) {
-    const isValidPolygon = Array.isArray(geometry.coordinates) &&
-      geometry.coordinates.length > 0 &&
-      geometry.coordinates.every((ring: Position[]) => {
-        const isValidRing = Array.isArray(ring) &&
-          ring.length >= 4 &&
-          ring.every(validateCoordinate) &&
-          JSON.stringify(ring[0]) === JSON.stringify(ring[ring.length - 1]);
-        
-        if (!isValidRing) {
-          console.warn('[DEBUG] Invalid Polygon ring:', {
-            isArray: Array.isArray(ring),
-            length: ring?.length,
-            isClosed: ring && ring.length >= 2 && 
-              JSON.stringify(ring[0]) === JSON.stringify(ring[ring.length - 1]),
-            ring
-          });
-        }
-        return isValidRing;
-      });
+    // More lenient Polygon validation
+    const isValidPolygon = geometry.coordinates.every((ring: Position[]) => {
+      // Convert all values to numbers
+      const parsedRing = ring.map(coord => 
+        coord.map(n => typeof n === 'number' ? n : parseFloat(String(n)))
+      );
+      
+      const isValidRing = parsedRing.length >= 4 &&
+        parsedRing.every(coord => 
+          coord.slice(0, 2).every(n => !isNaN(n) && isFinite(n))
+        ) &&
+        // Check if first and last points are approximately equal
+        Math.abs(parsedRing[0][0] - parsedRing[parsedRing.length - 1][0]) < 1e-10 &&
+        Math.abs(parsedRing[0][1] - parsedRing[parsedRing.length - 1][1]) < 1e-10;
+      
+      if (!isValidRing) {
+        console.warn('[DEBUG] Invalid Polygon ring:', {
+          length: ring?.length,
+          original: ring,
+          parsed: parsedRing,
+          isClosed: ring.length >= 2 && 
+            Math.abs(parsedRing[0][0] - parsedRing[parsedRing.length - 1][0]) < 1e-10 &&
+            Math.abs(parsedRing[0][1] - parsedRing[parsedRing.length - 1][1]) < 1e-10
+        });
+      }
+      return isValidRing;
+    });
 
     if (!isValidPolygon) {
       console.warn('[DEBUG] Invalid Polygon geometry:', {
-        isArray: Array.isArray(geometry.coordinates),
-        length: geometry.coordinates?.length,
-        coordinates: geometry.coordinates
+        ringCount: geometry.coordinates?.length,
+        rings: geometry.coordinates.map(ring => ({
+          length: ring.length,
+          first: ring[0],
+          last: ring[ring.length - 1]
+        }))
       });
     }
     return isValidPolygon;

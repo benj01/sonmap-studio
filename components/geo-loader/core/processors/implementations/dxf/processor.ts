@@ -3,12 +3,15 @@ import { StreamProcessor } from '../../stream/stream-processor';
 import { AnalyzeResult, ProcessorResult } from '../../base/types';
 import { StreamProcessorResult } from '../../stream/types';
 import { DxfParser } from './parser';
-import { DxfProcessorOptions, DxfParseOptions, DxfEntity } from './types';
+import { coordinateSystemManager } from '../../../coordinate-system-manager';
+import { createPreviewManager } from '../../../../preview/preview-manager';
+import { DxfProcessorOptions, DxfParseOptions, DxfEntity, DxfBlock, DxfLayer } from './types';
 import { ValidationError } from '../../../errors/types';
 import { StreamReader } from './utils/stream-reader';
 import { BlockManager } from './utils/block-manager';
 import { LayerManager } from './utils/layer-manager';
 import { EntityParser } from './utils/entity-parser';
+import { DxfParserWrapper } from './parsers/dxf-parser-wrapper';
 
 /**
  * Processor for DXF files
@@ -45,6 +48,53 @@ export class DxfProcessor extends StreamProcessor {
   }
 
   /**
+   * Calculate bounds from raw DXF entities
+   */
+  private calculateBoundsFromEntities(entities: DxfEntity[]): ProcessorResult['bounds'] {
+    const bounds = {
+      minX: Infinity,
+      minY: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity
+    };
+
+    const updateBoundsWithCoord = (x: number, y: number) => {
+      bounds.minX = Math.min(bounds.minX, x);
+      bounds.minY = Math.min(bounds.minY, y);
+      bounds.maxX = Math.max(bounds.maxX, x);
+      bounds.maxY = Math.max(bounds.maxY, y);
+    };
+
+    entities.forEach(entity => {
+      if (entity.type === 'LWPOLYLINE' && entity.data?.vertices) {
+        entity.data.vertices.forEach(vertex => {
+          if ('x' in vertex && 'y' in vertex) {
+            updateBoundsWithCoord(vertex.x, vertex.y);
+          }
+        });
+      } else if (entity.data) {
+        // Handle other entity types with x,y coordinates
+        if ('x' in entity.data && 'y' in entity.data) {
+          updateBoundsWithCoord(entity.data.x, entity.data.y);
+        }
+        // Handle entities with end points (like LINE)
+        if ('x2' in entity.data && 'y2' in entity.data) {
+          updateBoundsWithCoord(entity.data.x2, entity.data.y2);
+        }
+      }
+    });
+
+    // Check if we found any valid coordinates
+    if (bounds.minX === Infinity) {
+      console.warn('[DEBUG] No valid coordinates found in raw entities');
+      return this.getDefaultBounds(this.options.coordinateSystem);
+    }
+
+    console.log('[DEBUG] Calculated raw bounds:', bounds);
+    return bounds;
+  }
+
+  /**
    * Check if file can be processed
    */
   async canProcess(file: File): Promise<boolean> {
@@ -65,46 +115,47 @@ export class DxfProcessor extends StreamProcessor {
         allEntities: entityArray
       });
 
-      // Validate and log each entity
+      // More lenient entity validation
       const validEntities = entityArray.filter((entity): entity is DxfEntity => {
-        // Enhanced validation with detailed logging
+        // Basic structure check
         if (!entity || typeof entity !== 'object') {
           console.warn('[DEBUG] Invalid entity (not an object):', entity);
           return false;
         }
 
-        const validation = {
-          hasType: 'type' in entity,
-          hasAttributes: 'attributes' in entity && typeof entity.attributes === 'object',
-          hasData: 'data' in entity && typeof entity.data === 'object',
-          hasVertices: entity.type === 'LWPOLYLINE' ? 
-            'data' in entity && 
-            typeof entity.data === 'object' && 
-            Array.isArray(entity.data.vertices) : true
-        };
-
-        // Log detailed validation results
-        console.log('[DEBUG] Entity validation:', {
-          type: entity.type,
-          validation,
-          entityData: {
-            attributes: entity.attributes,
-            dataKeys: entity.data ? Object.keys(entity.data) : [],
-            vertexCount: entity.type === 'LWPOLYLINE' && entity.data?.vertices?.length
-          }
-        });
-
-        const isValid = Object.values(validation).every(v => v);
-        if (!isValid) {
-          console.warn('[DEBUG] Invalid entity structure:', {
-            type: entity.type,
-            failedChecks: Object.entries(validation)
-              .filter(([, v]) => !v)
-              .map(([k]) => k)
-          });
+        // Type check
+        if (!('type' in entity)) {
+          console.warn('[DEBUG] Entity missing type:', entity);
+          return false;
         }
+
+        // Initialize missing properties with defaults
+        if (!('attributes' in entity) || !entity.attributes) {
+          console.log('[DEBUG] Adding default attributes to entity');
+          entity.attributes = { layer: '0' };
+        }
+
+        if (!('data' in entity) || !entity.data) {
+          console.log('[DEBUG] Adding empty data object to entity');
+          entity.data = {};
+        }
+
+        // Special handling for LWPOLYLINE
+        if (entity.type === 'LWPOLYLINE' && (!entity.data.vertices || !Array.isArray(entity.data.vertices))) {
+          console.warn('[DEBUG] LWPOLYLINE missing vertices array:', entity);
+          return false;
+        }
+
+        // Log entity details
+        console.log('[DEBUG] Valid entity:', {
+          type: entity.type,
+          hasAttributes: 'attributes' in entity,
+          hasData: 'data' in entity,
+          dataKeys: entity.data ? Object.keys(entity.data) : [],
+          vertexCount: entity.type === 'LWPOLYLINE' ? entity.data.vertices?.length : undefined
+        });
         
-        return isValid;
+        return true;
       });
 
       console.log('[DEBUG] Valid entities to convert:', {
@@ -137,20 +188,65 @@ export class DxfProcessor extends StreamProcessor {
       const text = await file.text();
       console.log('[DEBUG] File content length:', text.length);
 
-      // Parse layers first
-      const layers = await this.layerManager.parseLayers(text);
-      console.log('[DEBUG] Parsed layers:', {
-        count: layers.length,
-        names: layers.map(l => l.name)
-      });
+      let parseResult;
+      let features: Feature[] = [];
+      let layerNames: string[] = [];
 
-      // Parse DXF structure and features
-      const parseResult = await this.parser.analyzeStructure(file, {
-        previewEntities: (this.options as DxfProcessorOptions).previewEntities || 1000,
-        parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
-        parseText: (this.options as DxfProcessorOptions).importText,
-        parseDimensions: (this.options as DxfProcessorOptions).importDimensions
-      });
+      // Try dxf-parser library first
+      try {
+        console.log('[DEBUG] Attempting to use dxf-parser library...');
+        const wrapper = DxfParserWrapper.getInstance();
+        const structure = await wrapper.parse(text);
+        
+        // If successful, use the dxf-parser result
+        console.log('[DEBUG] Successfully parsed with dxf-parser');
+        features = await wrapper.convertToFeatures(
+          structure.entityTypes.flatMap((type: string) => 
+            structure.blocks.flatMap((block: DxfBlock) => 
+              block.entities.filter((e: DxfEntity) => e.type === type)
+            )
+          )
+        );
+
+        parseResult = {
+          structure,
+          preview: features,
+          issues: []
+        };
+        layerNames = structure.layers.map((l: DxfLayer) => l.name);
+      } catch (error: unknown) {
+        console.warn('[DEBUG] dxf-parser failed, falling back to custom parser:', error);
+        this.errorReporter.addWarning(
+          'DXF Parser library failed, using fallback parser',
+          'DXF_PARSER_FALLBACK',
+          { error: error instanceof Error ? error.message : String(error) }
+        );
+
+        // Parse layers first
+        const parsedLayers = await this.layerManager.parseLayers(text);
+        layerNames = parsedLayers.map(layer => layer.name);
+        console.log('[DEBUG] Parsed layers:', {
+          count: layerNames.length,
+          names: layerNames
+        });
+
+        // Parse DXF structure and features with custom parser
+        parseResult = await this.parser.analyzeStructure(file, {
+          previewEntities: (this.options as DxfProcessorOptions).previewEntities || 1000,
+          parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
+          parseText: (this.options as DxfProcessorOptions).importText,
+          parseDimensions: (this.options as DxfProcessorOptions).importDimensions
+        });
+
+        // Convert preview entities to features
+        console.log('[DEBUG] Converting preview entities...');
+        if (!Array.isArray(parseResult.preview)) {
+          console.error('[DEBUG] Preview entities is not an array:', parseResult.preview);
+          parseResult.preview = [];
+        }
+        
+        features = await this.convertToFeatures(parseResult.preview);
+      }
 
       // Update layer manager with parsed layers
       parseResult.structure.layers.forEach(layer => {
@@ -162,7 +258,7 @@ export class DxfProcessor extends StreamProcessor {
         blocks: parseResult.structure.blocks.length,
         entityTypes: parseResult.structure.entityTypes,
         previewEntities: parseResult.preview.length,
-        parsedLayers: layers.length
+        parsedLayers: layerNames.length
       });
 
       // Report any issues found during analysis
@@ -174,21 +270,7 @@ export class DxfProcessor extends StreamProcessor {
         );
       });
 
-      // Convert preview entities to features
-      console.log('[DEBUG] Converting preview entities...');
-      if (!Array.isArray(parseResult.preview)) {
-        console.error('[DEBUG] Preview entities is not an array:', parseResult.preview);
-        parseResult.preview = [];
-      }
-      
-      const previewFeatures = await this.convertToFeatures(parseResult.preview);
-      console.log('[DEBUG] Preview features:', {
-        input: parseResult.preview.length,
-        converted: previewFeatures.length,
-        types: new Set(previewFeatures.map(f => f.geometry.type))
-      });
-
-      if (previewFeatures.length === 0) {
+      if (features.length === 0) {
         console.warn('[DEBUG] No preview features generated from entities');
         this.errorReporter.addWarning(
           'No preview features could be generated',
@@ -198,56 +280,96 @@ export class DxfProcessor extends StreamProcessor {
       }
 
       // Update layers
-      this.layers = parseResult.structure.layers.map(layer => layer.name);
+      this.layers = layerNames;
       console.log('[DEBUG] Detected layers:', this.layers);
 
-      // Calculate preview bounds
-      const bounds = this.calculateBoundsFromFeatures(previewFeatures);
-      console.log('[DEBUG] Calculated bounds:', bounds);
+      // Calculate initial bounds from raw coordinates
+      const rawBounds = this.calculateBoundsFromEntities(parseResult.preview);
+      console.log('[DEBUG] Raw coordinate bounds:', rawBounds);
 
-      // Detect coordinate system based on bounds
+      // Ensure coordinate system manager is initialized
+      if (!coordinateSystemManager.isInitialized()) {
+        await coordinateSystemManager.initialize();
+      }
+
+      // Detect coordinate system based on raw bounds
       let detectedSystem = this.options.coordinateSystem;
-      if (!detectedSystem && bounds) {
+      if (!detectedSystem && rawBounds) {
         // Check for Swiss LV95 coordinates (typical range around 2.6M, 1.2M)
-        if (bounds.minX > 2000000 && bounds.minX < 3000000 &&
-            bounds.minY > 1000000 && bounds.minY < 1400000) {
-          detectedSystem = 'EPSG:2056'; // Swiss LV95
-          console.log('[DEBUG] Detected Swiss LV95 coordinates');
+        if (rawBounds.minX > 2000000 && rawBounds.minX < 3000000 &&
+            rawBounds.minY > 1000000 && rawBounds.minY < 1400000) {
+          const lv95Def = coordinateSystemManager.getSystemDefinition('EPSG:2056');
+          if (lv95Def && coordinateSystemManager.validateBounds({ x: rawBounds.minX, y: rawBounds.minY }, 'EPSG:2056')) {
+            detectedSystem = 'EPSG:2056'; // Swiss LV95
+            console.log('[DEBUG] Detected Swiss LV95 coordinates');
+            // Update processor options with detected system
+            this.options.coordinateSystem = detectedSystem;
+          }
         }
         // Check for Swiss LV03 coordinates (typical range around 600k, 200k)
-        else if (bounds.minX > 400000 && bounds.minX < 900000 &&
-                bounds.minY > 0 && bounds.minY < 400000) {
+        else if (rawBounds.minX > 400000 && rawBounds.minX < 900000 &&
+                rawBounds.minY > 0 && rawBounds.minY < 400000) {
           detectedSystem = 'EPSG:21781'; // Swiss LV03
           console.log('[DEBUG] Detected Swiss LV03 coordinates');
         }
         // Check for WGS84 coordinates
-        else if (Math.abs(bounds.minX) <= 180 && Math.abs(bounds.maxX) <= 180 &&
-                Math.abs(bounds.minY) <= 90 && Math.abs(bounds.maxY) <= 90) {
+        else if (Math.abs(rawBounds.minX) <= 180 && Math.abs(rawBounds.maxX) <= 180 &&
+                Math.abs(rawBounds.minY) <= 90 && Math.abs(rawBounds.maxY) <= 90) {
           detectedSystem = 'EPSG:4326'; // WGS84
           console.log('[DEBUG] Detected WGS84 coordinates');
         } else {
-          console.warn('[DEBUG] Could not detect coordinate system from bounds:', bounds);
+          console.warn('[DEBUG] Could not detect coordinate system from bounds:', rawBounds);
         }
       }
+
+      // Create preview manager to properly categorize features
+      const previewManager = createPreviewManager({
+        maxFeatures: (this.options as DxfProcessorOptions).previewEntities || 1000,
+        visibleLayers: this.layers,
+        coordinateSystem: detectedSystem,
+        enableCaching: true
+      });
+
+      // Set features in preview manager
+      previewManager.setFeatures(features);
+
+      // Get categorized collections
+      const collections = await previewManager.getPreviewCollections();
+      console.log('[DEBUG] Preview collections:', {
+        points: collections.points.features.length,
+        lines: collections.lines.features.length,
+        polygons: collections.polygons.features.length,
+        total: collections.totalCount
+      });
+
+      // Create preview feature collection
+      const previewFeatures: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: [
+          ...collections.points.features,
+          ...collections.lines.features,
+          ...collections.polygons.features
+        ]
+      };
+
+      // Calculate final bounds from features
+      const finalBounds = this.calculateBoundsFromFeatures(features);
 
       const analyzeResult: AnalyzeResult = {
         layers: this.layers,
         coordinateSystem: detectedSystem,
-        bounds,
-        preview: {
-          type: 'FeatureCollection',
-          features: previewFeatures
-        },
+        bounds: finalBounds,
+        preview: previewFeatures,
         dxfData: parseResult.structure
       };
 
       // Log analysis results
       console.log('[DEBUG] Analysis complete:', {
         layers: this.layers.length,
-        features: previewFeatures.length,
-        featureTypes: Array.from(new Set(previewFeatures.map(f => f.geometry.type))),
+        features: features.length,
+        featureTypes: Array.from(new Set(features.map(f => f.geometry.type))),
         coordinateSystem: detectedSystem,
-        hasBounds: !!bounds
+        hasBounds: !!finalBounds
       });
 
       return analyzeResult;

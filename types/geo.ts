@@ -22,6 +22,15 @@ export interface GeoFeature extends Feature {
   };
 }
 
+export interface GeoFeatureCollection extends FeatureCollection {
+  statistics?: {
+    points: number;
+    lines: number;
+    polygons: number;
+    total: number;
+  };
+}
+
 export interface LoaderResult {
   features: GeoFeature[];
   bounds: Bounds;
@@ -44,7 +53,7 @@ export interface AnalyzeResult {
   layers: string[];
   coordinateSystem?: CoordinateSystem;
   bounds: Bounds;
-  preview: FeatureCollection;
+  preview: GeoFeatureCollection;
   dxfData?: any;
   analysis?: {
     warnings: Array<{ type: string; message: string }>;

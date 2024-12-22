@@ -12,21 +12,20 @@
    - See bug_track/active/dxf-parser-integration.md
 
 2. DXF Import and Preview (In Progress)
-   - Root cause identified: TypeScript type errors in validation chain
-   - Layer parsing works but data not propagating to UI
-   - Entity parsing succeeds but features dropped in validation
-   - Coordinate system detection working (WGS84)
-   - Next steps: Fix validation chain and layer propagation
-   - See bug_track/active/dxf-preview-generation.md
+   - Root cause identified: Multiple issues in processing chain
+   - Coordinate system detection needs to happen before feature conversion
+   - Type safety issues causing feature validation failures
+   - Preview manager initialization needs coordinate system context
+   - Next steps: Complete type safety improvements and fix preview initialization
+   - See bug_track/active/dxf-coordinate-detection.md
 
 3. Preview Generation (In Progress)
-   - Issue: No features reaching preview manager
-   - Root cause identified: TypeScript type errors in validation chain
-   - Layer parsing works but data not propagating to UI
-   - Entity parsing succeeds but features dropped in validation
-   - Coordinate system detection working (WGS84)
-   - Next steps: Fix validation chain and layer propagation
-   - See bug_track/active/dxf-preview-generation.md
+   - Issue: Preview manager initialization and feature handling
+   - Root cause identified: Coordinate system context missing
+   - Features being converted with incorrect coordinate system
+   - Type mismatches causing features to be dropped
+   - Next steps: Fix coordinate system detection and type safety
+   - See bug_track/active/dxf-coordinate-detection.md
 
 ### Required Actions
 1. DXF Parser Integration
@@ -37,12 +36,12 @@
    - Update documentation with browser-specific considerations
 
 2. DXF Import Enhancement
-   - Fix TypeScript type definitions in validation chain
-   - Implement proper type guards for geometry validation
-   - Fix layer data propagation to UI components
-   - Update validation criteria for features
-   - Add comprehensive debug logging
-   - Test with various DXF formats
+   - Fix coordinate system detection timing
+   - Add raw coordinate analysis before conversion
+   - Implement proper type guards throughout chain
+   - Fix preview manager initialization
+   - Add comprehensive error logging
+   - Test with various coordinate systems
 
 3. Investigation Areas
    - TypeScript type definitions for geometry validation

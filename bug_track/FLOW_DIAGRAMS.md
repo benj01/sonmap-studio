@@ -61,38 +61,47 @@ File Selection ──> GeoImportDialog ─────────────�
                    DxfProcessor ─────> analyzeStructure ────> ErrorReporter
                          │                    │
                          v                    v
-                  EntityParser         detectCoordSystem [✓]
+                  EntityParser         calculateRawBounds [✓]
                          │                    │
                          v                    v
-                parseEntities [✓] ────> CoordSystemManager [✓]
-                         │
-                         v
-            convertToFeatures [!]  ────┐     [Feature Generation Chain]
-                    │                  │
-                    v                  v
-            validateGeometry [!] transformCoords [✓]
-                    │                  │
-                    v                  v
+                parseEntities [✓] ────> detectCoordSystem [✓]
+                         │                    │
+                         v                    v
+            convertToFeatures [✓] ────> CoordSystemManager [✓]
+                    │                    │
+                    v                    v
+            validateGeometry [✓] ──> transformCoords [✓]
+                    │                    │
+                    v                    v
             FeatureManager ────> PreviewManager [!]
-                    │                  │
-                    v                  v
+                    │                    │
+                    v                    v
           categorizeFeatures ───> PreviewMap [!]
                     │
                     v
              [Generated Features]
 
-[!] Current failure points:
-1. Feature conversion fails due to TypeScript type errors in validation chain
-2. Layer data not propagating to UI components
-3. Features dropped during validation despite successful parsing
-4. Bounds calculation may be affected by validation failures
-5. Preview generation blocked by validation issues
+[!] Current issues:
+1. Coordinate system must be detected before feature conversion
+2. Type safety needed throughout conversion chain
+3. Preview manager needs coordinate system context
+4. Feature validation dropping valid features
+5. Need to verify coordinate transformations
 
-[✓] Working components:
+[✓] Fixed components:
 1. File parsing and entity detection
-2. Coordinate system detection (WGS84)
-3. Basic entity parsing
-4. Initial coordinate transformation
+2. Raw coordinate bounds calculation
+3. Coordinate system detection from bounds
+4. Basic entity parsing
+5. Initial coordinate transformation
+6. Layer data propagation
+7. Type system updates
+
+[New Components]:
+1. GeoFeatureCollection type with statistics
+2. Enhanced preview data structure
+3. Feature categorization by geometry type
+4. Preview statistics tracking
 ```
 
 ### DXF Parser Module Structure
