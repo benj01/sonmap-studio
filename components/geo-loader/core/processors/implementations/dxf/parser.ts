@@ -90,10 +90,10 @@ export class DxfParser {
 
       // Find ENTITIES section to collect entity types
       const entityTypes = new Set<DxfEntityType>();
-      const entitiesMatch = text.match(/^0\s+SECTION\s+2\s+ENTITIES([\s\S]*?)^0\s+ENDSEC/m);
+      const entitiesMatch = text.match(/0[\s\r\n]+SECTION[\s\r\n]+2[\s\r\n]+ENTITIES([\s\S]*?)0[\s\r\n]+ENDSEC/m);
       
       if (entitiesMatch) {
-        const entityRegex = /^0\s+(\w+)\s+/gm;
+        const entityRegex = /0[\s\r\n]+(\w+)[\s\r\n]+/gm;
         let match;
         
         while ((match = entityRegex.exec(entitiesMatch[1])) !== null) {
@@ -146,69 +146,124 @@ export class DxfParser {
   ): Promise<DxfEntity[]> {
     console.log('[DEBUG] Starting entity parsing');
     const entities: DxfEntity[] = [];
-    const entityRegex = /^0\s+(\w+)\s+([\s\S]*?)(?=^0\s+\w+|\Z)/gm;
-    
-    let match;
-    let count = 0;
-    while ((match = entityRegex.exec(text)) !== null) {
-      try {
-        const [, type, entityContent] = match;
-        const upperType = type.toUpperCase();
-        
-        if (this.isValidEntityType(upperType)) {
-          const entityType = upperType as DxfEntityType;
+
+    try {
+      // Find ENTITIES section
+      const entitiesMatch = text.match(/0[\s\r\n]+SECTION[\s\r\n]+2[\s\r\n]+ENTITIES([\s\S]*?)0[\s\r\n]+ENDSEC/m);
+      if (!entitiesMatch) {
+        console.warn('[DEBUG] No ENTITIES section found in content:', text.substring(0, 200));
+        return entities;
+      }
+      
+      // Clean up entities content
+      const entitiesContent = entitiesMatch[1]
+        .replace(/#.*$/gm, '') // Remove comments
+        .replace(/^\s+|\s+$/gm, '') // Trim each line
+        .replace(/\r\n/g, '\n') // Normalize line endings
+        .replace(/\n+/g, '\n'); // Remove empty lines
+      
+      console.log('[DEBUG] Found ENTITIES section, content:', {
+        length: entitiesContent.length,
+        sample: entitiesContent.substring(0, 200),
+        lineCount: entitiesContent.split('\n').length
+      });
+
+      // Parse entities within ENTITIES section
+      const entityRegex = /0[\s\n]+(\w+)([\s\S]*?)(?=0[\s\n]+(?:\w+|ENDSEC)|\Z)/gm;
+      
+      let match;
+      let count = 0;
+      while ((match = entityRegex.exec(entitiesContent)) !== null) {
+        try {
+          const [, type, entityContent] = match;
+          const upperType = type.toUpperCase();
           
-          // Skip if entity type is not in options
-          if (options.entityTypes && !options.entityTypes.includes(entityType)) {
-            continue;
-          }
+          if (this.isValidEntityType(upperType)) {
+            const entityType = upperType as DxfEntityType;
+            
+            // Skip if entity type is not in options
+            if (options.entityTypes && !options.entityTypes.includes(entityType)) {
+              continue;
+            }
 
-          // Skip text entities if not requested
-          if (!options.parseText && (entityType === 'TEXT' || entityType === 'MTEXT')) {
-            continue;
-          }
+            // Skip text entities if not requested
+            if (!options.parseText && (entityType === 'TEXT' || entityType === 'MTEXT')) {
+              continue;
+            }
 
-          // Skip dimensions if not requested
-          if (!options.parseDimensions && entityType === 'DIMENSION') {
-            continue;
-          }
+            // Skip dimensions if not requested
+            if (!options.parseDimensions && entityType === 'DIMENSION') {
+              continue;
+            }
 
-          const groupCodes = this.parseGroupCodes(entityContent);
-          const attributes = this.parseEntityAttributes(groupCodes);
-          const data = this.parseEntityData(groupCodes, entityType);
+            // Clean up entity content
+            const cleanContent = entityContent
+              .replace(/#.*$/gm, '') // Remove comments
+              .replace(/^\s+|\s+$/gm, '') // Trim each line
+              .replace(/\r\n/g, '\n') // Normalize line endings
+              .replace(/\n+/g, '\n'); // Remove empty lines
 
-          // Only create entity if we have valid data
-          if (data && Object.keys(data).length > 0) {
-            const entity: DxfEntity = {
+            console.log('[DEBUG] Found entity:', {
               type: entityType,
-              attributes: attributes || {},
-              data: data
-            };
+              contentLength: cleanContent.length,
+              sample: cleanContent.substring(0, 100),
+              lineCount: cleanContent.split('\n').length
+            });
 
-            // Add block-specific properties for INSERT entities
-            if (entityType === 'INSERT') {
-              const blockName = groupCodes.find(([code]) => code === 2)?.[1];
-              if (blockName) {
-                entity.blockName = blockName;
+            const groupCodes = this.parseGroupCodes(cleanContent);
+            console.log('[DEBUG] Parsed group codes:', groupCodes.length);
+
+            const attributes = this.parseEntityAttributes(groupCodes);
+            const data = this.parseEntityData(groupCodes, entityType);
+
+            // Only create entity if we have valid data
+            if (data && Object.keys(data).length > 0) {
+              const entity: DxfEntity = {
+                type: entityType,
+                attributes: attributes || {},
+                data: data
+              };
+
+              console.log('[DEBUG] Created entity:', {
+                type: entityType,
+                dataKeys: Object.keys(data),
+                attributeKeys: Object.keys(attributes || {}),
+                hasVertices: 'vertices' in data
+              });
+
+              // Add block-specific properties for INSERT entities
+              if (entityType === 'INSERT') {
+                const blockName = groupCodes.find(([code]) => code === 2)?.[1];
+                if (blockName) {
+                  entity.blockName = blockName;
+                }
+              }
+
+              entities.push(entity);
+              count++;
+
+              // Stop if we've reached maxEntities
+              if (options.maxEntities && count >= options.maxEntities) {
+                break;
               }
             }
-
-            entities.push(entity);
-            count++;
-
-            // Stop if we've reached maxEntities
-            if (options.maxEntities && count >= options.maxEntities) {
-              break;
-            }
           }
+        } catch (error) {
+          console.warn('Failed to parse entity:', error);
         }
-      } catch (error) {
-        console.warn('Failed to parse entity:', error);
       }
-    }
 
-    console.log('[DEBUG] Parsed entities:', entities.length);
-    return entities;
+      console.log('[DEBUG] Parsed entities:', {
+        count: entities.length,
+        types: entities.map(e => e.type)
+      });
+
+      return entities;
+    } catch (error) {
+      console.error('[DEBUG] Error parsing entities:', error);
+      // Return empty array on error rather than throwing
+      return [];
+    }
   }
 
   /**
@@ -484,10 +539,10 @@ export class DxfParser {
    */
   private parseBlocks(text: string): DxfBlock[] {
     const blocks: DxfBlock[] = [];
-    const blocksMatch = text.match(/^0\s+SECTION\s+2\s+BLOCKS([\s\S]*?)^0\s+ENDSEC/m);
+    const blocksMatch = text.match(/0[\s\r\n]+SECTION[\s\r\n]+2[\s\r\n]+BLOCKS([\s\S]*?)0[\s\r\n]+ENDSEC/m);
     
     if (blocksMatch) {
-      const blockRegex = /^0\s+BLOCK\s+([\s\S]*?)^0\s+ENDBLK/gm;
+      const blockRegex = /0[\s\r\n]+BLOCK([\s\S]*?)0[\s\r\n]+ENDBLK/gm;
       let match;
       
       while ((match = blockRegex.exec(blocksMatch[1])) !== null) {
@@ -540,15 +595,15 @@ export class DxfParser {
   private parseLayers(text: string): DxfLayer[] {
     const layers: DxfLayer[] = [];
     // Find TABLES section first
-    const tablesMatch = text.match(/^0\s+SECTION\s+2\s+TABLES([\s\S]*?)^0\s+ENDSEC/m);
+    const tablesMatch = text.match(/0[\s\r\n]+SECTION[\s\r\n]+2[\s\r\n]+TABLES([\s\S]*?)0[\s\r\n]+ENDSEC/m);
     
     if (tablesMatch) {
       // Find LAYER table
-      const layerTableMatch = tablesMatch[1].match(/^0\s+TABLE\s+2\s+LAYER([\s\S]*?)^0\s+ENDTAB/m);
+      const layerTableMatch = tablesMatch[1].match(/0[\s\r\n]+TABLE[\s\r\n]+2[\s\r\n]+LAYER([\s\S]*?)0[\s\r\n]+ENDTAB/m);
       
       if (layerTableMatch) {
         // Match individual layers
-        const layerRegex = /^0\s+LAYER\s+([\s\S]*?)(?=^0\s+(?:LAYER|ENDTAB)|\Z)/gm;
+        const layerRegex = /0[\s\r\n]+LAYER([\s\S]*?)(?=0[\s\r\n]+(?:LAYER|ENDTAB)|\Z)/gm;
         let match;
         
         while ((match = layerRegex.exec(layerTableMatch[1])) !== null) {
@@ -609,11 +664,11 @@ export class DxfParser {
     } = {};
 
     // Find HEADER section
-    const headerMatch = text.match(/^0\s+SECTION\s+2\s+HEADER([\s\S]*?)^0\s+ENDSEC/m);
+    const headerMatch = text.match(/0[\s\r\n]+SECTION[\s\r\n]+2[\s\r\n]+HEADER([\s\S]*?)0[\s\r\n]+ENDSEC/m);
     
     if (headerMatch) {
       // Parse $EXTMIN
-      const extminMatch = headerMatch[1].match(/\$EXTMIN\s+([\s\S]*?)(?=\$|\Z)/);
+      const extminMatch = headerMatch[1].match(/\$EXTMIN([\s\S]*?)(?=\$|\Z)/);
       if (extminMatch) {
         const groupCodes = this.parseGroupCodes(extminMatch[1]);
         const extmin: { x?: number; y?: number; z?: number } = {};
@@ -638,7 +693,7 @@ export class DxfParser {
       }
 
       // Parse $EXTMAX
-      const extmaxMatch = headerMatch[1].match(/\$EXTMAX\s+([\s\S]*?)(?=\$|\Z)/);
+      const extmaxMatch = headerMatch[1].match(/\$EXTMAX([\s\S]*?)(?=\$|\Z)/);
       if (extmaxMatch) {
         const groupCodes = this.parseGroupCodes(extmaxMatch[1]);
         const extmax: { x?: number; y?: number; z?: number } = {};
@@ -663,7 +718,7 @@ export class DxfParser {
       }
 
       // Parse $MEASUREMENT
-      const measurementMatch = headerMatch[1].match(/\$MEASUREMENT\s+70\s+(\d+)/);
+      const measurementMatch = headerMatch[1].match(/\$MEASUREMENT[\s\r\n]+70[\s\r\n]+(\d+)/);
       if (measurementMatch) {
         header.$MEASUREMENT = parseInt(measurementMatch[1]);
       }
@@ -709,12 +764,12 @@ export class DxfParser {
    * Parse DXF group codes and values
    */
   private parseGroupCodes(text: string): Array<[number, string]> {
-    const lines = text.split('\n');
+    const lines = text.split(/[\r\n]+/).map(line => line.trim()).filter(line => line);
     const pairs: Array<[number, string]> = [];
     
     for (let i = 0; i < lines.length - 1; i += 2) {
-      const code = parseInt(lines[i].trim());
-      const value = lines[i + 1].trim();
+      const code = parseInt(lines[i]);
+      const value = lines[i + 1];
       if (!isNaN(code)) {
         pairs.push([code, value]);
       }

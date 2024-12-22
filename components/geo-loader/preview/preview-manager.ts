@@ -444,6 +444,12 @@ export class PreviewManager {
 
     for await (const feature of this.featureManager.getFeatures()) {
       totalCount++;
+      console.log('[DEBUG] Categorizing feature:', {
+        geometryType: feature.geometry.type,
+        entityType: feature.properties?.entityType,
+        properties: feature.properties
+      });
+
       switch (feature.geometry.type) {
         case 'Point':
           points.push(feature);
@@ -456,8 +462,17 @@ export class PreviewManager {
         case 'MultiPolygon':
           polygons.push(feature);
           break;
+        default:
+          console.warn('[DEBUG] Unknown geometry type:', feature.geometry.type);
       }
     }
+
+    console.log('[DEBUG] Preview collections:', {
+      points: points.length,
+      lines: lines.length,
+      polygons: polygons.length,
+      total: totalCount
+    });
 
     return {
       points: {

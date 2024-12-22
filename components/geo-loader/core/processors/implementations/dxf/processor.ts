@@ -3,7 +3,7 @@ import { StreamProcessor } from '../../stream/stream-processor';
 import { AnalyzeResult, ProcessorResult } from '../../base/types';
 import { StreamProcessorResult } from '../../stream/types';
 import { DxfParser } from './parser';
-import { DxfProcessorOptions, DxfParseOptions } from './types';
+import { DxfProcessorOptions, DxfParseOptions, DxfEntity } from './types';
 import { ValidationError } from '../../../errors/types';
 import { StreamReader } from './utils/stream-reader';
 import { BlockManager } from './utils/block-manager';
@@ -57,23 +57,37 @@ export class DxfProcessor extends StreamProcessor {
   async convertToFeatures(entities: unknown): Promise<Feature[]> {
     console.log('[DEBUG] Converting DXF entities to features');
     try {
-      // Validate entities is an array
-      if (!Array.isArray(entities)) {
-        console.error('Entities is not an array:', entities);
-        return [];
-      }
+      // Ensure entities is an array
+      const entityArray = Array.isArray(entities) ? entities : [];
+      console.log('[DEBUG] Entity array length:', entityArray.length);
 
       // Validate each entity has required structure
-      const validEntities = entities.filter(entity => {
-        return entity && typeof entity === 'object' && 
-               'type' in entity && 
-               'attributes' in entity && 
-               'data' in entity;
+      const validEntities = entityArray.filter((entity): entity is DxfEntity => {
+        const isValid = entity && 
+                       typeof entity === 'object' && 
+                       'type' in entity && 
+                       'attributes' in entity && 
+                       'data' in entity;
+        
+        if (!isValid) {
+          console.warn('[DEBUG] Invalid entity structure:', entity);
+        }
+        
+        return isValid;
       });
 
-      console.log('[DEBUG] Valid entities to convert:', validEntities.length);
+      console.log('[DEBUG] Valid entities to convert:', {
+        total: entityArray.length,
+        valid: validEntities.length,
+        types: validEntities.map(e => e.type)
+      });
+
       const features = await this.entityParser.convertToFeatures(validEntities);
-      console.log('[DEBUG] Converted to features:', features.length);
+      console.log('[DEBUG] Converted to features:', {
+        count: features.length,
+        types: Array.from(new Set(features.map(f => f.geometry.type)))
+      });
+      
       return features;
     } catch (error) {
       console.error('Failed to convert entities to features:', error);

@@ -40,9 +40,10 @@ const lineColorExpression: any = [
   warningCondition,
   '#ff4444',
   ['match',
-    ['get', 'type'],
+    ['get', 'entityType'],  // Use entityType instead of type
     'LINE', '#4a90e2',
     'POLYLINE', '#50e3c2',
+    'LWPOLYLINE', '#50e3c2', // Add explicit LWPOLYLINE handling
     'ARC', '#b8e986',
     '#4a90e2'  // default color
   ]
@@ -62,9 +63,10 @@ const fillColorExpression: any = [
   warningCondition,
   '#ff4444',
   ['match',
-    ['get', 'type'],
+    ['get', 'entityType'],  // Use entityType instead of type
     'POLYGON', '#4a90e2',
     'CIRCLE', '#50e3c2',
+    'LWPOLYLINE', '#50e3c2', // Add explicit LWPOLYLINE handling
     'HATCH', '#b8e986',
     '#4a90e2'  // default color
   ]

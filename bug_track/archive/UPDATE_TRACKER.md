@@ -144,30 +144,58 @@ See URGENT_TODOS.md for detailed information about:
 
 ## Known Issues
 
-1. Performance
+1. DXF Import and Preview (Critical)
+   - Feature conversion fails silently in entity parser
+   - Preview map receives no features despite successful parsing
+   - Multiple validation points may cause silent failures
+   - Error context missing in conversion chain
+   - See bug_track/active/dxf-preview-generation.md for details
+
+2. Performance
    - Parallel processing not yet implemented
    - Some memory optimization opportunities remain
    - Cache invalidation could be improved
    - Some operations could be optimized
 
-2. Documentation
+3. Documentation
    - Some advanced features need better documentation
    - More examples needed for complex use cases
    - Performance guidelines could be expanded
    - API documentation could be more detailed
 
-3. User Experience
+4. User Experience
    - Error messages could be more user-friendly
    - Progress reporting could be more detailed
    - Debugging tools could be improved
    - Visualization tools could be enhanced
 
-4. Coordinate System Detection and Import Flow
+5. Coordinate System Detection and Import Flow
    - Simple DXF files may not detect coordinate system due to strict confidence thresholds
    - Multiple error handlers causing fragmented error reporting
    - Preview generation and layer visibility issues
    - Component communication and state management problems
    - See URGENT_TODOS.md for detailed analysis and action items
+
+## Next Development Focus
+
+### DXF Import Enhancement
+1. Feature Conversion
+   - Add error context to conversion chain
+   - Review validation criteria
+   - Improve error reporting
+   - Add debug logging points
+
+2. Preview Generation
+   - Verify feature manager integration
+   - Enhance preview collection categorization
+   - Add feature validation logging
+   - Improve bounds calculation reliability
+
+3. Error Handling
+   - Consolidate validation points
+   - Add error recovery mechanisms
+   - Improve error context
+   - Enhance debugging capabilities
 
 ## Dependencies & Compatibility
 

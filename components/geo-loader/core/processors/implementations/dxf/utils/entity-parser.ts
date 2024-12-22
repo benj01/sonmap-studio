@@ -34,24 +34,47 @@ export class EntityParser {
    */
   async parseEntities(content: string): Promise<DxfEntity[]> {
     const entities: DxfEntity[] = [];
-    const entityRegex = /^0\s+(\w+)\s+([\s\S]*?)(?=^0\s+\w+|\Z)/gm;
     
-    let match;
-    while ((match = entityRegex.exec(content)) !== null) {
-      try {
-        const [, type, entityContent] = match;
-        if (this.isValidEntityType(type)) {
-          const entity = await this.parseEntity(type as DxfEntityType, entityContent);
-          if (entity) {
-            entities.push(entity);
-          }
-        }
-      } catch (error) {
-        console.warn('Failed to parse entity:', error);
+    try {
+      // Find ENTITIES section
+      const entitiesMatch = content.match(/^0[\s\r\n]+SECTION[\s\r\n]+2[\s\r\n]+ENTITIES([\s\S]*?)^0[\s\r\n]+ENDSEC/m);
+      if (!entitiesMatch) {
+        console.warn('[DEBUG] No ENTITIES section found');
+        return entities;
       }
-    }
+      
+      // Parse entities within ENTITIES section
+      const entityRegex = /^0[\s\r\n]+(\w+)([\s\S]*?)(?=^0[\s\r\n]+(?:\w+|ENDSEC)|\Z)/gm;
+      const entitiesContent = entitiesMatch[1];
+      
+      console.log('[DEBUG] Found ENTITIES section, content:', {
+        length: entitiesContent.length,
+        sample: entitiesContent.substring(0, 100) + '...'
+      });
+      
+      let match: RegExpExecArray | null;
+      while ((match = entityRegex.exec(entitiesContent)) !== null) {
+        try {
+          const [, type, entityContent] = match;
+          if (this.isValidEntityType(type)) {
+            console.log('[DEBUG] Parsing entity:', type);
+            const entity = await this.parseEntity(type, entityContent);
+            if (entity) {
+              console.log('[DEBUG] Successfully parsed entity:', type);
+              entities.push(entity);
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to parse entity:', error instanceof Error ? error.message : String(error));
+        }
+      }
 
-    return entities;
+      console.log('[DEBUG] Total entities parsed:', entities.length);
+      return entities;
+    } catch (error) {
+      console.error('[DEBUG] Error parsing entities:', error instanceof Error ? error.message : String(error));
+      return entities;
+    }
   }
 
   /**
@@ -59,42 +82,110 @@ export class EntityParser {
    */
   async convertToFeatures(entities: DxfEntity[]): Promise<Feature[]> {
     const features: Feature[] = [];
+    console.log('[DEBUG] Converting entities to features:', entities.length);
 
-    for (const entity of entities) {
-      try {
-        // Skip entities on frozen or invisible layers
-        if (!this.layerManager.shouldProcessEntity(entity)) {
-          continue;
-        }
+    try {
+      for (const entity of entities) {
+        try {
+          // Skip entities on frozen or invisible layers
+          if (!this.layerManager.shouldProcessEntity(entity)) {
+            continue;
+          }
 
-        const feature = await this.entityToFeature(entity);
-        if (feature) {
-          features.push(feature);
+          const feature = await this.entityToFeature(entity);
+          if (feature) {
+            features.push(feature);
+          }
+        } catch (error) {
+          console.warn('[DEBUG] Failed to convert entity:', {
+            type: entity.type,
+            error: error instanceof Error ? error.message : String(error)
+          });
         }
-      } catch (error) {
-        console.warn('Failed to convert entity:', error);
       }
-    }
 
-    return features;
+      console.log('[DEBUG] Successfully converted features:', features.length);
+      return features;
+    } catch (error) {
+      console.error('[DEBUG] Error converting entities to features:', error instanceof Error ? error.message : String(error));
+      return features;
+    }
   }
 
   /**
    * Parse a single DXF entity
    */
   private async parseEntity(type: DxfEntityType, content: string): Promise<DxfEntity | null> {
-    const lines = content.split('\n').map(line => line.trim());
-    const entity: Partial<DxfEntity> = {
-      type,
-      attributes: {},
-      data: {}
-    };
-
-    for (let i = 0; i < lines.length; i++) {
-      const code = parseInt(lines[i]);
-      const value = lines[i + 1];
+    try {
+      // Clean up content - remove comments and normalize whitespace
+      content = content
+        .replace(/#.*$/gm, '') // Remove comments
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
       
-      if (isNaN(code)) continue;
+      // Split into lines, handling both \r\n and \n
+      const lines = content.split(/\r?\n/).map(line => line.trim()).filter(line => {
+        // Filter out empty lines and comment lines
+        return line && !line.startsWith('#');
+      });
+      console.log('[DEBUG] Parsing entity:', {
+        type,
+        lineCount: lines.length,
+        firstLine: lines[0],
+        content: content.substring(0, 100)
+      });
+
+      const entity: Partial<DxfEntity> = {
+        type,
+        attributes: {},
+        data: {}
+      };
+
+      // For LWPOLYLINE, we need to collect vertices
+      const vertices: Array<{x: number, y: number, z?: number, bulge?: number}> = [];
+      let currentVertex: {x?: number, y?: number, z?: number, bulge?: number} = {};
+      let vertexCount = 0;
+      let expectedVertexCount = 0;
+
+      // First pass: find vertex count and closed flag
+      if (type === 'LWPOLYLINE') {
+        for (const line of lines) {
+          const code = parseInt(line);
+          if (code === 90) { // Vertex count
+            expectedVertexCount = parseInt(lines[lines.indexOf(line) + 1]);
+            break;
+          }
+        }
+        console.log('[DEBUG] LWPOLYLINE expected vertices:', expectedVertexCount);
+      }
+
+      // Second pass: collect vertices
+      for (let i = 0; i < lines.length - 1; i++) {
+        console.log('[DEBUG] Processing line:', {
+          index: i,
+          line: lines[i],
+          nextLine: lines[i + 1]
+        });
+        const code = parseInt(lines[i].trim());
+        const value = lines[i + 1].trim();
+        
+        if (isNaN(code)) {
+          console.warn('[DEBUG] Invalid group code:', {
+            line: lines[i],
+            index: i,
+            content: lines[i]
+          });
+          continue;
+        }
+        
+        if (!value) {
+          console.warn('[DEBUG] Missing value for code:', {
+            code,
+            index: i + 1,
+            nextLine: lines[i + 1]
+          });
+          continue;
+        }
 
       switch (code) {
         // Common group codes
@@ -124,23 +215,90 @@ export class EntityParser {
           break;
 
         // Entity-specific group codes
+        case 70: // Flags for LWPOLYLINE
+          if (type === 'LWPOLYLINE') {
+            entity.data = {
+              ...entity.data,
+              closed: (parseInt(value) & 1) === 1
+            };
+          }
+          break;
+        case 90: // Vertex count for LWPOLYLINE
+          if (type === 'LWPOLYLINE') {
+            entity.data = {
+              ...entity.data,
+              vertexCount: parseInt(value)
+            };
+          }
+          break;
         case 10: // X coordinate
-          entity.data = {
-            ...entity.data,
-            x: parseFloat(value)
-          };
+          if (type === 'LWPOLYLINE') {
+            const x = parseFloat(value);
+            if (!isNaN(x)) {
+              // Complete previous vertex if exists
+              if (currentVertex.x !== undefined && currentVertex.y !== undefined) {
+                vertices.push({ ...currentVertex } as {x: number, y: number});
+                vertexCount++;
+                console.log('[DEBUG] Added vertex:', vertices[vertices.length - 1]);
+              }
+              currentVertex = { x };
+            } else {
+              console.warn('[DEBUG] Invalid X coordinate:', value);
+            }
+          } else {
+            entity.data = {
+              ...entity.data,
+              x: parseFloat(value)
+            };
+          }
           break;
         case 20: // Y coordinate
-          entity.data = {
-            ...entity.data,
-            y: parseFloat(value)
-          };
+          if (type === 'LWPOLYLINE') {
+            const y = parseFloat(value);
+            if (!isNaN(y) && currentVertex.x !== undefined) {
+              currentVertex.y = y;
+              console.log('[DEBUG] Added Y to current vertex:', currentVertex);
+            } else {
+              console.warn('[DEBUG] Invalid Y coordinate or missing X:', {
+                y: value,
+                currentVertex
+              });
+            }
+          } else {
+            entity.data = {
+              ...entity.data,
+              y: parseFloat(value)
+            };
+          }
           break;
         case 30: // Z coordinate
-          entity.data = {
-            ...entity.data,
-            z: parseFloat(value)
-          };
+          if (type === 'LWPOLYLINE') {
+            const z = parseFloat(value);
+            if (!isNaN(z) && currentVertex.x !== undefined && currentVertex.y !== undefined) {
+              currentVertex.z = z;
+              console.log('[DEBUG] Added Z to current vertex:', currentVertex);
+            } else {
+              console.warn('[DEBUG] Invalid Z coordinate or incomplete vertex:', {
+                z: value,
+                currentVertex
+              });
+            }
+          } else {
+            entity.data = {
+              ...entity.data,
+              z: parseFloat(value)
+            };
+          }
+          break;
+
+        case 42: // Bulge (for LWPOLYLINE arcs)
+          if (type === 'LWPOLYLINE') {
+            const bulge = parseFloat(value);
+            if (!isNaN(bulge)) {
+              currentVertex.bulge = bulge;
+              console.log('[DEBUG] Added bulge to current vertex:', currentVertex);
+            }
+          }
           break;
         case 40: // Radius, size, or scale
           entity.data = {
@@ -163,7 +321,36 @@ export class EntityParser {
       i++; // Skip value line
     }
 
-    return entity as DxfEntity;
+      // Add the last vertex if complete
+      if (type === 'LWPOLYLINE' && currentVertex.x !== undefined && currentVertex.y !== undefined) {
+        vertices.push({ ...currentVertex } as {x: number, y: number});
+        vertexCount++;
+      }
+
+      // Add collected vertices for LWPOLYLINE
+      if (type === 'LWPOLYLINE' && vertices.length > 0) {
+        entity.data = {
+          ...entity.data,
+          vertices
+        };
+      }
+
+      console.log('[DEBUG] Parsed entity:', {
+        type,
+        attributes: entity.attributes,
+        dataKeys: Object.keys(entity.data || {}),
+        vertexCount: type === 'LWPOLYLINE' ? vertices.length : undefined
+      });
+
+      return entity as DxfEntity;
+    } catch (error) {
+      console.error('[DEBUG] Error parsing entity:', {
+        type,
+        error,
+        content: content.substring(0, 100) + '...'
+      });
+      return null;
+    }
   }
 
   /**
@@ -171,6 +358,12 @@ export class EntityParser {
    */
   private async entityToFeature(entity: DxfEntity): Promise<Feature | null> {
     try {
+      console.log('[DEBUG] Converting entity to feature:', {
+        type: entity.type,
+        layer: entity.attributes.layer,
+        hasData: !!entity.data
+      });
+
       let geometry;
       let properties = this.getEntityProperties(entity);
 
@@ -194,10 +387,30 @@ export class EntityParser {
         case 'INSERT':
           return this.handleBlockReference(entity);
         default:
+          console.warn('[DEBUG] Unsupported entity type:', entity.type);
           return null;
       }
 
-      if (!geometry) return null;
+      if (!geometry) {
+        console.warn('[DEBUG] No geometry generated for entity:', {
+          type: entity.type,
+          data: entity.data
+        });
+        return null;
+      }
+
+      // Ensure geometry type is properly set in properties
+      properties = {
+        ...properties,
+        geometryType: geometry.type,
+        entityType: entity.type
+      };
+
+      console.log('[DEBUG] Created feature:', {
+        type: entity.type,
+        geometryType: geometry.type,
+        coordinates: geometry.coordinates.length
+      });
 
       // Validate geometry if required
       if (this.options.validateGeometry && !this.validateGeometry(geometry)) {
@@ -209,11 +422,19 @@ export class EntityParser {
         );
       }
 
-      return {
-        type: 'Feature',
+      const feature = {
+        type: 'Feature' as const,
         geometry,
         properties
       };
+
+      console.log('[DEBUG] Final feature:', {
+        type: feature.type,
+        geometryType: feature.geometry.type,
+        properties: feature.properties
+      });
+
+      return feature;
     } catch (error) {
       console.warn('Failed to convert entity to feature:', error);
       return null;
@@ -295,29 +516,45 @@ export class EntityParser {
    * Convert polyline entity to GeoJSON geometry
    */
   private polylineToGeometry(entity: DxfEntity): LineString | Polygon | null {
-    const vertices = entity.data.vertices as Array<{ x: number; y: number; z?: number }>;
-    if (!vertices?.length) return null;
+    console.log('[DEBUG] Converting polyline to geometry:', {
+      type: entity.type,
+      hasVertices: entity.data.vertices?.length || 0,
+      isClosed: entity.data.closed,
+      data: entity.data
+    });
 
-    const coordinates: Position[] = vertices.map(v => [
-      v.x || 0,
-      v.y || 0,
-      v.z || 0
-    ]);
+    const vertices = entity.data.vertices as Array<{ x: number; y: number; z?: number }>;
+    if (!vertices?.length) {
+      console.warn('[DEBUG] No vertices found for polyline');
+      return null;
+    }
+
+    const coordinates: Position[] = vertices.map(v => {
+      const coord = [v.x || 0, v.y || 0, v.z || 0];
+      console.log('[DEBUG] Vertex coordinate:', coord);
+      return coord;
+    });
 
     // Check if polyline is closed
     if (entity.data.closed) {
+      console.log('[DEBUG] Creating closed polygon');
       // Add first point to close the polygon
       coordinates.push(coordinates[0]);
-      return {
-        type: 'Polygon',
+      const polygon = {
+        type: 'Polygon' as const,
         coordinates: [coordinates]
       };
+      console.log('[DEBUG] Created polygon:', polygon);
+      return polygon;
     }
 
-    return {
-      type: 'LineString',
+    console.log('[DEBUG] Creating line string');
+    const lineString = {
+      type: 'LineString' as const,
       coordinates
     };
+    console.log('[DEBUG] Created line string:', lineString);
+    return lineString;
   }
 
   /**
