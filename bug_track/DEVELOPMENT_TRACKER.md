@@ -4,11 +4,12 @@
 
 ### Active Issues
 1. DXF Parser Integration (In Progress)
-   - Browser compatibility implementation complete
-   - Dynamic import system implemented
-   - Webpack configuration updated for proper module loading
-   - Enhanced error handling and logging added
-   - Next steps: Testing and validation
+   - Browser compatibility implementation in progress
+   - Dynamic import system needs validation
+   - Webpack configuration being tested
+   - Enhanced error handling and logging in development
+   - Parser initialization issues being addressed
+   - Type safety improvements needed
    - See bug_track/active/dxf-parser-integration.md
 
 2. DXF Import and Preview (In Progress)
@@ -58,11 +59,11 @@
 - [x] Added test infrastructure
 - [x] Added debug logging
 - [x] Created type definitions
-- [x] Implemented browser compatibility
-- [x] Added webpack configuration
-- [x] Enhanced error handling
-- [x] Identified validation chain issues
-- [x] Added comprehensive debug logging
+- [ ] Complete browser compatibility implementation
+- [ ] Validate webpack configuration
+- [ ] Complete error handling implementation
+- [ ] Fix validation chain issues
+- [ ] Enhance debug logging
 - [ ] Fix TypeScript type errors
 - [ ] Fix layer propagation
 - [ ] Update validation criteria
