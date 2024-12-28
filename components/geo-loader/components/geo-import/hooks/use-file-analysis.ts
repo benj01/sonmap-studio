@@ -110,18 +110,10 @@ export function useFileAnalysis({
         smartSampling: true
       });
 
-      // Convert preview entities to features
-      console.log('[DEBUG] Converting preview entities to features...');
-      const features = await processor.convertToFeatures(result.preview);
-      console.log('[DEBUG] Generated features:', features.length);
-
-      // Set features in preview manager
-      if (features.length > 0) {
-        console.log('[DEBUG] Setting features in preview manager...');
-        previewManager.setFeatures({
-          type: 'FeatureCollection',
-          features: features
-        });
+      // Set preview features in preview manager
+      if (result.preview && result.preview.features.length > 0) {
+        console.log('[DEBUG] Setting preview features in preview manager...');
+        previewManager.setFeatures(result.preview);
       }
 
       console.log('[DEBUG] Analysis complete, updating state...');

@@ -272,6 +272,8 @@ export interface DxfStructure {
   layers: DxfLayer[];
   /** Available blocks */
   blocks: DxfBlock[];
+  /** Main entities */
+  entities: DxfEntity[];
   /** Entity types present in file */
   entityTypes: DxfEntityType[];
   /** Drawing units */

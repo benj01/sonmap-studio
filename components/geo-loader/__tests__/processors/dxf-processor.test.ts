@@ -1,4 +1,4 @@
-import { DxfProcessor } from '../../core/processors/implementations/dxf/processor';
+import { DxfProcessor } from '../../core/processors/implementations/dxf/dxf-processor';
 import { ProcessorOptions } from '../../core/processors/base/types';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
 import { ValidationError, ParseError } from '../../core/errors/types';
@@ -96,6 +96,33 @@ describe('DxfProcessor', () => {
   });
 
   describe('entity conversion', () => {
+    test('should handle LWPOLYLINE with missing vertices', async () => {
+      const content = `0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nLAYER1\n0\nENDSEC\n0\nEOF\n`;
+      const file = new File([content], 'test.dxf');
+      
+      const result = await processor.process(file);
+      expect(result.statistics.errors).toHaveLength(1);
+      expect(result.statistics.errors[0].type).toBe('invalid_entity');
+    });
+
+    test('should handle LWPOLYLINE with invalid vertices', async () => {
+      const content = `0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nLAYER1\n10\n1\n20\nNaN\n0\nENDSEC\n0\nEOF\n`;
+      const file = new File([content], 'test.dxf');
+      
+      const result = await processor.process(file);
+      expect(result.statistics.errors).toHaveLength(1);
+      expect(result.statistics.errors[0].type).toBe('invalid_coordinates');
+    });
+
+    test('should handle LWPOLYLINE with insufficient vertices', async () => {
+      const content = `0\nSECTION\n2\nENTITIES\n0\nLWPOLYLINE\n8\nLAYER1\n10\n1\n20\n2\n0\nENDSEC\n0\nEOF\n`;
+      const file = new File([content], 'test.dxf');
+      
+      const result = await processor.process(file);
+      expect(result.statistics.errors).toHaveLength(1);
+      expect(result.statistics.errors[0].type).toBe('insufficient_vertices');
+    });
+
     test('should convert POINT entities', async () => {
       const content = `0\nSECTION\n2\nENTITIES\n0\nPOINT\n10\n1\n20\n2\n0\nENDSEC\n0\nEOF\n`;
       const file = new File([content], 'test.dxf');

@@ -25,8 +25,19 @@ export async function middleware(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
-      request,
-      response: NextResponse.next(),
+      cookies: {
+        get: (name: string) => request.cookies.get(name)?.value || '',
+        set: (name: string, value: string, options: any) => {
+          const response = NextResponse.next();
+          response.cookies.set(name, value, options);
+          return response;
+        },
+        remove: (name: string, options: any) => {
+          const response = NextResponse.next();
+          response.cookies.delete(name, options);
+          return response;
+        },
+      },
     }
   );
 
@@ -51,7 +62,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Match routes explicitly listed or all dynamic routes excluding static assets
     "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|css|js|map)$).*)",
   ],
 };

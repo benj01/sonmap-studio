@@ -32,6 +32,7 @@ function isDxfStructure(value: unknown): value is DxfStructure {
   const structure = value as Record<string, unknown>;
   return Array.isArray(structure.layers) &&
          Array.isArray(structure.blocks) &&
+         Array.isArray(structure.entities) &&
          Array.isArray(structure.entityTypes) &&
          (structure.units === undefined || typeof structure.units === 'string') &&
          (structure.extents === undefined || isObject(structure.extents));
@@ -129,6 +130,25 @@ export function validateStructure(structure: unknown): ValidationIssue[] {
           message: `Invalid entity type: ${type}`,
           path: ['entityTypes', index.toString()]
         });
+      }
+    });
+  }
+
+  // Validate entities
+  if (!Array.isArray(dxfStructure.entities)) {
+    issues.push({
+      type: 'INVALID_ENTITIES',
+      message: 'Entities must be an array',
+      path: ['entities']
+    });
+  } else {
+    dxfStructure.entities.forEach((entity, index) => {
+      const entityIssues = validateEntityData(entity.type, entity.data);
+      if (entityIssues.length > 0) {
+        issues.push(...entityIssues.map(issue => ({
+          ...issue,
+          path: ['entities', index.toString(), ...(issue.path || [])]
+        })));
       }
     });
   }

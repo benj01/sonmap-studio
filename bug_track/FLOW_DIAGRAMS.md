@@ -58,104 +58,88 @@ Status: Current
 File Selection ──> GeoImportDialog ──────────────────────────────────┐
                          │                                           │
                          v                                           v
-                   DxfProcessor ─────> analyzeStructure ────> ErrorReporter [!]
-                         │                    │
-                         v                    v
-                  EntityParser [!]     calculateRawBounds [✓]
-                         │                    │
-                         v                    v
-                parseEntities [!] ────> detectCoordSystem [!]
-                         │                    │
-                         v                    v
-            convertToFeatures [!] ────> CoordSystemManager [!]
-                    │                    │
-                    v                    v
-            validateGeometry [!] ──> transformCoords [!]
-                    │                    │
-                    v                    v
-            FeatureManager [!] ──> PreviewManager [!]
-                    │                    │
-                    v                    v
-          categorizeFeatures [!] ─> PreviewMap [!]
-                    │
-                    v
-             [Generated Features]
+                   DxfProcessor ─────────────────────────> ErrorReporter
+                         │
+                         ├─────────────┬──────────────┬─────────────┐
+                         │             │              │             │
+                         v             v              v             v
+                   DxfAnalyzer   DxfTransformer  DxfEntityProc  DxfLayerProc
+                         │             │              │             │
+                         v             v              v             v
+              Detect Coords    Transform Coords    Process      Handle Layers
+                   │                  │           Entities          │
+                   └──────────┬──────┘              │             │
+                             v                       v             │
+                    Coordinate System         Generate Features    │
+                          Manager                    │             │
+                             │                       v             │
+                             └───────────> PreviewManager <───────┘
+                                               │
+                                               v
+                                          PreviewMap
 
-[!] Current issues:
-1. Browser compatibility implementation incomplete
-2. Dynamic import system needs validation
-3. Type safety improvements needed throughout chain
-4. Parser initialization issues being addressed
-5. Coordinate system detection timing needs fixing
-6. Feature validation dropping valid features
-7. Preview manager needs coordinate system context
-8. Layer data not propagating correctly
-9. Multiple validation points causing silent failures
-
-[✓] Fixed components:
-1. Basic file structure analysis
-2. Raw coordinate bounds calculation
-3. Initial error reporting structure
+Key:
+[✓] Fixed/Improved components:
+1. DxfAnalyzer: Coordinate system detection and bounds calculation
+2. DxfTransformer: Coordinate transformations between systems
+3. DxfEntityProcessor: Entity validation and feature conversion
+4. DxfLayerProcessor: Layer management and validation
+5. Error handling and logging throughout chain
 
 [In Progress]:
-1. Browser compatibility implementation
-2. Dynamic import system validation
-3. Type safety improvements
-4. Error handling enhancements
-5. Coordinate system detection
-6. Feature validation chain
-7. Preview generation system
+1. Comprehensive module testing
+2. Performance optimization
+3. Documentation updates
 ```
 
-### DXF Parser Module Structure
+### DXF Module Structure (New)
 Last Updated: [Current Date]
 Status: Current
 
 ```
-DxfParser (parser.ts)
+DxfProcessor (dxf-processor.ts)
        │
        ├─────────────┬─────────────┬──────────────┬───────────────┐
        │             │             │              │               │
-header-parser.ts  layer-parser.ts  block-parser.ts  entity-parser.ts  regex-patterns.ts
+  DxfAnalyzer  DxfTransformer  DxfEntityProc  DxfLayerProc  DxfParserWrapper
        │             │             │              │               │
        v             v             v              v               v
-Header Section   Layer Section   Block Section  Entity Section  Shared Utilities
-Parsing          Parsing         Parsing        Parsing         & Patterns
-       │             │             │              │               │
+Coordinate     Coordinate      Entity          Layer           Parser
+Detection    Transformation  Processing      Management      Integration
        │             │             │              │               │
        └─────────────┴─────────────┴──────────────┴───────────────┘
                                   │
                                   v
-                        structure-validator.ts
-                                  │
-                                  v
-                          Validated Structure
+                            index.ts exports
 ```
 
 Key Points:
 1. Module Organization:
-   - Each parser focused on specific DXF section
-   - Shared regex patterns and utilities working correctly
-   - Centralized validation needs TypeScript fixes
-   - Clear module boundaries but validation chain incomplete
+   - Each module has a single responsibility
+   - Clear interfaces between modules
+   - Centralized error handling
+   - Improved testability
 
 2. Data Flow:
-   - File content cleaned and normalized
-   - Each section parsed independently
-   - Results validated centrally but failing
-   - Structure assembled but features dropped
+   - File content parsed by DxfParserWrapper
+   - Coordinates analyzed by DxfAnalyzer
+   - Transformations handled by DxfTransformer
+   - Entities processed by DxfEntityProcessor
+   - Layers managed by DxfLayerProcessor
 
 3. Error Handling:
-   - Each parser handles section-specific errors
-   - Validation at module boundaries needs fixing
-   - Error context preserved throughout
-   - Clear error propagation chain needed
+   - Each module handles its specific errors
+   - Error context preserved throughout chain
+   - Centralized error reporting
+   - Clear error propagation
 
 Notes:
-- Each parser module is self-contained
-- Regex patterns working correctly
-- Validation needs TypeScript fixes
-- Error handling needs improvement in validation chain
+- Each module is independently testable
+- Clear separation of concerns
+- Improved maintainability
+- Better error context preservation
+
+
 
 ### Feature Conversion Flow
 Last Updated: [Current Date]
