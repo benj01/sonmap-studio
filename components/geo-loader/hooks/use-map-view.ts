@@ -235,7 +235,7 @@ export function useMapView(
     setViewState(evt.viewState as ViewState);
   }, []);
 
-  const getViewportBounds = useCallback((): BBox | undefined => {
+  const getViewportBounds = useCallback((): [number, number, number, number] | undefined => {
     if (!viewState) return undefined;
 
     const { longitude, latitude, zoom } = viewState;
@@ -244,13 +244,16 @@ export function useMapView(
     const latRange = 360 / Math.pow(2, zoom + 1);
     const lonRange = 360 / Math.pow(2, zoom);
     
-    return [
+    // Ensure we return exactly 4 numbers for 2D bounds
+    const bounds: [number, number, number, number] = [
       longitude - lonRange / 2,  // minLon
       latitude - latRange / 2,   // minLat
       longitude + lonRange / 2,  // maxLon
       latitude + latRange / 2    // maxLat
     ];
-  }, [viewState]);
+    
+    return bounds;
+  }, [viewState.longitude, viewState.latitude, viewState.zoom]); // Only depend on needed values
 
   // Initialize view when bounds change
   useEffect(() => {

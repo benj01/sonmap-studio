@@ -23,6 +23,9 @@ export class DxfEntityProcessor {
     if (!('attributes' in entity) || !entity.attributes) {
       console.log('[DEBUG] Adding default attributes to entity');
       entity.attributes = { layer: '0' };
+    } else if (!entity.attributes.layer) {
+      console.log('[DEBUG] Adding default layer to entity attributes');
+      entity.attributes.layer = '0';
     }
 
     if (!('data' in entity) || !entity.data) {
@@ -64,6 +67,7 @@ export class DxfEntityProcessor {
       type: entity.type,
       hasAttributes: 'attributes' in entity,
       hasData: 'data' in entity,
+      layer: entity.attributes.layer,
       dataKeys: entity.data ? Object.keys(entity.data) : [],
       vertexCount: entity.type === 'LWPOLYLINE' ? entity.data.vertices?.length : undefined
     });
@@ -90,6 +94,7 @@ export class DxfEntityProcessor {
         type: entity.type,
         hasVertices: 'vertices' in entity.data,
         vertexCount: Array.isArray(entity.data.vertices) ? entity.data.vertices.length : 0,
+        layer: entity.attributes.layer,
         attributes: entity.attributes,
         dataKeys: Object.keys(entity.data)
       });
@@ -105,6 +110,8 @@ export class DxfEntityProcessor {
               },
               properties: {
                 type: entity.type,
+                layer: entity.attributes.layer || '0',
+                entityType: entity.type,
                 ...entity.attributes
               }
             };
@@ -125,6 +132,8 @@ export class DxfEntityProcessor {
               },
               properties: {
                 type: entity.type,
+                layer: entity.attributes.layer || '0',
+                entityType: entity.type,
                 ...entity.attributes
               }
             };
@@ -155,6 +164,8 @@ export class DxfEntityProcessor {
                   },
                   properties: {
                     type: entity.type,
+                    layer: entity.attributes.layer || '0',
+                    entityType: entity.type,
                     ...entity.attributes
                   }
                 };
@@ -167,6 +178,8 @@ export class DxfEntityProcessor {
                   },
                   properties: {
                     type: entity.type,
+                    layer: entity.attributes.layer || '0',
+                    entityType: entity.type,
                     ...entity.attributes
                   }
                 };
@@ -196,6 +209,8 @@ export class DxfEntityProcessor {
               },
               properties: {
                 type: entity.type,
+                layer: entity.attributes.layer || '0',
+                entityType: entity.type,
                 ...entity.attributes
               }
             };
@@ -228,6 +243,8 @@ export class DxfEntityProcessor {
               },
               properties: {
                 type: entity.type,
+                layer: entity.attributes.layer || '0',
+                entityType: entity.type,
                 ...entity.attributes
               }
             };
@@ -247,6 +264,8 @@ export class DxfEntityProcessor {
               },
               properties: {
                 type: entity.type,
+                layer: entity.attributes.layer || '0',
+                entityType: entity.type,
                 text: entity.data.text,
                 height: entity.data.height,
                 rotation: entity.data.rotation,
@@ -273,10 +292,13 @@ export class DxfEntityProcessor {
       .map(entity => this.entityToFeature(entity))
       .filter((feature): feature is Feature => feature !== null);
 
+    // Log unique layers for debugging
+    const layers = new Set(features.map(f => f.properties?.layer));
     console.log('[DEBUG] Conversion complete:', {
       input: entities.length,
       output: features.length,
-      types: Array.from(new Set(features.map(f => f.geometry.type)))
+      types: Array.from(new Set(features.map(f => f.geometry.type))),
+      layers: Array.from(layers)
     });
 
     return features;

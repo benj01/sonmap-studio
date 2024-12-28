@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from 'components/ui/dialog';
 import { GeoImportDialogProps } from './types';
 import { ImportHeader } from './components/import-header';
@@ -9,6 +9,7 @@ import { useFileAnalysis } from './hooks/use-file-analysis';
 import { useCoordinateSystem } from './hooks/use-coordinate-system';
 import { useImportProcess } from './hooks/use-import-process';
 import { useProcessor } from './hooks/use-processor';
+import { AnalyzeResult } from '../../core/processors/base/types';
 
 // Progress phases with descriptions
 const PROGRESS_PHASES = {
@@ -149,11 +150,14 @@ export function GeoImportDialog({
     getProcessor
   });
 
-  // Initialize coordinate system when analysis completes
+  // Initialize coordinate system once when analysis first completes
+  const analysisRef = useRef<AnalyzeResult | null>(null);
   useEffect(() => {
-    if (analysis?.coordinateSystem) {
-      console.log('Initializing coordinate system from analysis:', analysis.coordinateSystem);
+    // Only initialize if this is the first time we get analysis
+    if (analysis?.coordinateSystem && analysis !== analysisRef.current) {
+      console.debug('Initializing coordinate system from analysis:', analysis.coordinateSystem);
       initializeCoordinateSystem(analysis.coordinateSystem);
+      analysisRef.current = analysis;
     }
   }, [analysis, initializeCoordinateSystem]);
 

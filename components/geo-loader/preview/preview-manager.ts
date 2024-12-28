@@ -1,4 +1,3 @@
-
 import { Feature, FeatureCollection, Point, GeoJsonProperties } from 'geojson';
 import { FeatureManager } from '../core/feature-manager';
 import { cacheManager } from '../core/cache-manager';
@@ -8,7 +7,6 @@ import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
 import { calculateFeatureBounds, Bounds } from '../core/feature-manager/bounds';
 import { GeoFeature } from '../../../types/geo';
-
 
 export interface PreviewOptions {
   /** Maximum number of features to include in preview */
@@ -30,6 +28,13 @@ export interface PreviewOptions {
   analysis?: {
     warnings: Array<{ type: string; message: string; }>;
   };
+  /** Initial bounds for preview */
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  } | null;
 }
 
 export interface PreviewResult {
@@ -61,6 +66,14 @@ export class PreviewManager {
   private readonly BOUNDS_PADDING = 0.1; // 10% padding
 
   private ensureValidBounds(bounds: Bounds | null): Required<Bounds> {
+    // Use initial bounds if provided and valid
+    if (this.options.bounds && 
+        isFinite(this.options.bounds.minX) && isFinite(this.options.bounds.minY) &&
+        isFinite(this.options.bounds.maxX) && isFinite(this.options.bounds.maxY)) {
+      console.debug('[DEBUG] Using initial bounds:', this.options.bounds);
+      return this.options.bounds;
+    }
+
     // Check if bounds are valid
     if (!bounds || 
         !isFinite(bounds.minX) || !isFinite(bounds.minY) ||
@@ -87,6 +100,13 @@ export class PreviewManager {
 
   private featureManager: FeatureManager;
   private options: Required<PreviewOptions>;
+  private collectionsCache: {
+    points: Feature[];
+    lines: Feature[];
+    polygons: Feature[];
+    totalCount: number;
+    visibleCount: number;
+  } | null = null;
 
   constructor(options: PreviewOptions = {}) {
     this.options = {
@@ -96,13 +116,23 @@ export class PreviewManager {
       coordinateSystem: options.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
       enableCaching: options.enableCaching ?? true,
       smartSampling: options.smartSampling ?? true,
-      analysis: options.analysis || { warnings: [] }
+      analysis: options.analysis || { warnings: [] },
+      bounds: options.bounds || null
     };
+
+    // Log initial bounds if provided
+    if (options.bounds) {
+      console.debug('[DEBUG] Initial bounds provided:', options.bounds);
+    }
 
     this.featureManager = new FeatureManager({
       chunkSize: Math.ceil(this.options.maxFeatures / 10), // Split into ~10 chunks
       maxMemoryMB: 256 // Lower memory limit for preview
     });
+  }
+
+  private invalidateCache() {
+    this.collectionsCache = null;
   }
 
   /**
@@ -124,7 +154,7 @@ export class PreviewManager {
     const layers = new Set<string>();
     let featureCount = 0;
     let previewCount = 0;
-    let bounds: Bounds | null = null;
+    let bounds: Bounds | null = this.options.bounds;
 
     try {
       for await (const feature of stream) {
@@ -145,18 +175,20 @@ export class PreviewManager {
           continue;
         }
 
-        // Update bounds
-        const featureBounds = calculateFeatureBounds(feature);
-        if (featureBounds) {
-          if (!bounds) {
-            bounds = featureBounds;
-          } else {
-            bounds = {
-              minX: Math.min(bounds.minX, featureBounds.minX),
-              minY: Math.min(bounds.minY, featureBounds.minY),
-              maxX: Math.max(bounds.maxX, featureBounds.maxX),
-              maxY: Math.max(bounds.maxY, featureBounds.maxY)
-            };
+        // Update bounds if no initial bounds provided
+        if (!this.options.bounds) {
+          const featureBounds = calculateFeatureBounds(feature);
+          if (featureBounds) {
+            if (!bounds) {
+              bounds = featureBounds;
+            } else {
+              bounds = {
+                minX: Math.min(bounds.minX, featureBounds.minX),
+                minY: Math.min(bounds.minY, featureBounds.minY),
+                maxX: Math.max(bounds.maxX, featureBounds.maxX),
+                maxY: Math.max(bounds.maxY, featureBounds.maxY)
+              };
+            }
           }
         }
 
@@ -280,7 +312,7 @@ export class PreviewManager {
 
     try {
       const transformedFeatures: Feature[] = [];
-      let bounds: Bounds | null = null;
+      let bounds: Bounds | null = this.options.bounds;
 
       for (const feature of preview.features.features) {
         let transformedFeature: GeoFeature;
@@ -333,18 +365,20 @@ export class PreviewManager {
 
         transformedFeatures.push(transformedFeature);
 
-        // Update bounds
-        const featureBounds = calculateFeatureBounds(transformedFeature);
-        if (featureBounds) {
-          if (!bounds) {
-            bounds = featureBounds;
-          } else {
-            bounds = {
-              minX: Math.min(bounds.minX, featureBounds.minX),
-              minY: Math.min(bounds.minY, featureBounds.minY),
-              maxX: Math.max(bounds.maxX, featureBounds.maxX),
-              maxY: Math.max(bounds.maxY, featureBounds.maxY)
-            };
+        // Update bounds if no initial bounds provided
+        if (!this.options.bounds) {
+          const featureBounds = calculateFeatureBounds(transformedFeature);
+          if (featureBounds) {
+            if (!bounds) {
+              bounds = featureBounds;
+            } else {
+              bounds = {
+                minX: Math.min(bounds.minX, featureBounds.minX),
+                minY: Math.min(bounds.minY, featureBounds.minY),
+                maxX: Math.max(bounds.maxX, featureBounds.maxX),
+                maxY: Math.max(bounds.maxY, featureBounds.maxY)
+              };
+            }
           }
         }
       }
@@ -380,10 +414,19 @@ export class PreviewManager {
    * Update preview options
    */
   public setOptions(options: Partial<PreviewOptions>): void {
+    const visibleLayersChanged = 
+      options.visibleLayers && 
+      JSON.stringify(options.visibleLayers) !== JSON.stringify(this.options.visibleLayers);
+
     this.options = {
       ...this.options,
       ...options
     };
+
+    // Only invalidate cache if visible layers changed
+    if (visibleLayersChanged) {
+      this.invalidateCache();
+    }
   }
 
   /**
@@ -398,6 +441,7 @@ export class PreviewManager {
    */
   public setFeatures(features: Feature[] | FeatureCollection) {
     this.featureManager.clear();
+    this.invalidateCache();
     
     const featureArray = Array.isArray(features) 
       ? features 
@@ -437,17 +481,51 @@ export class PreviewManager {
    * Get preview collections separated by geometry type
    */
   public async getPreviewCollections() {
+    // Return cached collections if available and layers haven't changed
+    if (this.collectionsCache) {
+      return {
+        points: {
+          type: 'FeatureCollection' as const,
+          features: this.collectionsCache.points
+        },
+        lines: {
+          type: 'FeatureCollection' as const,
+          features: this.collectionsCache.lines
+        },
+        polygons: {
+          type: 'FeatureCollection' as const,
+          features: this.collectionsCache.polygons
+        },
+        totalCount: this.collectionsCache.totalCount,
+        visibleCount: this.collectionsCache.visibleCount
+      };
+    }
+
+    // Calculate collections
     const points: Feature[] = [];
     const lines: Feature[] = [];
     const polygons: Feature[] = [];
     let totalCount = 0;
+    let visibleCount = 0;
 
     for await (const feature of this.featureManager.getFeatures()) {
       totalCount++;
-      console.log('[DEBUG] Categorizing feature:', {
+      
+      // Apply layer visibility filtering
+      const layer = feature.properties?.layer || '';
+      const isVisible = this.options.visibleLayers.length === 0 || 
+                       this.options.visibleLayers.includes(layer);
+      
+      if (!isVisible) {
+        continue;
+      }
+
+      visibleCount++;
+      console.debug('[DEBUG] Categorizing feature:', {
         geometryType: feature.geometry.type,
         entityType: feature.properties?.entityType,
-        properties: feature.properties
+        properties: feature.properties,
+        layer
       });
 
       switch (feature.geometry.type) {
@@ -467,12 +545,21 @@ export class PreviewManager {
       }
     }
 
-    console.log('[DEBUG] Preview collections:', {
+    console.debug('[DEBUG] Preview collections:', {
       points: points.length,
       lines: lines.length,
       polygons: polygons.length,
       total: totalCount
     });
+
+    // Cache the results
+    this.collectionsCache = {
+      points,
+      lines,
+      polygons,
+      totalCount,
+      visibleCount: points.length + lines.length + polygons.length
+    };
 
     return {
       points: {
@@ -488,7 +575,7 @@ export class PreviewManager {
         features: polygons
       },
       totalCount,
-      visibleCount: points.length + lines.length + polygons.length
+      visibleCount: this.collectionsCache.visibleCount
     };
   }
 

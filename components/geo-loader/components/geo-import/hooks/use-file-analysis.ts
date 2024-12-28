@@ -152,15 +152,23 @@ export function useFileAnalysis({
   }, []);
 
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
-    console.log('[DEBUG] Toggle layer visibility:', layer, visible);
+    console.debug('[DEBUG] Toggle layer visibility:', layer, visible);
     setState(prev => {
       const newVisibleLayers = visible
         ? [...prev.visibleLayers, layer]
         : prev.visibleLayers.filter(l => l !== layer);
       
-      // Update preview manager visibility using setOptions
+      // Update existing preview manager options instead of creating new instance
       if (prev.previewManager) {
-        prev.previewManager.setOptions({ visibleLayers: newVisibleLayers });
+        prev.previewManager.setOptions({
+          visibleLayers: newVisibleLayers,
+          // Keep other options unchanged
+          maxFeatures: prev.previewManager.getOptions().maxFeatures,
+          analysis: prev.previewManager.getOptions().analysis,
+          coordinateSystem: prev.previewManager.getOptions().coordinateSystem,
+          enableCaching: prev.previewManager.getOptions().enableCaching,
+          smartSampling: prev.previewManager.getOptions().smartSampling
+        });
       }
 
       return {

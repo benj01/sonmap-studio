@@ -50,7 +50,7 @@ Notes:
 
 ## Current Flows
 
-### DXF Import Flow
+### DXF Import and Processing Flow (Updated)
 Last Updated: [Current Date]
 Status: Current
 
@@ -68,6 +68,10 @@ File Selection ──> GeoImportDialog ─────────────�
                          v             v              v             v
               Detect Coords    Transform Coords    Process      Handle Layers
                    │                  │           Entities          │
+                   │                  │              │             │
+                   v                  │              │             v
+             Calculate Bounds         │              │        Filter Layers
+                   │                  │              │        (Skip System)
                    └──────────┬──────┘              │             │
                              v                       v             │
                     Coordinate System         Generate Features    │
@@ -78,68 +82,84 @@ File Selection ──> GeoImportDialog ─────────────�
                                                v
                                           PreviewMap
 
-Key:
-[✓] Fixed/Improved components:
-1. DxfAnalyzer: Coordinate system detection and bounds calculation
-2. DxfTransformer: Coordinate transformations between systems
-3. DxfEntityProcessor: Entity validation and feature conversion
-4. DxfLayerProcessor: Layer management and validation
-5. Error handling and logging throughout chain
+Key Points:
+1. Layer Management:
+   - System properties filtered out
+   - Consistent layer handling
+   - Proper state tracking
+   - Improved validation
 
-[In Progress]:
-1. Comprehensive module testing
-2. Performance optimization
-3. Documentation updates
+2. State Management:
+   - Centralized state handling
+   - Proper cleanup
+   - Type-safe operations
+   - Better error context
+
+3. Error Handling:
+   - Validation at each step
+   - Clear error propagation
+   - Proper error context
+   - Better debugging info
+
+Notes:
+- Layer filtering happens early
+- State consistency maintained
+- Better error reporting
 ```
 
-### DXF Module Structure (New)
+### Layer State Management Flow (New)
 Last Updated: [Current Date]
 Status: Current
 
 ```
-DxfProcessor (dxf-processor.ts)
-       │
-       ├─────────────┬─────────────┬──────────────┬───────────────┐
-       │             │             │              │               │
-  DxfAnalyzer  DxfTransformer  DxfEntityProc  DxfLayerProc  DxfParserWrapper
-       │             │             │              │               │
-       v             v             v              v               v
-Coordinate     Coordinate      Entity          Layer           Parser
-Detection    Transformation  Processing      Management      Integration
-       │             │             │              │               │
-       └─────────────┴─────────────┴──────────────┴───────────────┘
-                                  │
-                                  v
-                            index.ts exports
-```
+DXF Structure ──────> Extract Layer Data ──────> Filter System Props
+       │                      │                        │
+       v                      v                        v
+  Entity Data          Validate Layers          Create Layer Set
+       │                      │                        │
+       v                      v                        v
+Extract Layers    Convert to DxfLayer     Add Default Layer ('0')
+       │                      │                        │
+       v                      v                        v
+Validate Names      Update Layer Cache     Track Layer States
+       │                      │                        │
+       └──────────────┬──────┘                        │
+                      v                                │
+              Layer Manager <───────────────────────────┘
+                      │
+                      ├─────────────┬──────────────┐
+                      │             │              │
+                      v             v              v
+             Preview Manager  State Updates   Error Context
+                      │             │              │
+                      v             v              v
+            Layer Controls    Statistics     Error Reporter
 
 Key Points:
-1. Module Organization:
-   - Each module has a single responsibility
-   - Clear interfaces between modules
-   - Centralized error handling
-   - Improved testability
+1. Early Filtering:
+   - System properties removed at extraction
+   - Consistent filtering across flows
+   - Default layer handling
+   - Proper validation
 
-2. Data Flow:
-   - File content parsed by DxfParserWrapper
-   - Coordinates analyzed by DxfAnalyzer
-   - Transformations handled by DxfTransformer
-   - Entities processed by DxfEntityProcessor
-   - Layers managed by DxfLayerProcessor
+2. State Tracking:
+   - Layer cache management
+   - State synchronization
+   - Statistics updates
+   - Error propagation
 
 3. Error Handling:
-   - Each module handles its specific errors
-   - Error context preserved throughout chain
-   - Centralized error reporting
-   - Clear error propagation
+   - Validation at each step
+   - Clear error messages
+   - Context preservation
+   - Debug information
 
 Notes:
-- Each module is independently testable
-- Clear separation of concerns
-- Improved maintainability
-- Better error context preservation
-
-
+- System properties never reach UI
+- Layer state always consistent
+- Better error reporting
+- Improved debugging
+```
 
 ### Feature Conversion Flow
 Last Updated: [Current Date]
@@ -209,7 +229,6 @@ No File Loaded     Validation Check      Progress Updates
                          │            Detection/Selection
                          v
                    Import Complete
-```
 
 Key Points:
 1. State Transitions:

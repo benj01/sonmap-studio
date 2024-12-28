@@ -2,7 +2,33 @@
 
 ## Current Version
 
-### v0.4.5
+### v0.4.6 (In Progress)
+- Performance and stability improvements
+  - Fixed DXF layer handling:
+    - Added system layer filtering
+    - Improved layer state management
+    - Enhanced layer validation
+    - Fixed layer visibility toggle behavior
+    - Ensured consistent state between UI and preview
+  - Fixed DXF bounds calculation:
+    - Added missing calculateBounds implementation
+    - Improved state management for entities
+    - Enhanced coordinate system handling
+    - Added proper type safety
+    - Fixed bounds calculation for empty states
+  - Fixed infinite loop in DXF preview:
+    - Optimized viewport polygon calculation
+    - Increased debounce time to 250ms
+    - Added proper cleanup for preview manager
+    - Enhanced type safety with React.ReactElement
+  - General improvements:
+    - Better state isolation between components
+    - More efficient preview collection updates
+    - Improved error context preservation
+    - Enhanced type safety throughout
+    - Better cleanup in useEffect hooks
+
+### v0.4.5 (Released)
 - Complete DXF Processor Modularization
   - Split monolithic processor into focused modules:
     - DxfAnalyzer: Coordinate system detection and bounds
@@ -17,7 +43,7 @@
   - Added comprehensive module documentation
   - Created centralized exports in index.ts
   - Fixed entity conversion flow:
-    - Corrected entity conversion process in DxfParserWrapper
+    - Corrected entity conversion process
     - Added proper parse options handling
     - Improved entity processing chain
     - Enhanced error context preservation

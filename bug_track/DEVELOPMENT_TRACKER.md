@@ -3,21 +3,35 @@
 ## Current Status
 
 ### Active Issues
-1. DXF Import and Preview (In Progress)
-   - Root cause identified: Multiple issues in processing chain
-   - Coordinate system detection fixed with DxfAnalyzer module
-   - Type safety improved with focused modules
-   - Preview manager initialization fixed
-   - Next steps: Test with various coordinate systems
-   - See bug_track/active/dxf-coordinate-detection.md
+1. DXF Import Testing (In Progress)
+   - Comprehensive testing needed for recent improvements
+   - Performance testing with large files needed
+   - Stress testing for UI interactions required
+   - Error boundary implementation needed
+   - See bug_track/active/dxf-testing-implementation.md
 
-3. Preview Generation (In Progress)
-   - Issue: Preview manager initialization and feature handling
-   - Root cause addressed with modular architecture
-   - Features now converted with correct coordinate system
-   - Type safety improved with focused modules
-   - Next steps: Comprehensive testing
-   - See bug_track/active/dxf-preview-generation.md
+### Recently Resolved
+1. DXF Layer Handling (✓)
+   - Fixed system properties being treated as layers
+   - Improved layer state management
+   - Added centralized layer filtering
+   - Enhanced layer validation and logging
+   - See bug_track/resolved/dxf-layer-handling.md
+
+2. DXF Bounds Calculation (✓)
+   - Fixed missing calculateBounds implementation
+   - Improved state management for entities
+   - Enhanced coordinate system handling
+   - Added proper type safety
+   - See bug_track/resolved/dxf-bounds-calculation.md
+
+3. DXF Preview Infinite Loop (✓)
+   - Fixed viewport state dependencies
+   - Optimized preview update cycle
+   - Increased debounce time to 250ms
+   - Added proper cleanup handlers
+   - Enhanced type safety throughout
+   - See bug_track/resolved/dxf-preview-infinite-loop-2.md
 
 ### Required Actions
 1. Testing New Modular Structure
@@ -56,14 +70,50 @@
 - [x] Fix TypeScript type errors
 - [x] Code modularization complete
 - [x] Fix entity conversion flow
+- [x] Fix bounds calculation
+- [x] Fix layer handling
 - [ ] Complete module testing
 - [ ] Performance verification
 - [ ] Update documentation
 - [ ] Verify preview generation
 
+### Recent Improvements
+1. Layer Handling
+   - Centralized system layer definitions
+   - Consistent layer filtering across components
+   - Improved layer state management
+   - Better layer validation and error handling
+   - Enhanced layer-related logging
+
+2. State Management
+   - Proper entity and layer tracking
+   - Consistent state handling across components
+   - Improved statistics calculation
+   - Better error context preservation
+
 ## Version History
 
-### v0.4.5 (In Progress)
+### v0.4.6 (In Progress)
+- Performance and stability improvements
+  - Fixed DXF layer handling:
+    - Added system layer filtering
+    - Improved layer state management
+    - Enhanced layer validation
+  - Fixed DXF bounds calculation:
+    - Added missing calculateBounds implementation
+    - Improved state management
+    - Enhanced coordinate system handling
+  - Fixed infinite loop in DXF preview:
+    - Optimized viewport updates
+    - Added proper debouncing
+    - Improved cleanup handling
+  - General improvements:
+    - Enhanced type safety throughout
+    - Better state management
+    - More efficient updates
+    - Improved error handling
+
+### v0.4.5 (Released)
 - Complete DXF Processor Modularization ✓
   - Split into focused modules:
     - DxfAnalyzer: Coordinate system detection and bounds
@@ -75,8 +125,6 @@
   - Better type safety with clear module boundaries
   - Reduced main processor complexity
   - Improved testability with focused modules
-
-[Previous version history remains unchanged...]
 
 ## Known Issues
 
@@ -92,5 +140,3 @@
    - API documentation updates required
    - Example usage documentation needed
    - See bug_track/active/dxf-documentation.md
-
-[Rest of the file remains unchanged...]

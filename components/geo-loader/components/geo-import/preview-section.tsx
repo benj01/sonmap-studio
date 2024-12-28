@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PreviewSectionProps } from './types';
 import { PreviewMap } from '../preview-map';
 import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
@@ -30,11 +30,22 @@ export function PreviewSection({
   });
   const [isLoading, setIsLoading] = useState(true);
 
+  // Keep track of preview manager instance
+  const previewManagerRef = useRef(previewManager);
+  useEffect(() => {
+    previewManagerRef.current = previewManager;
+  }, [previewManager]);
+
+  // Load preview when preview manager or visible layers change
   useEffect(() => {
     async function loadPreview() {
+      if (!previewManagerRef.current) return;
+      
       setIsLoading(true);
+      console.debug('[DEBUG] Loading preview with visible layers:', visibleLayers);
       try {
-        const { points, lines, polygons } = await previewManager.getPreviewCollections();
+        // Only get collections if we have visible layers
+        const { points, lines, polygons } = await previewManagerRef.current.getPreviewCollections();
         
         // Combine all features into one collection for the map
         const combinedFeatures: FeatureCollection = {
@@ -46,10 +57,10 @@ export function PreviewSection({
           ]
         };
         
-        setPreview({
+        setPreview(prev => ({
           features: combinedFeatures as FeatureCollection,
-          bounds: bounds || { minX: 0, minY: 0, maxX: 0, maxY: 0 },
-          layers: visibleLayers || [],
+          bounds: bounds || prev.bounds,
+          layers: visibleLayers || prev.layers,
           statistics: {
             featureCount: combinedFeatures.features.length,
             layerCount: visibleLayers?.length || 0,
@@ -61,8 +72,8 @@ export function PreviewSection({
             failedTransformations: 0,
             errors: []
           },
-          coordinateSystem: coordinateSystem || COORDINATE_SYSTEMS.WGS84
-        });
+          coordinateSystem: coordinateSystem || prev.coordinateSystem
+        }));
       } catch (error) {
         console.error('Failed to load preview:', error);
       } finally {
@@ -71,7 +82,7 @@ export function PreviewSection({
     }
 
     loadPreview();
-  }, [previewManager]);
+  }, [previewManager, visibleLayers]); // Depend on both preview manager and visible layers changes
 
   return (
     <div className="border rounded-lg p-4">

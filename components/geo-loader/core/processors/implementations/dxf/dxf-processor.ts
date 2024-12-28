@@ -1,8 +1,9 @@
 import { Feature, FeatureCollection } from 'geojson';
 import { StreamProcessor } from '../../stream/stream-processor';
 import { AnalyzeResult, ProcessorResult } from '../../base/types';
-import { StreamProcessorResult } from '../../stream/types';
-import { DxfProcessorOptions, DxfParseOptions } from './types';
+import { CoordinateSystem } from '../../../../types/coordinates';
+import { StreamProcessorResult, StreamProcessorState } from '../../stream/types';
+import { DxfProcessorOptions, DxfParseOptions, DxfStructure, DxfEntity, DxfLayer } from './types';
 import { ValidationError } from '../../../errors/types';
 import { DxfParserWrapper } from './parsers/dxf-parser-wrapper';
 import { DxfAnalyzer } from './modules/analyzer';
@@ -17,10 +18,47 @@ import { createPreviewManager } from '../../../../preview/preview-manager';
  */
 export class DxfProcessor extends StreamProcessor {
   private parser: DxfParserWrapper;
+  protected state: StreamProcessorState & { features: DxfEntity[] };
 
   constructor(options: DxfProcessorOptions = {}) {
     super(options);
     this.parser = DxfParserWrapper.getInstance();
+    this.state = this.createDxfProcessorState();
+  }
+
+  /**
+   * Create initial state for DXF processor
+   */
+  private createDxfProcessorState(): StreamProcessorState & { features: DxfEntity[] } {
+    return {
+      isProcessing: false,
+      progress: 0,
+      featuresProcessed: 0,
+      chunksProcessed: 0,
+      statistics: {
+        featureCount: 0,
+        layerCount: 0,
+        featureTypes: {},
+        failedTransformations: 0,
+        errors: []
+      },
+      features: []
+    };
+  }
+
+  /**
+   * Get available layers from current state, excluding system properties
+   */
+  protected getLayers(): string[] {
+    const layerSet = new Set<string>();
+    this.state.features.forEach(entity => {
+      const layer = entity.attributes.layer || '0';
+      // Filter out system properties that might appear as layers
+      if (layer !== 'handle' && layer !== 'ownerHandle' && layer !== 'layers') {
+        layerSet.add(layer);
+      }
+    });
+    return Array.from(layerSet);
   }
 
   /**
@@ -51,37 +89,68 @@ export class DxfProcessor extends StreamProcessor {
       };
 
       // Parse DXF structure with options
-      const structure = await this.parser.parse(text, parseOptions);
+      const structure = await this.parser.parse(text, parseOptions) as DxfStructure;
       
-      // Get all entities from structure (already converted by parser)
-      const convertedEntities = [
+      // Get and store all entities from structure
+      this.state.features = [
         ...(structure.entities || []),
         ...structure.blocks.flatMap(block => block.entities || [])
       ];
       
       console.log('[DEBUG] Using converted entities:', {
-        total: convertedEntities.length,
-        types: Array.from(new Set(convertedEntities.map(e => e.type)))
+        total: this.state.features.length,
+        types: Array.from(new Set(this.state.features.map(e => e.type)))
       });
 
-      // Extract and process layers
-      const layerNames = DxfLayerProcessor.extractLayerNames(structure.tables?.layer || {});
-      console.log('[DEBUG] Found layers:', layerNames);
+      // Extract and process layers (excluding system properties)
+      const validLayerNames = new Set<string>();
+      
+      // Add layers from structure
+      structure.layers.forEach((layer: DxfLayer) => {
+        if (layer.name !== 'handle' && layer.name !== 'ownerHandle' && layer.name !== 'layers') {
+          validLayerNames.add(layer.name);
+        }
+      });
+      
+      // Add layers from entities
+      this.state.features.forEach((entity: DxfEntity) => {
+        const layer = entity.attributes.layer || '0';
+        if (layer !== 'handle' && layer !== 'ownerHandle' && layer !== 'layers') {
+          validLayerNames.add(layer);
+        }
+      });
+      
+      const layerNames = Array.from(validLayerNames);
+      console.log('[DEBUG] Found layers:', {
+        fromStructure: structure.layers
+          .filter((l: DxfLayer) => l.name !== 'handle' && l.name !== 'ownerHandle' && l.name !== 'layers')
+          .map((l: DxfLayer) => ({
+            name: l.name,
+            color: l.color,
+            lineType: l.lineType,
+            state: { frozen: l.frozen, locked: l.locked, off: l.off }
+          })),
+        fromEntities: Array.from(new Set(this.state.features
+          .map((e: DxfEntity) => e.attributes.layer)
+          .filter(layer => layer !== 'handle' && layer !== 'ownerHandle' && layer !== 'layers'))),
+        combined: layerNames
+      });
 
       // Calculate bounds from raw coordinates
-      const entityBounds = DxfAnalyzer.calculateBoundsFromEntities(convertedEntities);
-      const headerBounds = structure.header?.$EXTMIN && structure.header?.$EXTMAX ? {
-        minX: structure.header.$EXTMIN.x,
-        minY: structure.header.$EXTMIN.y,
-        maxX: structure.header.$EXTMAX.x,
-        maxY: structure.header.$EXTMAX.y
+      const entityBounds = DxfAnalyzer.calculateBoundsFromEntities(this.state.features);
+      const headerBounds = structure.extents ? {
+        minX: structure.extents.min[0],
+        minY: structure.extents.min[1],
+        maxX: structure.extents.max[0],
+        maxY: structure.extents.max[1]
       } : null;
       const rawBounds = headerBounds || entityBounds;
 
       // Detect coordinate system
       let detectedSystem = this.options.coordinateSystem;
       if (!detectedSystem && rawBounds) {
-        detectedSystem = DxfAnalyzer.detectCoordinateSystem(rawBounds, structure.header);
+        const system = DxfAnalyzer.detectCoordinateSystem(rawBounds, structure);
+        detectedSystem = system as CoordinateSystem;
         if (detectedSystem) {
           this.options.coordinateSystem = detectedSystem;
         }
@@ -94,24 +163,45 @@ export class DxfProcessor extends StreamProcessor {
 
       // Transform coordinates if needed
       let features: Feature[] = [];
+      let transformedBounds = entityBounds;
+      
       if (detectedSystem && detectedSystem !== 'EPSG:4326') {
         console.log('[DEBUG] Transforming coordinates from', detectedSystem, 'to WGS84');
+        
+        // Transform bounds first
+        if (entityBounds) {
+          transformedBounds = await DxfTransformer.transformBounds(
+            entityBounds,
+            detectedSystem,
+            'EPSG:4326'
+          );
+          console.log('[DEBUG] Transformed bounds:', {
+            original: entityBounds,
+            transformed: transformedBounds
+          });
+        }
+
+        // Then transform entities
         const transformedEntities = await DxfTransformer.transformEntities(
-          convertedEntities,
+          this.state.features,
           detectedSystem,
           'EPSG:4326'
         );
+        
+        // Update state with transformed entities
+        this.state.features = transformedEntities;
         features = DxfEntityProcessor.entitiesToFeatures(transformedEntities);
       } else {
-        features = DxfEntityProcessor.entitiesToFeatures(convertedEntities);
+        features = DxfEntityProcessor.entitiesToFeatures(this.state.features);
       }
 
-      // Create preview manager
+      // Create preview manager with transformed bounds
       const previewManager = createPreviewManager({
         maxFeatures: (this.options as DxfProcessorOptions).previewEntities || 1000,
         visibleLayers: layerNames,
-        coordinateSystem: detectedSystem,
+        coordinateSystem: 'EPSG:4326', // Always use WGS84 for preview
         enableCaching: true,
+        bounds: transformedBounds,
         analysis: {
           warnings: this.errorReporter.getWarnings().map(w => ({
             type: 'warning',
@@ -142,13 +232,10 @@ export class DxfProcessor extends StreamProcessor {
         ]
       };
 
-      // Calculate final bounds from features
-      const finalBounds = DxfAnalyzer.calculateBoundsFromEntities(convertedEntities);
-
       const analyzeResult: AnalyzeResult = {
         layers: layerNames,
-        coordinateSystem: detectedSystem,
-        bounds: finalBounds,
+        coordinateSystem: 'EPSG:4326', // Always return WGS84
+        bounds: transformedBounds,
         preview: previewFeatures,
         dxfData: structure
       };
@@ -158,8 +245,8 @@ export class DxfProcessor extends StreamProcessor {
         layers: layerNames.length,
         features: features.length,
         featureTypes: Array.from(new Set(features.map(f => f.geometry.type))),
-        coordinateSystem: detectedSystem,
-        hasBounds: !!finalBounds
+        coordinateSystem: 'EPSG:4326',
+        hasBounds: !!transformedBounds
       });
 
       return analyzeResult;
@@ -190,6 +277,16 @@ export class DxfProcessor extends StreamProcessor {
     return DxfEntityProcessor.entitiesToFeatures(entities);
   }
 
+  /**
+   * Calculate bounds for processor result
+   */
+  protected calculateBounds(): ProcessorResult['bounds'] {
+    if (this.state.features.length === 0) {
+      return DxfAnalyzer.getDefaultBounds(this.options.coordinateSystem);
+    }
+    return DxfAnalyzer.calculateBoundsFromEntities(this.state.features);
+  }
+
   protected async processStream(file: File): Promise<StreamProcessorResult> {
     try {
       // Configure parsing options
@@ -203,13 +300,38 @@ export class DxfProcessor extends StreamProcessor {
 
       // Process entire file at once since streaming isn't working well with DXF
       const text = await file.text();
-      const structure = await this.parser.parse(text, parseOptions);
-      const entities = structure.entities || [];
-      const features = DxfEntityProcessor.entitiesToFeatures(entities);
+      const structure = await this.parser.parse(text, parseOptions) as DxfStructure;
+      // Store all entities including blocks in state for bounds calculation
+      this.state.features = [
+        ...(structure.entities || []),
+        ...structure.blocks.flatMap(block => block.entities || [])
+      ];
+      
+      // Convert to GeoJSON features
+      const features = DxfEntityProcessor.entitiesToFeatures(this.state.features);
 
-      // Update statistics
+      // Update statistics and state
+      let validFeatureCount = 0;
       features.forEach(feature => {
-        this.updateStats(this.state.statistics, feature.geometry.type.toLowerCase());
+        // Only count features from valid layers
+        const layer = feature.properties?.layer || '0';
+        if (layer !== 'handle' && layer !== 'ownerHandle' && layer !== 'layers') {
+          validFeatureCount++;
+          this.updateStats(this.state.statistics, feature.geometry.type.toLowerCase());
+        }
+      });
+
+      // Update layer count in statistics
+      this.state.statistics.layerCount = Array.from(new Set(
+        this.state.features
+          .map(e => e.attributes.layer || '0')
+          .filter(layer => layer !== 'handle' && layer !== 'ownerHandle' && layer !== 'layers')
+      )).length;
+
+      console.log('[DEBUG] Processing complete:', {
+        totalFeatures: features.length,
+        validFeatures: validFeatureCount,
+        layerCount: this.state.statistics.layerCount
       });
 
       // Update progress

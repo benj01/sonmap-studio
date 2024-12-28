@@ -48,14 +48,15 @@ export function useCoordinateSystem({
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
     try {
-      // Only update state if it's a valid coordinate system
+      // Only update pending state if it's a valid coordinate system
       if (Object.values(COORDINATE_SYSTEMS).includes(value as CoordinateSystem)) {
-        console.log('Changing coordinate system to:', value);
+        console.log('Setting pending coordinate system to:', value);
         setState(prev => ({
           ...prev,
-          pendingCoordinateSystem: value as CoordinateSystem,
-          coordinateSystem: value as CoordinateSystem // Update both to avoid needing to apply
+          pendingCoordinateSystem: value as CoordinateSystem
         }));
+      } else {
+        console.warn('Invalid coordinate system:', value);
       }
     } catch (error: unknown) {
       console.warn('Coordinate system validation error:', error instanceof Error ? error.message : String(error));
@@ -124,10 +125,11 @@ export function useCoordinateSystem({
         }
       }
 
+      // Only update coordinateSystem after successful application
       setState(prev => ({
         loading: false,
         coordinateSystem: prev.pendingCoordinateSystem,
-        pendingCoordinateSystem: prev.pendingCoordinateSystem
+        pendingCoordinateSystem: undefined // Clear pending state
       }));
 
       console.log('Successfully applied coordinate system');
@@ -154,21 +156,24 @@ export function useCoordinateSystem({
 
   const initializeCoordinateSystem = useCallback((system?: CoordinateSystem) => {
     if (system && Object.values(COORDINATE_SYSTEMS).includes(system)) {
-      console.log('Initializing coordinate system:', system);
+      console.debug('Initializing coordinate system:', system);
       setState(prev => ({
         ...prev,
         coordinateSystem: system,
-        pendingCoordinateSystem: system
+        // Don't set pendingCoordinateSystem to avoid double update
+        pendingCoordinateSystem: prev.pendingCoordinateSystem || system
       }));
     } else {
-      console.log('Invalid coordinate system provided:', system);
+      console.warn('Invalid coordinate system provided:', system);
     }
   }, []);
 
-  // Log state changes
-  useEffect(() => {
-    console.log('Coordinate system state updated:', state);
-  }, [state]);
+  // Only log in development
+  if (process.env.NODE_ENV === 'development') {
+    useEffect(() => {
+      console.debug('Coordinate system state:', state);
+    }, [state]);
+  }
 
   return {
     ...state,

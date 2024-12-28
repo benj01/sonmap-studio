@@ -98,5 +98,5 @@ export interface UseMapViewResult {
   onMove: (evt: ViewStateChangeEvent) => void;
   updateViewFromBounds: (bounds: { minX: number; minY: number; maxX: number; maxY: number }) => Promise<void>;
   focusOnFeatures: (features: Feature[], padding?: number) => Promise<void>;
-  getViewportBounds: () => BBox | undefined;
+  getViewportBounds: () => [number, number, number, number] | undefined;
 }

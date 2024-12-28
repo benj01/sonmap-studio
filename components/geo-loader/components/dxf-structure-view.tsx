@@ -309,7 +309,7 @@ export function DxfStructureView({
   const handleToggleAllLayers = (visible: boolean) => {
     allLayers.forEach(layer => {
       if (!validationErrors[layer]) {
-        onLayerVisibilityToggle(layer, visible);
+        onLayerVisibilityToggle(layer, !visible); // Keep inverted to match individual switches
       }
     });
   };
@@ -332,7 +332,8 @@ export function DxfStructureView({
 
   // Check if all layers/entity types are visible/selected
   const allLayersVisible = allLayers.length > 0 && 
-    allLayers.every(layer => !validationErrors[layer] && visibleLayers.includes(layer));
+    allLayers.every(layer => !validationErrors[layer] && !visibleLayers.includes(layer)); // Keep inverted to match individual switches
+
   const allLayersSelected = allLayers.length > 0 && 
     allLayers.every(layer => !validationErrors[layer] && selectedLayers.includes(layer));
   const allEntityTypesSelected = allEntityTypes.length > 0 && 
@@ -385,7 +386,7 @@ export function DxfStructureView({
               <div className="flex items-center gap-1">
                 <Eye className="h-3 w-3" />
                 <Switch
-                  checked={allLayersVisible}
+                  checked={allLayersVisible} // Keep inverted to match individual switches
                   onCheckedChange={handleToggleAllLayers}
                   className="scale-75"
                 />
@@ -418,8 +419,8 @@ export function DxfStructureView({
                   <div className="flex items-center gap-1">
                     <Eye className="h-3 w-3" />
                     <Switch
-                      checked={visibleLayers.includes(layer.name)}
-                      onCheckedChange={(checked) => onLayerVisibilityToggle(layer.name, checked)}
+                      checked={!visibleLayers.includes(layer.name)} // Keep inverted
+                      onCheckedChange={(checked) => onLayerVisibilityToggle(layer.name, !checked)} // Keep inverted
                       className="scale-75"
                     />
                   </div>

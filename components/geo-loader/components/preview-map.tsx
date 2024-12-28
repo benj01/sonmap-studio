@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { Map, Source, Layer, AttributionControl, ViewStateChangeEvent, MapRef } from 'react-map-gl';
+import { Map, Source, Layer, AttributionControl, ViewStateChangeEvent, MapRef, MapMouseEvent } from 'react-map-gl';
 import { COORDINATE_SYSTEMS, isSwissSystem } from '../types/coordinates';
 import { layerStyles } from './map/map-layers';
 import { PreviewMapProps, ViewState, MapFeature, MapEvent, CacheStats, PreviewOptions } from '../types/map';
@@ -27,6 +27,7 @@ const VIEWPORT_PADDING = 50;
 const CLUSTER_RADIUS = 50;
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
 const CACHE_KEY_PREFIX = 'preview-map';
+const DEBOUNCE_TIME = 250; // Increased debounce time
 
 export function PreviewMap({
   preview,
@@ -35,7 +36,7 @@ export function PreviewMap({
   visibleLayers = [],
   selectedElement,
   analysis
-}: PreviewMapProps) {
+}: PreviewMapProps): React.ReactElement {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<MapFeature | null>(null);
@@ -63,7 +64,7 @@ export function PreviewMap({
       coordinateSystem,
       enableCaching: true,
       onProgress: (progress: number): void => setStreamProgress(progress * 100),
-      viewportBounds: getViewportBounds()
+      viewportBounds: getViewportBounds() as [number, number, number, number] | undefined
     };
 
     const pm = createPreviewManager(options);
@@ -112,6 +113,13 @@ export function PreviewMap({
 
     previewManagerRef.current = pm;
     setIsLoading(false);
+
+    // Cleanup preview manager on unmount or when options change
+    return () => {
+      if (previewManagerRef.current) {
+        previewManagerRef.current = null;
+      }
+    };
   }, [preview, visibleLayers, analysis, coordinateSystem, getViewportBounds]);
 
   // Initial zoom to bounds
@@ -160,7 +168,17 @@ export function PreviewMap({
 
   // Filter features by viewport if needed
   const viewportBounds = getViewportBounds();
-  const viewportPolygon = useMemo(() => viewportBounds ? bboxPolygon(viewportBounds) : null, [viewportBounds]);
+
+  // Memoize viewport polygon calculation with explicit bounds check
+  const viewportPolygon = useMemo(() => {
+    if (!viewportBounds || 
+        !Array.isArray(viewportBounds) || 
+        viewportBounds.length !== 4 ||
+        !viewportBounds.every(n => typeof n === 'number' && isFinite(n))) {
+      return null;
+    }
+    return bboxPolygon(viewportBounds);
+  }, [viewportBounds?.[0], viewportBounds?.[1], viewportBounds?.[2], viewportBounds?.[3]]);
 
   const [previewState, setPreviewState] = useState<{
     points: FeatureCollection;
@@ -176,16 +194,22 @@ export function PreviewMap({
     visibleCount: 0
   });
 
-  useEffect(() => {
-    async function updatePreviewCollections() {
-      if (!previewManagerRef.current) {
-        return;
-      }
+  // Debounced preview update function
+  const debouncedUpdatePreview = useCallback(async () => {
+    if (!previewManagerRef.current) return;
 
-      const collections = await previewManagerRef.current.getPreviewCollections();
-      
+    try {
+      const collections = await previewManagerRef.current?.getPreviewCollections();
+      if (!collections) return;
+
       // Try to get filtered features from cache first
-      const cacheKey = `${CACHE_KEY_PREFIX}:viewport:${viewportBounds?.join(',')}`;
+      const bounds2D = viewportBounds ? [
+        viewportBounds[0],
+        viewportBounds[1],
+        viewportBounds[2],
+        viewportBounds[3]
+      ] : undefined;
+      const cacheKey = `${CACHE_KEY_PREFIX}:viewport:${bounds2D?.join(',')}`;
       const cached = cacheManager.getCachedPreview(cacheKey, {
         viewportBounds,
         visibleLayers
@@ -241,7 +265,7 @@ export function PreviewMap({
           minY: viewportBounds[1],
           maxX: viewportBounds[2],
           maxY: viewportBounds[3]
-        } : preview.bounds,
+        } : preview?.bounds,
         layers: visibleLayers,
         featureCount: filteredVisibleCount,
         coordinateSystem
@@ -260,10 +284,32 @@ export function PreviewMap({
         misses: prev.misses + 1,
         hitRate: prev.hits / (prev.hits + prev.misses + 1)
       }));
+    } catch (error) {
+      console.error('Failed to update preview collections:', error);
     }
+  }, [viewportPolygon, viewportBounds, visibleLayers, preview?.bounds, coordinateSystem]);
+
+  // Effect to handle debounced preview updates
+  useEffect(() => {
+    let timeoutId: NodeJS.Timeout;
+    
+    const updatePreviewCollections = async () => {
+      // Clear any pending update
+      if (timeoutId) clearTimeout(timeoutId);
+      
+      // Schedule new update with increased debounce time
+      timeoutId = setTimeout(() => {
+        debouncedUpdatePreview();
+      }, DEBOUNCE_TIME);
+    };
 
     updatePreviewCollections();
-  }, [viewportPolygon, viewportBounds, visibleLayers, preview.bounds, coordinateSystem]);
+
+    // Cleanup timeout on unmount or deps change
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [debouncedUpdatePreview]);
 
   const { points, lines, polygons, totalCount, visibleCount } = previewState;
 
@@ -345,9 +391,18 @@ export function PreviewMap({
     return components;
   }, [points, lines, polygons]);
 
-  const handleMouseMove = useCallback((event: MapEvent) => {
-    const features = event.features || [];
-    setHoveredFeature(features[0]);
+  const handleMouseMove = useCallback((event: MapMouseEvent & { features?: Array<any> }) => {
+    if (event.features && event.features.length > 0) {
+      const feature = event.features[0];
+      setHoveredFeature({
+        type: 'Feature',
+        geometry: feature.geometry,
+        properties: feature.properties || {},
+        point: event.point ? [event.point.x, event.point.y] : undefined
+      });
+    } else {
+      setHoveredFeature(null);
+    }
     
     if (event.lngLat) {
       setMouseCoords({
