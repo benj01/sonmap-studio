@@ -65,7 +65,7 @@ export class DxfParserWrapper {
   /**
    * Parse DXF content and convert to our internal structure
    */
-  async parse(content: string): Promise<DxfStructure> {
+  async parse(content: string, options?: DxfParseOptions): Promise<DxfStructure> {
     await this.initializeParser();
     
     try {
@@ -73,8 +73,16 @@ export class DxfParserWrapper {
         throw new Error('Parser not properly initialized');
       }
 
-      // Parse DXF content
-      const parsedDxf = this.parser.parseSync(content);
+      // Configure parser options
+      const parseOptions = {
+        entityTypes: options?.entityTypes,
+        parseBlocks: options?.parseBlocks ?? true,
+        parseText: options?.parseText ?? true,
+        parseDimensions: options?.parseDimensions ?? true
+      };
+
+      // Parse DXF content with options
+      const parsedDxf = this.parser.parseSync(content, parseOptions);
       
       if (!parsedDxf || typeof parsedDxf !== 'object') {
         throw new Error('Parser returned invalid data');

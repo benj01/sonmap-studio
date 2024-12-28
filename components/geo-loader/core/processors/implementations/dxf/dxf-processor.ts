@@ -41,20 +41,26 @@ export class DxfProcessor extends StreamProcessor {
       const text = await file.text();
       console.log('[DEBUG] File content length:', text.length);
 
-      // Parse DXF structure
-      const structure = await this.parser.parse(text);
+      // Configure parsing options
+      const parseOptions: DxfParseOptions = {
+        entityTypes: (this.options as DxfProcessorOptions).entityTypes,
+        parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
+        parseText: (this.options as DxfProcessorOptions).importText,
+        parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
+        validate: (this.options as DxfProcessorOptions).validateGeometry
+      };
+
+      // Parse DXF structure with options
+      const structure = await this.parser.parse(text, parseOptions);
       
-      // Extract entities from structure
-      const allEntities = [
+      // Get all entities from structure (already converted by parser)
+      const convertedEntities = [
         ...(structure.entities || []),
         ...structure.blocks.flatMap(block => block.entities || [])
       ];
-
-      // Convert raw entities to our format
-      const convertedEntities = this.parser.convertEntities(allEntities);
-      console.log('[DEBUG] Converted raw entities:', {
-        input: allEntities.length,
-        output: convertedEntities.length,
+      
+      console.log('[DEBUG] Using converted entities:', {
+        total: convertedEntities.length,
         types: Array.from(new Set(convertedEntities.map(e => e.type)))
       });
 
@@ -197,8 +203,8 @@ export class DxfProcessor extends StreamProcessor {
 
       // Process entire file at once since streaming isn't working well with DXF
       const text = await file.text();
-      const structure = await this.parser.parse(text);
-      const entities = this.parser.convertEntities(structure.entities || []);
+      const structure = await this.parser.parse(text, parseOptions);
+      const entities = structure.entities || [];
       const features = DxfEntityProcessor.entitiesToFeatures(entities);
 
       // Update statistics
