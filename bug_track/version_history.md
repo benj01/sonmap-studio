@@ -16,6 +16,11 @@
   - Improved testability with focused modules
   - Added comprehensive module documentation
   - Created centralized exports in index.ts
+  - Fixed entity conversion flow:
+    - Corrected entity conversion process in DxfParserWrapper
+    - Added proper parse options handling
+    - Improved entity processing chain
+    - Enhanced error context preservation
 
 ## Earlier Versions
 

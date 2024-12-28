@@ -3,17 +3,7 @@
 ## Current Status
 
 ### Active Issues
-1. DXF Parser Integration (Resolved)
-   - Browser compatibility implementation complete
-   - Dynamic import system validated
-   - Webpack configuration tested
-   - Enhanced error handling and logging implemented
-   - Parser initialization issues resolved
-   - Type safety improvements completed
-   - Code modularized into focused components
-   - See bug_track/resolved/dxf-parser-integration.md
-
-2. DXF Import and Preview (In Progress)
+1. DXF Import and Preview (In Progress)
    - Root cause identified: Multiple issues in processing chain
    - Coordinate system detection fixed with DxfAnalyzer module
    - Type safety improved with focused modules
@@ -65,6 +55,7 @@
 - [x] Enhance debug logging
 - [x] Fix TypeScript type errors
 - [x] Code modularization complete
+- [x] Fix entity conversion flow
 - [ ] Complete module testing
 - [ ] Performance verification
 - [ ] Update documentation
