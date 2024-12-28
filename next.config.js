@@ -36,7 +36,7 @@ const nextConfig = {
   
   // Enable experimental features for better module support
   experimental: {
-    esmExternals: 'loose'
+    //esmExternals: 'loose'
   }
 };
 
