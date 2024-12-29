@@ -207,15 +207,10 @@ export function useFileAnalysis({
         allLayersVisible: newVisibleLayers.length === 0
       });
 
-      // Update preview manager with new visibility state
+      // Update preview manager with just the new visibility state
       if (prev.previewManager) {
         prev.previewManager.setOptions({
-          visibleLayers: newVisibleLayers,
-          maxFeatures: prev.previewManager.getOptions().maxFeatures,
-          analysis: prev.previewManager.getOptions().analysis,
-          coordinateSystem: prev.previewManager.getOptions().coordinateSystem,
-          enableCaching: prev.previewManager.getOptions().enableCaching,
-          smartSampling: prev.previewManager.getOptions().smartSampling
+          visibleLayers: newVisibleLayers
         });
       }
 

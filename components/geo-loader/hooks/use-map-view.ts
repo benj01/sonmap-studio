@@ -240,19 +240,30 @@ export function useMapView(
 
     const { longitude, latitude, zoom } = viewState;
     
+    // Validate all values are finite numbers
+    if (!isFinite(longitude) || !isFinite(latitude) || !isFinite(zoom)) {
+      console.debug('[DEBUG] Invalid viewState values:', { longitude, latitude, zoom });
+      return undefined;
+    }
+    
     // Calculate viewport bounds based on zoom level
     const latRange = 360 / Math.pow(2, zoom + 1);
     const lonRange = 360 / Math.pow(2, zoom);
     
-    // Ensure we return exactly 4 numbers for 2D bounds
-    const bounds: [number, number, number, number] = [
-      longitude - lonRange / 2,  // minLon
-      latitude - latRange / 2,   // minLat
-      longitude + lonRange / 2,  // maxLon
-      latitude + latRange / 2    // maxLat
-    ];
+    // Calculate bounds
+    const minLon = longitude - lonRange / 2;
+    const minLat = latitude - latRange / 2;
+    const maxLon = longitude + lonRange / 2;
+    const maxLat = latitude + latRange / 2;
     
-    return bounds;
+    // Validate calculated bounds
+    if (!isFinite(minLon) || !isFinite(minLat) || !isFinite(maxLon) || !isFinite(maxLat)) {
+      console.debug('[DEBUG] Invalid calculated bounds:', { minLon, minLat, maxLon, maxLat });
+      return undefined;
+    }
+    
+    // Ensure we return exactly 4 numbers for 2D bounds
+    return [minLon, minLat, maxLon, maxLat];
   }, [viewState.longitude, viewState.latitude, viewState.zoom]); // Only depend on needed values
 
   // Initialize view when bounds change

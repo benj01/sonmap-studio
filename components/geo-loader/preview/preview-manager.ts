@@ -7,48 +7,7 @@ import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
 import { calculateFeatureBounds, Bounds } from '../core/feature-manager/bounds';
 import { GeoFeature } from '../../../types/geo';
-
-export interface PreviewOptions {
-  /** Maximum number of features to include in preview */
-  maxFeatures?: number;
-  /** Visible layers to include */
-  visibleLayers?: string[];
-  /** Selected element type and layer */
-  selectedElement?: {
-    type: string;
-    layer: string;
-  } | null;
-  /** Target coordinate system */
-  coordinateSystem?: CoordinateSystem;
-  /** Whether to enable caching */
-  enableCaching?: boolean;
-  /** Whether to use smart sampling */
-  smartSampling?: boolean;
-  /** Analysis results including warnings */
-  analysis?: {
-    warnings: Array<{ type: string; message: string; }>;
-  };
-  /** Initial bounds for preview */
-  bounds?: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-  } | null;
-}
-
-export interface PreviewResult {
-  features: FeatureCollection;
-  bounds: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-  };
-  layers: string[];
-  featureCount: number;
-  coordinateSystem: CoordinateSystem;
-}
+import { PreviewOptions, PreviewResult } from '../types/map';
 
 interface PreviewCollectionResult {
   points: FeatureCollection;
@@ -83,22 +42,38 @@ export class PreviewManager {
   }> = new Map();
 
   constructor(options: PreviewOptions = {}) {
+    const defaultOptions: Required<PreviewOptions> = {
+      maxFeatures: this.DEFAULT_MAX_FEATURES,
+      visibleLayers: [],
+      selectedElement: null,
+      coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+      enableCaching: true,
+      smartSampling: true,
+      analysis: { warnings: [] },
+      viewportBounds: [0, 0, 0, 0],
+      initialBounds: {
+        minX: 0,
+        minY: 0,
+        maxX: 0,
+        maxY: 0
+      },
+      onProgress: () => {}
+    };
+
     this.options = {
-      maxFeatures: options.maxFeatures || this.DEFAULT_MAX_FEATURES,
-      visibleLayers: options.visibleLayers || [],
-      selectedElement: options.selectedElement || null,
-      coordinateSystem: options.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
-      enableCaching: options.enableCaching ?? true,
-      smartSampling: options.smartSampling ?? true,
-      analysis: options.analysis || { warnings: [] },
-      bounds: options.bounds || null
+      ...defaultOptions,
+      ...options,
+      // Ensure we don't override with undefined values
+      viewportBounds: options.viewportBounds ?? defaultOptions.viewportBounds,
+      initialBounds: options.initialBounds ?? defaultOptions.initialBounds
     };
 
     // Log initial state
     console.debug('[DEBUG] PreviewManager initialized:', {
       visibleLayers: this.options.visibleLayers,
       allLayersVisible: this.options.visibleLayers.length === 0,
-      bounds: this.options.bounds,
+      viewportBounds: this.options.viewportBounds,
+      initialBounds: this.options.initialBounds,
       coordinateSystem: this.options.coordinateSystem
     });
 
@@ -111,11 +86,11 @@ export class PreviewManager {
 
   private ensureValidBounds(bounds: Bounds | null): Required<Bounds> {
     // Use initial bounds if provided and valid
-    if (this.options.bounds && 
-        isFinite(this.options.bounds.minX) && isFinite(this.options.bounds.minY) &&
-        isFinite(this.options.bounds.maxX) && isFinite(this.options.bounds.maxY)) {
-      console.debug('[DEBUG] Using initial bounds:', this.options.bounds);
-      return this.options.bounds;
+    if (this.options.initialBounds && 
+        isFinite(this.options.initialBounds.minX) && isFinite(this.options.initialBounds.minY) &&
+        isFinite(this.options.initialBounds.maxX) && isFinite(this.options.initialBounds.maxY)) {
+      console.debug('[DEBUG] Using initial bounds:', this.options.initialBounds);
+      return this.options.initialBounds;
     }
 
     // Check if bounds are valid
@@ -367,13 +342,9 @@ export class PreviewManager {
       updates: options
     });
 
-    // Always use provided bounds if available, otherwise keep current bounds
-    const newBounds = options.bounds ?? this.options.bounds;
-
     this.options = {
       ...this.options,
-      ...options,
-      bounds: newBounds
+      ...options
     };
 
     // Invalidate cache for any option change
@@ -382,7 +353,7 @@ export class PreviewManager {
     console.debug('[DEBUG] Preview options updated:', {
       visibleLayers: this.options.visibleLayers,
       allLayersVisible: this.options.visibleLayers.length === 0,
-      bounds: this.options.bounds
+      viewportBounds: this.options.viewportBounds
     });
   }
 

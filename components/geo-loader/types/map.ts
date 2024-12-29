@@ -1,37 +1,21 @@
-import { FeatureCollection, Feature, BBox } from 'geojson';
-import { ViewStateChangeEvent } from 'react-map-gl';
+import { FeatureCollection, Feature } from 'geojson';
 import { CoordinateSystem } from './coordinates';
-import { ProcessorResult } from '../core/processors/base/types';
-
-export interface PreviewOptions {
-  /** Maximum number of features to include in preview */
-  maxFeatures?: number;
-  /** Visible layers to include */
-  visibleLayers?: string[];
-  /** Selected element type and layer */
-  selectedElement?: {
-    type: string;
-    layer: string;
-  } | null;
-  /** Target coordinate system */
-  coordinateSystem?: CoordinateSystem;
-  /** Whether to enable caching */
-  enableCaching?: boolean;
-  /** Whether to use smart sampling */
-  smartSampling?: boolean;
-  /** Analysis results including warnings */
-  analysis?: {
-    warnings: Array<{ type: string; message: string; }>;
-  };
-  /** Progress callback */
-  onProgress?: (progress: number) => void;
-  /** Viewport bounds for filtering */
-  viewportBounds?: [number, number, number, number];
-}
+import { PreviewManager } from '../preview/preview-manager';
+import { ViewStateChangeEvent } from 'react-map-gl';
 
 export interface PreviewMapProps {
   /** Preview data from processor */
-  preview: ProcessorResult;
+  preview: {
+    features: FeatureCollection;
+    bounds?: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    };
+    layers: string[];
+    previewManager: PreviewManager;
+  };
   /** Bounds for initial view */
   bounds?: {
     minX: number;
@@ -99,4 +83,50 @@ export interface UseMapViewResult {
   updateViewFromBounds: (bounds: { minX: number; minY: number; maxX: number; maxY: number }) => Promise<void>;
   focusOnFeatures: (features: Feature[], padding?: number) => Promise<void>;
   getViewportBounds: () => [number, number, number, number] | undefined;
+}
+
+export interface PreviewOptions {
+  /** Maximum number of features to include in preview */
+  maxFeatures?: number;
+  /** Visible layers to include */
+  visibleLayers?: string[];
+  /** Selected element type and layer */
+  selectedElement?: {
+    type: string;
+    layer: string;
+  } | null;
+  /** Target coordinate system */
+  coordinateSystem?: CoordinateSystem;
+  /** Whether to enable caching */
+  enableCaching?: boolean;
+  /** Whether to use smart sampling */
+  smartSampling?: boolean;
+  /** Analysis results including warnings */
+  analysis?: {
+    warnings: Array<{ type: string; message: string; }>;
+  };
+  /** Progress callback */
+  onProgress?: (progress: number) => void;
+  /** Viewport bounds for filtering */
+  viewportBounds?: [number, number, number, number];
+  /** Initial bounds */
+  initialBounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+}
+
+export interface PreviewResult {
+  features: FeatureCollection;
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  layers: string[];
+  featureCount: number;
+  coordinateSystem: CoordinateSystem;
 }
