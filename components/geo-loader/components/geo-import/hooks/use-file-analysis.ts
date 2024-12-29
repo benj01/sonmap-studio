@@ -34,7 +34,7 @@ const initialState: FileAnalysisState = {
   analysis: null,
   dxfData: null,
   selectedLayers: [],
-  visibleLayers: [],
+  visibleLayers: [], // Empty array means all layers visible
   selectedTemplates: [],
   previewManager: null
 };
@@ -101,7 +101,7 @@ export function useFileAnalysis({
       console.log('[DEBUG] Creating preview manager...');
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
-        visibleLayers: layers,
+        visibleLayers: [], // Empty array means all layers visible
         analysis: {
           warnings: convertWarningsToAnalysis(processor.getWarnings())
         },
@@ -109,6 +109,8 @@ export function useFileAnalysis({
         enableCaching: true,
         smartSampling: true
       });
+
+      console.log('[DEBUG] Preview manager created with all layers visible');
 
       // Set preview features in preview manager
       if (result.preview && result.preview.features.length > 0) {
@@ -122,9 +124,15 @@ export function useFileAnalysis({
         analysis: result,
         dxfData: result.dxfData,
         selectedLayers: layers,
-        visibleLayers: layers,
+        visibleLayers: [], // Empty array means all layers visible
         selectedTemplates: [],
         previewManager
+      });
+
+      console.log('[DEBUG] State initialized with:', {
+        layers,
+        selectedLayers: layers,
+        visibleLayers: [], // Empty array means all layers visible
       });
 
       return result;
@@ -142,7 +150,12 @@ export function useFileAnalysis({
 
   // Handle layer selection
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
-    console.log('[DEBUG] Toggle layer:', layer, enabled);
+    console.log('[DEBUG] Toggle layer selection:', {
+      layer,
+      enabled,
+      action: enabled ? 'selecting' : 'deselecting'
+    });
+
     setState(prev => ({
       ...prev,
       selectedLayers: enabled 
@@ -151,18 +164,53 @@ export function useFileAnalysis({
     }));
   }, []);
 
+  // Handle layer visibility
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
-    console.debug('[DEBUG] Toggle layer visibility:', layer, visible);
+    console.debug('[DEBUG] Toggle layer visibility:', {
+      layer,
+      visible,
+      action: visible ? 'showing' : 'hiding'
+    });
+
     setState(prev => {
-      const newVisibleLayers = visible
-        ? [...prev.visibleLayers, layer]
-        : prev.visibleLayers.filter(l => l !== layer);
-      
-      // Update existing preview manager options instead of creating new instance
+      const allLayers = prev.analysis?.layers || [];
+      let newVisibleLayers: string[];
+
+      // If no layers are explicitly set as visible (empty array), all layers are visible
+      if (prev.visibleLayers.length === 0) {
+        if (visible) {
+          // Layer is being made visible when all layers are already visible - no change needed
+          newVisibleLayers = [];
+        } else {
+          // Hide one layer when all were visible - make all except this one visible
+          newVisibleLayers = allLayers.filter(l => l !== layer);
+        }
+      } else {
+        if (visible) {
+          // Add layer to visible layers
+          newVisibleLayers = [...prev.visibleLayers, layer];
+          // If all layers are now visible, use empty array
+          if (newVisibleLayers.length === allLayers.length) {
+            newVisibleLayers = [];
+          }
+        } else {
+          // Remove layer from visible layers
+          newVisibleLayers = prev.visibleLayers.filter(l => l !== layer);
+        }
+      }
+
+      console.debug('[DEBUG] Layer visibility update:', {
+        layer,
+        visible,
+        previousState: prev.visibleLayers,
+        newState: newVisibleLayers,
+        allLayersVisible: newVisibleLayers.length === 0
+      });
+
+      // Update preview manager with new visibility state
       if (prev.previewManager) {
         prev.previewManager.setOptions({
           visibleLayers: newVisibleLayers,
-          // Keep other options unchanged
           maxFeatures: prev.previewManager.getOptions().maxFeatures,
           analysis: prev.previewManager.getOptions().analysis,
           coordinateSystem: prev.previewManager.getOptions().coordinateSystem,

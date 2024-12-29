@@ -305,39 +305,67 @@ export function DxfStructureView({
   const allLayers = structure.layers.map(l => l.name);
   const allEntityTypes = Array.from(entityCounts.keys());
   
+  // Calculate layer visibility states
+  const validLayers = allLayers.filter(layer => !validationErrors[layer]);
+  const visibleLayerCount = visibleLayers.length === 0 ? validLayers.length : 
+                           validLayers.filter(layer => visibleLayers.includes(layer)).length;
+  const selectedLayerCount = validLayers.filter(layer => selectedLayers.includes(layer)).length;
+  const selectedEntityTypeCount = allEntityTypes.filter(type => selectedEntityTypes.includes(type)).length;
+
+  // Determine toggle states - empty visibleLayers means all layers are visible
+  const allLayersVisible = visibleLayers.length === 0 || 
+                          (validLayers.length > 0 && visibleLayerCount === validLayers.length);
+  const someLayersVisible = visibleLayers.length === 0 || visibleLayerCount > 0;
+  const allLayersSelected = validLayers.length > 0 && selectedLayerCount === validLayers.length;
+  const someLayersSelected = selectedLayerCount > 0;
+  const allEntityTypesSelected = allEntityTypes.length > 0 && selectedEntityTypeCount === allEntityTypes.length;
+  const someEntityTypesSelected = selectedEntityTypeCount > 0;
+
   // Handle toggle all layers visibility
   const handleToggleAllLayers = (visible: boolean) => {
-    allLayers.forEach(layer => {
-      if (!validationErrors[layer]) {
-        onLayerVisibilityToggle(layer, !visible); // Keep inverted to match individual switches
-      }
+    // When toggling all layers, we want to:
+    // - If turning on: Set visibleLayers to empty array (all visible)
+    // - If turning off: Set visibleLayers to empty array (none visible)
+    // This maintains the "empty array means all visible" convention
+    if (visible) {
+      // Clear visibleLayers to make all layers visible
+      validLayers.forEach(layer => {
+        onLayerVisibilityToggle(layer, true);
+      });
+    } else {
+      // Add all layers to visibleLayers to make them explicitly invisible
+      validLayers.forEach(layer => {
+        onLayerVisibilityToggle(layer, false);
+      });
+    }
+    
+    console.debug('[DEBUG] Toggling all layers:', {
+      action: visible ? 'show all' : 'hide all',
+      allLayersVisible,
+      someLayersVisible,
+      validLayers,
+      currentVisibleLayers: visibleLayers,
+      expectedState: visible ? 'empty array' : 'all layers listed'
     });
   };
 
   // Handle toggle all layers import
   const handleToggleAllLayersImport = (enabled: boolean) => {
-    allLayers.forEach(layer => {
-      if (!validationErrors[layer]) {
-        onLayerToggle(layer, enabled);
-      }
+    // Similar logic to visibility toggle
+    const newState = !allLayersSelected || enabled;
+    validLayers.forEach(layer => {
+      onLayerToggle(layer, newState);
     });
   };
 
   // Handle toggle all entity types
   const handleToggleAllEntityTypes = (enabled: boolean) => {
+    // Similar logic to layer toggles
+    const newState = !allEntityTypesSelected || enabled;
     allEntityTypes.forEach(type => {
-      onEntityTypeSelect(type, enabled);
+      onEntityTypeSelect(type, newState);
     });
   };
-
-  // Check if all layers/entity types are visible/selected
-  const allLayersVisible = allLayers.length > 0 && 
-    allLayers.every(layer => !validationErrors[layer] && !visibleLayers.includes(layer)); // Keep inverted to match individual switches
-
-  const allLayersSelected = allLayers.length > 0 && 
-    allLayers.every(layer => !validationErrors[layer] && selectedLayers.includes(layer));
-  const allEntityTypesSelected = allEntityTypes.length > 0 && 
-    allEntityTypes.every(type => selectedEntityTypes.includes(type));
 
   return (
     <ScrollArea className="h-[400px] w-full rounded-md border p-2">
@@ -386,7 +414,7 @@ export function DxfStructureView({
               <div className="flex items-center gap-1">
                 <Eye className="h-3 w-3" />
                 <Switch
-                  checked={allLayersVisible} // Keep inverted to match individual switches
+                  checked={allLayersVisible}
                   onCheckedChange={handleToggleAllLayers}
                   className="scale-75"
                 />
@@ -419,8 +447,8 @@ export function DxfStructureView({
                   <div className="flex items-center gap-1">
                     <Eye className="h-3 w-3" />
                     <Switch
-                      checked={!visibleLayers.includes(layer.name)} // Keep inverted
-                      onCheckedChange={(checked) => onLayerVisibilityToggle(layer.name, !checked)} // Keep inverted
+                      checked={visibleLayers.length === 0 || visibleLayers.includes(layer.name)}
+                      onCheckedChange={(checked) => onLayerVisibilityToggle(layer.name, checked)}
                       className="scale-75"
                     />
                   </div>

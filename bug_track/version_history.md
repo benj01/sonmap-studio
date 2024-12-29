@@ -4,6 +4,12 @@
 
 ### v0.4.6 (In Progress)
 - Performance and stability improvements
+  - Fixed map preview issues:
+    - Corrected initial map centering
+    - Fixed coordinate system handling
+    - Prevented double transformation of coordinates
+    - Added feature-level visibility filtering
+    - Improved layer visibility toggle behavior
   - Fixed DXF layer handling:
     - Added system layer filtering
     - Improved layer state management

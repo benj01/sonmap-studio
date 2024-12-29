@@ -27,7 +27,7 @@ const VIEWPORT_PADDING = 50;
 const CLUSTER_RADIUS = 50;
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
 const CACHE_KEY_PREFIX = 'preview-map';
-const DEBOUNCE_TIME = 250; // Increased debounce time
+const DEBOUNCE_TIME = 250;
 
 export function PreviewMap({
   preview,
@@ -43,23 +43,26 @@ export function PreviewMap({
   const [mouseCoords, setMouseCoords] = useState<{ lng: number; lat: number } | null>(null);
   const [cacheStats, setCacheStats] = useState<CacheStats>({ hits: 0, misses: 0, hitRate: 0 });
   const [streamProgress, setStreamProgress] = useState<number>(0);
+  const [initialBoundsSet, setInitialBoundsSet] = useState(false);
   const mapRef = React.useRef<MapRef>(null);
 
+  // Note: Preview bounds are already in WGS84 (EPSG:4326) after DxfProcessor transformation
   const {
     viewState,
     onMove,
     updateViewFromBounds,
     focusOnFeatures,
     getViewportBounds
-  } = useMapView(bounds, coordinateSystem);
+  } = useMapView(bounds, COORDINATE_SYSTEMS.WGS84);
 
   // Initialize preview manager with caching
   const previewManagerRef = React.useRef<PreviewManager | null>(null);
 
   useEffect(() => {
+    // Empty visibleLayers means all layers are visible, otherwise use specified layers
     const options: PreviewOptions = {
       maxFeatures: 5000,
-      visibleLayers,
+      visibleLayers, // Pass visibleLayers directly - empty array means all visible
       analysis,
       coordinateSystem,
       enableCaching: true,
@@ -67,13 +70,21 @@ export function PreviewMap({
       viewportBounds: getViewportBounds() as [number, number, number, number] | undefined
     };
 
+    console.debug('[DEBUG] Creating PreviewManager:', {
+      visibleLayers,
+      allLayersVisible: visibleLayers.length === 0,
+      previewLayers: preview.layers
+    });
+
     const pm = createPreviewManager(options);
 
     if (preview) {
-      console.debug('Setting preview features:', {
+      console.debug('[DEBUG] Setting preview features:', {
         featureCount: preview.features.features.length,
         coordinateSystem,
-        isSwiss: isSwissSystem(coordinateSystem)
+        isSwiss: isSwissSystem(coordinateSystem),
+        visibleLayers,
+        allLayersVisible: visibleLayers.length === 0
       });
 
       // Use cached preview if available
@@ -114,7 +125,6 @@ export function PreviewMap({
     previewManagerRef.current = pm;
     setIsLoading(false);
 
-    // Cleanup preview manager on unmount or when options change
     return () => {
       if (previewManagerRef.current) {
         previewManagerRef.current = null;
@@ -122,23 +132,24 @@ export function PreviewMap({
     };
   }, [preview, visibleLayers, analysis, coordinateSystem, getViewportBounds]);
 
-  // Initial zoom to bounds
+  // Initial zoom to bounds - only once
   useEffect(() => {
-    if (bounds) {
+    if (bounds && !initialBoundsSet) {
       try {
-        console.debug('Updating view from bounds:', {
+        console.debug('[DEBUG] Setting initial view from bounds:', {
           bounds,
           coordinateSystem,
           isSwiss: isSwissSystem(coordinateSystem)
         });
         updateViewFromBounds(bounds);
+        setInitialBoundsSet(true);
         setError(null);
       } catch (err) {
         const e = err as Error;
         setError(`Failed to set initial view: ${e.message}`);
       }
     }
-  }, [bounds, updateViewFromBounds, coordinateSystem]);
+  }, [bounds, updateViewFromBounds, coordinateSystem, initialBoundsSet]);
 
   // Focus on selected element if needed
   useEffect(() => {
@@ -199,6 +210,19 @@ export function PreviewMap({
     if (!previewManagerRef.current) return;
 
     try {
+      // Pass current viewport bounds to preview manager to prevent recalculation
+      const currentBounds = getViewportBounds();
+      if (currentBounds) {
+        previewManagerRef.current.setOptions({
+          bounds: {
+            minX: currentBounds[0],
+            minY: currentBounds[1],
+            maxX: currentBounds[2],
+            maxY: currentBounds[3]
+          }
+        });
+      }
+
       const collections = await previewManagerRef.current?.getPreviewCollections();
       if (!collections) return;
 
@@ -284,10 +308,16 @@ export function PreviewMap({
         misses: prev.misses + 1,
         hitRate: prev.hits / (prev.hits + prev.misses + 1)
       }));
+
+      // Update bounds on initial load
+      if (!initialBoundsSet && collections.bounds) {
+        updateViewFromBounds(collections.bounds);
+        setInitialBoundsSet(true);
+      }
     } catch (error) {
       console.error('Failed to update preview collections:', error);
     }
-  }, [viewportPolygon, viewportBounds, visibleLayers, preview?.bounds, coordinateSystem]);
+  }, [viewportPolygon, viewportBounds, visibleLayers, preview?.bounds, coordinateSystem, initialBoundsSet, updateViewFromBounds, getViewportBounds]);
 
   // Effect to handle debounced preview updates
   useEffect(() => {
@@ -297,7 +327,13 @@ export function PreviewMap({
       // Clear any pending update
       if (timeoutId) clearTimeout(timeoutId);
       
-      // Schedule new update with increased debounce time
+      // Skip debounce for initial load
+      if (!initialBoundsSet) {
+        debouncedUpdatePreview();
+        return;
+      }
+      
+      // Schedule new update with debounce time
       timeoutId = setTimeout(() => {
         debouncedUpdatePreview();
       }, DEBOUNCE_TIME);
@@ -309,19 +345,41 @@ export function PreviewMap({
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [debouncedUpdatePreview]);
+  }, [debouncedUpdatePreview, initialBoundsSet]);
 
   const { points, lines, polygons, totalCount, visibleCount } = previewState;
 
   const layerComponents = useMemo(() => {
     const components = [];
 
-    if (points.features.length > 0) {
+    // Helper to check if a feature's layer is visible
+    const isLayerVisible = (feature: Feature) => {
+      const layer = feature.properties?.layer;
+      // If visibleLayers is empty, all layers are visible
+      // Otherwise, check if the layer is in visibleLayers
+      return visibleLayers.length === 0 || visibleLayers.includes(layer);
+    };
+
+    // Filter features by visibility
+    const visiblePoints = {
+      type: 'FeatureCollection' as const,
+      features: points.features.filter(isLayerVisible)
+    };
+    const visibleLines = {
+      type: 'FeatureCollection' as const,
+      features: lines.features.filter(isLayerVisible)
+    };
+    const visiblePolygons = {
+      type: 'FeatureCollection' as const,
+      features: polygons.features.filter(isLayerVisible)
+    };
+
+    if (visiblePoints.features.length > 0) {
       components.push(
         <Source
           key="points"
           type="geojson"
-          data={points}
+          data={visiblePoints}
           cluster={true}
           clusterMaxZoom={MIN_ZOOM_FOR_UNCLUSTERED}
           clusterRadius={CLUSTER_RADIUS}
@@ -371,17 +429,17 @@ export function PreviewMap({
       );
     }
 
-    if (lines.features.length > 0) {
+    if (visibleLines.features.length > 0) {
       components.push(
-        <Source key="lines" type="geojson" data={lines}>
+        <Source key="lines" type="geojson" data={visibleLines}>
           <Layer {...layerStyles.line} />
         </Source>
       );
     }
 
-    if (polygons.features.length > 0) {
+    if (visiblePolygons.features.length > 0) {
       components.push(
-        <Source key="polygons" type="geojson" data={polygons}>
+        <Source key="polygons" type="geojson" data={visiblePolygons}>
           <Layer {...layerStyles.polygon} />
           <Layer {...layerStyles.polygonOutline} />
         </Source>
