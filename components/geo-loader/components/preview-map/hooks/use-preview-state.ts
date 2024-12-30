@@ -81,6 +81,12 @@ export function usePreviewState({
     try {
       // Only update bounds if we're doing the initial load
       if (!initialBoundsSet) {
+        console.debug('[DEBUG] Initial load - bounds state:', {
+          initialBoundsSet,
+          viewportBounds,
+          previewManagerOptions: previewManager.getOptions()
+        });
+        
         if (viewportBounds) {
           previewManager.setOptions({
             viewportBounds
@@ -104,13 +110,11 @@ export function usePreviewState({
         const cachedFeatures = ((cached as unknown) as { features: { features: Feature[] } }).features.features;
         
         // Filter by layer visibility - empty array means all layers visible
-        const visibleFeatures = visibleLayers.length > 0
-          ? cachedFeatures.filter((f: Feature) => 
-              f.properties && 
-              typeof f.properties.layer === 'string' && 
-              visibleLayers.includes(f.properties.layer)
-            )
-          : cachedFeatures;
+        const visibleFeatures = cachedFeatures.filter((f: Feature) => 
+          f.properties && 
+          typeof f.properties.layer === 'string' && 
+          (visibleLayers.length === 0 || visibleLayers.includes(f.properties.layer))
+        );
 
         // Split the visible features by geometry type
         const pointFeatures = visibleFeatures.filter((f: Feature) => 
@@ -140,33 +144,79 @@ export function usePreviewState({
         return;
       }
 
-      // Filter features by viewport and visibility
-      const polygon = viewportPolygon();
+      // Skip viewport filtering on initial load to ensure features are visible
+      const shouldFilterByViewport = initialBoundsSet;
+      const polygon = shouldFilterByViewport ? viewportPolygon() : null;
+
+      console.debug('[DEBUG] Preview filtering state:', {
+        initialBoundsSet,
+        shouldFilterByViewport,
+        viewportBounds,
+        polygon: polygon ? {
+          type: polygon.geometry.type,
+          coordinates: polygon.geometry.coordinates
+        } : null,
+        visibleLayers,
+        allLayersVisible: visibleLayers.length === 0,
+        totalFeatures: collections.totalCount
+      });
+      
+      console.debug('[DEBUG] Viewport state:', {
+        initialBoundsSet,
+        shouldFilterByViewport,
+        polygon,
+        bounds: viewportBounds
+      });
+
       const filterFeatures = (fc: FeatureCollection) => {
         if (!fc.features.length) return fc;
         
         let filtered = fc.features;
 
-        // Filter by viewport if we have valid bounds
-        if (polygon) {
-          filtered = filtered.filter((f: Feature) => booleanIntersects(f, polygon));
+        // Only filter by viewport if we're past initial load
+        if (shouldFilterByViewport && polygon) {
+          filtered = filtered.filter((f: Feature) => {
+            const intersects = booleanIntersects(f, polygon);
+            console.debug('[DEBUG] Feature intersection test:', {
+              featureType: f.geometry.type,
+              coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined,
+              layer: f.properties?.layer,
+              intersects,
+              viewportBounds
+            });
+            return intersects;
+          });
         }
 
         // Filter by layer visibility - empty array means all layers visible
-        if (visibleLayers.length > 0) {
-          filtered = filtered.filter((f: Feature) => 
-            f.properties && 
-            typeof f.properties.layer === 'string' && 
-            visibleLayers.includes(f.properties.layer)
-          );
-        }
+        filtered = filtered.filter((f: Feature) => 
+          f.properties && 
+          typeof f.properties.layer === 'string' && 
+          (visibleLayers.length === 0 || visibleLayers.includes(f.properties.layer))
+        );
 
         return { ...fc, features: filtered };
       };
 
+      console.debug('[DEBUG] Filtering collections:', {
+        originalCounts: {
+          points: collections.points.features.length,
+          lines: collections.lines.features.length,
+          polygons: collections.polygons.features.length
+        }
+      });
+
       const filteredPoints = filterFeatures(collections.points);
       const filteredLines = filterFeatures(collections.lines);
       const filteredPolygons = filterFeatures(collections.polygons);
+
+      console.debug('[DEBUG] Filtered collections:', {
+        filteredCounts: {
+          points: filteredPoints.features.length,
+          lines: filteredLines.features.length,
+          polygons: filteredPolygons.features.length
+        }
+      });
 
       const filteredVisibleCount = 
         filteredPoints.features.length + 

@@ -33,7 +33,11 @@ export class DxfCoordinateHandler {
         sourceSystem,
         testPoint,
         transformed,
-        expectedWGS84: { x: 8.0, y: 47.4 }
+        expectedWGS84: { x: 8.0, y: 47.4 },
+        difference: {
+          x: Math.abs(transformed.x - 8.0),
+          y: Math.abs(transformed.y - 47.4)
+        }
       });
     }
   }
@@ -47,14 +51,43 @@ export class DxfCoordinateHandler {
   ): Promise<Feature[]> {
     console.debug('[DEBUG] Processing entities with coordinate transformation:', {
       count: entities.length,
-      sourceSystem
+      sourceSystem,
+      entityTypes: entities.map(e => e.type)
     });
 
     // Transform entities to WGS84
+    console.debug('[DEBUG] Entity coordinates before transformation:', 
+      entities.map(e => ({
+        type: e.type,
+        data: {
+          x: e.data.x,
+          y: e.data.y,
+          x2: e.data.x2,
+          y2: e.data.y2,
+          vertices: e.data.vertices
+        },
+        attributes: e.attributes
+      }))
+    );
+
     const transformedEntities = await DxfTransformer.transformEntities(
       entities,
       sourceSystem,
       'EPSG:4326'
+    );
+
+    console.debug('[DEBUG] Entity coordinates after transformation:',
+      transformedEntities.map(e => ({
+        type: e.type,
+        data: {
+          x: e.data.x,
+          y: e.data.y,
+          x2: e.data.x2,
+          y2: e.data.y2,
+          vertices: e.data.vertices
+        },
+        attributes: e.attributes
+      }))
     );
 
     // Convert transformed entities to features
@@ -71,7 +104,8 @@ export class DxfCoordinateHandler {
       inputCount: entities.length,
       outputCount: features.length,
       sourceSystem,
-      targetSystem: 'EPSG:4326'
+      targetSystem: 'EPSG:4326',
+      featureTypes: features.map(f => f.geometry.type)
     });
 
     return features;
@@ -86,7 +120,18 @@ export class DxfCoordinateHandler {
   ): Promise<Bounds> {
     console.debug('[DEBUG] Transforming bounds:', {
       bounds,
-      sourceSystem
+      sourceSystem,
+      sourceBoundsValid: bounds && 
+        isFinite(bounds.minX) && isFinite(bounds.minY) &&
+        isFinite(bounds.maxX) && isFinite(bounds.maxY),
+      sourceBoundsRange: bounds ? {
+        width: bounds.maxX - bounds.minX,
+        height: bounds.maxY - bounds.minY,
+        center: {
+          x: (bounds.minX + bounds.maxX) / 2,
+          y: (bounds.minY + bounds.maxY) / 2
+        }
+      } : null
     });
 
     // Transform min point
@@ -113,7 +158,18 @@ export class DxfCoordinateHandler {
     console.debug('[DEBUG] Bounds transformation complete:', {
       original: bounds,
       transformed: transformedBounds,
-      sourceSystem
+      sourceSystem,
+      transformedBoundsValid: 
+        isFinite(transformedBounds.minX) && isFinite(transformedBounds.minY) &&
+        isFinite(transformedBounds.maxX) && isFinite(transformedBounds.maxY),
+      transformedBoundsRange: {
+        width: transformedBounds.maxX - transformedBounds.minX,
+        height: transformedBounds.maxY - transformedBounds.minY,
+        center: {
+          x: (transformedBounds.minX + transformedBounds.maxX) / 2,
+          y: (transformedBounds.minY + transformedBounds.maxY) / 2
+        }
+      }
     });
 
     return transformedBounds;

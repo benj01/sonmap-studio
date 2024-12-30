@@ -1,4 +1,4 @@
-import { Feature } from 'geojson';
+import { Feature, Point, LineString, Polygon, GeoJsonProperties } from 'geojson';
 import { DxfEntity, DxfEntityType } from '../types';
 import { ValidationError } from '../../../../errors/types';
 
@@ -102,10 +102,10 @@ export class DxfEntityProcessor {
       switch (entity.type) {
         case 'POINT':
           if (typeof entity.data.x === 'number' && typeof entity.data.y === 'number') {
-            return {
-              type: 'Feature',
+            const feature: Feature<Point, GeoJsonProperties> = {
+              type: 'Feature' as const,
               geometry: {
-                type: 'Point',
+                type: 'Point' as const,
                 coordinates: [entity.data.x, entity.data.y]
               },
               properties: {
@@ -115,16 +115,17 @@ export class DxfEntityProcessor {
                 ...entity.attributes
               }
             };
+            return feature;
           }
           break;
 
         case 'LINE':
           if (typeof entity.data.x === 'number' && typeof entity.data.y === 'number' &&
               typeof entity.data.x2 === 'number' && typeof entity.data.y2 === 'number') {
-            return {
-              type: 'Feature',
+            const feature: Feature<LineString, GeoJsonProperties> = {
+              type: 'Feature' as const,
               geometry: {
-                type: 'LineString',
+                type: 'LineString' as const,
                 coordinates: [
                   [entity.data.x, entity.data.y],
                   [entity.data.x2, entity.data.y2]
@@ -137,53 +138,102 @@ export class DxfEntityProcessor {
                 ...entity.attributes
               }
             };
+            return feature;
           }
           break;
 
         case 'POLYLINE':
         case 'LWPOLYLINE':
           if (Array.isArray(entity.data.vertices)) {
-            const coordinates = entity.data.vertices.map((v: any) => [v.x, v.y]);
+            console.debug('[DEBUG] Processing LWPOLYLINE vertices:', {
+              vertexCount: entity.data.vertices.length,
+              transformed: entity.data.transformed,
+              layer: entity.attributes?.layer
+            });
+
+            // Filter out invalid vertices and create coordinates
+            const coordinates = entity.data.vertices
+              .filter((v: any) => 
+                typeof v.x === 'number' && 
+                typeof v.y === 'number' && 
+                isFinite(v.x) && 
+                isFinite(v.y)
+              )
+              .map((v: any) => [v.x, v.y]);
+
+            console.debug('[DEBUG] Valid coordinates extracted:', {
+              inputVertices: entity.data.vertices.length,
+              validCoordinates: coordinates.length,
+              layer: entity.attributes?.layer
+            });
+
+            // Only proceed if we have enough valid coordinates
             if (coordinates.length >= 2) {
+              // Check if the polyline forms a closed shape
               const isClosed = entity.data.closed || 
                              (coordinates.length >= 3 && 
                               coordinates[0][0] === coordinates[coordinates.length - 1][0] &&
                               coordinates[0][1] === coordinates[coordinates.length - 1][1]);
-              
+
               if (isClosed && coordinates.length >= 3) {
                 // Ensure polygon is properly closed
                 if (coordinates[0][0] !== coordinates[coordinates.length - 1][0] ||
                     coordinates[0][1] !== coordinates[coordinates.length - 1][1]) {
                   coordinates.push([...coordinates[0]]);
                 }
-                return {
-                  type: 'Feature',
+
+                const feature: Feature<Polygon, GeoJsonProperties> = {
+                  type: 'Feature' as const,
                   geometry: {
-                    type: 'Polygon',
+                    type: 'Polygon' as const,
                     coordinates: [coordinates]
                   },
                   properties: {
                     type: entity.type,
                     layer: entity.attributes.layer || '0',
                     entityType: entity.type,
+                    transformed: entity.data.transformed || false,
                     ...entity.attributes
                   }
                 };
+
+                console.debug('[DEBUG] Created Polygon feature:', {
+                  coordinates: coordinates.length,
+                  layer: entity.attributes?.layer,
+                  transformed: entity.data.transformed
+                });
+
+                return feature;
               } else {
-                return {
-                  type: 'Feature',
+                const feature: Feature<LineString, GeoJsonProperties> = {
+                  type: 'Feature' as const,
                   geometry: {
-                    type: 'LineString',
+                    type: 'LineString' as const,
                     coordinates: coordinates
                   },
                   properties: {
                     type: entity.type,
                     layer: entity.attributes.layer || '0',
                     entityType: entity.type,
+                    transformed: entity.data.transformed || false,
                     ...entity.attributes
                   }
                 };
+
+                console.debug('[DEBUG] Created LineString feature:', {
+                  coordinates: coordinates.length,
+                  layer: entity.attributes?.layer,
+                  transformed: entity.data.transformed
+                });
+
+                return feature;
               }
+            } else {
+              console.warn('[DEBUG] Insufficient valid coordinates for feature:', {
+                type: entity.type,
+                validCoordinates: coordinates.length,
+                layer: entity.attributes?.layer
+              });
             }
           }
           break;
@@ -201,10 +251,10 @@ export class DxfEntityProcessor {
                 entity.data.y + Math.sin(angle) * entity.data.radius
               ]);
             }
-            return {
-              type: 'Feature',
+            const feature: Feature<Polygon, GeoJsonProperties> = {
+              type: 'Feature' as const,
               geometry: {
-                type: 'Polygon',
+                type: 'Polygon' as const,
                 coordinates: [coordinates]
               },
               properties: {
@@ -214,6 +264,7 @@ export class DxfEntityProcessor {
                 ...entity.attributes
               }
             };
+            return feature;
           }
           break;
 
@@ -235,10 +286,10 @@ export class DxfEntityProcessor {
                 entity.data.y + Math.sin(angle) * entity.data.radius
               ]);
             }
-            return {
-              type: 'Feature',
+            const feature: Feature<LineString, GeoJsonProperties> = {
+              type: 'Feature' as const,
               geometry: {
-                type: 'LineString',
+                type: 'LineString' as const,
                 coordinates: coordinates
               },
               properties: {
@@ -248,6 +299,7 @@ export class DxfEntityProcessor {
                 ...entity.attributes
               }
             };
+            return feature;
           }
           break;
 
@@ -256,10 +308,10 @@ export class DxfEntityProcessor {
           if (typeof entity.data.x === 'number' && 
               typeof entity.data.y === 'number' &&
               typeof entity.data.text === 'string') {
-            return {
-              type: 'Feature',
+            const feature: Feature<Point, GeoJsonProperties> = {
+              type: 'Feature' as const,
               geometry: {
-                type: 'Point',
+                type: 'Point' as const,
                 coordinates: [entity.data.x, entity.data.y]
               },
               properties: {
@@ -273,6 +325,7 @@ export class DxfEntityProcessor {
                 ...entity.attributes
               }
             };
+            return feature;
           }
           break;
       }

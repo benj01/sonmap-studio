@@ -1,6 +1,6 @@
 import React from 'react';
 import { Source, Layer } from 'react-map-gl';
-import { FeatureCollection } from 'geojson';
+import { FeatureCollection, Position, LineString } from 'geojson';
 
 const CLUSTER_RADIUS = 50;
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
@@ -74,10 +74,50 @@ export const PointLayer: React.FC<LayerProps> = ({ data }) => {
 };
 
 export const LineLayer: React.FC<LayerProps> = ({ data }) => {
+  console.debug('[DEBUG] Line layer data:', {
+    featureCount: data.features.length,
+    features: data.features.map(f => ({
+      type: f.geometry.type,
+      coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined,
+      properties: f.properties,
+      bounds: f.geometry.type === 'LineString' ? {
+        minX: Math.min(...((f.geometry as LineString).coordinates).map(c => c[0])),
+        minY: Math.min(...((f.geometry as LineString).coordinates).map(c => c[1])),
+        maxX: Math.max(...((f.geometry as LineString).coordinates).map(c => c[0])),
+        maxY: Math.max(...((f.geometry as LineString).coordinates).map(c => c[1]))
+      } : undefined,
+      coordinateSystem: f.properties?.originalSystem || 'unknown'
+    }))
+  });
+
+  // Add tolerance for coordinate precision
+  const tolerance = 0.000001; // ~0.1m at equator
+  const roundCoordinate = (coord: number): number => Math.round(coord / tolerance) * tolerance;
+
+  // Create a new FeatureCollection with rounded coordinates
+  const roundedData = {
+    ...data,
+    features: data.features.map(f => ({
+      ...f,
+      geometry: f.geometry.type === 'LineString' ? {
+        ...f.geometry,
+        coordinates: ((f.geometry as LineString).coordinates).map((coord: Position) => 
+          coord.map((c: number) => roundCoordinate(c))
+        )
+      } : f.geometry
+    }))
+  };
+
   if (data.features.length === 0) return null;
 
   return (
-    <Source key="lines" type="geojson" data={data}>
+    <Source 
+      key="lines" 
+      type="geojson" 
+      data={roundedData}
+      tolerance={tolerance}
+      generateId={true}
+    >
       <Layer
         id="lines"
         type="line"
@@ -120,6 +160,11 @@ export const MapLayers: React.FC<{
   lines: FeatureCollection;
   polygons: FeatureCollection;
 }> = ({ points, lines, polygons }) => {
+  console.debug('[DEBUG] MapLayers render:', {
+    pointFeatures: points.features.length,
+    lineFeatures: lines.features.length,
+    polygonFeatures: polygons.features.length
+  });
   return (
     <>
       <PointLayer data={points} />

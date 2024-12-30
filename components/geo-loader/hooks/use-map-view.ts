@@ -1,13 +1,20 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ViewStateChangeEvent } from 'react-map-gl';
 import { Feature, BBox } from 'geojson';
-import { COORDINATE_SYSTEMS, CoordinateSystem, Bounds, DEFAULT_CENTER } from '../types/coordinates';
+import { 
+  COORDINATE_SYSTEMS, 
+  CoordinateSystem, 
+  Bounds, 
+  DEFAULT_CENTER,
+  isSwissSystem 
+} from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
 import proj4 from 'proj4';
 
 // Padding for bounds (in degrees for WGS84)
-const BOUNDS_PADDING_DEGREES = 0.01;  // About 1km at Swiss latitudes
+const BOUNDS_PADDING_DEGREES = 0.1;  // About 10km at Swiss latitudes
+const BOUNDS_PADDING_PERCENT = 0.2;   // 20% padding for better context
 
 export function useMapView(
   initialBounds?: Bounds,
@@ -173,11 +180,26 @@ export function useMapView(
         }
       }
 
-      // Add padding
+      // Add padding based on coordinate system
       const width = transformedBounds.maxX - transformedBounds.minX;
       const height = transformedBounds.maxY - transformedBounds.minY;
-      const padX = Math.max(width * 0.1, BOUNDS_PADDING_DEGREES);
-      const padY = Math.max(height * 0.1, BOUNDS_PADDING_DEGREES);
+      
+      // Use percentage-based padding for projected systems, fixed degrees for WGS84
+      const padX = isSwissSystem(coordinateSystem) 
+        ? width * BOUNDS_PADDING_PERCENT 
+        : Math.max(width * 0.1, BOUNDS_PADDING_DEGREES);
+      const padY = isSwissSystem(coordinateSystem)
+        ? height * BOUNDS_PADDING_PERCENT
+        : Math.max(height * 0.1, BOUNDS_PADDING_DEGREES);
+
+      console.debug('[DEBUG] Calculating bounds padding:', {
+        width,
+        height,
+        padX,
+        padY,
+        system: coordinateSystem,
+        isSwiss: isSwissSystem(coordinateSystem)
+      });
 
       transformedBounds = {
         minX: transformedBounds.minX - padX,
@@ -186,23 +208,54 @@ export function useMapView(
         maxY: transformedBounds.maxY + padY
       };
 
+      // Log bounds before validation
+      console.debug('[DEBUG] Bounds before validation:', {
+        original: bounds,
+        transformed: transformedBounds,
+        system: coordinateSystem
+      });
+
       // Constrain to valid WGS84 ranges
       const validMinLat = Math.max(transformedBounds.minY, -85);
       const validMaxLat = Math.min(transformedBounds.maxY, 85);
       const validMinLon = Math.max(transformedBounds.minX, -180);
       const validMaxLon = Math.min(transformedBounds.maxX, 180);
 
+      // Log bounds after validation
+      console.debug('[DEBUG] Bounds after validation:', {
+        minLat: { original: transformedBounds.minY, validated: validMinLat },
+        maxLat: { original: transformedBounds.maxY, validated: validMaxLat },
+        minLon: { original: transformedBounds.minX, validated: validMinLon },
+        maxLon: { original: transformedBounds.maxX, validated: validMaxLon }
+      });
+
       // Calculate center point
       const longitude = (validMinLon + validMaxLon) / 2;
       const latitude = (validMinLat + validMaxLat) / 2;
 
-      // Calculate zoom level
-      const latZoom = Math.log2(360 / (validMaxLat - validMinLat)) - 1;
-      const lonZoom = Math.log2(360 / (validMaxLon - validMinLon)) - 1;
+      // Calculate zoom level with enhanced precision
+      const latZoom = Math.log2(360 / Math.max(0.000001, validMaxLat - validMinLat)) - 1;
+      const lonZoom = Math.log2(360 / Math.max(0.000001, validMaxLon - validMinLon)) - 1;
       let zoom = Math.min(latZoom, lonZoom);
 
       // Ensure zoom is within valid range and add slight zoom out for context
-      zoom = Math.min(Math.max(zoom - 0.5, 1), 20);
+      zoom = Math.min(Math.max(zoom - 1.5, 1), 20); // Zoom out more for better context
+
+      console.debug('[DEBUG] View state calculation:', {
+        bounds: transformedBounds,
+        validBounds: {
+          minLat: validMinLat,
+          maxLat: validMaxLat,
+          minLon: validMinLon,
+          maxLon: validMaxLon
+        },
+        center: { longitude, latitude },
+        zoom: {
+          latZoom,
+          lonZoom,
+          finalZoom: zoom
+        }
+      });
 
       console.debug('Setting map view:', {
         longitude,

@@ -189,10 +189,12 @@ export class PreviewManager {
    * Get preview collections separated by geometry type
    */
   public async getPreviewCollections(): Promise<PreviewCollectionResult> {
+    console.debug('[DEBUG] Starting getPreviewCollections');
     const cacheKey = this.getCacheKey();
     const cached = this.collectionsCache.get(cacheKey);
     
     if (cached) {
+      console.debug('[DEBUG] Using cached collections');
       console.debug('[DEBUG] Using cached preview collections:', {
         cacheKey,
         points: cached.points.length,
@@ -245,7 +247,9 @@ export class PreviewManager {
         geometryType: feature.geometry.type,
         layer,
         isVisible,
-        visibleLayers: this.options.visibleLayers
+        visibleLayers: this.options.visibleLayers,
+        coordinates: 'coordinates' in feature.geometry ? feature.geometry.coordinates : undefined,
+        properties: feature.properties
       });
 
       // Convert to GeoFeature to ensure proper typing
@@ -297,7 +301,11 @@ export class PreviewManager {
       polygons: polygons.length,
       totalCount,
       visibleCount,
-      bounds
+      bounds,
+      lineFeatures: lines.map(f => ({
+        coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined,
+        properties: f.properties
+      }))
     });
 
     // Ensure bounds are valid and add padding

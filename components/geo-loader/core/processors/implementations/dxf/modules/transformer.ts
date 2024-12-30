@@ -21,26 +21,122 @@ export class DxfTransformer {
       switch (entity.type) {
         case 'LWPOLYLINE':
           if (entity.data?.vertices) {
-            const transformedVertices = await Promise.all(entity.data.vertices.map(async vertex => {
-              if (typeof vertex.x !== 'number' || typeof vertex.y !== 'number') {
-                console.warn('[DEBUG] Invalid vertex coordinates:', vertex);
-                return vertex;
+            console.debug('[DEBUG] Starting LWPOLYLINE transformation:', {
+              entityType: entity.type,
+              vertexCount: entity.data.vertices.length,
+              originalVertices: entity.data.vertices.map(v => ({ x: v.x, y: v.y })),
+              sourceSystem,
+              targetSystem,
+              layer: entity.attributes?.layer,
+              bounds: {
+                minX: Math.min(...entity.data.vertices.map(v => v.x)),
+                minY: Math.min(...entity.data.vertices.map(v => v.y)),
+                maxX: Math.max(...entity.data.vertices.map(v => v.x)),
+                maxY: Math.max(...entity.data.vertices.map(v => v.y))
               }
-              const transformed = await coordinateSystemManager.transform(
-                { x: vertex.x, y: vertex.y },
+            });
+
+            const transformedVertices = [];
+            let hasValidTransformation = false;
+
+            for (let i = 0; i < entity.data.vertices.length; i++) {
+              const vertex = entity.data.vertices[i];
+              
+              // Validate input coordinates
+              if (typeof vertex.x !== 'number' || typeof vertex.y !== 'number' ||
+                  !isFinite(vertex.x) || !isFinite(vertex.y)) {
+                console.warn('[DEBUG] Invalid input vertex coordinates:', {
+                  index: i,
+                  vertex,
+                  entityType: entity.type,
+                  layer: entity.attributes?.layer
+                });
+                transformedVertices.push(vertex);
+                continue;
+              }
+
+              try {
+                const transformed = await coordinateSystemManager.transform(
+                  { x: vertex.x, y: vertex.y },
+                  sourceSystem,
+                  targetSystem
+                );
+
+                // Validate transformed coordinates with tolerance
+                const isValid = typeof transformed.x === 'number' && 
+                              typeof transformed.y === 'number' &&
+                              isFinite(transformed.x) && 
+                              isFinite(transformed.y);
+
+                if (isValid) {
+                  hasValidTransformation = true;
+                  transformedVertices.push({ ...vertex, x: transformed.x, y: transformed.y });
+                  
+                  console.debug(`[DEBUG] Vertex ${i} transformed successfully:`, {
+                    original: { x: vertex.x, y: vertex.y },
+                    transformed: { x: transformed.x, y: transformed.y },
+                    layer: entity.attributes?.layer
+                  });
+                } else {
+                  console.warn(`[DEBUG] Invalid transformation result for vertex ${i}:`, {
+                    original: { x: vertex.x, y: vertex.y },
+                    transformed,
+                    layer: entity.attributes?.layer
+                  });
+                  transformedVertices.push(vertex);
+                }
+              } catch (error) {
+                console.warn(`[DEBUG] Transformation error for vertex ${i}:`, {
+                  error: error instanceof Error ? error.message : String(error),
+                  vertex,
+                  layer: entity.attributes?.layer
+                });
+                transformedVertices.push(vertex);
+              }
+            }
+
+            // Only update entity if at least one vertex was transformed successfully
+            if (!hasValidTransformation) {
+              console.warn('[DEBUG] No valid transformations for LWPOLYLINE:', {
+                vertexCount: entity.data.vertices.length,
+                layer: entity.attributes?.layer,
                 sourceSystem,
                 targetSystem
-              );
-              // Validate transformed coordinates
-              if (!isFinite(transformed.x) || !isFinite(transformed.y)) {
-                console.warn('[DEBUG] Invalid transformed coordinates:', { original: vertex, transformed });
-                return vertex;
+              });
+              return entity;
+            }
+            console.debug('[DEBUG] LWPOLYLINE transformation complete:', {
+              entityType: entity.type,
+              layer: entity.attributes?.layer,
+              originalCount: entity.data.vertices.length,
+              transformedCount: transformedVertices.length,
+              originalVertices: entity.data.vertices.map(v => ({ x: v.x, y: v.y })),
+              transformedVertices: transformedVertices.map(v => ({ x: v.x, y: v.y })),
+              sourceSystem,
+              targetSystem,
+              bounds: {
+                original: {
+                  minX: Math.min(...entity.data.vertices.map(v => v.x)),
+                  minY: Math.min(...entity.data.vertices.map(v => v.y)),
+                  maxX: Math.max(...entity.data.vertices.map(v => v.x)),
+                  maxY: Math.max(...entity.data.vertices.map(v => v.y))
+                },
+                transformed: {
+                  minX: Math.min(...transformedVertices.map(v => v.x)),
+                  minY: Math.min(...transformedVertices.map(v => v.y)),
+                  maxX: Math.max(...transformedVertices.map(v => v.x)),
+                  maxY: Math.max(...transformedVertices.map(v => v.y))
+                }
               }
-              return { ...vertex, x: transformed.x, y: transformed.y };
-            }));
+            });
+
             return {
               ...entity,
-              data: { ...entity.data, vertices: transformedVertices }
+              data: { 
+                ...entity.data, 
+                vertices: transformedVertices,
+                transformed: true // Mark as transformed for downstream processing
+              }
             };
           }
           break;
@@ -141,16 +237,26 @@ export class DxfTransformer {
     sourceSystem: string,
     targetSystem: string
   ): Promise<DxfEntity[]> {
-    console.log('[DEBUG] Transforming entities from', sourceSystem, 'to', targetSystem);
+    console.debug('[DEBUG] Starting batch transformation:', {
+      entityCount: entities.length,
+      entityTypes: Array.from(new Set(entities.map(e => e.type))),
+      sourceSystem,
+      targetSystem
+    });
     
     const transformed = await Promise.all(
       entities.map(entity => this.transformEntity(entity, sourceSystem, targetSystem))
     );
 
-    console.log('[DEBUG] Transformation complete:', {
+    console.debug('[DEBUG] Batch transformation complete:', {
       input: entities.length,
       output: transformed.length,
-      types: Array.from(new Set(transformed.map(e => e.type)))
+      types: Array.from(new Set(transformed.map(e => e.type))),
+      transformedTypes: transformed.map(e => ({
+        type: e.type,
+        hasVertices: 'vertices' in e.data,
+        vertexCount: Array.isArray(e.data.vertices) ? e.data.vertices.length : 0
+      }))
     });
 
     return transformed;

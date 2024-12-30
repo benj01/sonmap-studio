@@ -265,6 +265,12 @@ export class CoordinateSystemManager {
     fromSystem: string,
     toSystem: string
   ): Promise<CoordinatePoint> {
+    console.debug('[DEBUG] Transform request:', {
+      point,
+      fromSystem,
+      toSystem
+    });
+    
     if (!this.initialized) {
       throw new CoordinateSystemError('Coordinate systems not initialized');
     }
@@ -300,6 +306,13 @@ export class CoordinateSystemManager {
       const [x, y] = transformer.forward([point.x, point.y]);
 
       const result: CoordinatePoint = { x, y };
+      
+      console.debug('[DEBUG] Transform result:', {
+        input: point,
+        output: result,
+        fromSystem,
+        toSystem
+      });
 
       // Validate result
       if (!isValidPoint(result)) {

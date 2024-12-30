@@ -50,7 +50,13 @@ function calculateCoordinateArrayBounds(coords: Position[]): Bounds | null {
  * Calculate bounds for a geometry object.
  */
 export function calculateGeometryBounds(geometry: Geometry): Bounds | null {
+  console.debug('[DEBUG] Calculating geometry bounds:', {
+    geometryType: geometry?.type,
+    hasCoordinates: 'coordinates' in geometry
+  });
+
   if (!geometry || !geometry.type) {
+    console.debug('[DEBUG] Invalid geometry for bounds calculation');
     return null;
   }
 
@@ -121,8 +127,19 @@ export function calculateGeometryBounds(geometry: Geometry): Bounds | null {
  * Calculate bounds for a GeoJSON feature.
  */
 export function calculateFeatureBounds(feature: GeoFeature): Bounds | null {
+  console.debug('[DEBUG] Calculating feature bounds:', {
+    featureType: feature?.type,
+    geometryType: feature?.geometry?.type,
+    properties: feature?.properties
+  });
+
   if (!feature || !feature.geometry) {
+    console.debug('[DEBUG] Invalid feature for bounds calculation');
     return null;
   }
-  return calculateGeometryBounds(feature.geometry);
+  
+  const bounds = calculateGeometryBounds(feature.geometry);
+  console.debug('[DEBUG] Calculated bounds:', bounds);
+  
+  return bounds;
 }

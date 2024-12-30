@@ -271,13 +271,19 @@ export class DxfProcessor extends StreamProcessor {
         visibleLayers: [], // Empty array means all layers visible
         coordinateSystem: 'EPSG:4326', // Always WGS84 for preview
         enableCaching: true,
-        bounds: previewBounds,
+        initialBounds: previewBounds, // Use transformed bounds as initial bounds
         analysis: {
           warnings: this.errorReporter.getWarnings().map(w => ({
             type: 'warning',
             message: w.message
           }))
         }
+      });
+
+      console.debug('[DEBUG] Created preview manager:', {
+        bounds: previewBounds,
+        features: features.length,
+        coordinateSystem: 'EPSG:4326'
       });
 
       // Set features in preview manager
