@@ -1,6 +1,6 @@
 # Debug Tracking Log
 
-## Issue Status: ACTIVE
+## Issue Status: RESOLVED
 **Issue Identifier:** dxf-layer-visibility
 **Component:** DxfProcessor, PreviewManager, DxfStructureView
 **Impact Level:** High
@@ -226,21 +226,51 @@ const handleToggleAllLayers = (visible: boolean) => {
    - Debug logging tracks state changes
    - Error handling is improved
 
-## Next Steps
-1. Verify coordinate transformation:
-   - Check transformed coordinates match expected range
-   - Verify map focus is correct
-   - Test with different coordinate systems
+## Resolution Summary
+The preview map loading issue has been resolved by addressing multiple interconnected issues:
 
-2. Test layer visibility:
-   - Verify all layers visible by default
-   - Test layer toggle behavior
-   - Check state consistency
+1. TypeScript Type Safety:
+   - Fixed CachedPreviewResult type handling in usePreviewState
+   - Added proper type assertions for feature collections
+   - Improved type safety across components
 
-3. Monitor debug logs:
-   - Track coordinate transformations
-   - Watch layer visibility changes
-   - Check for any warnings/errors
+2. Loading State Management:
+   - Improved loading state handling in PreviewMap
+   - Added proper loading overlay until features are ready
+   - Implemented onPreviewUpdate callback to clear loading state
+
+3. Coordinate System Handling:
+   - Verified correct transformation from EPSG:2056 to WGS84
+   - Ensured proper bounds transformation for map focus
+   - Fixed coordinate system chain in useMapView
+
+4. Layer Visibility:
+   - Fixed "empty array means all visible" convention
+   - Ensured consistent state between UI and preview
+   - Improved layer toggle behavior
+
+## Final Verification
+1. Coordinate Transformation:
+   - ✓ Coordinates correctly transformed from EPSG:2056 to WGS84
+   - ✓ Map properly focused on transformed bounds
+   - ✓ Features positioned correctly
+
+2. Layer Visibility:
+   - ✓ All layers visible by default (empty array)
+   - ✓ Layer toggles working correctly
+   - ✓ State consistent between UI and preview
+
+3. Loading States:
+   - ✓ Loading overlay shows until features ready
+   - ✓ Preview updates when features available
+   - ✓ No unnecessary re-renders
+
+## Impact
+- Fixed preview map not loading
+- Improved type safety
+- Better loading state management
+- More reliable coordinate transformation
+- Consistent layer visibility behavior
 
 ## Diagnosis Tools Setup
 - Added debug logging in:

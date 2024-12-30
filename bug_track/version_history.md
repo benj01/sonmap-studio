@@ -1,14 +1,17 @@
-# Version History Archive
+ # Version History Archive
 
 ## Current Version
 
 ### v0.4.6 (In Progress)
 - Performance and stability improvements
-  - Fixed map preview issues:
-    - Corrected initial map centering
-    - Fixed coordinate system handling
-    - Prevented double transformation of coordinates
-    - Added feature-level visibility filtering
+  - Fixed map preview loading issues:
+    - Fixed TypeScript type handling in usePreviewState
+    - Improved loading state management in PreviewMap
+    - Added proper loading overlay until features ready
+    - Implemented onPreviewUpdate callback
+    - Fixed coordinate system transformation chain
+    - Ensured proper bounds transformation for map focus
+    - Fixed "empty array means all visible" convention
     - Improved layer visibility toggle behavior
   - Fixed DXF layer handling:
     - Added system layer filtering

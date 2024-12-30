@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { PreviewSectionProps } from './types';
-import { PreviewMap } from '../preview-map';
+import { PreviewMap } from '../preview-map/index';
 import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
 import { ProcessorResult } from '../../core/processors/base/types';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';

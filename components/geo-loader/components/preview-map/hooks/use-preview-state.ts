@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Feature, FeatureCollection } from 'geojson';
 import { PreviewManager } from '../../../preview/preview-manager';
-import { CacheStats, CachedPreviewResult } from '../../../types/cache';
+import type { CacheStats, CachedPreviewResult, CachedFeatureCollection } from '../../../types/cache';
 import { cacheManager } from '../../../core/cache-manager';
 import { COORDINATE_SYSTEMS } from '../../../types/coordinates';
 import bboxPolygon from '@turf/bbox-polygon';
@@ -24,6 +24,7 @@ interface UsePreviewStateProps {
   visibleLayers: string[];
   initialBoundsSet: boolean;
   onUpdateBounds: (bounds: any) => void;
+  onPreviewUpdate?: () => void;
 }
 
 export function usePreviewState({
@@ -31,7 +32,8 @@ export function usePreviewState({
   viewportBounds,
   visibleLayers,
   initialBoundsSet,
-  onUpdateBounds
+  onUpdateBounds,
+  onPreviewUpdate
 }: UsePreviewStateProps) {
   const [previewState, setPreviewState] = useState<PreviewState>({
     points: { type: 'FeatureCollection', features: [] },
@@ -98,15 +100,26 @@ export function usePreviewState({
       });
 
       if (cached) {
-        // Split the cached features into points, lines, and polygons
-        const features = cached.features.features;
-        const pointFeatures = features.filter((f: Feature) => 
+        // Get cached features and apply visibility filter
+        const cachedFeatures = ((cached as unknown) as { features: { features: Feature[] } }).features.features;
+        
+        // Filter by layer visibility - empty array means all layers visible
+        const visibleFeatures = visibleLayers.length > 0
+          ? cachedFeatures.filter((f: Feature) => 
+              f.properties && 
+              typeof f.properties.layer === 'string' && 
+              visibleLayers.includes(f.properties.layer)
+            )
+          : cachedFeatures;
+
+        // Split the visible features by geometry type
+        const pointFeatures = visibleFeatures.filter((f: Feature) => 
           f.geometry.type === 'Point'
         );
-        const lineFeatures = features.filter((f: Feature) => 
+        const lineFeatures = visibleFeatures.filter((f: Feature) => 
           f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString'
         );
-        const polygonFeatures = features.filter((f: Feature) => 
+        const polygonFeatures = visibleFeatures.filter((f: Feature) => 
           f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'
         );
 
@@ -115,7 +128,7 @@ export function usePreviewState({
           lines: { type: 'FeatureCollection', features: lineFeatures },
           polygons: { type: 'FeatureCollection', features: polygonFeatures },
           totalCount: collections.totalCount,
-          visibleCount: features.length
+          visibleCount: visibleFeatures.length
         };
 
         setPreviewState(newState);
@@ -127,17 +140,33 @@ export function usePreviewState({
         return;
       }
 
-      // Filter features by viewport
+      // Filter features by viewport and visibility
       const polygon = viewportPolygon();
-      const filterByViewport = (fc: FeatureCollection) => {
-        if (!polygon) return fc;
-        const filtered = fc.features.filter((f: Feature) => booleanIntersects(f, polygon));
+      const filterFeatures = (fc: FeatureCollection) => {
+        if (!fc.features.length) return fc;
+        
+        let filtered = fc.features;
+
+        // Filter by viewport if we have valid bounds
+        if (polygon) {
+          filtered = filtered.filter((f: Feature) => booleanIntersects(f, polygon));
+        }
+
+        // Filter by layer visibility - empty array means all layers visible
+        if (visibleLayers.length > 0) {
+          filtered = filtered.filter((f: Feature) => 
+            f.properties && 
+            typeof f.properties.layer === 'string' && 
+            visibleLayers.includes(f.properties.layer)
+          );
+        }
+
         return { ...fc, features: filtered };
       };
 
-      const filteredPoints = filterByViewport(collections.points);
-      const filteredLines = filterByViewport(collections.lines);
-      const filteredPolygons = filterByViewport(collections.polygons);
+      const filteredPoints = filterFeatures(collections.points);
+      const filteredLines = filterFeatures(collections.lines);
+      const filteredPolygons = filterFeatures(collections.polygons);
 
       const filteredVisibleCount = 
         filteredPoints.features.length + 
@@ -152,15 +181,20 @@ export function usePreviewState({
         visibleCount: filteredVisibleCount
       });
 
+      // Notify that preview has been updated
+      onPreviewUpdate?.();
+
       // Cache the filtered results
+      const combinedFeatures: Feature[] = [
+        ...filteredPoints.features,
+        ...filteredLines.features,
+        ...filteredPolygons.features
+      ];
+
       const cacheResult: CachedPreviewResult = {
         features: {
           type: 'FeatureCollection',
-          features: [
-            ...filteredPoints.features,
-            ...filteredLines.features,
-            ...filteredPolygons.features
-          ]
+          features: combinedFeatures
         },
         viewportBounds: bounds2D,
         layers: visibleLayers,
@@ -186,7 +220,7 @@ export function usePreviewState({
     } catch (error) {
       console.error('Failed to update preview collections:', error);
     }
-  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, viewportPolygon, onUpdateBounds]);
+  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, viewportPolygon, onUpdateBounds, onPreviewUpdate]);
 
   // Effect to handle debounced preview updates
   useEffect(() => {

@@ -6,11 +6,13 @@ export interface CacheKey {
   visibleLayers: string[];
 }
 
+export interface CachedFeatureCollection {
+  type: 'FeatureCollection';
+  features: Feature[];
+}
+
 export interface CachedPreviewResult {
-  features: {
-    type: 'FeatureCollection';
-    features: Feature[];
-  };
+  features: CachedFeatureCollection;
   viewportBounds?: [number, number, number, number];
   layers: string[];
   featureCount: number;

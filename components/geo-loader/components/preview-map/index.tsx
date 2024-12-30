@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Map, MapRef, ViewStateChangeEvent, MapMouseEvent } from 'react-map-gl';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
 import { PreviewMapProps, MapFeature } from '../../types/map';
@@ -27,6 +27,15 @@ export function PreviewMap({
   analysis
 }: PreviewMapProps): React.ReactElement {
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Update loading state when preview or bounds change
+  useEffect(() => {
+    if (!preview || !bounds) {
+      setIsLoading(true);
+      return;
+    }
+    // Loading will be set to false by onPreviewUpdate callback
+  }, [preview, bounds]);
   const [error, setError] = useState<string | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<MapFeature | null>(null);
   const [mouseCoords, setMouseCoords] = useState<{ lng: number; lat: number } | null>(null);
@@ -42,6 +51,7 @@ export function PreviewMap({
   } = useMapView(bounds, coordinateSystem);
 
   const { previewState, cacheStats } = usePreviewState({
+    onPreviewUpdate: () => setIsLoading(false),
     previewManager: preview?.previewManager ?? null,
     viewportBounds: getViewportBounds(),
     visibleLayers,

@@ -11,6 +11,13 @@
    - See bug_track/active/dxf-testing-implementation.md
 
 ### Recently Resolved
+1. DXF Preview Map Loading (✓)
+   - Fixed preview map not loading
+   - Fixed coordinate system transformation
+   - Improved layer visibility handling
+   - Enhanced loading state management
+   - See bug_track/resolved/dxf-layer-visibility.md
+
 1. DXF Layer Handling (✓)
    - Fixed system properties being treated as layers
    - Improved layer state management

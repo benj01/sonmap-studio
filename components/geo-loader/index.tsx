@@ -60,7 +60,7 @@ export { wrappedManager as coordinateSystemManager };
 
 // Component exports
 export { default as GeoImportDialog } from './components/geo-import';
-export { PreviewMap } from './components/preview-map';
+export { PreviewMap } from './components/preview-map/index';
 export { DxfStructureView } from './components/dxf-structure-view';
 
 // Type exports
