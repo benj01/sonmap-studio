@@ -50,12 +50,12 @@ export class PreviewManager {
       enableCaching: true,
       smartSampling: true,
       analysis: { warnings: [] },
-      viewportBounds: [0, 0, 0, 0],
+      viewportBounds: [2485000, 1075000, 2834000, 1296000],
       initialBounds: {
-        minX: 0,
-        minY: 0,
-        maxX: 0,
-        maxY: 0
+        minX: 2485000,
+        minY: 1075000,
+        maxX: 2834000,
+        maxY: 1296000
       },
       onProgress: () => {}
     };
@@ -88,7 +88,8 @@ export class PreviewManager {
     console.debug('[DEBUG] Validating bounds:', {
       inputBounds: bounds,
       initialBounds: this.options.initialBounds,
-      viewportBounds: this.options.viewportBounds
+      viewportBounds: this.options.viewportBounds,
+      coordinateSystem: this.options.coordinateSystem
     });
 
     // First try to use provided bounds
@@ -125,9 +126,9 @@ export class PreviewManager {
       };
     }
 
-    // Default to Switzerland bounds for Swiss coordinate systems
+    // Use appropriate default bounds based on coordinate system
     if (this.options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
-      console.debug('[DEBUG] Using Swiss default bounds');
+      console.debug('[DEBUG] Using Swiss LV95 default bounds');
       return {
         minX: 2485000,
         minY: 1075000,
@@ -136,7 +137,7 @@ export class PreviewManager {
       };
     }
 
-    console.debug('[DEBUG] Using global default bounds');
+    console.debug('[DEBUG] Using WGS84 default bounds');
     return { minX: -180, minY: -85, maxX: 180, maxY: 85 };
   }
 
