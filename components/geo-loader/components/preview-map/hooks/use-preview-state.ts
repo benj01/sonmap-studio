@@ -76,22 +76,33 @@ export function usePreviewState({
 
   // Debounced preview update function
   const updatePreview = useCallback(async () => {
-    if (!previewManager) return;
+    if (!previewManager) {
+      console.debug('[DEBUG] No preview manager available');
+      return;
+    }
 
     try {
-      // Only update bounds if we're doing the initial load
-      if (!initialBoundsSet) {
-        console.debug('[DEBUG] Initial load - bounds state:', {
-          initialBoundsSet,
+      console.debug('[DEBUG] Updating preview with state:', {
+        initialBoundsSet,
+        viewportBounds,
+        visibleLayers,
+        hasPreviewManager: !!previewManager
+      });
+
+      // Update bounds in preview manager
+      if (viewportBounds) {
+        previewManager.setOptions({
           viewportBounds,
-          previewManagerOptions: previewManager.getOptions()
+          // Only set as initial bounds if not already set
+          ...((!initialBoundsSet && {
+            initialBounds: {
+              minX: viewportBounds[0],
+              minY: viewportBounds[1],
+              maxX: viewportBounds[2],
+              maxY: viewportBounds[3]
+            }
+          }))
         });
-        
-        if (viewportBounds) {
-          previewManager.setOptions({
-            viewportBounds
-          });
-        }
       }
 
       const collections = await previewManager.getPreviewCollections();

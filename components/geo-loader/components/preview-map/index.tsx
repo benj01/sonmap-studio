@@ -30,12 +30,20 @@ export function PreviewMap({
   
   // Update loading state when preview or bounds change
   useEffect(() => {
+    console.debug('[DEBUG] PreviewMap state update:', {
+      hasPreview: !!preview,
+      hasBounds: !!bounds,
+      previewManager: preview?.previewManager ? 'initialized' : 'null',
+      boundsData: bounds,
+      visibleLayers
+    });
+    
     if (!preview || !bounds) {
       setIsLoading(true);
       return;
     }
     // Loading will be set to false by onPreviewUpdate callback
-  }, [preview, bounds]);
+  }, [preview, bounds, visibleLayers]);
   const [error, setError] = useState<string | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<MapFeature | null>(null);
   const [mouseCoords, setMouseCoords] = useState<{ lng: number; lat: number } | null>(null);

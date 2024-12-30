@@ -85,24 +85,59 @@ export class PreviewManager {
   }
 
   private ensureValidBounds(bounds: Bounds | null): Required<Bounds> {
-    // Use initial bounds if provided and valid
+    console.debug('[DEBUG] Validating bounds:', {
+      inputBounds: bounds,
+      initialBounds: this.options.initialBounds,
+      viewportBounds: this.options.viewportBounds
+    });
+
+    // First try to use provided bounds
+    if (bounds && 
+        isFinite(bounds.minX) && isFinite(bounds.minY) &&
+        isFinite(bounds.maxX) && isFinite(bounds.maxY) &&
+        bounds.minX !== bounds.maxX && bounds.minY !== bounds.maxY) {
+      console.debug('[DEBUG] Using provided bounds');
+      return bounds as Required<Bounds>;
+    }
+
+    // Then try initial bounds
     if (this.options.initialBounds && 
         isFinite(this.options.initialBounds.minX) && isFinite(this.options.initialBounds.minY) &&
-        isFinite(this.options.initialBounds.maxX) && isFinite(this.options.initialBounds.maxY)) {
-      console.debug('[DEBUG] Using initial bounds:', this.options.initialBounds);
+        isFinite(this.options.initialBounds.maxX) && isFinite(this.options.initialBounds.maxY) &&
+        this.options.initialBounds.minX !== this.options.initialBounds.maxX && 
+        this.options.initialBounds.minY !== this.options.initialBounds.maxY) {
+      console.debug('[DEBUG] Using initial bounds');
       return this.options.initialBounds;
     }
 
-    // Check if bounds are valid
-    if (!bounds || 
-        !isFinite(bounds.minX) || !isFinite(bounds.minY) ||
-        !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
-      console.debug('[DEBUG] Using default bounds');
-      return { minX: -1, minY: -1, maxX: 1, maxY: 1 };
+    // Finally try viewport bounds
+    if (this.options.viewportBounds && 
+        this.options.viewportBounds.length === 4 &&
+        this.options.viewportBounds.every(n => isFinite(n)) &&
+        this.options.viewportBounds[0] !== this.options.viewportBounds[2] &&
+        this.options.viewportBounds[1] !== this.options.viewportBounds[3]) {
+      console.debug('[DEBUG] Using viewport bounds');
+      return {
+        minX: this.options.viewportBounds[0],
+        minY: this.options.viewportBounds[1],
+        maxX: this.options.viewportBounds[2],
+        maxY: this.options.viewportBounds[3]
+      };
     }
 
-    console.debug('[DEBUG] Using calculated bounds:', bounds);
-    return bounds;
+    // Default to Switzerland bounds for Swiss coordinate systems
+    if (this.options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+      console.debug('[DEBUG] Using Swiss default bounds');
+      return {
+        minX: 2485000,
+        minY: 1075000,
+        maxX: 2834000,
+        maxY: 1296000
+      };
+    }
+
+    console.debug('[DEBUG] Using global default bounds');
+    return { minX: -180, minY: -85, maxX: 180, maxY: 85 };
   }
 
   private addPaddingToBounds(bounds: Required<Bounds>): Required<Bounds> {
