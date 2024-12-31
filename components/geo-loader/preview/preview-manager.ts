@@ -6,20 +6,34 @@ import { ErrorSeverity } from '../../../types/errors';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
 import { calculateFeatureBounds, Bounds } from '../core/feature-manager/bounds';
-import { GeoFeature } from '../../../types/geo';
-import { PreviewOptions, PreviewResult } from '../types/map';
+import { GeoFeature, GeoFeatureCollection } from '../../../types/geo';
 
 interface PreviewCollectionResult {
-  points: FeatureCollection;
-  lines: FeatureCollection;
-  polygons: FeatureCollection;
+  points: GeoFeatureCollection;
+  lines: GeoFeatureCollection;
+  polygons: GeoFeatureCollection;
   totalCount: number;
   visibleCount: number;
   bounds: Required<Bounds>;
 }
 
 interface SamplingStrategy {
-  shouldIncludeFeature(feature: Feature<any, { [key: string]: any; layer?: string; type?: string }>, index: number): boolean;
+  shouldIncludeFeature(feature: GeoFeature, index: number): boolean;
+}
+
+export interface PreviewOptions {
+  maxFeatures?: number;
+  coordinateSystem?: CoordinateSystem;
+  enableCaching?: boolean;
+  smartSampling?: boolean;
+  analysis?: {
+    warnings: string[];
+  };
+  viewportBounds?: [number, number, number, number];
+  initialBounds?: Bounds;
+  onProgress?: (progress: number) => void;
+  visibleLayers?: string[];
+  selectedElement?: string;
 }
 
 /**
@@ -33,9 +47,9 @@ export class PreviewManager {
   private featureManager: FeatureManager;
   private options: Required<PreviewOptions>;
   private collectionsCache: Map<string, {
-    points: Feature[];
-    lines: Feature[];
-    polygons: Feature[];
+    points: GeoFeature[];
+    lines: GeoFeature[];
+    polygons: GeoFeature[];
     totalCount: number;
     bounds: Required<Bounds>;
   }> = new Map();
@@ -54,14 +68,18 @@ export class PreviewManager {
         maxX: 2834000,
         maxY: 1296000
       },
-      onProgress: () => {}
+      onProgress: () => {},
+      visibleLayers: [],
+      selectedElement: ''
     };
 
     this.options = {
       ...defaultOptions,
       ...options,
       viewportBounds: options.viewportBounds ?? defaultOptions.viewportBounds,
-      initialBounds: options.initialBounds ?? defaultOptions.initialBounds
+      initialBounds: options.initialBounds ?? defaultOptions.initialBounds,
+      visibleLayers: options.visibleLayers ?? defaultOptions.visibleLayers,
+      selectedElement: options.selectedElement ?? defaultOptions.selectedElement
     };
 
     console.debug('[DEBUG] PreviewManager initialized:', {
@@ -176,7 +194,7 @@ export class PreviewManager {
     let totalFeatures = 0;
 
     return {
-      shouldIncludeFeature: (feature: Feature) => {
+      shouldIncludeFeature: (feature: GeoFeature) => {
         // Apply progressive sampling based on total features
         if (totalFeatures >= this.options.maxFeatures) {
           return false;
@@ -214,8 +232,12 @@ export class PreviewManager {
    */
   async getPreviewCollections(): Promise<PreviewCollectionResult | null> {
     try {
-      const features = await this.featureManager.getFeatures();
-      if (!features || !Array.isArray(features) || features.length === 0) {
+      const features: GeoFeature[] = [];
+      for await (const feature of this.featureManager.getFeatures()) {
+        features.push(feature as GeoFeature);
+      }
+
+      if (features.length === 0) {
         console.debug('[DEBUG] No valid features available');
         return {
           points: { type: 'FeatureCollection', features: [] },
@@ -233,9 +255,9 @@ export class PreviewManager {
       });
 
       // Split features by geometry type
-      const points: Feature[] = [];
-      const lines: Feature[] = [];
-      const polygons: Feature[] = [];
+      const points: GeoFeature[] = [];
+      const lines: GeoFeature[] = [];
+      const polygons: GeoFeature[] = [];
 
       features.forEach(feature => {
         if (!feature?.geometry?.type) {
@@ -269,7 +291,7 @@ export class PreviewManager {
         bounds
       });
 
-      return {
+      const result: PreviewCollectionResult = {
         points: { type: 'FeatureCollection', features: points },
         lines: { type: 'FeatureCollection', features: lines },
         polygons: { type: 'FeatureCollection', features: polygons },
@@ -277,6 +299,8 @@ export class PreviewManager {
         visibleCount: points.length + lines.length + polygons.length,
         bounds
       };
+
+      return result;
     } catch (error) {
       console.error('Failed to get preview collections:', error);
       return null;
@@ -315,28 +339,45 @@ export class PreviewManager {
   /**
    * Set features directly for preview
    */
-  public setFeatures(features: Feature[] | FeatureCollection): void {
+  public async setFeatures(features: Feature[] | FeatureCollection): Promise<void> {
     console.debug('[DEBUG] Setting features:', {
       type: Array.isArray(features) ? 'array' : 'collection',
       count: Array.isArray(features) ? features.length : features.features.length
     });
 
+    // Clear existing features
+    this.featureManager.clear();
+
+    // Convert features to GeoFeatures
     const featureArray = Array.isArray(features) ? features : features.features;
-    this.featureManager.setFeatures(featureArray);
+    const geoFeatures: GeoFeature[] = featureArray.map(feature => ({
+      ...feature,
+      properties: {
+        ...feature.properties,
+        layer: feature.properties?.layer || '0',
+        type: feature.properties?.type || feature.geometry.type
+      }
+    }));
+
+    // Add new features
+    await this.featureManager.addFeatures(geoFeatures);
+    
+    // Invalidate cache after adding features
     this.invalidateCache();
   }
 
   /**
    * Get features by type and layer
    */
-  public async getFeaturesByTypeAndLayer(type: string, layer: string): Promise<Feature[]> {
-    const features: Feature[] = [];
+  public async getFeaturesByTypeAndLayer(type: string, layer: string): Promise<GeoFeature[]> {
+    const features: GeoFeature[] = [];
     for await (const feature of this.featureManager.getFeatures()) {
+      const geoFeature = feature as GeoFeature;
       if (
-        feature.geometry.type === type &&
-        feature.properties?.layer === layer
+        geoFeature.geometry.type === type &&
+        geoFeature.properties?.layer === layer
       ) {
-        features.push(feature);
+        features.push(geoFeature);
       }
     }
     return features;
@@ -347,24 +388,8 @@ export class PreviewManager {
    */
   public async hasVisibleFeatures(): Promise<boolean> {
     const collections = await this.getPreviewCollections();
-    return collections?.visibleCount > 0;
+    return collections !== null && collections.visibleCount > 0;
   }
-}
-
-/**
- * Options for preview manager
- */
-export interface PreviewOptions {
-  maxFeatures?: number;
-  coordinateSystem?: CoordinateSystem;
-  enableCaching?: boolean;
-  smartSampling?: boolean;
-  analysis?: {
-    warnings: string[];
-  };
-  viewportBounds?: [number, number, number, number];
-  initialBounds?: Bounds;
-  onProgress?: (progress: number) => void;
 }
 
 /**

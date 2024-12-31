@@ -1,7 +1,7 @@
 import { Feature, FeatureCollection } from 'geojson';
 import { StreamProcessor } from '../../stream/stream-processor';
 import { AnalyzeResult, ProcessorResult } from '../../base/types';
-import { CoordinateSystem } from '../../../../types/coordinates';
+import { CoordinateSystem, COORDINATE_SYSTEMS } from '../../../../types/coordinates';
 import { StreamProcessorResult, StreamProcessorState } from '../../stream/types';
 import { DxfProcessorOptions, DxfParseOptions, DxfStructure, DxfEntity, DxfLayer } from './types';
 import { ValidationError } from '../../../errors/types';
@@ -121,26 +121,41 @@ export class DxfProcessor extends StreamProcessor {
       const detectedSystem = DxfAnalyzer.detectCoordinateSystem(bounds, structure);
       console.log('[DEBUG] Detected coordinate system:', detectedSystem);
 
-      // If no coordinate system detected, default to LV95
-      const coordinateSystem = detectedSystem || 'EPSG:2056';
+      // If no coordinate system detected or if it's 'none', use LV95 as default
+      const coordinateSystem = (detectedSystem === null || detectedSystem === COORDINATE_SYSTEMS.NONE) 
+        ? COORDINATE_SYSTEMS.SWISS_LV95 
+        : detectedSystem;
       console.log('[DEBUG] Using coordinate system:', coordinateSystem);
 
-      // Extract layers
-      const layers = DxfLayerProcessor.extractLayerNames(structure.tables?.layer || {});
+      // Extract layers from structure
+      const layers = DxfLayerProcessor.extractLayerNames(structure.layers || []);
       console.log('[DEBUG] Extracted layers:', layers);
 
-      // Create preview manager
-      const previewManager = createPreviewManager();
-      await previewManager.addFeatures(entities, coordinateSystem);
+      // Convert DXF entities to GeoJSON features
+      const features = await DxfEntityProcessor.entitiesToFeatures(entities);
+      console.log('[DEBUG] Converted entities to features:', features.length);
+
+      // Create preview manager with coordinate system configuration
+      const previewManager = createPreviewManager({
+        coordinateSystem: coordinateSystem
+      });
+      
+      // Set features using the correct API
+      previewManager.setFeatures(features);
       console.log('[DEBUG] Added features to preview manager');
 
+      // Create feature collection for preview
+      const preview: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: features
+      };
+
       return {
-        fileType: 'dxf',
-        coordinateSystem,
         layers,
+        coordinateSystem,
         bounds,
-        previewManager,
-        statistics: {
+        preview,
+        dxfData: {
           entityCount: entities.length,
           layerCount: layers.length
         }
@@ -194,7 +209,10 @@ export class DxfProcessor extends StreamProcessor {
    */
   protected calculateBounds(): ProcessorResult['bounds'] {
     if (!this.state.features || this.state.features.length === 0) {
-      return DxfAnalyzer.getDefaultBounds(this.options.coordinateSystem);
+      const defaultSystem = this.options.coordinateSystem === COORDINATE_SYSTEMS.NONE 
+        ? COORDINATE_SYSTEMS.SWISS_LV95 
+        : (this.options.coordinateSystem ?? COORDINATE_SYSTEMS.SWISS_LV95);
+      return DxfAnalyzer.getDefaultBounds(defaultSystem);
     }
     
     // Calculate bounds in chunks if many features
@@ -220,7 +238,10 @@ export class DxfProcessor extends StreamProcessor {
         }
       }
       
-      return bounds || DxfAnalyzer.getDefaultBounds(this.options.coordinateSystem);
+      const fallbackSystem = this.options.coordinateSystem === COORDINATE_SYSTEMS.NONE 
+        ? COORDINATE_SYSTEMS.SWISS_LV95 
+        : (this.options.coordinateSystem ?? COORDINATE_SYSTEMS.SWISS_LV95);
+      return bounds || DxfAnalyzer.getDefaultBounds(fallbackSystem);
     }
     
     return DxfAnalyzer.calculateBoundsFromEntities(this.state.features);

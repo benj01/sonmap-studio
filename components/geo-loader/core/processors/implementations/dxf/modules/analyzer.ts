@@ -1,7 +1,10 @@
 import { DxfEntity } from '../types';
 import { coordinateSystemManager } from '../../../../coordinate-system-manager';
+import { CoordinateSystem, COORDINATE_SYSTEMS, Bounds } from '../../../../../types/coordinates';
 
-interface Bounds {
+type DetectedCoordinateSystem = CoordinateSystem | null;
+
+interface DxfBounds extends Bounds {
   minX: number;
   minY: number;
   maxX: number;
@@ -12,7 +15,6 @@ interface DxfStructure {
   // Add properties for DxfStructure as needed
 }
 
-type CoordinateSystem = 'EPSG:2056' | 'EPSG:21781' | 'EPSG:4326' | null;
 
 export class DxfAnalyzer {
   /**
@@ -106,7 +108,7 @@ export class DxfAnalyzer {
     if (!isFinite(bounds.minX) || !isFinite(bounds.minY) || 
         !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
       console.warn('[DEBUG] Invalid bounds calculated, using defaults');
-      return this.getDefaultBounds();
+      return this.getDefaultBounds(COORDINATE_SYSTEMS.SWISS_LV95);
     }
 
     return bounds;
@@ -115,7 +117,7 @@ export class DxfAnalyzer {
   /**
    * Detect coordinate system from bounds and structure
    */
-  static detectCoordinateSystem(bounds: Bounds, structure: DxfStructure): CoordinateSystem {
+  static detectCoordinateSystem(bounds: Bounds, structure: DxfStructure): DetectedCoordinateSystem {
     console.debug('[DEBUG] Detecting coordinate system from bounds:', bounds);
 
     // Check if bounds are in reasonable ranges
@@ -141,18 +143,18 @@ export class DxfAnalyzer {
     // First check for Swiss coordinate systems
     if (isLV95Range) {
       console.debug('[DEBUG] Detected LV95 coordinates');
-      return 'EPSG:2056';
+      return COORDINATE_SYSTEMS.SWISS_LV95;
     }
 
     if (isLV03Range) {
       console.debug('[DEBUG] Detected LV03 coordinates');
-      return 'EPSG:21781';
+      return COORDINATE_SYSTEMS.SWISS_LV03;
     }
 
     // If coordinates are in WGS84 range, use WGS84
     if (isWGS84Range) {
       console.debug('[DEBUG] Detected WGS84 coordinates');
-      return 'EPSG:4326';
+      return COORDINATE_SYSTEMS.WGS84;
     }
 
     // If we can't determine the system, return null
@@ -163,23 +165,23 @@ export class DxfAnalyzer {
   /**
    * Get default bounds for a coordinate system
    */
-  static getDefaultBounds(system: CoordinateSystem): Bounds {
+  static getDefaultBounds(system: CoordinateSystem = COORDINATE_SYSTEMS.SWISS_LV95): DxfBounds {
     switch (system) {
-      case 'EPSG:2056': // LV95
+      case COORDINATE_SYSTEMS.SWISS_LV95:
         return {
           minX: 2485000,
           minY: 1075000,
           maxX: 2835000,
           maxY: 1295000
         };
-      case 'EPSG:21781': // LV03
+      case COORDINATE_SYSTEMS.SWISS_LV03:
         return {
           minX: 485000,
           minY: 75000,
           maxX: 835000,
           maxY: 295000
         };
-      case 'EPSG:4326': // WGS84
+      case COORDINATE_SYSTEMS.WGS84:
       default:
         return {
           minX: 5.9,

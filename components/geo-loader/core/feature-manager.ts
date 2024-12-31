@@ -1,6 +1,7 @@
 import { Feature } from 'geojson';
 import { geoErrorManager } from './error-manager';
 import { ErrorSeverity } from '../../../types/errors';
+import { GeoFeature } from '../../../types/geo';
 
 export interface FeatureManagerOptions {
   /** Maximum number of features per chunk */
@@ -24,8 +25,8 @@ export interface FeatureStats {
  * Manages feature storage with memory-efficient chunking
  */
 export class FeatureManager {
-  private chunks: Feature[][] = [];
-  private currentChunk: Feature[] = [];
+  private chunks: GeoFeature[][] = [];
+  private currentChunk: GeoFeature[] = [];
   private readonly options: Required<FeatureManagerOptions>;
   private readonly DEFAULT_CHUNK_SIZE = 1000;
   private readonly DEFAULT_MAX_MEMORY = 512; // 512MB
@@ -45,9 +46,19 @@ export class FeatureManager {
    * Add features to storage
    * @throws Error if memory limit is exceeded
    */
-  public async addFeatures(features: Feature[]): Promise<void> {
+  public async addFeatures(features: Feature[] | GeoFeature[]): Promise<void> {
     for (const feature of features) {
-      this.currentChunk.push(feature);
+      // Convert Feature to GeoFeature if needed
+      const geoFeature: GeoFeature = {
+        ...feature,
+        properties: {
+          ...feature.properties,
+          layer: feature.properties?.layer || '0',
+          type: feature.properties?.type || feature.geometry.type
+        }
+      };
+      
+      this.currentChunk.push(geoFeature);
       this.totalFeatures++;
 
       if (this.currentChunk.length >= this.options.chunkSize) {
@@ -65,8 +76,18 @@ export class FeatureManager {
    * Add a single feature to storage
    * @throws Error if memory limit is exceeded
    */
-  public async addFeature(feature: Feature): Promise<void> {
-    this.currentChunk.push(feature);
+  public async addFeature(feature: Feature | GeoFeature): Promise<void> {
+    // Convert Feature to GeoFeature if needed
+    const geoFeature: GeoFeature = {
+      ...feature,
+      properties: {
+        ...feature.properties,
+        layer: feature.properties?.layer || '0',
+        type: feature.properties?.type || feature.geometry.type
+      }
+    };
+
+    this.currentChunk.push(geoFeature);
     this.totalFeatures++;
 
     if (this.currentChunk.length >= this.options.chunkSize) {
@@ -123,7 +144,7 @@ export class FeatureManager {
   /**
    * Get all features as an async generator
    */
-  public async *getFeatures(): AsyncGenerator<Feature> {
+  public async *getFeatures(): AsyncGenerator<GeoFeature> {
     // First yield any features in the current chunk
     for (const feature of this.currentChunk) {
       yield feature;
@@ -140,7 +161,7 @@ export class FeatureManager {
   /**
    * Get features from a specific chunk
    */
-  public getChunk(index: number): Feature[] | null {
+  public getChunk(index: number): GeoFeature[] | null {
     if (index >= 0 && index < this.chunks.length) {
       return [...this.chunks[index]];
     }

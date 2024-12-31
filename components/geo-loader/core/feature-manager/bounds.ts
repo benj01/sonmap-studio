@@ -126,7 +126,25 @@ export function calculateGeometryBounds(geometry: Geometry): Bounds | null {
 /**
  * Calculate bounds for a GeoJSON feature.
  */
-export function calculateFeatureBounds(feature: GeoFeature): Bounds | null {
+export function calculateFeatureBounds(feature: GeoFeature | GeoFeature[]): Bounds | null {
+  if (Array.isArray(feature)) {
+    console.debug('[DEBUG] Calculating bounds for feature array:', {
+      featureCount: feature.length
+    });
+
+    return feature.reduce((bounds: Bounds | null, feat) => {
+      const featureBounds = calculateFeatureBounds(feat);
+      if (!featureBounds) return bounds;
+      if (!bounds) return featureBounds;
+      return {
+        minX: Math.min(bounds.minX, featureBounds.minX),
+        minY: Math.min(bounds.minY, featureBounds.minY),
+        maxX: Math.max(bounds.maxX, featureBounds.maxX),
+        maxY: Math.max(bounds.maxY, featureBounds.maxY)
+      };
+    }, null);
+  }
+
   console.debug('[DEBUG] Calculating feature bounds:', {
     featureType: feature?.type,
     geometryType: feature?.geometry?.type,
