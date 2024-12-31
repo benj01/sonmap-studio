@@ -11,6 +11,7 @@ import {
 import { ViewState, UseMapViewResult } from '../types/map';
 import { coordinateSystemManager } from '../core/coordinate-system-manager';
 import proj4 from 'proj4';
+import WebMercatorViewport from '@math.gl/web-mercator';
 
 // Padding for bounds (in degrees for WGS84)
 const BOUNDS_PADDING_DEGREES = 0.1;  // About 10km at Swiss latitudes
@@ -41,11 +42,17 @@ export function useMapView(
   // Verify coordinate system is supported
   useEffect(() => {
     if (!coordinateSystemManager.isInitialized()) return;
-    
-    const supportedSystems = coordinateSystemManager.getSupportedSystems();
-    if (coordinateSystem && !supportedSystems.includes(coordinateSystem)) {
-      console.error(`Coordinate system ${coordinateSystem} is not supported`);
-      // Set default view of Aarau
+
+    const isSupported = coordinateSystemManager.isSupported(coordinateSystem);
+    console.debug('[DEBUG] Coordinate system check:', {
+      system: coordinateSystem,
+      isSupported,
+      initialized: coordinateSystemManager.isInitialized()
+    });
+
+    if (!isSupported) {
+      console.warn(`[DEBUG] Unsupported coordinate system: ${coordinateSystem}`);
+      // Fallback to WGS84 if system not supported
       setViewState(prev => ({
         ...prev,
         ...DEFAULT_CENTER
@@ -120,162 +127,54 @@ export function useMapView(
     return { minX, minY, maxX, maxY };
   }, [coordinateSystem]);
 
-  const updateViewFromBounds = useCallback(async (bounds: Bounds): Promise<void> => {
+  const updateViewFromBounds = useCallback(async (bounds: Bounds) => {
+    if (!coordinateSystemManager.isInitialized()) {
+      console.warn('[DEBUG] Coordinate system manager not initialized');
+      return;
+    }
+
     try {
-      // Validate bounds first
-      if (!bounds || 
-          bounds.minX === null || bounds.minY === null || 
-          bounds.maxX === null || bounds.maxY === null ||
-          !isFinite(bounds.minX) || !isFinite(bounds.minY) ||
-          !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
-        console.warn('Invalid bounds provided, using default center');
-        setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
-        return;
-      }
-
-      // Verify coordinate system is supported before attempting transformation
-      if (!coordinateSystemManager.isInitialized()) {
-        throw new Error('Coordinate system manager not initialized');
-      }
-
-      const supportedSystems = coordinateSystemManager.getSupportedSystems();
-      if (coordinateSystem && !supportedSystems.includes(coordinateSystem)) {
-        throw new Error(`Coordinate system ${coordinateSystem} is not supported`);
-      }
-
-      let transformedBounds = bounds;
-      
-      // Only transform if we're not already in WGS84
-      if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        try {
-          // Transform each corner of the bounds
-          const minPoint = await coordinateSystemManager.transform(
-            { x: bounds.minX, y: bounds.minY },
-            coordinateSystem,
-            COORDINATE_SYSTEMS.WGS84
-          );
-          const maxPoint = await coordinateSystemManager.transform(
-            { x: bounds.maxX, y: bounds.maxY },
-            coordinateSystem,
-            COORDINATE_SYSTEMS.WGS84
-          );
-
-          transformedBounds = {
-            minX: minPoint.x,
-            minY: minPoint.y,
-            maxX: maxPoint.x,
-            maxY: maxPoint.y
-          };
-
-          console.debug('Bounds transformation:', {
-            original: bounds,
-            transformed: transformedBounds,
-            system: coordinateSystem
-          });
-        } catch (error) {
-          console.error('Coordinate transformation error:', error);
-          // If transformation fails, default to Aarau
-          setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
-          return;
-        }
-      }
-
-      // Add padding based on coordinate system
-      const width = transformedBounds.maxX - transformedBounds.minX;
-      const height = transformedBounds.maxY - transformedBounds.minY;
-      
-      // Use percentage-based padding for projected systems, fixed degrees for WGS84
-      const padX = isSwissSystem(coordinateSystem) 
-        ? width * BOUNDS_PADDING_PERCENT 
-        : Math.max(width * 0.1, BOUNDS_PADDING_DEGREES);
-      const padY = isSwissSystem(coordinateSystem)
-        ? height * BOUNDS_PADDING_PERCENT
-        : Math.max(height * 0.1, BOUNDS_PADDING_DEGREES);
-
-      console.debug('[DEBUG] Calculating bounds padding:', {
-        width,
-        height,
-        padX,
-        padY,
-        system: coordinateSystem,
-        isSwiss: isSwissSystem(coordinateSystem)
+      console.debug('[DEBUG] Updating view from bounds:', {
+        bounds,
+        coordinateSystem,
+        currentView: viewState
       });
 
-      transformedBounds = {
-        minX: transformedBounds.minX - padX,
-        minY: transformedBounds.minY - padY,
-        maxX: transformedBounds.maxX + padX,
-        maxY: transformedBounds.maxY + padY
-      };
+      // Transform bounds to WGS84 if needed
+      const transformedBounds = coordinateSystem === COORDINATE_SYSTEMS.WGS84
+        ? bounds
+        : await coordinateSystemManager.transformBounds(bounds, coordinateSystem, COORDINATE_SYSTEMS.WGS84);
 
-      // Log bounds before validation
-      console.debug('[DEBUG] Bounds before validation:', {
+      console.debug('[DEBUG] Transformed bounds:', {
         original: bounds,
-        transformed: transformedBounds,
-        system: coordinateSystem
+        transformed: transformedBounds
       });
 
-      // Constrain to valid WGS84 ranges
-      const validMinLat = Math.max(transformedBounds.minY, -85);
-      const validMaxLat = Math.min(transformedBounds.maxY, 85);
-      const validMinLon = Math.max(transformedBounds.minX, -180);
-      const validMaxLon = Math.min(transformedBounds.maxX, 180);
-
-      // Log bounds after validation
-      console.debug('[DEBUG] Bounds after validation:', {
-        minLat: { original: transformedBounds.minY, validated: validMinLat },
-        maxLat: { original: transformedBounds.maxY, validated: validMaxLat },
-        minLon: { original: transformedBounds.minX, validated: validMinLon },
-        maxLon: { original: transformedBounds.maxX, validated: validMaxLon }
+      // Calculate viewport settings from bounds
+      const viewport = new WebMercatorViewport({
+        width: window.innerWidth,
+        height: window.innerHeight
       });
 
-      // Calculate center point
-      const longitude = (validMinLon + validMaxLon) / 2;
-      const latitude = (validMinLat + validMaxLat) / 2;
-
-      // Calculate zoom level with enhanced precision
-      const latZoom = Math.log2(360 / Math.max(0.000001, validMaxLat - validMinLat)) - 1;
-      const lonZoom = Math.log2(360 / Math.max(0.000001, validMaxLon - validMinLon)) - 1;
-      let zoom = Math.min(latZoom, lonZoom);
-
-      // Ensure zoom is within valid range and add slight zoom out for context
-      zoom = Math.min(Math.max(zoom - 1.5, 1), 20); // Zoom out more for better context
-
-      console.debug('[DEBUG] View state calculation:', {
-        bounds: transformedBounds,
-        validBounds: {
-          minLat: validMinLat,
-          maxLat: validMaxLat,
-          minLon: validMinLon,
-          maxLon: validMaxLon
-        },
-        center: { longitude, latitude },
-        zoom: {
-          latZoom,
-          lonZoom,
-          finalZoom: zoom
-        }
-      });
-
-      console.debug('Setting map view:', {
-        longitude,
-        latitude,
-        zoom,
-        bounds: transformedBounds
-      });
+      const { longitude, latitude, zoom } = viewport.fitBounds(
+        [
+          [transformedBounds.minX, transformedBounds.minY],
+          [transformedBounds.maxX, transformedBounds.maxY]
+        ],
+        { padding: 20 }
+      );
 
       setViewState(prev => ({
         ...prev,
         longitude,
         latitude,
-        zoom
+        zoom: Math.min(zoom, 20), // Cap zoom level
+        transitionDuration: 1000
       }));
     } catch (error) {
-      console.error('Error setting map view state:', error);
-      // Default to Aarau view
-      setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
+      console.error('[DEBUG] Error updating view from bounds:', error);
     }
-  }, [coordinateSystem]);
+  }, [coordinateSystem, viewState]);
 
   const focusOnFeatures = useCallback(async (features: Feature[], padding: number = 50): Promise<void> => {
     const bounds = await calculateBoundsFromFeatures(features);

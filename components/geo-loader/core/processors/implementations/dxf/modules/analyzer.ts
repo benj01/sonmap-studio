@@ -8,6 +8,12 @@ interface Bounds {
   maxY: number;
 }
 
+interface DxfStructure {
+  // Add properties for DxfStructure as needed
+}
+
+type CoordinateSystem = 'EPSG:2056' | 'EPSG:21781' | 'EPSG:4326' | null;
+
 export class DxfAnalyzer {
   /**
    * Calculate bounds from raw DXF entities
@@ -107,98 +113,80 @@ export class DxfAnalyzer {
   }
 
   /**
-   * Detect coordinate system based on bounds and header
+   * Detect coordinate system from bounds and structure
    */
-  static detectCoordinateSystem(bounds: Bounds, header: any): string | undefined {
-    // Validate bounds first
-    if (!bounds || !isFinite(bounds.minX) || !isFinite(bounds.minY) || 
-        !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
-      console.warn('[DEBUG] Invalid bounds for coordinate system detection');
-      return undefined;
-    }
+  static detectCoordinateSystem(bounds: Bounds, structure: DxfStructure): CoordinateSystem {
+    console.debug('[DEBUG] Detecting coordinate system from bounds:', bounds);
 
-    // Log detection attempt
-    console.log('[DEBUG] Detecting coordinate system:', {
-      bounds,
-      headerUnits: header?.$INSUNITS
-    });
+    // Check if bounds are in reasonable ranges
+    const isWGS84Range = 
+      bounds.minX >= -180 && bounds.maxX <= 180 &&
+      bounds.minY >= -90 && bounds.maxY <= 90;
 
-    // Check coordinate ranges first since they're most reliable
-    if (bounds.minX > 2000000 && bounds.minX < 3000000 &&
-        bounds.minY > 1000000 && bounds.minY < 1400000) {
-      console.log('[DEBUG] Detected Swiss LV95 (EPSG:2056) based on coordinate range');
-      return 'EPSG:2056'; // Swiss LV95
-    } 
-    
-    if (bounds.minX > 400000 && bounds.minX < 900000 &&
-        bounds.minY > 0 && bounds.minY < 400000) {
-      console.log('[DEBUG] Detected Swiss LV03 (EPSG:21781) based on coordinate range');
-      return 'EPSG:21781'; // Swiss LV03
-    } 
-    
-    if (Math.abs(bounds.minX) <= 180 && Math.abs(bounds.maxX) <= 180 &&
-        Math.abs(bounds.minY) <= 90 && Math.abs(bounds.maxY) <= 90) {
-      console.log('[DEBUG] Detected WGS84 (EPSG:4326) based on coordinate range');
-      return 'EPSG:4326'; // WGS84
-    } 
-    
-    if (bounds.minX > 2000000 || bounds.maxX > 2000000) {
-      console.log('[DEBUG] Detected Swiss LV95 (EPSG:2056) based on magnitude');
-      return 'EPSG:2056'; // Swiss LV95 (based on magnitude)
-    }
+    const isLV95Range =
+      bounds.minX >= 2485000 && bounds.maxX <= 2835000 &&
+      bounds.minY >= 1075000 && bounds.maxY <= 1295000;
 
-    // Fallback to header hints
-    if (header?.$INSUNITS === 1) {
-      console.log('[DEBUG] Detected Swiss LV95 (EPSG:2056) based on header units');
-      return 'EPSG:2056'; // Scientific/Engineering units often indicate LV95
-    }
+    const isLV03Range =
+      bounds.minX >= 485000 && bounds.maxX <= 835000 &&
+      bounds.minY >= 75000 && bounds.maxY <= 295000;
 
-    console.log('[DEBUG] Could not detect coordinate system');
-    return undefined;
-  }
-
-  /**
-   * Get default bounds based on coordinate system
-   */
-  static getDefaultBounds(coordinateSystem?: string): Bounds {
-    const bounds = (() => {
-      switch (coordinateSystem) {
-        case 'EPSG:2056': // Swiss LV95
-          return {
-            minX: 2485000,
-            minY: 1075000,
-            maxX: 2835000,
-            maxY: 1295000
-          };
-        case 'EPSG:21781': // Swiss LV03
-          return {
-            minX: 485000,
-            minY: 75000,
-            maxX: 835000,
-            maxY: 295000
-          };
-        case 'EPSG:4326': // WGS84
-          return {
-            minX: 5.9,
-            minY: 45.8,
-            maxX: 10.5,
-            maxY: 47.8
-          };
-        default:
-          return {
-            minX: -1,
-            minY: -1,
-            maxX: 1,
-            maxY: 1
-          };
-      }
-    })();
-
-    console.log('[DEBUG] Using default bounds:', {
-      coordinateSystem,
+    console.debug('[DEBUG] Coordinate system range checks:', {
+      isWGS84Range,
+      isLV95Range,
+      isLV03Range,
       bounds
     });
 
-    return bounds;
+    // First check for Swiss coordinate systems
+    if (isLV95Range) {
+      console.debug('[DEBUG] Detected LV95 coordinates');
+      return 'EPSG:2056';
+    }
+
+    if (isLV03Range) {
+      console.debug('[DEBUG] Detected LV03 coordinates');
+      return 'EPSG:21781';
+    }
+
+    // If coordinates are in WGS84 range, use WGS84
+    if (isWGS84Range) {
+      console.debug('[DEBUG] Detected WGS84 coordinates');
+      return 'EPSG:4326';
+    }
+
+    // If we can't determine the system, return null
+    console.debug('[DEBUG] Could not detect coordinate system from bounds');
+    return null;
+  }
+
+  /**
+   * Get default bounds for a coordinate system
+   */
+  static getDefaultBounds(system: CoordinateSystem): Bounds {
+    switch (system) {
+      case 'EPSG:2056': // LV95
+        return {
+          minX: 2485000,
+          minY: 1075000,
+          maxX: 2835000,
+          maxY: 1295000
+        };
+      case 'EPSG:21781': // LV03
+        return {
+          minX: 485000,
+          minY: 75000,
+          maxX: 835000,
+          maxY: 295000
+        };
+      case 'EPSG:4326': // WGS84
+      default:
+        return {
+          minX: 5.9,
+          minY: 45.8,
+          maxX: 10.5,
+          maxY: 47.8
+        };
+    }
   }
 }

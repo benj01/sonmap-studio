@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Source, Layer } from 'react-map-gl';
 import { FeatureCollection, Position, LineString } from 'geojson';
 
@@ -86,9 +86,15 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
         maxX: Math.max(...((f.geometry as LineString).coordinates).map(c => c[0])),
         maxY: Math.max(...((f.geometry as LineString).coordinates).map(c => c[1]))
       } : undefined,
-      coordinateSystem: f.properties?.originalSystem || 'unknown'
+      coordinateSystem: f.properties?.originalSystem || 'unknown',
+      layer: f.properties?.layer
     }))
   });
+
+  if (data.features.length === 0) {
+    console.debug('[DEBUG] No line features to render');
+    return null;
+  }
 
   // Add tolerance for coordinate precision
   const tolerance = 0.000001; // ~0.1m at equator
@@ -108,7 +114,15 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
     }))
   };
 
-  if (data.features.length === 0) return null;
+  console.debug('[DEBUG] Rounded line data:', {
+    featureCount: roundedData.features.length,
+    firstFeature: roundedData.features[0] ? {
+      type: roundedData.features[0].geometry.type,
+      coordinates: 'coordinates' in roundedData.features[0].geometry ? roundedData.features[0].geometry.coordinates : undefined,
+      properties: roundedData.features[0].properties,
+      layer: roundedData.features[0].properties?.layer
+    } : null
+  });
 
   return (
     <Source 
@@ -155,21 +169,88 @@ export const PolygonLayer: React.FC<LayerProps> = ({ data }) => {
   );
 };
 
-export const MapLayers: React.FC<{
+interface MapLayersProps {
   points: FeatureCollection;
   lines: FeatureCollection;
   polygons: FeatureCollection;
-}> = ({ points, lines, polygons }) => {
-  console.debug('[DEBUG] MapLayers render:', {
-    pointFeatures: points.features.length,
-    lineFeatures: lines.features.length,
-    polygonFeatures: polygons.features.length
-  });
+}
+
+export function MapLayers({
+  points,
+  lines,
+  polygons
+}: MapLayersProps): React.ReactElement {
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    console.debug('[DEBUG] MapLayers received collections:', {
+      points: points.features.length,
+      lines: lines.features.length,
+      polygons: polygons.features.length
+    });
+    setLoaded(true);
+  }, [points, lines, polygons]);
+
+  if (!loaded) {
+    console.debug('[DEBUG] MapLayers not yet loaded');
+    return null;
+  }
+
   return (
     <>
-      <PointLayer data={points} />
-      <LineLayer data={lines} />
-      <PolygonLayer data={polygons} />
+      {lines.features.length > 0 && (
+        <Source
+          id="lines"
+          type="geojson"
+          data={lines}
+        >
+          <Layer
+            id="lines"
+            type="line"
+            paint={{
+              'line-color': '#4a90e2',
+              'line-width': 2
+            }}
+          />
+        </Source>
+      )}
+
+      {points.features.length > 0 && (
+        <Source
+          id="points"
+          type="geojson"
+          data={points}
+        >
+          <Layer
+            id="points"
+            type="circle"
+            paint={{
+              'circle-radius': 6,
+              'circle-color': '#4a90e2',
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#ffffff'
+            }}
+          />
+        </Source>
+      )}
+
+      {polygons.features.length > 0 && (
+        <Source
+          id="polygons"
+          type="geojson"
+          data={polygons}
+        >
+          <Layer
+            id="polygons"
+            type="fill"
+            paint={{
+              'fill-color': '#4a90e2',
+              'fill-opacity': 0.5,
+              'fill-outline-color': '#ffffff'
+            }}
+          />
+        </Source>
+      )}
     </>
   );
-};
+}

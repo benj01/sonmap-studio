@@ -1,5 +1,5 @@
 import { Feature, Point, LineString, Polygon, GeoJsonProperties } from 'geojson';
-import { DxfEntity, DxfEntityType } from '../types';
+import { DxfEntity, DxfEntityType, DxfStructure } from '../types';
 import { ValidationError } from '../../../../errors/types';
 
 export class DxfEntityProcessor {
@@ -355,5 +355,42 @@ export class DxfEntityProcessor {
     });
 
     return features;
+  }
+
+  /**
+   * Extract all entities from DXF structure
+   */
+  static async extractEntities(structure: DxfStructure): Promise<DxfEntity[]> {
+    const entities: DxfEntity[] = [];
+    
+    console.debug('[DEBUG] Extracting entities from structure');
+
+    // Extract main entities
+    if (structure.entities) {
+      console.debug('[DEBUG] Processing main entities:', structure.entities.length);
+      entities.push(...structure.entities.filter(e => this.validateEntity(e)));
+    }
+
+    // Extract block entities
+    if (structure.blocks) {
+      console.debug('[DEBUG] Processing blocks:', structure.blocks.length);
+      for (const block of structure.blocks) {
+        if (block.entities) {
+          const validEntities = block.entities.filter(e => this.validateEntity(e));
+          console.debug(`[DEBUG] Block ${block.name}: ${validEntities.length} valid entities`);
+          entities.push(...validEntities);
+        }
+      }
+    }
+
+    console.debug('[DEBUG] Total entities extracted:', {
+      total: entities.length,
+      types: entities.reduce((acc, e) => {
+        acc[e.type] = (acc[e.type] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>)
+    });
+
+    return entities;
   }
 }

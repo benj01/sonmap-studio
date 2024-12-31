@@ -109,222 +109,46 @@ export class DxfProcessor extends StreamProcessor {
       
       console.log('[DEBUG] Starting entity processing');
       
-      // Process entities directly from structure to avoid copies
-      const validLayerNames = new Set<string>();
-      let entityBounds: ProcessorResult['bounds'] | null = null;
+      // Extract entities from structure
+      const entities = await DxfEntityProcessor.extractEntities(structure);
+      console.log('[DEBUG] Extracted entities:', entities.length);
 
-      // Process main entities
-      if (structure.entities) {
-        for (const entity of structure.entities) {
-          // Process layer
-          const layer = this.getLayerName(entity);
-          if (!this.isSystemProperty(layer)) {
-            validLayerNames.add(layer);
-          }
-
-          // Update bounds
-          const entityBound = DxfAnalyzer.calculateBoundsFromEntities([entity]);
-          if (entityBound) {
-            if (!entityBounds) {
-              entityBounds = entityBound;
-            } else {
-              entityBounds = {
-                minX: Math.min(entityBounds.minX, entityBound.minX),
-                minY: Math.min(entityBounds.minY, entityBound.minY),
-                maxX: Math.max(entityBounds.maxX, entityBound.maxX),
-                maxY: Math.max(entityBounds.maxY, entityBound.maxY)
-              };
-            }
-          }
-        }
-      }
-
-      // Process block entities
-      if (structure.blocks) {
-        for (const block of structure.blocks) {
-          if (block.entities) {
-            for (const entity of block.entities) {
-              const layer = this.getLayerName(entity);
-              if (!this.isSystemProperty(layer)) {
-                validLayerNames.add(layer);
-              }
-
-              const entityBound = DxfAnalyzer.calculateBoundsFromEntities([entity]);
-              if (entityBound) {
-                if (!entityBounds) {
-                  entityBounds = entityBound;
-                } else {
-                  entityBounds = {
-                    minX: Math.min(entityBounds.minX, entityBound.minX),
-                    minY: Math.min(entityBounds.minY, entityBound.minY),
-                    maxX: Math.max(entityBounds.maxX, entityBound.maxX),
-                    maxY: Math.max(entityBounds.maxY, entityBound.maxY)
-                  };
-                }
-              }
-            }
-          }
-        }
-      }
-
-      // Add layers from structure, excluding system properties
-      structure.layers.forEach((layer: DxfLayer) => {
-        if (!this.isSystemProperty(layer.name)) {
-          validLayerNames.add(layer.name);
-        }
-      });
-
-      console.log('[DEBUG] Valid layers identified:', Array.from(validLayerNames));
-      
-      const layerNames = Array.from(validLayerNames);
-      console.log('[DEBUG] Found layers:', {
-        fromStructure: structure.layers
-          .filter((l: DxfLayer) => !this.isSystemProperty(l.name))
-          .map((l: DxfLayer) => ({
-            name: l.name,
-            color: l.color,
-            lineType: l.lineType,
-            state: { frozen: l.frozen, locked: l.locked, off: l.off }
-          })),
-        fromEntities: Array.from(new Set(this.state.features
-          .map(e => this.getLayerName(e))
-          .filter(layer => !this.isSystemProperty(layer)))),
-        combined: layerNames
-      });
-
-      // Use header bounds if available, otherwise use calculated entity bounds
-      const headerBounds = structure.extents ? {
-        minX: structure.extents.min[0],
-        minY: structure.extents.min[1],
-        maxX: structure.extents.max[0],
-        maxY: structure.extents.max[1]
-      } : null;
-      const rawBounds = headerBounds || entityBounds;
+      // Calculate bounds from entities
+      const bounds = DxfAnalyzer.calculateBoundsFromEntities(entities);
+      console.log('[DEBUG] Calculated bounds:', bounds);
 
       // Detect coordinate system
-      let detectedSystem = this.options.coordinateSystem;
-      if (!detectedSystem && rawBounds) {
-        const system = DxfAnalyzer.detectCoordinateSystem(rawBounds, structure);
-        detectedSystem = system as CoordinateSystem;
-        if (detectedSystem) {
-          this.options.coordinateSystem = detectedSystem;
-        }
-      }
+      const detectedSystem = DxfAnalyzer.detectCoordinateSystem(bounds, structure);
+      console.log('[DEBUG] Detected coordinate system:', detectedSystem);
 
-      // Initialize and verify coordinate system
-      await DxfCoordinateHandler.initializeCoordinateSystem(detectedSystem || 'EPSG:4326');
+      // If no coordinate system detected, default to LV95
+      const coordinateSystem = detectedSystem || 'EPSG:2056';
+      console.log('[DEBUG] Using coordinate system:', coordinateSystem);
 
-      // Convert a sample of entities for preview
-      const features: Feature[] = [];
-      const maxPreviewEntities = 1000;
-      
-      // Sample and process main entities
-      if (structure.entities) {
-        const sampleStep = Math.max(1, Math.floor(structure.entities.length / maxPreviewEntities));
-        const sampledEntities = structure.entities.filter((_, index) => index % sampleStep === 0);
-        
-        // Process entities with coordinate transformation
-        const mainFeatures = await DxfCoordinateHandler.processEntities(
-          sampledEntities,
-          detectedSystem || 'EPSG:4326'
-        );
-        features.push(...mainFeatures);
-      }
-      
-      // Sample and process block entities if space remains
-      if (structure.blocks && features.length < maxPreviewEntities) {
-        const remainingSlots = maxPreviewEntities - features.length;
-        for (const block of structure.blocks) {
-          if (block.entities) {
-            const sampleStep = Math.max(1, Math.floor(block.entities.length / remainingSlots));
-            const sampledEntities = block.entities.filter((_, index) => index % sampleStep === 0);
-            
-            // Process block entities with coordinate transformation
-            const blockFeatures = await DxfCoordinateHandler.processEntities(
-              sampledEntities,
-              detectedSystem || 'EPSG:4326'
-            );
-            features.push(...blockFeatures.slice(0, remainingSlots));
-            if (features.length >= maxPreviewEntities) break;
-          }
-        }
-      }
+      // Extract layers
+      const layers = DxfLayerProcessor.extractLayerNames(structure.tables?.layer || {});
+      console.log('[DEBUG] Extracted layers:', layers);
 
-      // Transform bounds to WGS84 for preview
-      const previewBounds = await DxfCoordinateHandler.transformBounds(
-        entityBounds || DxfAnalyzer.getDefaultBounds(detectedSystem),
-        detectedSystem || 'EPSG:4326'
-      );
+      // Create preview manager
+      const previewManager = createPreviewManager();
+      await previewManager.addFeatures(entities, coordinateSystem);
+      console.log('[DEBUG] Added features to preview manager');
 
-      console.debug('[DEBUG] Creating preview manager:', {
-        layerCount: layerNames.length,
-        layers: layerNames,
-        sourceBounds: entityBounds,
-        transformedBounds: previewBounds,
-        coordinateSystem: 'EPSG:4326', // Always WGS84 for preview
-        featureCount: features.length
-      });
-
-      // Create preview manager with transformed coordinates
-      const previewManager = createPreviewManager({
-        maxFeatures: (this.options as DxfProcessorOptions).previewEntities || 1000,
-        visibleLayers: [], // Empty array means all layers visible
-        coordinateSystem: 'EPSG:4326', // Always WGS84 for preview
-        enableCaching: true,
-        initialBounds: previewBounds, // Use transformed bounds as initial bounds
-        analysis: {
-          warnings: this.errorReporter.getWarnings().map(w => ({
-            type: 'warning',
-            message: w.message
-          }))
-        }
-      });
-
-      console.debug('[DEBUG] Created preview manager:', {
-        bounds: previewBounds,
-        features: features.length,
-        coordinateSystem: 'EPSG:4326'
-      });
-
-      // Set features in preview manager
-      previewManager.setFeatures(features);
-
-      // Get categorized collections
-      const collections = await previewManager.getPreviewCollections();
-      console.log('[DEBUG] Preview collections:', {
-        points: collections.points.features.length,
-        lines: collections.lines.features.length,
-        polygons: collections.polygons.features.length,
-        total: collections.totalCount
-      });
-
-      // Create preview feature collection
-      const previewFeatures: FeatureCollection = {
-        type: 'FeatureCollection',
-        features: [
-          ...collections.points.features,
-          ...collections.lines.features,
-          ...collections.polygons.features
-        ]
-      };
-
-      // Return AnalyzeResult with transformed preview features
       return {
-        layers: layerNames,
-        coordinateSystem: detectedSystem || 'EPSG:4326',
-        bounds: entityBounds || undefined,
-        preview: previewFeatures,
-        dxfData: structure
+        fileType: 'dxf',
+        coordinateSystem,
+        layers,
+        bounds,
+        previewManager,
+        statistics: {
+          entityCount: entities.length,
+          layerCount: layers.length
+        }
       };
+
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error('[DEBUG] Analysis error:', message);
-      throw new ValidationError(
-        `Failed to analyze DXF file: ${message}`,
-        'DXF_ANALYSIS_ERROR',
-        undefined,
-        { error: message }
-      );
+      console.error('[DEBUG] Error analyzing DXF file:', error);
+      throw error;
     }
   }
 

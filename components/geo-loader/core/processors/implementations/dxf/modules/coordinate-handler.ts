@@ -49,6 +49,14 @@ export class DxfCoordinateHandler {
     entities: DxfEntity[],
     sourceSystem: CoordinateSystem
   ): Promise<Feature[]> {
+    if (!entities || entities.length === 0) {
+      console.debug('[DEBUG] No entities to process');
+      return [];
+    }
+
+    // Initialize coordinate system if needed
+    await this.initializeCoordinateSystem(sourceSystem);
+
     console.debug('[DEBUG] Processing entities with coordinate transformation:', {
       count: entities.length,
       sourceSystem,
@@ -57,14 +65,14 @@ export class DxfCoordinateHandler {
 
     // Transform entities to WGS84
     console.debug('[DEBUG] Entity coordinates before transformation:', 
-      entities.map(e => ({
+      entities.slice(0, 3).map(e => ({
         type: e.type,
         data: {
           x: e.data.x,
           y: e.data.y,
           x2: e.data.x2,
           y2: e.data.y2,
-          vertices: e.data.vertices
+          vertices: e.data.vertices?.slice(0, 2)
         },
         attributes: e.attributes
       }))
@@ -76,15 +84,20 @@ export class DxfCoordinateHandler {
       'EPSG:4326'
     );
 
+    if (!transformedEntities || transformedEntities.length === 0) {
+      console.warn('[DEBUG] No entities after transformation');
+      return [];
+    }
+
     console.debug('[DEBUG] Entity coordinates after transformation:',
-      transformedEntities.map(e => ({
+      transformedEntities.slice(0, 3).map(e => ({
         type: e.type,
         data: {
           x: e.data.x,
           y: e.data.y,
           x2: e.data.x2,
           y2: e.data.y2,
-          vertices: e.data.vertices
+          vertices: e.data.vertices?.slice(0, 2)
         },
         attributes: e.attributes
       }))
@@ -92,6 +105,21 @@ export class DxfCoordinateHandler {
 
     // Convert transformed entities to features
     const features = await DxfEntityProcessor.entitiesToFeatures(transformedEntities);
+    
+    if (!features || features.length === 0) {
+      console.warn('[DEBUG] No features after conversion');
+      return [];
+    }
+
+    console.debug('[DEBUG] Features after conversion:', {
+      count: features.length,
+      types: features.map(f => f.geometry.type),
+      samples: features.slice(0, 3).map(f => ({
+        type: f.geometry.type,
+        coordinates: f.geometry.coordinates,
+        properties: f.properties
+      }))
+    });
     
     // Add original coordinate system to feature properties
     features.forEach(feature => {

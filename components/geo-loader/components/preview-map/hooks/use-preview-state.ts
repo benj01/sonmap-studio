@@ -121,11 +121,20 @@ export function usePreviewState({
         const cachedFeatures = ((cached as unknown) as { features: { features: Feature[] } }).features.features;
         
         // Filter by layer visibility - empty array means all layers visible
-        const visibleFeatures = cachedFeatures.filter((f: Feature) => 
-          f.properties && 
-          typeof f.properties.layer === 'string' && 
-          (visibleLayers.length === 0 || visibleLayers.includes(f.properties.layer))
-        );
+        const visibleFeatures = cachedFeatures.filter((f: Feature) => {
+          const layer = f.properties?.layer;
+          const isVisible = !layer || visibleLayers.length === 0 || visibleLayers.includes(layer);
+
+          console.debug('[DEBUG] Feature visibility check:', {
+            layer,
+            visibleLayers,
+            isVisible,
+            geometryType: f.geometry.type,
+            coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined
+          });
+
+          return isVisible;
+        });
 
         // Split the visible features by geometry type
         const pointFeatures = visibleFeatures.filter((f: Feature) => 
@@ -137,6 +146,13 @@ export function usePreviewState({
         const polygonFeatures = visibleFeatures.filter((f: Feature) => 
           f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'
         );
+
+        console.debug('[DEBUG] Feature counts after filtering:', {
+          total: visibleFeatures.length,
+          points: pointFeatures.length,
+          lines: lineFeatures.length,
+          polygons: polygonFeatures.length
+        });
 
         const newState: PreviewState = {
           points: { type: 'FeatureCollection', features: pointFeatures },
@@ -171,13 +187,6 @@ export function usePreviewState({
         allLayersVisible: visibleLayers.length === 0,
         totalFeatures: collections.totalCount
       });
-      
-      console.debug('[DEBUG] Viewport state:', {
-        initialBoundsSet,
-        shouldFilterByViewport,
-        polygon,
-        bounds: viewportBounds
-      });
 
       const filterFeatures = (fc: FeatureCollection) => {
         if (!fc.features.length) return fc;
@@ -200,11 +209,20 @@ export function usePreviewState({
         }
 
         // Filter by layer visibility - empty array means all layers visible
-        filtered = filtered.filter((f: Feature) => 
-          f.properties && 
-          typeof f.properties.layer === 'string' && 
-          (visibleLayers.length === 0 || visibleLayers.includes(f.properties.layer))
-        );
+        filtered = filtered.filter((f: Feature) => {
+          const layer = f.properties?.layer;
+          const isVisible = !layer || visibleLayers.length === 0 || visibleLayers.includes(layer);
+
+          console.debug('[DEBUG] Feature visibility check:', {
+            layer,
+            visibleLayers,
+            isVisible,
+            geometryType: f.geometry.type,
+            coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined
+          });
+
+          return isVisible;
+        });
 
         return { ...fc, features: filtered };
       };
@@ -260,7 +278,7 @@ export function usePreviewState({
         viewportBounds: bounds2D,
         layers: visibleLayers,
         featureCount: filteredVisibleCount,
-        coordinateSystem: COORDINATE_SYSTEMS.WGS84
+        coordinateSystem: previewManager.getOptions().coordinateSystem || COORDINATE_SYSTEMS.WGS84
       };
 
       cacheManager.cachePreview(cacheKey, {
@@ -279,40 +297,28 @@ export function usePreviewState({
         onUpdateBounds(collections.bounds);
       }
     } catch (error) {
-      console.error('Failed to update preview collections:', error);
+      console.error('[DEBUG] Error updating preview:', error);
     }
-  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, viewportPolygon, onUpdateBounds, onPreviewUpdate]);
+  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, viewportPolygon]);
 
-  // Effect to handle debounced preview updates
+  // Debounced update effect
   useEffect(() => {
-    let timeoutId: NodeJS.Timeout;
-    
-    const updatePreviewCollections = async () => {
-      // Clear any pending update
-      if (timeoutId) clearTimeout(timeoutId);
-      
-      // Skip debounce for initial load
-      if (!initialBoundsSet) {
-        updatePreview();
-        return;
-      }
-      
-      // Schedule new update with debounce time
-      timeoutId = setTimeout(() => {
-        updatePreview();
-      }, DEBOUNCE_TIME);
-    };
+    if (!previewManager || !viewportBounds) {
+      console.debug('[DEBUG] Skipping preview update - missing manager or bounds');
+      return;
+    }
 
-    updatePreviewCollections();
+    console.debug('[DEBUG] Scheduling preview update with state:', {
+      hasPreviewManager: !!previewManager,
+      viewportBounds,
+      visibleLayers,
+      initialBoundsSet,
+      coordinateSystem: previewManager.getOptions().coordinateSystem
+    });
 
-    // Cleanup timeout on unmount or deps change
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-    };
-  }, [updatePreview, initialBoundsSet]);
+    const timeoutId = setTimeout(updatePreview, DEBOUNCE_TIME);
+    return () => clearTimeout(timeoutId);
+  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, updatePreview]);
 
-  return {
-    previewState,
-    cacheStats
-  };
+  return { previewState, cacheStats };
 }

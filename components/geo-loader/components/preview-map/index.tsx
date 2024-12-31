@@ -59,12 +59,29 @@ export function PreviewMap({
   } = useMapView(bounds, coordinateSystem);
 
   const { previewState, cacheStats } = usePreviewState({
-    onPreviewUpdate: () => setIsLoading(false),
+    onPreviewUpdate: () => {
+      setIsLoading(false);
+      console.debug('[DEBUG] Preview updated:', {
+        coordinateSystem,
+        viewState,
+        bounds,
+        features: {
+          points: previewState.points.features.length,
+          lines: previewState.lines.features.length,
+          polygons: previewState.polygons.features.length
+        }
+      });
+    },
     previewManager: preview?.previewManager ?? null,
     viewportBounds: getViewportBounds(),
     visibleLayers,
     initialBoundsSet,
     onUpdateBounds: (newBounds) => {
+      console.debug('[DEBUG] Updating bounds:', {
+        current: bounds,
+        new: newBounds,
+        coordinateSystem
+      });
       updateViewFromBounds(newBounds);
       setInitialBoundsSet(true);
       setError(null);

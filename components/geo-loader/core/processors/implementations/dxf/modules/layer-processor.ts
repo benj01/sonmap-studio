@@ -5,16 +5,56 @@ export class DxfLayerProcessor {
   private static readonly SYSTEM_LAYERS = ['handle', 'ownerHandle', 'layers'];
 
   /**
-   * Check if a layer name is a system layer
+   * Extract layer names from layer data
+   */
+  static extractLayerNames(layerData: Record<string, any>): string[] {
+    console.debug('[DEBUG] Extracting layer names from:', Object.keys(layerData));
+
+    const layerNames = new Set<string>();
+    layerNames.add('0'); // Always include default layer
+
+    // Process layer data
+    Object.entries(layerData).forEach(([name, data]) => {
+      if (!this.isSystemLayer(name) && this.validateLayer(data)) {
+        layerNames.add(name);
+      }
+    });
+
+    const layers = Array.from(layerNames);
+    console.debug('[DEBUG] Extracted layers:', layers);
+    
+    return layers;
+  }
+
+  /**
+   * Check if layer name is a system layer
    */
   private static isSystemLayer(name: string): boolean {
     return this.SYSTEM_LAYERS.includes(name);
   }
 
   /**
+   * Validate layer data
+   */
+  private static validateLayer(layer: any): boolean {
+    if (!layer || typeof layer !== 'object') {
+      console.warn('[DEBUG] Invalid layer data:', layer);
+      return false;
+    }
+
+    // Basic validation - layer should have a name at minimum
+    if (!layer.name) {
+      console.warn('[DEBUG] Layer missing name:', layer);
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
    * Extract layer names from raw layer data, excluding system layers
    */
-  static extractLayerNames(layerData: Record<string, any>): string[] {
+  static extractLayerNamesFromRaw(layerData: Record<string, any>): string[] {
     return Object.entries(layerData)
       .filter(([name, layer]) => 
         typeof layer === 'object' && 
@@ -118,7 +158,7 @@ export class DxfLayerProcessor {
   /**
    * Validate layer data
    */
-  static validateLayer(layer: any): layer is DxfLayer {
+  static validateLayerData(layer: any): layer is DxfLayer {
     if (!layer || typeof layer !== 'object') {
       console.warn('[DEBUG] Invalid layer (not an object):', layer);
       return false;

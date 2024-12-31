@@ -101,7 +101,7 @@ export function useFileAnalysis({
       console.log('[DEBUG] Creating preview manager...');
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
-        visibleLayers: [], // Empty array means all layers visible
+        visibleLayers: layers, // Set visible layers to all detected layers
         analysis: {
           warnings: convertWarningsToAnalysis(processor.getWarnings())
         },
@@ -124,7 +124,7 @@ export function useFileAnalysis({
         analysis: result,
         dxfData: result.dxfData,
         selectedLayers: layers,
-        visibleLayers: [], // Empty array means all layers visible
+        visibleLayers: layers, // Set visible layers to all detected layers
         selectedTemplates: [],
         previewManager
       });
@@ -132,7 +132,7 @@ export function useFileAnalysis({
       console.log('[DEBUG] State initialized with:', {
         layers,
         selectedLayers: layers,
-        visibleLayers: [], // Empty array means all layers visible
+        visibleLayers: layers, // Set visible layers to all detected layers
       });
 
       return result;
