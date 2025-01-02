@@ -186,33 +186,21 @@ function TreeNode({
 }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
 
-  // Split the click handler to handle expansion separately
-  const handleHeaderClick = (e: React.MouseEvent) => {
-    // Only handle expansion if there's no custom click handler
-    if (!onClick) {
-      setExpanded(!expanded);
-    }
-  };
-
-  // Custom click handler is now separate from expansion
-  const handleCustomClick = (e: React.MouseEvent) => {
-    if (onClick) {
-      e.stopPropagation();
-      onClick();
-    }
-  };
-
   return (
     <div className="space-y-1">
       <div 
         className={cn(
-          "flex items-center gap-2 hover:bg-accent hover:text-accent-foreground rounded-sm cursor-pointer p-1",
-          error && "border-l-2 border-destructive"
+          "flex items-center gap-2 hover:bg-accent hover:text-accent-foreground rounded-sm p-1",
+          error && "border-l-2 border-destructive",
+          onClick ? "cursor-pointer" : ""
         )}
       >
-        {/* Expansion chevron is its own clickable area */}
+        {/* Expansion chevron */}
         {children ? (
-          <div onClick={handleHeaderClick} className="cursor-pointer">
+          <div 
+            className="cursor-pointer" 
+            onClick={() => setExpanded(!expanded)}
+          >
             {expanded ? 
               <ChevronDown className="h-3 w-3 flex-shrink-0" /> : 
               <ChevronRight className="h-3 w-3 flex-shrink-0" />
@@ -225,7 +213,13 @@ function TreeNode({
         {/* Main content area */}
         <div 
           className="flex items-center gap-2 flex-grow"
-          onClick={handleCustomClick}
+          onClick={() => {
+            if (onClick) {
+              onClick();
+            } else if (children) {
+              setExpanded(!expanded);
+            }
+          }}
         >
           {icon && <div className="h-4 w-4 flex-shrink-0">{icon}</div>}
           <span className="text-xs flex-grow">{label}</span>
@@ -438,7 +432,7 @@ export function DxfStructureView({
               <Layers className="h-4 w-4" />
               <span className="text-xs">Toggle All Layers</span>
             </div>
-            <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center gap-2">
               <div className="flex items-center gap-1">
                 <Eye className="h-3 w-3" />
                 <Switch
@@ -470,17 +464,12 @@ export function DxfStructureView({
                   )}
                 </div>
                 {/* Switches are now in their own isolated container */}
-                <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+                <div className="flex items-center gap-2">
                   <div className="flex items-center gap-1">
                     <Eye className="h-3 w-3" />
                     <Switch
                       checked={visibleLayers.includes(layer.name)}
                       onCheckedChange={(checked) => {
-                        console.debug('[DEBUG] Layer visibility toggle:', {
-                          layer: layer.name,
-                          checked,
-                          currentVisibleLayers: visibleLayers
-                        });
                         onLayerVisibilityToggle(layer.name, checked);
                       }}
                     />
@@ -489,7 +478,9 @@ export function DxfStructureView({
                     <Download className="h-3 w-3" />
                     <Switch
                       checked={selectedLayers.includes(layer.name)}
-                      onCheckedChange={(checked) => onLayerToggle(layer.name, checked)}
+                      onCheckedChange={(checked) => {
+                        onLayerToggle(layer.name, checked);
+                      }}
                     />
                   </div>
                 </div>
@@ -567,7 +558,7 @@ export function DxfStructureView({
               <Grid className="h-4 w-4" />
               <span className="text-xs">Toggle All Types</span>
             </div>
-            <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center gap-1">
               <Download className="h-3 w-3" />
               <Switch
                 checked={allEntityTypesSelected}
@@ -596,7 +587,7 @@ export function DxfStructureView({
                     )}
                   </div>
                 </div>
-                <div onClick={e => e.stopPropagation()}>
+                <div>
                   <Switch
                     checked={selectedEntityTypes.includes(type)}
                     onCheckedChange={(checked) => onEntityTypeSelect(type, checked)}
