@@ -276,27 +276,30 @@ export function DxfStructureView({
     console.debug('[DEBUG] Setting up layer manager with layers:', structure.layers);
     layerManager.clear();
     
-    // Initialize all layers as visible if visibleLayers is empty
-    if (visibleLayers.length === 0 && onLayerVisibilityToggle) {
-      console.debug('[DEBUG] Initializing all layers as visible');
-      structure.layers.forEach(layer => {
-        console.debug('[DEBUG] Setting initial visibility for layer:', layer.name);
-        onLayerVisibilityToggle(layer.name, true);
+    // Initialize all layers as visible by default
+    const layersToInitialize = structure.layers.map(layer => layer.name);
+    console.debug('[DEBUG] Initializing layers:', layersToInitialize);
+
+    // If no visible layers are specified, make all layers visible
+    if (visibleLayers.length === 0) {
+      layersToInitialize.forEach(layer => {
+        console.debug('[DEBUG] Setting layer visible:', layer);
+        onLayerVisibilityToggle?.(layer, true);
       });
     } else {
-      console.debug('[DEBUG] Using existing visibility state:', visibleLayers);
+      // Otherwise, respect the provided visible layers
+      layersToInitialize.forEach(layer => {
+        const isVisible = visibleLayers.includes(layer);
+        console.debug('[DEBUG] Setting layer visibility:', { layer, isVisible });
+        onLayerVisibilityToggle?.(layer, isVisible);
+      });
     }
 
     structure.layers.forEach(layer => {
       try {
         layerManager.addLayer(layer);
-        console.debug('[DEBUG] Layer added to manager:', { 
-          name: layer.name, 
-          visible: visibleLayers.includes(layer.name) 
-        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Invalid layer';
-        console.debug('[DEBUG] Layer validation error:', { layer: layer.name, error: message });
         setValidationErrors(prev => ({
           ...prev,
           [layer.name]: message
@@ -304,7 +307,7 @@ export function DxfStructureView({
         onError?.(message);
       }
     });
-  }, [structure, layerManager, onError, visibleLayers, onLayerVisibilityToggle]);
+  }, [structure, layerManager, onError]);
 
   // Listen for layer visibility changes
   useEffect(() => {
@@ -394,10 +397,18 @@ export function DxfStructureView({
 
   // Handle toggle all layers visibility with debug logging
   const handleToggleAllLayers = (visible: boolean) => {
-    console.debug('[DEBUG] Toggle all layers visibility:', { visible, layers: allLayers });
+    console.debug('[DEBUG] Toggle all layers visibility:', { 
+      visible, 
+      layers: allLayers,
+      currentVisibleLayers: visibleLayers 
+    });
+
+    // Toggle all layers
     allLayers.forEach(layer => {
-      console.debug('[DEBUG] Toggling layer visibility:', { layer, visible });
-      onLayerVisibilityToggle(layer, visible);
+      if (visible !== visibleLayers.includes(layer)) {
+        console.debug('[DEBUG] Toggling layer visibility:', { layer, visible });
+        onLayerVisibilityToggle?.(layer, visible);
+      }
     });
   };
 
@@ -417,6 +428,12 @@ export function DxfStructureView({
       console.debug('[DEBUG] Toggling entity type:', { type, enabled });
       onEntityTypeSelect(type, enabled);
     });
+  };
+
+  // Handle individual layer visibility toggle
+  const handleLayerVisibilityToggle = (layer: string, visible: boolean) => {
+    console.debug('[DEBUG] Layer visibility toggle:', { layer, visible });
+    onLayerVisibilityToggle?.(layer, visible);
   };
 
   return (
@@ -535,7 +552,7 @@ export function DxfStructureView({
                               currentlyVisible: isVisible,
                               newState: checked
                             });
-                            onLayerVisibilityToggle(layer.name, checked);
+                            handleLayerVisibilityToggle(layer.name, checked);
                           }}
                         />
                       </div>

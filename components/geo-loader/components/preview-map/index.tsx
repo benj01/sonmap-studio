@@ -140,21 +140,23 @@ export function PreviewMap({
           minZoom={1}
           interactiveLayerIds={['points', 'lines', 'polygons', 'clusters']}
         >
-          <MapLayers
-            points={previewState.points}
-            lines={previewState.lines}
-            polygons={previewState.polygons}
-          />
+          {previewState && (
+            <MapLayers
+              points={previewState.points || { type: 'FeatureCollection', features: [] }}
+              lines={previewState.lines || { type: 'FeatureCollection', features: [] }}
+              polygons={previewState.polygons || { type: 'FeatureCollection', features: [] }}
+            />
+          )}
 
           <MapAttribution />
 
           <StatsControl
-            visibleCount={previewState.visibleCount}
-            totalCount={previewState.totalCount}
-            pointsCount={previewState.points.features.length}
+            visibleCount={previewState?.visibleCount || 0}
+            totalCount={previewState?.totalCount || 0}
+            pointsCount={previewState?.points?.features?.length || 0}
             zoomLevel={viewState.zoom}
             minZoomForUnclustered={MIN_ZOOM_FOR_UNCLUSTERED}
-            cacheHitRate={cacheStats.hitRate}
+            cacheHitRate={cacheStats?.hitRate || 0}
           />
 
           <CoordinatesControl coordinates={mouseCoords} />

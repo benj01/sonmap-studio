@@ -12,13 +12,15 @@ import { COORDINATE_SYSTEMS } from '../../../types/coordinates';
 
 const CACHE_KEY_PREFIX = 'preview-map';
 const DEBOUNCE_TIME = 100; // ms
+const PROGRESS_UPDATE_INTERVAL = 250; // ms
 
 interface PreviewState {
   points: FeatureCollection;
   lines: FeatureCollection;
   polygons: FeatureCollection;
   totalCount: number;
-  visibleCount: number;
+  loading: boolean;
+  progress: number;
 }
 
 interface CacheStats {
@@ -43,120 +45,105 @@ export function usePreviewState({
   initialBoundsSet,
   onUpdateBounds,
   onPreviewUpdate
-}: UsePreviewStateProps) {
-  const [previewState, setPreviewState] = useState<PreviewState>({
-    points: { type: 'FeatureCollection', features: [] },
-    lines: { type: 'FeatureCollection', features: [] },
-    polygons: { type: 'FeatureCollection', features: [] },
+}: UsePreviewStateProps): PreviewState {
+  const emptyCollection = { type: 'FeatureCollection', features: [] } as FeatureCollection;
+  const initialState: PreviewState = {
+    points: emptyCollection,
+    lines: emptyCollection,
+    polygons: emptyCollection,
     totalCount: 0,
-    visibleCount: 0
-  });
+    loading: false,
+    progress: 0
+  };
 
-  const [cacheStats, setCacheStats] = useState<CacheStats>({
-    hitRate: 0,
-    missRate: 0,
-    size: 0
-  });
+  const [state, setState] = useState<PreviewState>(initialState);
+  const mountedRef = useRef(true);
 
-  const updateRequestRef = useRef(0);
-
-  // Update visible layers when they change
+  // Cleanup on unmount
   useEffect(() => {
-    if (!previewManager) return;
-    
-    console.debug('[DEBUG] Updating preview manager visible layers:', visibleLayers);
-    previewManager.setOptions({ visibleLayers });
-    updatePreviewRef.current();
-  }, [previewManager, visibleLayers]);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
-  // Stabilize callback references
-  const stableOnUpdateBounds = useRef(onUpdateBounds);
-  const stableOnPreviewUpdate = useRef(onPreviewUpdate);
-
+  // Update preview collections when viewport or layers change
   useEffect(() => {
-    stableOnUpdateBounds.current = onUpdateBounds;
-    stableOnPreviewUpdate.current = onPreviewUpdate;
-  }, [onUpdateBounds, onPreviewUpdate]);
-
-  // Separate the update logic into a stable reference
-  const updatePreviewRef = useRef(async () => {
-    if (!previewManager) return;
-
-    const currentRequest = ++updateRequestRef.current;
-    const abortController = new AbortController();
-
-    try {
-      console.debug('[DEBUG] Updating preview collections');
-      const collections = await previewManager.getPreviewCollections();
-      
-      if (!collections || currentRequest !== updateRequestRef.current) {
-        console.debug('[DEBUG] Preview update cancelled or superseded');
-        return;
-      }
-
-      console.debug('[DEBUG] Setting new preview state:', {
-        pointCount: collections.points.features.length,
-        lineCount: collections.lines.features.length,
-        polygonCount: collections.polygons.features.length,
-        totalCount: collections.totalCount,
-        visibleCount: collections.visibleCount
-      });
-
-      setPreviewState({
-        points: collections.points,
-        lines: collections.lines,
-        polygons: collections.polygons,
-        totalCount: collections.totalCount,
-        visibleCount: collections.visibleCount
-      });
-
-      if (!initialBoundsSet && collections.bounds) {
-        console.debug('[DEBUG] Updating initial bounds:', collections.bounds);
-        stableOnUpdateBounds.current?.(collections.bounds);
-      }
-
-      stableOnPreviewUpdate.current?.();
-    } catch (error) {
-      console.error('[ERROR] Failed to update preview:', error);
-    } finally {
-      abortController.abort();
+    if (!previewManager) {
+      console.debug('[usePreviewState] No preview manager available');
+      return;
     }
-  });
 
-  // Separate effect for layer visibility
-  useEffect(() => {
-    if (!previewManager) return;
-    
-    console.debug('[DEBUG] Syncing layer visibility:', {
-      current: previewManager.getOptions().visibleLayers,
-      new: visibleLayers
-    });
-
-    previewManager.setOptions({ visibleLayers });
-    
-    // Debounce the preview update
-    const timeoutId = setTimeout(() => {
-      updatePreviewRef.current();
-    }, DEBOUNCE_TIME);
-
-    return () => clearTimeout(timeoutId);
-  }, [previewManager, visibleLayers]);
-
-  // Separate effect for viewport updates
-  useEffect(() => {
-    if (!previewManager || (!initialBoundsSet && !viewportBounds)) return;
-
-    console.debug('[DEBUG] Viewport update triggered:', {
-      bounds: viewportBounds,
+    console.debug('[usePreviewState] Updating preview collections:', {
+      viewportBounds,
+      visibleLayers,
       initialBoundsSet
     });
 
-    const timeoutId = setTimeout(() => {
-      updatePreviewRef.current();
-    }, DEBOUNCE_TIME);
+    const updatePreview = async () => {
+      if (!mountedRef.current) return;
 
-    return () => clearTimeout(timeoutId);
-  }, [previewManager, viewportBounds, initialBoundsSet]);
+      try {
+        setState(prev => ({ ...prev, loading: true }));
 
-  return { previewState, cacheStats };
+        // Update preview manager options
+        previewManager.setOptions({
+          viewportBounds,
+          visibleLayers,
+          enableCaching: true
+        });
+
+        // Get preview collections
+        const collections = await previewManager.getPreviewCollections();
+        
+        if (!mountedRef.current) return;
+
+        if (!collections || !collections.points || !collections.lines || !collections.polygons) {
+          console.debug('[usePreviewState] Invalid collections returned:', collections);
+          setState(prev => ({
+            ...initialState,
+            loading: false
+          }));
+          return;
+        }
+
+        console.debug('[usePreviewState] Setting preview state:', {
+          points: collections.points.features?.length || 0,
+          lines: collections.lines.features?.length || 0,
+          polygons: collections.polygons.features?.length || 0,
+          bounds: collections.bounds
+        });
+
+        setState({
+          points: collections.points || emptyCollection,
+          lines: collections.lines || emptyCollection,
+          polygons: collections.polygons || emptyCollection,
+          totalCount: collections.totalCount || 0,
+          loading: false,
+          progress: 1
+        });
+        
+        // Update bounds if needed
+        if (!initialBoundsSet && collections.bounds) {
+          console.debug('[usePreviewState] Setting initial bounds:', collections.bounds);
+          onUpdateBounds?.(collections.bounds);
+        }
+
+        // Notify of preview update
+        onPreviewUpdate?.();
+
+      } catch (error) {
+        if (!mountedRef.current) return;
+
+        console.error('[usePreviewState] Error updating preview:', error);
+        setState(prev => ({
+          ...initialState,
+          loading: false
+        }));
+      }
+    };
+
+    updatePreview();
+  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet]);
+
+  return state;
 }
