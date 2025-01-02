@@ -34,20 +34,13 @@ const createInitialState = (): FileAnalysisState => ({
   analysis: null,
   dxfData: null,
   selectedLayers: [],
-  visibleLayers: [], // Always start with empty array
+  visibleLayers: [],
   selectedTemplates: [],
   previewManager: null
 });
 
 // Initialize state with all layers visible by default
 const initialState = createInitialState();
-
-function convertWarningsToAnalysis(warnings: string[] = []): Warning[] {
-  return warnings.map(message => ({
-    type: 'warning',
-    message
-  }));
-}
 
 export function useFileAnalysis({
   file,
@@ -59,6 +52,12 @@ export function useFileAnalysis({
   const [state, setState] = useState<FileAnalysisState>(initialState);
   const currentFileRef = useRef<File | null>(null);
   const loadingRef = useRef(false);
+  const stateRef = useRef(state);
+
+  // Keep stateRef in sync with state
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const analyzeFile = useCallback(async (file: File) => {
     if (loadingRef.current) {
@@ -109,7 +108,7 @@ export function useFileAnalysis({
       console.log('[DEBUG] Creating preview manager...');
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
-        visibleLayers: initialVisibleLayers, // All layers visible initially
+        visibleLayers: initialVisibleLayers,
         analysis: {
           warnings: processor.getWarnings()
         },
@@ -127,16 +126,21 @@ export function useFileAnalysis({
       }
 
       console.log('[DEBUG] Analysis complete, updating state...');
-      // Update state with all layers initially visible to match PreviewManager
-      setState({
+      
+      // Update state with all layers initially visible
+      const newState = {
         loading: false,
         analysis: result,
         dxfData: result.dxfData,
         selectedLayers: layers,
-        visibleLayers: initialVisibleLayers, // Ensure this matches PreviewManager's state
+        visibleLayers: initialVisibleLayers,
         selectedTemplates: [],
         previewManager
-      });
+      };
+
+      console.log('[DEBUG] Setting new state:', newState);
+      setState(newState);
+      stateRef.current = newState;
 
       console.log('[DEBUG] State initialized with:', {
         layers,
@@ -153,68 +157,29 @@ export function useFileAnalysis({
         onError(`Failed to analyze file: ${error instanceof Error ? error.message : String(error)}`);
       }
       
-      setState(initialState);
+      const resetState = initialState;
+      setState(resetState);
+      stateRef.current = resetState;
       return null;
     } finally {
       loadingRef.current = false;
     }
   }, [getProcessor, onError]);
 
-  // Handle layer selection
-  const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
-    console.log('[DEBUG] Toggle layer selection:', {
-      layer,
-      enabled,
-      action: enabled ? 'selecting' : 'deselecting'
-    });
-
-    setState(prev => ({
-      ...prev,
-      selectedLayers: enabled 
-        ? [...prev.selectedLayers, layer]
-        : prev.selectedLayers.filter(l => l !== layer)
-    }));
-  }, []);
-
-  // Handle layer visibility with immediate updates
-  const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
-    console.debug('[DEBUG] Toggle layer visibility:', {
-      layer,
-      visible,
-      action: visible ? 'showing' : 'hiding'
-    });
-
-    setState(prev => {
-      // Skip if state wouldn't change
-      if (visible === prev.visibleLayers.includes(layer)) {
-        return prev;
-      }
-
-      const newVisibleLayers = visible
-        ? [...prev.visibleLayers, layer]
-        : prev.visibleLayers.filter(l => l !== layer);
-
-      // Immediately update preview manager
-      if (prev.previewManager) {
-        prev.previewManager.setOptions({
-          visibleLayers: newVisibleLayers
-        });
-      }
-
-      return {
-        ...prev,
-        visibleLayers: newVisibleLayers
-      };
-    });
-  }, []);
-
-  const handleTemplateSelect = useCallback((template: string, enabled: boolean) => {
-    setState(prev => ({
-      ...prev,
-      selectedTemplates: enabled
-        ? [...prev.selectedTemplates, template]
-        : prev.selectedTemplates.filter(t => t !== template)
-    }));
+  // Reset state and cleanup resources
+  const resetState = useCallback(() => {
+    console.debug('[DEBUG] Resetting file analysis state');
+    // Cleanup preview manager
+    if (stateRef.current.previewManager) {
+      console.debug('[DEBUG] Cleaning up preview manager');
+      stateRef.current.previewManager.dispose();
+    }
+    // Reset state
+    const newState = createInitialState();
+    setState(newState);
+    stateRef.current = newState;
+    currentFileRef.current = null;
+    loadingRef.current = false;
   }, []);
 
   // Effect to handle file changes
@@ -222,8 +187,7 @@ export function useFileAnalysis({
     const handleFileChange = async () => {
       if (!file) {
         console.debug('[DEBUG] No file, resetting state');
-        currentFileRef.current = null;
-        setState(initialState);
+        resetState();
         return;
       }
 
@@ -238,32 +202,147 @@ export function useFileAnalysis({
         return;
       }
 
+      // Reset state before analyzing new file
+      resetState();
+
       // New file to analyze
       console.debug('[DEBUG] New file detected, starting analysis');
       currentFileRef.current = file;
-      
-      // Always start fresh with new file
-      setState({
-        ...initialState,
-        loading: true
-      });
-      
-      try {
-        await analyzeFile(file);
-      } catch (error) {
-        console.error('File analysis error:', error);
-        onError(`Failed to analyze file: ${error instanceof Error ? error.message : String(error)}`);
-      }
+      await analyzeFile(file);
     };
 
-    handleFileChange();
-  }, [file, analyzeFile, onError]);
+    handleFileChange().catch(error => {
+      console.error('[ERROR] File analysis failed:', error);
+      onError(error instanceof Error ? error.message : String(error));
+    });
+  }, [file, analyzeFile, resetState, onError]);
+
+  // Handle layer toggle with debug logging
+  const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
+    console.debug('[DEBUG] useFileAnalysis handleLayerToggle:', {
+      layer,
+      enabled,
+      currentSelectedLayers: stateRef.current.selectedLayers
+    });
+
+    setState(prev => {
+      // Skip if state wouldn't change
+      if (enabled === prev.selectedLayers.includes(layer)) {
+        console.debug('[DEBUG] useFileAnalysis skipping selection update - no change');
+        return prev;
+      }
+
+      const newSelectedLayers = enabled
+        ? [...prev.selectedLayers, layer]
+        : prev.selectedLayers.filter(l => l !== layer);
+
+      console.debug('[DEBUG] useFileAnalysis layer selection updated:', {
+        layer,
+        enabled,
+        before: prev.selectedLayers,
+        after: newSelectedLayers
+      });
+
+      const newState = {
+        ...prev,
+        selectedLayers: newSelectedLayers
+      };
+
+      stateRef.current = newState;
+      return newState;
+    });
+  }, []);
+
+  // Handle layer visibility toggle with debug logging
+  const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
+    console.debug('[DEBUG] useFileAnalysis handleLayerVisibilityToggle:', {
+      layer,
+      visible,
+      currentState: stateRef.current
+    });
+
+    setState(prev => {
+      // Skip if state wouldn't change
+      if (visible === prev.visibleLayers.includes(layer)) {
+        console.debug('[DEBUG] useFileAnalysis skipping visibility update - no change');
+        return prev;
+      }
+
+      const newVisibleLayers = visible
+        ? [...prev.visibleLayers, layer]
+        : prev.visibleLayers.filter(l => l !== layer);
+
+      // Immediately update preview manager
+      if (prev.previewManager) {
+        console.debug('[DEBUG] useFileAnalysis updating preview manager visibility:', {
+          layer,
+          visible,
+          newVisibleLayers
+        });
+        prev.previewManager.setOptions({
+          visibleLayers: newVisibleLayers
+        });
+      }
+
+      console.debug('[DEBUG] useFileAnalysis layer visibility updated:', {
+        layer,
+        visible,
+        before: prev.visibleLayers,
+        after: newVisibleLayers
+      });
+
+      const newState = {
+        ...prev,
+        visibleLayers: newVisibleLayers
+      };
+
+      stateRef.current = newState;
+      return newState;
+    });
+  }, []);
+
+  // Handle template selection with debug logging
+  const handleTemplateSelect = useCallback((template: string, enabled: boolean) => {
+    console.debug('[DEBUG] useFileAnalysis handleTemplateSelect:', {
+      template,
+      enabled,
+      currentSelectedTemplates: stateRef.current.selectedTemplates
+    });
+
+    setState(prev => {
+      const newSelectedTemplates = enabled
+        ? [...prev.selectedTemplates, template]
+        : prev.selectedTemplates.filter(t => t !== template);
+
+      console.debug('[DEBUG] useFileAnalysis template selection updated:', {
+        template,
+        enabled,
+        before: prev.selectedTemplates,
+        after: newSelectedTemplates
+      });
+
+      const newState = {
+        ...prev,
+        selectedTemplates: newSelectedTemplates
+      };
+
+      stateRef.current = newState;
+      return newState;
+    });
+  }, []);
 
   return {
-    ...state,
+    ...stateRef.current,
     handleLayerToggle,
     handleLayerVisibilityToggle,
     handleTemplateSelect,
     analyzeFile
   };
+}
+
+function convertWarningsToAnalysis(warnings: string[] = []): Warning[] {
+  return warnings.map(message => ({
+    type: 'warning',
+    message
+  }));
 }

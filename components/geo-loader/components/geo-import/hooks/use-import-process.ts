@@ -41,7 +41,9 @@ export function useImportProcess({
     options: ImportOptions
   ): Promise<LoaderResult | null> => {
     try {
-      // Only pass valid ProcessorOptions
+      console.debug('[DEBUG] Starting file import with options:', options);
+
+      // Get processor for file type
       const processor = await getProcessor(file, {
         coordinateSystem: options.coordinateSystem,
         selectedLayers: options.selectedLayers,
@@ -49,120 +51,45 @@ export function useImportProcess({
       });
 
       if (!processor) {
-        throw new Error(`No processor available for file: ${file.name}`);
+        throw new GeoLoaderError(
+          `No processor available for file: ${file.name}`,
+          'PROCESSOR_NOT_FOUND'
+        );
       }
 
-      // Create feature manager for streaming support
-      const featureManager = new FeatureManager({
-        chunkSize: 1000,
-        maxMemoryMB: 512
-      });
+      // Process the file
+      console.debug('[DEBUG] Processing file with processor');
+      const result = await processor.process(file);
 
-      // Process file with streaming support
-      const processorResult = await processor.process(file);
-      const features: GeoFeature[] = [];
-
-      // Handle streaming or direct features
-      if (processorResult.features && 
-          typeof processorResult.features === 'object' && 
-          Symbol.asyncIterator in processorResult.features) {
-        for await (const feature of processorResult.features[Symbol.asyncIterator]()) {
-          await featureManager.addFeature(feature);
-          features.push(feature as GeoFeature);
-        }
-      } else {
-        for (const feature of processorResult.features.features) {
-          await featureManager.addFeature(feature);
-          features.push(feature as GeoFeature);
-        }
+      if (!result) {
+        throw new GeoLoaderError(
+          'Processor returned no result',
+          'PROCESSOR_NO_RESULT'
+        );
       }
 
-      // Convert ProcessorResult to LoaderResult
-      const result: LoaderResult = {
-        features,
-        bounds: processorResult.bounds,
-        layers: processorResult.layers || [],
-        coordinateSystem: processorResult.coordinateSystem,
-        statistics: convertStatistics(processorResult.statistics)
+      // Create feature manager
+      console.debug('[DEBUG] Creating feature manager');
+      const featureManager = new FeatureManager();
+      await featureManager.setFeatures(result.features);
+
+      // Return result
+      return {
+        features: result.features,
+        coordinateSystem: options.coordinateSystem,
+        statistics: convertStatistics(result.statistics),
+        featureManager
       };
-
-      // Clean up
-      featureManager.clear();
-
-      // Log import statistics
-      const importLogs: { message: string; type: 'info' | 'warning' | 'error' }[] = [];
-
-      if (result.coordinateSystem) {
-        importLogs.push({
-          message: `Using coordinate system: ${result.coordinateSystem}`,
-          type: 'info'
-        });
-      }
-
-      if (result.statistics) {
-        importLogs.push({
-          message: `Imported ${result.statistics.pointCount} features`,
-          type: 'info'
-        });
-
-        if (result.statistics.layerCount) {
-          importLogs.push({
-            message: `Found ${result.statistics.layerCount} layers`,
-            type: 'info'
-          });
-        }
-
-        Object.entries(result.statistics.featureTypes).forEach(([type, count]) => {
-          importLogs.push({
-            message: `- ${count} ${type} features`,
-            type: 'info'
-          });
-        });
-
-        if (result.statistics.failedTransformations && result.statistics.failedTransformations > 0) {
-          importLogs.push({
-            message: `Warning: ${result.statistics.failedTransformations} features failed coordinate transformation`,
-            type: 'warning'
-          });
-        }
-
-        if (result.statistics.errors && result.statistics.errors.length > 0) {
-          result.statistics.errors.forEach((error: { type: string; message?: string; count: number }) => {
-            importLogs.push({
-              message: error.message ?
-                `${error.type}: ${error.message} (${error.count} occurrence${error.count > 1 ? 's' : ''})` :
-                `${error.type}: ${error.count} occurrence${error.count > 1 ? 's' : ''}`,
-              type: 'error'
-            });
-          });
-        }
-      }
-
-      // Send logs
-      importLogs.forEach(log => {
-        switch (log.type) {
-          case 'warning':
-            onWarning(log.message);
-            break;
-          case 'error':
-            onError(log.message);
-            break;
-          default:
-            // Use onWarning for info since we don't have onInfo
-            onWarning(log.message);
-        }
-      });
-
-      return result;
     } catch (error) {
-      if (error instanceof GeoLoaderError) {
-        onError(`Import error: ${error.message}`);
+      console.error('[ERROR] Import failed:', error);
+      if (error instanceof Error) {
+        onError(error.message);
       } else {
-        onError(`Failed to import file: ${error instanceof Error ? error.message : String(error)}`);
+        onError(String(error));
       }
       return null;
     }
-  }, [getProcessor, onWarning, onError, onProgress]);
+  }, [getProcessor, onError]);
 
   return {
     importFile

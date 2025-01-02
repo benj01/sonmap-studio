@@ -89,11 +89,11 @@ export class DxfProcessor extends StreamProcessor {
    */
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
-      console.log('[DEBUG] Starting DXF analysis for:', file.name);
+      console.debug('[DEBUG] Starting DXF analysis for:', file.name);
       
       // Read file content with progress monitoring
       const text = await file.text();
-      console.log('[DEBUG] File content length:', text.length);
+      console.debug('[DEBUG] File content length:', text.length);
 
       // Configure parsing options
       const parseOptions: DxfParseOptions = {
@@ -107,19 +107,19 @@ export class DxfProcessor extends StreamProcessor {
       // Parse DXF structure with options
       const structure = await this.parser.parse(text, parseOptions) as DxfStructure;
       
-      console.log('[DEBUG] Starting entity processing');
+      console.debug('[DEBUG] Starting entity processing');
       
       // Extract entities from structure
       const entities = await DxfEntityProcessor.extractEntities(structure);
-      console.log('[DEBUG] Extracted entities:', entities.length);
+      console.debug('[DEBUG] Extracted entities:', entities.length);
 
       // Calculate bounds from entities
       const bounds = DxfAnalyzer.calculateBoundsFromEntities(entities);
-      console.log('[DEBUG] Calculated bounds:', bounds);
+      console.debug('[DEBUG] Calculated bounds:', bounds);
 
       // Detect coordinate system with enhanced validation
       const detection = DxfAnalyzer.detectCoordinateSystem(bounds, structure);
-      console.log('[DEBUG] Coordinate system detection:', {
+      console.debug('[DEBUG] Coordinate system detection:', {
         system: detection.system,
         confidence: detection.confidence,
         reason: detection.reason
@@ -129,7 +129,7 @@ export class DxfProcessor extends StreamProcessor {
       const coordinateSystem = detection.system ?? COORDINATE_SYSTEMS.SWISS_LV95;
       
       // Log coordinate system decision
-      console.log('[DEBUG] Using coordinate system:', {
+      console.debug('[DEBUG] Using coordinate system:', {
         system: coordinateSystem,
         fallback: detection.system === null,
         confidence: detection.confidence,
@@ -143,11 +143,11 @@ export class DxfProcessor extends StreamProcessor {
 
       // Extract layers from structure
       const layers = DxfLayerProcessor.extractLayerNames(structure.layers || []);
-      console.log('[DEBUG] Extracted layers:', layers);
+      console.debug('[DEBUG] Extracted layers:', layers);
 
       // Convert DXF entities to GeoJSON features
       const features = await DxfEntityProcessor.entitiesToFeatures(entities);
-      console.log('[DEBUG] Converted entities to features:', features.length);
+      console.debug('[DEBUG] Converted entities to features:', features.length);
 
       // Create feature collection for preview
       const preview: FeatureCollection = {
@@ -176,177 +176,85 @@ export class DxfProcessor extends StreamProcessor {
    * Process DXF file in streaming mode
    */
   protected async processChunk(features: Feature[], chunkIndex: number): Promise<Feature[]> {
-    // Process features in chunks
-    const processedFeatures = [...features]; // Create copy to avoid modifying original
-    
-    // Check memory usage
-    const memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024;
-    if (memoryUsage > 450) {
-      console.warn('[DEBUG] High memory usage in chunk processing:', Math.round(memoryUsage), 'MB');
-      if (global.gc) {
-        global.gc();
-      }
-    }
-    
-    return processedFeatures;
-  }
-
-  /**
-   * Convert entities to GeoJSON features with memory checks
-   */
-  async convertToFeatures(entities: DxfEntity[]): Promise<Feature[]> {
-    const features = await DxfEntityProcessor.entitiesToFeatures(entities);
-    
-    // Check memory usage after conversion
-    const memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024;
-    if (memoryUsage > 450) {
-      console.warn('[DEBUG] High memory usage in feature conversion:', Math.round(memoryUsage), 'MB');
-      if (global.gc) {
-        global.gc();
-      }
-    }
-    
+    console.debug('[DEBUG] Processing chunk:', { chunkIndex, featureCount: features.length });
     return features;
   }
 
   /**
-   * Calculate bounds for processor result with memory optimization
+   * Convert entities to GeoJSON features
    */
-  protected calculateBounds(): ProcessorResult['bounds'] {
-    if (!this.state.features || this.state.features.length === 0) {
-      const defaultSystem = this.options.coordinateSystem === COORDINATE_SYSTEMS.NONE 
-        ? COORDINATE_SYSTEMS.SWISS_LV95 
-        : (this.options.coordinateSystem ?? COORDINATE_SYSTEMS.SWISS_LV95);
-      return DxfAnalyzer.getDefaultBounds(defaultSystem);
-    }
-    
-    // Calculate bounds in chunks if many features
-    if (this.state.features.length > 1000) {
-      const chunkSize = 1000;
-      let bounds: ProcessorResult['bounds'] | null = null;
-      
-      for (let i = 0; i < this.state.features.length; i += chunkSize) {
-        const chunk = this.state.features.slice(i, i + chunkSize);
-        const chunkBounds = DxfAnalyzer.calculateBoundsFromEntities(chunk);
-        
-        if (chunkBounds) {
-          if (!bounds) {
-            bounds = chunkBounds;
-          } else {
-            bounds = {
-              minX: Math.min(bounds.minX, chunkBounds.minX),
-              minY: Math.min(bounds.minY, chunkBounds.minY),
-              maxX: Math.max(bounds.maxX, chunkBounds.maxX),
-              maxY: Math.max(bounds.maxY, chunkBounds.maxY)
-            };
-          }
-        }
-      }
-      
-      const fallbackSystem = this.options.coordinateSystem === COORDINATE_SYSTEMS.NONE 
-        ? COORDINATE_SYSTEMS.SWISS_LV95 
-        : (this.options.coordinateSystem ?? COORDINATE_SYSTEMS.SWISS_LV95);
-      return bounds || DxfAnalyzer.getDefaultBounds(fallbackSystem);
-    }
-    
-    return DxfAnalyzer.calculateBoundsFromEntities(this.state.features);
+  private async convertToFeatures(entities: DxfEntity[]): Promise<Feature[]> {
+    console.debug('[DEBUG] Converting entities to features:', { count: entities.length });
+    const features = await DxfEntityProcessor.entitiesToFeatures(entities);
+
+    // Update feature type statistics
+    features.forEach(feature => {
+      const type = feature.geometry.type.toLowerCase();
+      this.state.statistics.featureTypes[type] = (this.state.statistics.featureTypes[type] || 0) + 1;
+    });
+
+    return features;
   }
 
-  protected async processStream(file: File): Promise<StreamProcessorResult> {
+  /**
+   * Process DXF file
+   */
+  async process(file: File): Promise<ProcessorResult> {
     try {
-      const CHUNK_SIZE = 50000; // Process entities in chunks of 50k
+      console.debug('[DEBUG] Starting DXF processing');
+      
+      // Parse file content
+      const text = await file.text();
+      console.debug('[DEBUG] File content loaded');
+
+      // Parse options
       const parseOptions: DxfParseOptions = {
-        entityTypes: (this.options as DxfProcessorOptions).entityTypes,
         parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
         parseText: (this.options as DxfProcessorOptions).importText,
         parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
         validate: (this.options as DxfProcessorOptions).validateGeometry
       };
 
-      // Read file in chunks using streams if available
-      const text = await file.text();
-      const parsedStructure = await this.parser.parse(text, parseOptions) as DxfStructure;
+      // Parse DXF structure
+      const structure = await this.parser.parse(text, parseOptions) as DxfStructure;
+      console.debug('[DEBUG] DXF structure parsed');
 
-      // Ensure structure has required arrays initialized
-      const structure: DxfStructure = {
-        ...parsedStructure,
-        blocks: parsedStructure.blocks || [],
-        entities: parsedStructure.entities || [],
-        layers: parsedStructure.layers || [],
-        entityTypes: parsedStructure.entityTypes || []
+      // Extract and process entities
+      const entities = await DxfEntityProcessor.extractEntities(structure);
+      console.debug('[DEBUG] Entities extracted:', { count: entities.length });
+
+      // Convert to features
+      const features = await this.convertToFeatures(entities);
+      console.debug('[DEBUG] Features converted:', { count: features.length });
+
+      // Create feature collection
+      const featureCollection: FeatureCollection = {
+        type: 'FeatureCollection',
+        features
       };
 
-      // Collect all entities including blocks
-      const allEntities = [
-        ...structure.entities,
-        ...structure.blocks.flatMap(block => block.entities || [])
-      ];
+      // Extract layers
+      const layers = DxfLayerProcessor.extractLayerNames(structure.layers || []);
+      console.debug('[DEBUG] Layers extracted:', { count: layers.length });
 
-      // Process entities in chunks
-      const totalChunks = Math.ceil(allEntities.length / CHUNK_SIZE);
-      let processedCount = 0;
-      let validFeatureCount = 0;
-      const layerSet = new Set<string>();
+      // Calculate bounds
+      const bounds = DxfAnalyzer.calculateBoundsFromEntities(entities);
+      console.debug('[DEBUG] Bounds calculated:', bounds);
 
-      for (let i = 0; i < totalChunks; i++) {
-        const start = i * CHUNK_SIZE;
-        const end = Math.min(start + CHUNK_SIZE, allEntities.length);
-        const chunk = allEntities.slice(start, end);
-
-        // Store chunk in state for bounds calculation
-        this.state.features = chunk;
-
-        // Convert chunk to GeoJSON features
-        const features = await DxfEntityProcessor.entitiesToFeatures(chunk);
-
-        // Process features
-        features.forEach(feature => {
-          const layer = feature.properties?.layer || '0';
-          if (!this.isSystemProperty(layer)) {
-            validFeatureCount++;
-            this.updateStats(this.state.statistics, feature.geometry.type.toLowerCase());
-            layerSet.add(layer);
-          }
-        });
-
-        processedCount += chunk.length;
-        this.updateProgress(processedCount / allEntities.length);
-
-        // Check memory usage
-        const memoryUsage = process.memoryUsage().heapUsed / 1024 / 1024;
-        if (memoryUsage > 450) { // Warning threshold at 450MB
-          console.warn('[DEBUG] High memory usage detected:', Math.round(memoryUsage), 'MB');
-          // Force garbage collection if available
-          if (global.gc) {
-            global.gc();
-          }
-        }
-
-        // Add small delay between chunks to prevent blocking
-        await new Promise(resolve => setTimeout(resolve, 0));
-      }
-
-      // Update layer count in statistics
-      this.state.statistics.layerCount = layerSet.size;
-
-      console.log('[DEBUG] Processing complete:', {
-        totalEntities: allEntities.length,
-        validFeatures: validFeatureCount,
-        layerCount: this.state.statistics.layerCount,
-        chunksProcessed: totalChunks
-      });
+      // Update statistics
+      this.state.statistics.featureCount = features.length;
+      this.state.statistics.layerCount = layers.length;
 
       return {
-        statistics: this.state.statistics,
-        success: true
+        features: featureCollection,
+        bounds,
+        layers,
+        coordinateSystem: this.options.coordinateSystem,
+        statistics: this.state.statistics
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        statistics: this.state.statistics,
-        success: false,
-        error: `Failed to process DXF file: ${message}`
-      };
+      console.error('[ERROR] DXF processing failed:', error);
+      throw error;
     }
   }
 }

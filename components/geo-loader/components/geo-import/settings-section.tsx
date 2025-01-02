@@ -8,7 +8,7 @@ import { DxfStructureView } from '../dxf-structure-view';
 import { DxfEntityType, DxfStructure } from '../../core/processors/implementations/dxf/types';
 import { CoordinateSystemSelect } from '../coordinate-system-select';
 import { SettingsSectionProps } from './types';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 export function SettingsSection({
   file,
@@ -27,6 +27,34 @@ export function SettingsSection({
 }: SettingsSectionProps) {
   const [isApplying, setIsApplying] = useState(false);
   const isDxfFile = file.name.toLowerCase().endsWith('.dxf');
+  
+  // Add debug logging for state changes
+  useEffect(() => {
+    console.debug('[DEBUG] SettingsSection state:', {
+      selectedLayers,
+      visibleLayers,
+      selectedTemplates,
+      coordinateSystem: options.coordinateSystem,
+      pendingCoordinateSystem
+    });
+  }, [selectedLayers, visibleLayers, selectedTemplates, options.coordinateSystem, pendingCoordinateSystem]);
+
+  // Wrap handlers with debug logging
+  const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
+    console.debug('[DEBUG] SettingsSection layer toggle:', { layer, enabled });
+    onLayerToggle?.(layer, enabled);
+  }, [onLayerToggle]);
+
+  const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
+    console.debug('[DEBUG] SettingsSection layer visibility toggle:', { layer, visible });
+    onLayerVisibilityToggle?.(layer, visible);
+  }, [onLayerVisibilityToggle]);
+
+  const handleTemplateSelect = useCallback((template: string, enabled: boolean) => {
+    console.debug('[DEBUG] SettingsSection template select:', { template, enabled });
+    onTemplateSelect?.(template, enabled);
+  }, [onTemplateSelect]);
+
   const showCoordinateWarning = analysis?.coordinateSystem === COORDINATE_SYSTEMS.WGS84 && 
     analysis?.bounds && (
       Math.abs(analysis.bounds.maxX) > 180 || 
@@ -97,11 +125,12 @@ export function SettingsSection({
           <DxfStructureView
             structure={dxfData}
             selectedLayers={selectedLayers}
-            onLayerToggle={onLayerToggle}
+            onLayerToggle={handleLayerToggle}
             visibleLayers={visibleLayers}
-            onLayerVisibilityToggle={onLayerVisibilityToggle}
-            selectedEntityTypes={selectedTemplates as DxfEntityType[]}
-            onEntityTypeSelect={(type, enabled) => onTemplateSelect(type as string, enabled)}
+            onLayerVisibilityToggle={handleLayerVisibilityToggle}
+            selectedEntityTypes={[]}
+            onEntityTypeSelect={() => {}}
+            onError={(error) => console.error('[ERROR] DXF Structure Error:', error)}
           />
         </div>
       )}

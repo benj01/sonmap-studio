@@ -96,6 +96,7 @@ export function GeoImportDialog({
     onProgress
   });
 
+  // Enhanced file analysis with debug logging
   const {
     loading: analysisLoading,
     analysis,
@@ -112,9 +113,39 @@ export function GeoImportDialog({
     file,
     onWarning,
     onError,
-    onProgress,
+    onProgress: (progress) => {
+      onProgress(progress);
+      console.debug('[DEBUG] File analysis progress:', { progress });
+    },
     getProcessor
   });
+
+  // Debug logging for state changes
+  useEffect(() => {
+    console.debug('[DEBUG] Dialog state updated:', {
+      selectedLayers,
+      visibleLayers,
+      selectedTemplates,
+      hasErrors,
+      currentPhase
+    });
+  }, [selectedLayers, visibleLayers, selectedTemplates, hasErrors, currentPhase]);
+
+  // Enhanced layer toggle handlers
+  const handleLayerToggleWrapper = useCallback((layer: string, enabled: boolean) => {
+    console.debug('[DEBUG] Dialog layer toggle:', { layer, enabled });
+    handleLayerToggle(layer, enabled);
+  }, [handleLayerToggle]);
+
+  const handleLayerVisibilityToggleWrapper = useCallback((layer: string, visible: boolean) => {
+    console.debug('[DEBUG] Dialog layer visibility toggle:', { layer, visible });
+    handleLayerVisibilityToggle(layer, visible);
+  }, [handleLayerVisibilityToggle]);
+
+  const handleTemplateSelectWrapper = useCallback((template: string, enabled: boolean) => {
+    console.debug('[DEBUG] Dialog template select:', { template, enabled });
+    handleTemplateSelect(template, enabled);
+  }, [handleTemplateSelect]);
 
   const {
     loading: coordinateSystemLoading,
@@ -164,12 +195,28 @@ export function GeoImportDialog({
   // Reset everything when dialog closes
   useEffect(() => {
     if (!isOpen) {
+      console.debug('[DEBUG] Dialog closed, cleaning up...');
       resetProcessor();
       resetCoordinateSystem();
       clearLogs();
       setCurrentPhase(null);
+      // Reset file analysis state
+      if (previewManager) {
+        console.debug('[DEBUG] Cleaning up preview manager');
+        previewManager.dispose();
+      }
     }
-  }, [isOpen, resetProcessor, resetCoordinateSystem, clearLogs]);
+  }, [isOpen, resetProcessor, resetCoordinateSystem, clearLogs, previewManager]);
+
+  const handleClearAndClose = useCallback(() => {
+    console.debug('[DEBUG] Clearing and closing dialog');
+    clearLogs();
+    if (previewManager) {
+      console.debug('[DEBUG] Cleaning up preview manager');
+      previewManager.dispose();
+    }
+    onClose();
+  }, [clearLogs, previewManager, onClose]);
 
   const handleApplyCoordinateSystem = async () => {
     if (!file) return;
@@ -220,11 +267,6 @@ export function GeoImportDialog({
     }
   };
 
-  const handleClearAndClose = () => {
-    clearLogs();
-    onClose();
-  };
-
   if (!file) return null;
 
   const options = {
@@ -238,47 +280,44 @@ export function GeoImportDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClearAndClose()}>
-      <DialogContent className="max-w-6xl">
-        <DialogTitle className="sr-only">Import {file.name}</DialogTitle>
-        <DialogDescription className="sr-only">
-          Import dialog for processing and analyzing {file.name} with coordinate system and layer selection options
+      <DialogContent className="max-w-4xl h-[90vh]">
+        <DialogTitle>Import {file?.name}</DialogTitle>
+        <DialogDescription>
+          Configure import settings and preview the data
         </DialogDescription>
-        
-        <ImportHeader
-          fileName={file.name}
-          hasErrors={hasErrors}
-        />
 
-        <ImportContent
-          file={file}
-          dxfData={dxfData}
-          analysis={analysis}
-          options={options}
-          selectedLayers={selectedLayers}
-          visibleLayers={visibleLayers}
-          selectedTemplates={selectedTemplates}
-          previewManager={previewManager}
-          logs={logs}
-          loading={loading}
-          hasErrors={hasErrors}
-          pendingCoordinateSystem={pendingCoordinateSystem}
-          onLayerToggle={handleLayerToggle}
-          onLayerVisibilityToggle={handleLayerVisibilityToggle}
-          onTemplateSelect={handleTemplateSelect}
-          onCoordinateSystemChange={handleCoordinateSystemChangeWrapper}
-          onApplyCoordinateSystem={handleApplyCoordinateSystem}
-          onClearAndClose={handleClearAndClose}
-        />
+        <div className="flex flex-col h-full gap-4 pt-4">
+          <ImportContent
+            file={file}
+            dxfData={dxfData}
+            analysis={analysis}
+            options={options}
+            selectedLayers={selectedLayers}
+            visibleLayers={visibleLayers}
+            selectedTemplates={selectedTemplates}
+            previewManager={previewManager}
+            logs={logs}
+            loading={loading}
+            hasErrors={hasErrors}
+            pendingCoordinateSystem={pendingCoordinateSystem}
+            onLayerToggle={handleLayerToggleWrapper}
+            onLayerVisibilityToggle={handleLayerVisibilityToggleWrapper}
+            onTemplateSelect={handleTemplateSelectWrapper}
+            onCoordinateSystemChange={handleCoordinateSystemChangeWrapper}
+            onApplyCoordinateSystem={handleApplyCoordinateSystem}
+            onClearAndClose={handleClearAndClose}
+          />
 
-        <ImportControls
-          loading={loading}
-          hasErrors={hasErrors}
-          coordinateSystemChanged={coordinateSystemChanged}
-          pendingCoordinateSystem={pendingCoordinateSystem}
-          onClose={onClose}
-          onApplyCoordinateSystem={handleApplyCoordinateSystem}
-          onImport={handleImport}
-        />
+          <ImportControls
+            loading={loading}
+            hasErrors={hasErrors}
+            coordinateSystemChanged={coordinateSystemChanged}
+            pendingCoordinateSystem={pendingCoordinateSystem}
+            onClose={onClose}
+            onApplyCoordinateSystem={handleApplyCoordinateSystem}
+            onImport={handleImport}
+          />
+        </div>
       </DialogContent>
     </Dialog>
   );

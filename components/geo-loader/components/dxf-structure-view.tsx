@@ -248,6 +248,7 @@ export function DxfStructureView({
 }: DxfStructureViewProps) {
   // Early return if structure is not available
   if (!structure) {
+    console.debug('[DEBUG] No structure data available');
     return (
       <ScrollArea className="h-[400px] w-full rounded-md border p-2">
         <Alert variant="destructive">
@@ -258,20 +259,28 @@ export function DxfStructureView({
     );
   }
 
-  // Initialize layer manager
-  const [layerManager] = useState(() => new LayerManager());
+  // Initialize layer manager with debug logging
+  const [layerManager] = useState(() => {
+    console.debug('[DEBUG] Initializing layer manager');
+    return new LayerManager();
+  });
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // Setup layer manager when structure changes
+  // Setup layer manager when structure changes with debug logging
   useEffect(() => {
-    if (!structure?.layers) return;
+    if (!structure?.layers) {
+      console.debug('[DEBUG] No layers in structure');
+      return;
+    }
     
+    console.debug('[DEBUG] Setting up layer manager with layers:', structure.layers);
     layerManager.clear();
     structure.layers.forEach(layer => {
       try {
         layerManager.addLayer(layer);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Invalid layer';
+        console.debug('[DEBUG] Layer validation error:', { layer: layer.name, error: message });
         setValidationErrors(prev => ({
           ...prev,
           [layer.name]: message
@@ -351,41 +360,30 @@ export function DxfStructureView({
   const allEntityTypesSelected = allEntityTypes.length > 0 && selectedEntityTypeCount === allEntityTypes.length;
   const someEntityTypesSelected = selectedEntityTypeCount > 0;
 
-  // Handle toggle all layers visibility
+  // Handle toggle all layers visibility with debug logging
   const handleToggleAllLayers = (visible: boolean) => {
-    // When toggling all layers:
-    // - If turning on: Add all valid layers to visibleLayers
-    // - If turning off: Remove all layers (empty array)
-    
-    // Use the incoming visible state directly - don't combine with current state
+    console.debug('[DEBUG] Toggle all layers visibility:', { visible });
     validLayers.forEach(layer => {
+      console.debug('[DEBUG] Toggling layer visibility:', { layer, visible });
       onLayerVisibilityToggle(layer, visible);
     });
-    
-    console.debug('[DEBUG] Toggling all layers:', {
-      action: visible ? 'show all' : 'hide all',
-      allLayersVisible,
-      someLayersVisible,
-      validLayers,
-      currentVisibleLayers: visibleLayers
-    });
   };
 
-  // Handle toggle all layers import
+  // Handle toggle all layers import with debug logging
   const handleToggleAllLayersImport = (enabled: boolean) => {
-    // Similar logic to visibility toggle
-    const newState = !allLayersSelected || enabled;
+    console.debug('[DEBUG] Toggle all layers import:', { enabled });
     validLayers.forEach(layer => {
-      onLayerToggle(layer, newState);
+      console.debug('[DEBUG] Toggling layer import:', { layer, enabled });
+      onLayerToggle(layer, enabled);
     });
   };
 
-  // Handle toggle all entity types
+  // Handle toggle all entity types with debug logging
   const handleToggleAllEntityTypes = (enabled: boolean) => {
-    // Similar logic to layer toggles
-    const newState = !allEntityTypesSelected || enabled;
+    console.debug('[DEBUG] Toggle all entity types:', { enabled });
     allEntityTypes.forEach(type => {
-      onEntityTypeSelect(type, newState);
+      console.debug('[DEBUG] Toggling entity type:', { type, enabled });
+      onEntityTypeSelect(type, enabled);
     });
   };
 
@@ -420,183 +418,168 @@ export function DxfStructureView({
         </TreeNode>
 
         {/* Layers */}
-        <TreeNode 
-          label="Layers" 
-          icon={<Layers />}
-          count={structure.layers?.length ?? 0}
-          defaultExpanded
-        >
-          {/* Add master toggles for all layers */}
-          <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Layers className="h-4 w-4" />
-              <span className="text-xs">Toggle All Layers</span>
-            </div>
-                <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1">
-                <Eye className="h-3 w-3" />
-                <Switch
-                  checked={allLayersVisible}
-                  onCheckedChange={handleToggleAllLayers}
-                />
-              </div>
-              <div className="flex items-center gap-1">
-                <Download className="h-3 w-3" />
-                <Switch
-                  checked={allLayersSelected}
-                  onCheckedChange={handleToggleAllLayersImport}
-                />
-              </div>
+              <span className="text-sm font-medium">Layers</span>
+              <span className="text-xs text-muted-foreground">
+                ({structure.layers?.length ?? 0})
+              </span>
             </div>
           </div>
 
-          {structure.layers?.map(layer => (
-            <div key={layer.name} className="space-y-1">
-              <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
-                <div className="flex items-center gap-2">
-                  <Layers className="h-4 w-4" />
-                  <span className="text-xs">{layer.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    ({Array.from(elementsByLayer.get(layer.name)?.values() || []).reduce((a, b) => a + b, 0)})
-                  </span>
-                  {validationErrors[layer.name] && (
-                    <AlertTriangle className="h-4 w-4 text-destructive" />
-                  )}
-                </div>
-                {/* Switches are now in their own isolated container */}
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1">
-                    <Eye className="h-3 w-3" />
-                    <Switch
-                      checked={visibleLayers.includes(layer.name)}
-                      onCheckedChange={(checked) => {
-                        onLayerVisibilityToggle(layer.name, checked);
-                      }}
-                    />
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <Download className="h-3 w-3" />
-                    <Switch
-                      checked={selectedLayers.includes(layer.name)}
-                      onCheckedChange={(checked) => {
-                        onLayerToggle(layer.name, checked);
-                      }}
-                    />
-                  </div>
-                </div>
+          {/* Layer Controls */}
+          <div className="space-y-1">
+            {/* Toggle All Controls */}
+            <div className="flex items-center justify-between p-2 bg-muted/50 rounded-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-xs">Toggle All Layers</span>
               </div>
-              {elementsByLayer.get(layer.name) && (
-                <div className="ml-6 space-y-1">
-                  {Array.from(elementsByLayer.get(layer.name)!.entries()).map(([type, count]) => {
-                    const typeInfo = getEntityTypeInfo(type, entityCounts.get(type) || { total: 0, byLayer: {} });
-                    return (
-                      <div 
-                        key={type} 
-                        className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                        onClick={() => onElementSelect?.({ type, layer: layer.name })}
-                      >
-                        {typeInfo.icon}
-                        <span>{typeInfo.label}</span>
-                        <span>({count})</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          ))}
-        </TreeNode>
-
-        {/* Models */}
-        {(structure.blocks?.length ?? 0) > 0 && (
-          <TreeNode 
-            label="Models" 
-            icon={<Layout />}
-            count={structure.blocks?.length ?? 0}
-          >
-            {(structure.blocks || []).map(block => (
-              <TreeNode 
-                key={block.name} 
-                label={block.name}
-                icon={<Database />}
-                count={block.entities?.length ?? 0}
-              >
-                {Object.entries(
-                  (block.entities || []).reduce((acc, entity) => {
-                    acc[entity.type] = (acc[entity.type] || 0) + 1;
-                    return acc;
-                  }, {} as Record<DxfEntityType, number>)
-                ).map(([type, count]) => {
-                  const typeInfo = getEntityTypeInfo(type as DxfEntityType, entityCounts.get(type as DxfEntityType) || { total: 0, byLayer: {} });
-                  return (
-                    <div 
-                      key={type} 
-                      className="flex items-center gap-2 text-xs text-muted-foreground hover:bg-accent rounded-sm cursor-pointer p-1"
-                      onClick={() => onElementSelect?.({ type: type as DxfEntityType, layer: block.name })}
-                    >
-                      {typeInfo.icon}
-                      <span>{typeInfo.label}</span>
-                      <span>({count})</span>
-                    </div>
-                  );
-                })}
-              </TreeNode>
-            ))}
-          </TreeNode>
-        )}
-
-        {/* Entity Types */}
-        <TreeNode 
-          label="Entity Types" 
-          icon={<Grid />}
-          count={entityCounts.size}
-          defaultExpanded
-        >
-          {/* Add master toggle for all entity types */}
-          <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
-            <div className="flex items-center gap-2">
-              <Grid className="h-4 w-4" />
-              <span className="text-xs">Toggle All Types</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Download className="h-3 w-3" />
-              <Switch
-                checked={allEntityTypesSelected}
-                onCheckedChange={handleToggleAllEntityTypes}
-              />
-            </div>
-          </div>
-
-          {Array.from(entityCounts.entries()).map(([type, count]) => {
-            const typeInfo = getEntityTypeInfo(type, count);
-            return (
-              <div 
-                key={type} 
-                className="flex items-center justify-between p-1 hover:bg-accent rounded-sm group"
-              >
+              <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
-                  <div className="h-4 w-4">{typeInfo.icon}</div>
-                  <div>
-                    <Label className="text-xs cursor-pointer">
-                      {typeInfo.label} ({count.total})
-                    </Label>
-                    {typeInfo.description && (
-                      <p className="text-xs text-muted-foreground hidden group-hover:block">
-                        {typeInfo.description}
-                      </p>
-                    )}
-                  </div>
-                </div>
-                <div>
+                  <Eye className="h-3 w-3" />
                   <Switch
-                    checked={selectedEntityTypes.includes(type)}
-                    onCheckedChange={(checked) => onEntityTypeSelect(type, checked)}
+                    id="toggle-all-layers-visible"
+                    checked={allLayersVisible}
+                    onCheckedChange={(checked) => {
+                      console.debug('[DEBUG] Toggle all layers visibility:', { checked });
+                      handleToggleAllLayers(checked);
+                    }}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Download className="h-3 w-3" />
+                  <Switch
+                    id="toggle-all-layers-selected"
+                    checked={allLayersSelected}
+                    onCheckedChange={(checked) => {
+                      console.debug('[DEBUG] Toggle all layers selection:', { checked });
+                      handleToggleAllLayersImport(checked);
+                    }}
                   />
                 </div>
               </div>
-            );
-          })}
-        </TreeNode>
+            </div>
+
+            {/* Individual Layer Controls */}
+            <div className="space-y-1">
+              {structure.layers?.map(layer => (
+                <div 
+                  key={layer.name}
+                  className="flex items-center justify-between p-2 hover:bg-accent rounded-sm"
+                >
+                  <div className="flex items-center gap-2">
+                    <Layers className="h-4 w-4" />
+                    <span className="text-xs">{layer.name}</span>
+                    <span className="text-xs text-muted-foreground">
+                      ({Array.from(elementsByLayer.get(layer.name)?.values() || []).reduce((a, b) => a + b, 0)})
+                    </span>
+                    {validationErrors[layer.name] && (
+                      <AlertTriangle className="h-4 w-4 text-destructive" />
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <Eye className="h-3 w-3" />
+                      <Switch
+                        id={`layer-visible-${layer.name}`}
+                        checked={visibleLayers.includes(layer.name)}
+                        onCheckedChange={(checked) => {
+                          console.debug('[DEBUG] Layer visibility toggle:', { layer: layer.name, checked });
+                          onLayerVisibilityToggle(layer.name, checked);
+                        }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Download className="h-3 w-3" />
+                      <Switch
+                        id={`layer-selected-${layer.name}`}
+                        checked={selectedLayers.includes(layer.name)}
+                        onCheckedChange={(checked) => {
+                          console.debug('[DEBUG] Layer selection toggle:', { layer: layer.name, checked });
+                          onLayerToggle(layer.name, checked);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Entity Types */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Grid className="h-4 w-4" />
+              <span className="text-sm font-medium">Entity Types</span>
+              <span className="text-xs text-muted-foreground">
+                ({entityCounts.size})
+              </span>
+            </div>
+          </div>
+
+          {/* Entity Type Controls */}
+          <div className="space-y-1">
+            {/* Toggle All Types */}
+            <div className="flex items-center justify-between p-2 bg-muted/50 rounded-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-xs">Toggle All Types</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Download className="h-3 w-3" />
+                <Switch
+                  id="toggle-all-types"
+                  checked={allEntityTypesSelected}
+                  onCheckedChange={(checked) => {
+                    console.debug('[DEBUG] Toggle all entity types:', { checked });
+                    handleToggleAllEntityTypes(checked);
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Individual Entity Types */}
+            <div className="space-y-1">
+              {Array.from(entityCounts.entries()).map(([type, count]) => {
+                const typeInfo = getEntityTypeInfo(type, count);
+                return (
+                  <div 
+                    key={type}
+                    className="flex items-center justify-between p-2 hover:bg-accent rounded-sm"
+                  >
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4">{typeInfo.icon}</div>
+                      <div>
+                        <span className="text-xs">
+                          {typeInfo.label} ({count.total})
+                        </span>
+                        {typeInfo.description && (
+                          <p className="text-xs text-muted-foreground">
+                            {typeInfo.description}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Download className="h-3 w-3" />
+                      <Switch
+                        id={`entity-type-${type}`}
+                        checked={selectedEntityTypes.includes(type)}
+                        onCheckedChange={(checked) => {
+                          console.debug('[DEBUG] Entity type toggle:', { type, checked });
+                          onEntityTypeSelect(type, checked);
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
       </div>
     </ScrollArea>
   );
