@@ -67,10 +67,27 @@ export class FeatureManager {
   private updateVisibleFeatures() {
     console.debug('[DEBUG] Updating visible features');
     this.visibleFeatures = this.features.filter(feature => {
-      const layer = feature.properties?.layer;
-      return !layer || this.visibleLayers.includes(layer);
+      // Default to layer '0' if not specified, maintaining consistency with addFeature/addFeatures
+      const layer = feature.properties?.layer || '0';
+      const isVisible = this.visibleLayers.includes(layer);
+      
+      // Enhanced debugging to track visibility decisions
+      console.debug('[DEBUG] Feature visibility check:', {
+        layer,
+        isVisible,
+        visibleLayers: this.visibleLayers,
+        hasProperties: !!feature.properties,
+        originalLayer: feature.properties?.layer
+      });
+      
+      return isVisible;
     });
-    console.debug('[DEBUG] Visible features updated:', { count: this.visibleFeatures.length });
+    
+    console.debug('[DEBUG] Visible features updated:', {
+      totalFeatures: this.features.length,
+      visibleFeatures: this.visibleFeatures.length,
+      visibleLayers: this.visibleLayers
+    });
   }
 
   getVisibleFeatures(): GeoFeature[] {

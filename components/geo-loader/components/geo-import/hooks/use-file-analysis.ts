@@ -255,16 +255,27 @@ export function useFileAnalysis({
 
   // Handle layer visibility toggle with debug logging
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
-    console.debug('[DEBUG] useFileAnalysis handleLayerVisibilityToggle:', {
+    console.debug('[DEBUG] useFileAnalysis handleLayerVisibilityToggle - START:', {
       layer,
       visible,
-      currentState: stateRef.current
+      currentState: {
+        visibleLayers: stateRef.current.visibleLayers,
+        previewManager: stateRef.current.previewManager ? 'initialized' : 'null'
+      }
     });
 
     setState(prev => {
       // Skip if state wouldn't change
-      if (visible === prev.visibleLayers.includes(layer)) {
-        console.debug('[DEBUG] useFileAnalysis skipping visibility update - no change');
+      const isCurrentlyVisible = prev.visibleLayers.includes(layer);
+      console.debug('[DEBUG] Layer visibility check:', {
+        layer,
+        requestedVisible: visible,
+        isCurrentlyVisible,
+        wouldChange: visible !== isCurrentlyVisible
+      });
+
+      if (visible === isCurrentlyVisible) {
+        console.debug('[DEBUG] useFileAnalysis skipping visibility update - no change needed');
         return prev;
       }
 
@@ -277,18 +288,29 @@ export function useFileAnalysis({
         console.debug('[DEBUG] useFileAnalysis updating preview manager visibility:', {
           layer,
           visible,
+          currentVisibleLayers: prev.visibleLayers,
           newVisibleLayers
         });
-        prev.previewManager.setOptions({
-          visibleLayers: newVisibleLayers
-        });
+        
+        try {
+          prev.previewManager.setOptions({
+            visibleLayers: newVisibleLayers
+          });
+          console.debug('[DEBUG] Preview manager visibility updated successfully');
+        } catch (error) {
+          console.error('[ERROR] Failed to update preview manager visibility:', error);
+          onError(`Failed to update layer visibility: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        console.debug('[DEBUG] No preview manager available for visibility update');
       }
 
-      console.debug('[DEBUG] useFileAnalysis layer visibility updated:', {
+      console.debug('[DEBUG] useFileAnalysis layer visibility state update:', {
         layer,
         visible,
         before: prev.visibleLayers,
-        after: newVisibleLayers
+        after: newVisibleLayers,
+        change: `${visible ? 'showing' : 'hiding'} layer "${layer}"`
       });
 
       const newState = {
@@ -296,10 +318,17 @@ export function useFileAnalysis({
         visibleLayers: newVisibleLayers
       };
 
+      // Update the ref immediately to ensure consistent state
       stateRef.current = newState;
+      
+      // Dispatch a custom event to notify of visibility change
+      window.dispatchEvent(new CustomEvent('layer-visibility-changed', {
+        detail: { layer, visible, visibleLayers: newVisibleLayers }
+      }));
+
       return newState;
     });
-  }, []);
+  }, [onError]);
 
   // Handle template selection with debug logging
   const handleTemplateSelect = useCallback((template: string, enabled: boolean) => {

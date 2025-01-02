@@ -370,7 +370,10 @@ export class PreviewManager {
       // Filter features based on visible layers
       const visibleLayersSet = new Set(this.options.visibleLayers);
       const filterByVisibleLayers = (features: GeoFeature[]) =>
-        features.filter(f => f.properties?.layer && visibleLayersSet.has(f.properties.layer));
+        features.filter(f => {
+          const layer = f.properties?.layer || '0'; // Default to layer '0' if not specified
+          return visibleLayersSet.has(layer);
+        });
 
       const visiblePoints = filterByVisibleLayers(points);
       const visibleLines = filterByVisibleLayers(lines);
@@ -422,6 +425,12 @@ export class PreviewManager {
       ...this.options,
       ...updatedOptions
     };
+
+    // Update FeatureManager's visible layers when they change
+    if (options.visibleLayers !== undefined) {
+      console.debug('[DEBUG] Updating FeatureManager visible layers:', options.visibleLayers);
+      this.featureManager.setVisibleLayers(options.visibleLayers);
+    }
 
     console.debug('[DEBUG] PreviewManager options updated:', {
       visibleLayers: this.options.visibleLayers,

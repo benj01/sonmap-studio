@@ -266,7 +266,7 @@ export function DxfStructureView({
   });
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
-  // Setup layer manager when structure changes with debug logging
+  // Setup layer manager and initialize visible layers when structure changes
   useEffect(() => {
     if (!structure?.layers) {
       console.debug('[DEBUG] No layers in structure');
@@ -275,9 +275,25 @@ export function DxfStructureView({
     
     console.debug('[DEBUG] Setting up layer manager with layers:', structure.layers);
     layerManager.clear();
+    
+    // Initialize all layers as visible if visibleLayers is empty
+    if (visibleLayers.length === 0 && onLayerVisibilityToggle) {
+      console.debug('[DEBUG] Initializing all layers as visible');
+      structure.layers.forEach(layer => {
+        console.debug('[DEBUG] Setting initial visibility for layer:', layer.name);
+        onLayerVisibilityToggle(layer.name, true);
+      });
+    } else {
+      console.debug('[DEBUG] Using existing visibility state:', visibleLayers);
+    }
+
     structure.layers.forEach(layer => {
       try {
         layerManager.addLayer(layer);
+        console.debug('[DEBUG] Layer added to manager:', { 
+          name: layer.name, 
+          visible: visibleLayers.includes(layer.name) 
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Invalid layer';
         console.debug('[DEBUG] Layer validation error:', { layer: layer.name, error: message });
@@ -288,7 +304,24 @@ export function DxfStructureView({
         onError?.(message);
       }
     });
-  }, [structure, layerManager, onError]);
+  }, [structure, layerManager, onError, visibleLayers, onLayerVisibilityToggle]);
+
+  // Listen for layer visibility changes
+  useEffect(() => {
+    const handleVisibilityChange = (event: CustomEvent) => {
+      const { layer, visible, visibleLayers: newVisibleLayers } = event.detail;
+      console.debug('[DEBUG] Layer visibility changed event:', {
+        layer,
+        visible,
+        allVisibleLayers: newVisibleLayers
+      });
+    };
+
+    window.addEventListener('layer-visibility-changed', handleVisibilityChange as EventListener);
+    return () => {
+      window.removeEventListener('layer-visibility-changed', handleVisibilityChange as EventListener);
+    };
+  }, []);
 
   // Calculate styles and counts
   const [styles, entityCounts, elementsByLayer] = useMemo(() => {
@@ -346,24 +379,23 @@ export function DxfStructureView({
   const allLayers = structure?.layers?.map(l => l.name) || [];
   const allEntityTypes = Array.from(entityCounts.keys());
   
-  // Calculate layer visibility states
-  const validLayers = allLayers.filter(layer => !validationErrors[layer]);
-  const visibleLayerCount = validLayers.filter(layer => visibleLayers.includes(layer)).length;
-  const selectedLayerCount = validLayers.filter(layer => selectedLayers.includes(layer)).length;
+  // Calculate layer visibility states - do not filter by validation errors for visibility
+  const visibleLayerCount = allLayers.filter(layer => visibleLayers.includes(layer)).length;
+  const selectedLayerCount = allLayers.filter(layer => selectedLayers.includes(layer)).length;
   const selectedEntityTypeCount = allEntityTypes.filter(type => selectedEntityTypes.includes(type)).length;
 
   // Determine toggle states - a layer is only visible if it's in visibleLayers
-  const allLayersVisible = validLayers.length > 0 && visibleLayerCount === validLayers.length;
+  const allLayersVisible = allLayers.length > 0 && visibleLayerCount === allLayers.length;
   const someLayersVisible = visibleLayerCount > 0;
-  const allLayersSelected = validLayers.length > 0 && selectedLayerCount === validLayers.length;
+  const allLayersSelected = allLayers.length > 0 && selectedLayerCount === allLayers.length;
   const someLayersSelected = selectedLayerCount > 0;
   const allEntityTypesSelected = allEntityTypes.length > 0 && selectedEntityTypeCount === allEntityTypes.length;
   const someEntityTypesSelected = selectedEntityTypeCount > 0;
 
   // Handle toggle all layers visibility with debug logging
   const handleToggleAllLayers = (visible: boolean) => {
-    console.debug('[DEBUG] Toggle all layers visibility:', { visible });
-    validLayers.forEach(layer => {
+    console.debug('[DEBUG] Toggle all layers visibility:', { visible, layers: allLayers });
+    allLayers.forEach(layer => {
       console.debug('[DEBUG] Toggling layer visibility:', { layer, visible });
       onLayerVisibilityToggle(layer, visible);
     });
@@ -371,8 +403,8 @@ export function DxfStructureView({
 
   // Handle toggle all layers import with debug logging
   const handleToggleAllLayersImport = (enabled: boolean) => {
-    console.debug('[DEBUG] Toggle all layers import:', { enabled });
-    validLayers.forEach(layer => {
+    console.debug('[DEBUG] Toggle all layers import:', { enabled, layers: allLayers });
+    allLayers.forEach(layer => {
       console.debug('[DEBUG] Toggling layer import:', { layer, enabled });
       onLayerToggle(layer, enabled);
     });
@@ -380,7 +412,7 @@ export function DxfStructureView({
 
   // Handle toggle all entity types with debug logging
   const handleToggleAllEntityTypes = (enabled: boolean) => {
-    console.debug('[DEBUG] Toggle all entity types:', { enabled });
+    console.debug('[DEBUG] Toggle all entity types:', { enabled, types: allEntityTypes });
     allEntityTypes.forEach(type => {
       console.debug('[DEBUG] Toggling entity type:', { type, enabled });
       onEntityTypeSelect(type, enabled);
@@ -464,47 +496,64 @@ export function DxfStructureView({
 
             {/* Individual Layer Controls */}
             <div className="space-y-1">
-              {structure.layers?.map(layer => (
-                <div 
-                  key={layer.name}
-                  className="flex items-center justify-between p-2 hover:bg-accent rounded-sm"
-                >
-                  <div className="flex items-center gap-2">
-                    <Layers className="h-4 w-4" />
-                    <span className="text-xs">{layer.name}</span>
-                    <span className="text-xs text-muted-foreground">
-                      ({Array.from(elementsByLayer.get(layer.name)?.values() || []).reduce((a, b) => a + b, 0)})
-                    </span>
-                    {validationErrors[layer.name] && (
-                      <AlertTriangle className="h-4 w-4 text-destructive" />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-4">
+              {structure.layers?.map(layer => {
+                const isVisible = visibleLayers.includes(layer.name);
+                const elementCount = Array.from(elementsByLayer.get(layer.name)?.values() || []).reduce((a, b) => a + b, 0);
+                const hasError = !!validationErrors[layer.name];
+                
+                console.debug('[DEBUG] Rendering layer control:', {
+                  layer: layer.name,
+                  isVisible,
+                  elementCount,
+                  hasError
+                });
+
+                return (
+                  <div 
+                    key={layer.name}
+                    className="flex items-center justify-between p-2 hover:bg-accent rounded-sm"
+                  >
                     <div className="flex items-center gap-2">
-                      <Eye className="h-3 w-3" />
-                      <Switch
-                        id={`layer-visible-${layer.name}`}
-                        checked={visibleLayers.includes(layer.name)}
-                        onCheckedChange={(checked) => {
-                          console.debug('[DEBUG] Layer visibility toggle:', { layer: layer.name, checked });
-                          onLayerVisibilityToggle(layer.name, checked);
-                        }}
-                      />
+                      <Layers className="h-4 w-4" />
+                      <span className="text-xs">{layer.name}</span>
+                      <span className="text-xs text-muted-foreground">
+                        ({elementCount})
+                      </span>
+                      {hasError && (
+                        <AlertTriangle className="h-4 w-4 text-destructive" />
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Download className="h-3 w-3" />
-                      <Switch
-                        id={`layer-selected-${layer.name}`}
-                        checked={selectedLayers.includes(layer.name)}
-                        onCheckedChange={(checked) => {
-                          console.debug('[DEBUG] Layer selection toggle:', { layer: layer.name, checked });
-                          onLayerToggle(layer.name, checked);
-                        }}
-                      />
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <Eye className={cn("h-3 w-3", isVisible ? "text-primary" : "text-muted-foreground")} />
+                        <Switch
+                          id={`layer-visible-${layer.name}`}
+                          checked={isVisible}
+                          onCheckedChange={(checked) => {
+                            console.debug('[DEBUG] Layer visibility toggle clicked:', {
+                              layer: layer.name,
+                              currentlyVisible: isVisible,
+                              newState: checked
+                            });
+                            onLayerVisibilityToggle(layer.name, checked);
+                          }}
+                        />
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Download className="h-3 w-3" />
+                        <Switch
+                          id={`layer-selected-${layer.name}`}
+                          checked={selectedLayers.includes(layer.name)}
+                          onCheckedChange={(checked) => {
+                            console.debug('[DEBUG] Layer selection toggle:', { layer: layer.name, checked });
+                            onLayerToggle(layer.name, checked);
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

@@ -68,12 +68,24 @@ export function useImportProcess({
         );
       }
 
-      // Create feature manager
-      console.debug('[DEBUG] Creating feature manager');
+      // Create feature manager and initialize with features and visible layers
+      console.debug('[DEBUG] Creating feature manager with layers:', {
+        layers: result.layers,
+        selectedLayers: options.selectedLayers
+      });
+      
       const featureManager = new FeatureManager();
       await featureManager.setFeatures(result.features);
+      
+      // Set initially visible layers - use either selected layers from options
+      // or all layers if none specified
+      const initialVisibleLayers = options.selectedLayers?.length 
+        ? options.selectedLayers 
+        : result.layers;
+        
+      console.debug('[DEBUG] Setting initial visible layers:', initialVisibleLayers);
+      featureManager.setVisibleLayers(initialVisibleLayers);
 
-      // Return result
       return {
         features: result.features,
         coordinateSystem: options.coordinateSystem,
