@@ -28,7 +28,7 @@ export function PreviewMap({
 }: PreviewMapProps): React.ReactElement {
   const [isLoading, setIsLoading] = useState(true);
   
-  // Update loading state when preview or bounds change
+  // Update loading state when preview manager changes
   useEffect(() => {
     console.debug('[DEBUG] PreviewMap state update:', {
       hasPreview: !!preview,
@@ -38,12 +38,12 @@ export function PreviewMap({
       visibleLayers
     });
     
-    if (!preview || !bounds) {
+    if (!preview?.previewManager) {
       setIsLoading(true);
       return;
     }
     // Loading will be set to false by onPreviewUpdate callback
-  }, [preview, bounds, visibleLayers]);
+  }, [preview?.previewManager]);
   const [error, setError] = useState<string | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<MapFeature | null>(null);
   const [mouseCoords, setMouseCoords] = useState<{ lng: number; lat: number } | null>(null);

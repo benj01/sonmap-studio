@@ -111,17 +111,13 @@ export function useCoordinateSystem({
           }
         });
 
+        // Update preview with new features
         if (result.preview) {
-          if (Symbol.asyncIterator in result.preview) {
-            // Stream features
-            await previewManager.generatePreview(
-              result.preview[Symbol.asyncIterator](),
-              file.name
-            );
-          } else {
-            // Fallback for non-streaming preview
-            previewManager.setFeatures(result.preview);
-          }
+          await previewManager.setFeatures(result.preview);
+          console.debug('[DEBUG] Updated preview features with new coordinate system:', {
+            system: state.pendingCoordinateSystem,
+            featureCount: result.preview.features?.length ?? 0
+          });
         }
       }
 
@@ -154,19 +150,46 @@ export function useCoordinateSystem({
     });
   }, []);
 
-  const initializeCoordinateSystem = useCallback((system?: CoordinateSystem) => {
+  const initializeCoordinateSystem = useCallback(async (system?: CoordinateSystem) => {
     if (system && Object.values(COORDINATE_SYSTEMS).includes(system)) {
-      console.debug('Initializing coordinate system:', system);
+      console.debug('[DEBUG] Initializing coordinate system:', system);
+      
+      // First validate the system with the manager
+      if (!coordinateSystemManager.isInitialized()) {
+        await coordinateSystemManager.initialize();
+      }
+      
+      const supported = coordinateSystemManager.getSupportedSystems().includes(system);
+      if (!supported) {
+        console.warn('[DEBUG] Detected system not supported:', system);
+        onWarning(`Detected coordinate system ${system} is not supported, using WGS84`);
+        system = COORDINATE_SYSTEMS.WGS84;
+      }
+
+      // Set both current and pending to ensure immediate effect
       setState(prev => ({
         ...prev,
         coordinateSystem: system,
-        // Don't set pendingCoordinateSystem to avoid double update
-        pendingCoordinateSystem: prev.pendingCoordinateSystem || system
+        pendingCoordinateSystem: system,
+        loading: false
       }));
+
+      console.debug('[DEBUG] Coordinate system initialized:', {
+        system,
+        supported,
+        manager: 'initialized'
+      });
     } else {
-      console.warn('Invalid coordinate system provided:', system);
+      console.warn('[DEBUG] Invalid coordinate system provided:', system);
+      onWarning('Invalid coordinate system detected, using WGS84');
+      setState(prev => ({
+        ...prev,
+        coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+        pendingCoordinateSystem: COORDINATE_SYSTEMS.WGS84,
+        loading: false
+      }));
     }
-  }, []);
+  }, [onWarning]);
 
   // Only log in development
   if (process.env.NODE_ENV === 'development') {

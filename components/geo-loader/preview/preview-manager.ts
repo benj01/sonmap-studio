@@ -43,6 +43,7 @@ export class PreviewManager {
   private readonly DEFAULT_MAX_FEATURES = 1000;
   private readonly BOUNDS_PADDING = 0.1; // 10% padding
   private readonly MEMORY_LIMIT_MB = 512; // Increased memory limit for large files
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
 
   private featureManager: FeatureManager;
   private options: Required<PreviewOptions>;
@@ -52,6 +53,8 @@ export class PreviewManager {
     polygons: GeoFeature[];
     totalCount: number;
     bounds: Required<Bounds>;
+    coordinateSystem: CoordinateSystem;
+    timestamp: number;
   }> = new Map();
 
   constructor(options: PreviewOptions = {}) {
@@ -61,13 +64,8 @@ export class PreviewManager {
       enableCaching: true,
       smartSampling: true,
       analysis: { warnings: [] },
-      viewportBounds: [2485000, 1075000, 2834000, 1296000],
-      initialBounds: {
-        minX: 2485000,
-        minY: 1075000,
-        maxX: 2834000,
-        maxY: 1296000
-      },
+      viewportBounds: null as unknown as [number, number, number, number],
+      initialBounds: null as unknown as Required<Bounds>,
       onProgress: () => {},
       visibleLayers: [],
       selectedElement: ''
@@ -93,9 +91,82 @@ export class PreviewManager {
       maxMemoryMB: this.MEMORY_LIMIT_MB,
       monitorMemory: true
     });
+
+    // Validate coordinate system on initialization
+    this.validateCoordinateSystem();
   }
 
-  private ensureValidBounds(bounds: Bounds | null): Required<Bounds> {
+  /**
+   * Validate coordinate system configuration
+   */
+  private validateCoordinateSystem(): void {
+    if (!coordinateSystemManager.isInitialized()) {
+      console.warn('[DEBUG] Coordinate system manager not initialized');
+      return;
+    }
+
+    const system = this.options.coordinateSystem;
+    const supported = coordinateSystemManager.getSupportedSystems().includes(system);
+    
+    console.debug('[DEBUG] Validating coordinate system:', {
+      system,
+      supported,
+      available: coordinateSystemManager.getSupportedSystems()
+    });
+
+    if (!supported) {
+      console.warn(`[DEBUG] Unsupported coordinate system: ${system}, falling back to WGS84`);
+      this.options.coordinateSystem = COORDINATE_SYSTEMS.WGS84;
+      this.invalidateCache('unsupported coordinate system');
+    }
+  }
+
+  /**
+   * Get cache key for coordinate system
+   */
+  private getCacheKey(coordinateSystem: CoordinateSystem): string {
+    return `preview:${coordinateSystem}:all-visible`;
+  }
+
+  /**
+   * Invalidate cache with reason
+   */
+  private invalidateCache(reason?: string): void {
+    console.debug('[DEBUG] Invalidating preview cache:', { reason });
+    this.collectionsCache.clear();
+  }
+
+  /**
+   * Get default bounds for current coordinate system
+   */
+  private getDefaultBounds(): Required<Bounds> {
+    if (this.options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+      // Swiss LV95 bounds covering most of Switzerland
+      // Reference: https://epsg.io/2056
+      console.debug('[DEBUG] Using Swiss LV95 default bounds');
+      return {
+        minX: 2485000, // Western boundary
+        minY: 1075000, // Southern boundary
+        maxX: 2834000, // Eastern boundary
+        maxY: 1296000  // Northern boundary
+      };
+    }
+
+    // WGS84 bounds covering Switzerland
+    // Reference: https://epsg.io/4326
+    console.debug('[DEBUG] Using WGS84 default bounds');
+    return {
+      minX: 5.9,  // Western boundary
+      minY: 45.8, // Southern boundary
+      maxX: 10.5, // Eastern boundary
+      maxY: 47.8  // Northern boundary
+    };
+  }
+
+  /**
+   * Ensure valid bounds are available
+   */
+  private async ensureValidBounds(bounds: Bounds | null): Promise<Required<Bounds>> {
     // First try provided bounds
     if (bounds && 
         isFinite(bounds.minX) && isFinite(bounds.minY) &&
@@ -112,7 +183,7 @@ export class PreviewManager {
         this.options.initialBounds.minX !== this.options.initialBounds.maxX && 
         this.options.initialBounds.minY !== this.options.initialBounds.maxY) {
       console.debug('[DEBUG] Using initial bounds:', this.options.initialBounds);
-      return this.options.initialBounds;
+      return this.options.initialBounds as Required<Bounds>;
     }
 
     // Finally try viewport bounds
@@ -135,50 +206,38 @@ export class PreviewManager {
       };
     }
 
-    // Use appropriate default bounds based on coordinate system
-    if (this.options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
-      // Use wider bounds for Swiss LV95 to accommodate more data
-      console.debug('[DEBUG] Using expanded Swiss LV95 default bounds');
-      return {
-        minX: 2400000, // Expanded west
-        minY: 1000000, // Expanded south
-        maxX: 2900000, // Expanded east
-        maxY: 1400000  // Expanded north
-      };
+    // Calculate bounds from features if available
+    const features: GeoFeature[] = [];
+    try {
+      for await (const feature of this.featureManager.getFeatures()) {
+        features.push(feature);
+      }
+      if (features.length > 0) {
+        const featureBounds = calculateFeatureBounds(features);
+        if (featureBounds) {
+          console.debug('[DEBUG] Using bounds from features:', featureBounds);
+          return featureBounds as Required<Bounds>;
+        }
+      }
+    } catch (error) {
+      console.warn('[DEBUG] Failed to calculate bounds from features:', error);
     }
 
-    console.debug('[DEBUG] Using WGS84 default bounds');
-    return { minX: -180, minY: -85, maxX: 180, maxY: 85 };
+    // Use default bounds as last resort
+    return this.getDefaultBounds();
   }
 
-  private addPaddingToBounds(bounds: Required<Bounds>): Required<Bounds> {
-    const width = bounds.maxX - bounds.minX;
-    const height = bounds.maxY - bounds.minY;
-    const paddingX = width * this.BOUNDS_PADDING;
-    const paddingY = height * this.BOUNDS_PADDING;
-
-    const paddedBounds = {
-      minX: bounds.minX - paddingX,
-      minY: bounds.minY - paddingY,
-      maxX: bounds.maxX + paddingX,
-      maxY: bounds.maxY + paddingY
-    };
-
-    console.debug('[DEBUG] Added padding to bounds:', {
-      original: bounds,
-      padded: paddedBounds
-    });
-
-    return paddedBounds;
-  }
-
-  private getCacheKey(): string {
-    return 'all-visible';
-  }
-
-  private invalidateCache() {
-    console.debug('[DEBUG] Invalidating preview cache');
-    this.collectionsCache.clear();
+  /**
+   * Clean expired cache entries
+   */
+  private cleanExpiredCache(): void {
+    const now = Date.now();
+    for (const [key, value] of this.collectionsCache.entries()) {
+      if (now - value.timestamp > this.CACHE_TTL) {
+        console.debug('[DEBUG] Removing expired cache entry:', key);
+        this.collectionsCache.delete(key);
+      }
+    }
   }
 
   private createSamplingStrategy(): SamplingStrategy {
@@ -228,9 +287,15 @@ export class PreviewManager {
   }
 
   /**
-   * Get preview collections for the current viewport
+   * Get preview collections for the current viewport with enhanced validation
    */
   async getPreviewCollections(): Promise<PreviewCollectionResult | null> {
+    // Validate coordinate system configuration
+    this.validateCoordinateSystem();
+    
+    // Clean expired cache entries
+    this.cleanExpiredCache();
+
     try {
       const features: GeoFeature[] = [];
       for await (const feature of this.featureManager.getFeatures()) {
@@ -239,19 +304,21 @@ export class PreviewManager {
 
       if (features.length === 0) {
         console.debug('[DEBUG] No valid features available');
+        const defaultBounds = this.getDefaultBounds();
         return {
           points: { type: 'FeatureCollection', features: [] },
           lines: { type: 'FeatureCollection', features: [] },
           polygons: { type: 'FeatureCollection', features: [] },
           totalCount: 0,
           visibleCount: 0,
-          bounds: this.ensureValidBounds(null)
+          bounds: defaultBounds
         };
       }
 
       console.debug('[DEBUG] Processing features:', {
         total: features.length,
-        types: features.map(f => f.geometry?.type || 'unknown')
+        types: features.map(f => f.geometry?.type || 'unknown'),
+        coordinateSystem: this.options.coordinateSystem
       });
 
       // Split features by geometry type
@@ -282,13 +349,16 @@ export class PreviewManager {
         }
       });
 
-      const bounds = this.ensureValidBounds(calculateFeatureBounds(features));
+      // Calculate bounds from features first
+      const featureBounds = calculateFeatureBounds(features);
+      const bounds = await this.ensureValidBounds(featureBounds);
 
       console.debug('[DEBUG] Feature collections:', {
         points: points.length,
         lines: lines.length,
         polygons: polygons.length,
-        bounds
+        bounds,
+        coordinateSystem: this.options.coordinateSystem
       });
 
       const result: PreviewCollectionResult = {
@@ -300,6 +370,18 @@ export class PreviewManager {
         bounds
       };
 
+      // Cache the result with coordinate system info
+      const cacheKey = this.getCacheKey(this.options.coordinateSystem);
+      this.collectionsCache.set(cacheKey, {
+        points,
+        lines,
+        polygons,
+        totalCount: features.length,
+        bounds,
+        coordinateSystem: this.options.coordinateSystem,
+        timestamp: Date.now()
+      });
+
       return result;
     } catch (error) {
       console.error('Failed to get preview collections:', error);
@@ -308,7 +390,7 @@ export class PreviewManager {
   }
 
   /**
-   * Update preview options
+   * Update preview options with coordinate system validation
    */
   public setOptions(options: Partial<PreviewOptions>): void {
     console.debug('[DEBUG] Updating preview options:', {
@@ -316,16 +398,23 @@ export class PreviewManager {
       updates: options
     });
 
+    const oldSystem = this.options.coordinateSystem;
     this.options = {
       ...this.options,
       ...options
     };
 
-    // Invalidate cache for any option change
-    this.invalidateCache();
+    // If coordinate system changed, validate and potentially invalidate cache
+    if (options.coordinateSystem && options.coordinateSystem !== oldSystem) {
+      this.validateCoordinateSystem();
+    } else {
+      // Invalidate cache for other option changes
+      this.invalidateCache('options updated');
+    }
 
     console.debug('[DEBUG] Preview options updated:', {
-      viewportBounds: this.options.viewportBounds
+      viewportBounds: this.options.viewportBounds,
+      coordinateSystem: this.options.coordinateSystem
     });
   }
 
@@ -337,12 +426,16 @@ export class PreviewManager {
   }
 
   /**
-   * Set features directly for preview
+   * Set features directly for preview with coordinate system validation
    */
   public async setFeatures(features: Feature[] | FeatureCollection): Promise<void> {
+    // Validate coordinate system before processing features
+    this.validateCoordinateSystem();
+
     console.debug('[DEBUG] Setting features:', {
       type: Array.isArray(features) ? 'array' : 'collection',
-      count: Array.isArray(features) ? features.length : features.features.length
+      count: Array.isArray(features) ? features.length : features.features.length,
+      coordinateSystem: this.options.coordinateSystem
     });
 
     // Clear existing features
@@ -363,7 +456,7 @@ export class PreviewManager {
     await this.featureManager.addFeatures(geoFeatures);
     
     // Invalidate cache after adding features
-    this.invalidateCache();
+    this.invalidateCache('new features added');
   }
 
   /**

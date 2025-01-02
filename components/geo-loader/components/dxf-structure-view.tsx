@@ -228,12 +228,26 @@ export function DxfStructureView({
   onElementSelect,
   onError
 }: DxfStructureViewProps) {
+  // Early return if structure is not available
+  if (!structure) {
+    return (
+      <ScrollArea className="h-[400px] w-full rounded-md border p-2">
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <span className="text-sm">No structure data available</span>
+        </Alert>
+      </ScrollArea>
+    );
+  }
+
   // Initialize layer manager
   const [layerManager] = useState(() => new LayerManager());
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
 
   // Setup layer manager when structure changes
   useEffect(() => {
+    if (!structure?.layers) return;
+    
     layerManager.clear();
     structure.layers.forEach(layer => {
       try {
@@ -285,24 +299,24 @@ export function DxfStructureView({
 
         // Process nested blocks
         if (entity.type === 'INSERT' && entity.blockName) {
-          const block = structure.blocks.find(b => b.name === entity.blockName);
+          const block = (structure.blocks || []).find(b => b.name === entity.blockName);
           if (block) {
-            processEntities(block.entities, layer);
+            processEntities(block.entities || [], layer);
           }
         }
       });
     };
 
     // Process all blocks
-    structure.blocks.forEach(block => {
-      processEntities(block.entities);
+    (structure.blocks || []).forEach(block => {
+      processEntities(block.entities || []);
     });
 
     return [{ lineTypes, textStyles }, counts, byLayer];
   }, [structure]);
 
   // Get all available layers and entity types
-  const allLayers = structure.layers.map(l => l.name);
+  const allLayers = structure?.layers?.map(l => l.name) || [];
   const allEntityTypes = Array.from(entityCounts.keys());
   
   // Calculate layer visibility states
@@ -401,7 +415,7 @@ export function DxfStructureView({
         <TreeNode 
           label="Layers" 
           icon={<Layers />}
-          count={structure.layers.length}
+          count={structure.layers?.length ?? 0}
           defaultExpanded
         >
           {/* Add master toggles for all layers */}
@@ -430,7 +444,7 @@ export function DxfStructureView({
             </div>
           </div>
 
-          {structure.layers.map(layer => (
+          {structure.layers?.map(layer => (
             <div key={layer.name} className="space-y-1">
               <div className="flex items-center justify-between p-1 hover:bg-accent rounded-sm">
                 <div className="flex items-center gap-2">
@@ -485,21 +499,21 @@ export function DxfStructureView({
         </TreeNode>
 
         {/* Models */}
-        {structure.blocks.length > 0 && (
+        {(structure.blocks?.length ?? 0) > 0 && (
           <TreeNode 
             label="Models" 
             icon={<Layout />}
-            count={structure.blocks.length}
+            count={structure.blocks?.length ?? 0}
           >
-            {structure.blocks.map(block => (
+            {(structure.blocks || []).map(block => (
               <TreeNode 
                 key={block.name} 
                 label={block.name}
                 icon={<Database />}
-                count={block.entities.length}
+                count={block.entities?.length ?? 0}
               >
                 {Object.entries(
-                  block.entities.reduce((acc, entity) => {
+                  (block.entities || []).reduce((acc, entity) => {
                     acc[entity.type] = (acc[entity.type] || 0) + 1;
                     return acc;
                   }, {} as Record<DxfEntityType, number>)

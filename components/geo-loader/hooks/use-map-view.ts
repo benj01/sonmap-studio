@@ -26,38 +26,64 @@ export function useMapView(
     bearing: 0,
     pitch: 0
   });
+  const [initialBoundsSet, setInitialBoundsSet] = useState(false);
 
   // Initialize coordinate system manager
   useEffect(() => {
-    coordinateSystemManager.initialize().catch(error => {
-      console.error('Failed to initialize coordinate system manager:', error);
-      // Set default view of Aarau
-      setViewState(prev => ({
-        ...prev,
-        ...DEFAULT_CENTER
-      }));
-    });
+    const initManager = async () => {
+      try {
+        if (!coordinateSystemManager.isInitialized()) {
+          await coordinateSystemManager.initialize();
+        }
+      } catch (error) {
+        console.error('[DEBUG] Failed to initialize coordinate system manager:', error);
+        setViewState(prev => ({
+          ...prev,
+          ...DEFAULT_CENTER
+        }));
+      }
+    };
+    initManager();
   }, []);
 
-  // Verify coordinate system is supported
+  // Reset initialBoundsSet when coordinate system changes
   useEffect(() => {
-    if (!coordinateSystemManager.isInitialized()) return;
+    setInitialBoundsSet(false);
+  }, [coordinateSystem]);
 
-    const isSupported = coordinateSystemManager.isSupported(coordinateSystem);
-    console.debug('[DEBUG] Coordinate system check:', {
-      system: coordinateSystem,
-      isSupported,
-      initialized: coordinateSystemManager.isInitialized()
-    });
+  // Verify coordinate system support
+  useEffect(() => {
+    const verifySystem = async () => {
+      try {
+        if (!coordinateSystemManager.isInitialized()) {
+          await coordinateSystemManager.initialize();
+        }
 
-    if (!isSupported) {
-      console.warn(`[DEBUG] Unsupported coordinate system: ${coordinateSystem}`);
-      // Fallback to WGS84 if system not supported
-      setViewState(prev => ({
-        ...prev,
-        ...DEFAULT_CENTER
-      }));
-    }
+        const isSupported = coordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
+        console.debug('[DEBUG] Coordinate system verification:', {
+          system: coordinateSystem,
+          isSupported,
+          initialized: coordinateSystemManager.isInitialized(),
+          supportedSystems: coordinateSystemManager.getSupportedSystems()
+        });
+
+        if (!isSupported) {
+          console.warn(`[DEBUG] Unsupported coordinate system: ${coordinateSystem}, falling back to WGS84`);
+          setViewState(prev => ({
+            ...prev,
+            ...DEFAULT_CENTER
+          }));
+        }
+      } catch (error) {
+        console.error('[DEBUG] Error verifying coordinate system:', error);
+        setViewState(prev => ({
+          ...prev,
+          ...DEFAULT_CENTER
+        }));
+      }
+    };
+
+    verifySystem();
   }, [coordinateSystem]);
 
   const calculateBoundsFromFeatures = useCallback(async (features: Feature[]): Promise<Bounds | null> => {
@@ -141,13 +167,34 @@ export function useMapView(
       });
 
       // Transform bounds to WGS84 if needed
-      const transformedBounds = coordinateSystem === COORDINATE_SYSTEMS.WGS84
-        ? bounds
-        : await coordinateSystemManager.transformBounds(bounds, coordinateSystem, COORDINATE_SYSTEMS.WGS84);
+      let transformedBounds = bounds;
+      
+      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        // Transform each corner separately
+        const minPoint = await coordinateSystemManager.transform(
+          { x: bounds.minX, y: bounds.minY },
+          coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84
+        );
+        const maxPoint = await coordinateSystemManager.transform(
+          { x: bounds.maxX, y: bounds.maxY },
+          coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84
+        );
+        
+        transformedBounds = {
+          minX: minPoint.x,
+          minY: minPoint.y,
+          maxX: maxPoint.x,
+          maxY: maxPoint.y
+        };
+      }
 
       console.debug('[DEBUG] Transformed bounds:', {
         original: bounds,
-        transformed: transformedBounds
+        transformed: transformedBounds,
+        fromSystem: coordinateSystem,
+        toSystem: COORDINATE_SYSTEMS.WGS84
       });
 
       // Calculate viewport settings from bounds
@@ -171,6 +218,7 @@ export function useMapView(
         zoom: Math.min(zoom, 20), // Cap zoom level
         transitionDuration: 1000
       }));
+      setInitialBoundsSet(true);
     } catch (error) {
       console.error('[DEBUG] Error updating view from bounds:', error);
     }
@@ -188,7 +236,18 @@ export function useMapView(
   }, []);
 
   const getViewportBounds = useCallback((): [number, number, number, number] | undefined => {
-    if (!viewState) return undefined;
+    if (!viewState || !initialBoundsSet) {
+      // During initial load, use initial bounds if available
+      if (initialBounds) {
+        return [
+          initialBounds.minX,
+          initialBounds.minY,
+          initialBounds.maxX,
+          initialBounds.maxY
+        ];
+      }
+      return undefined;
+    }
 
     const { longitude, latitude, zoom } = viewState;
     
@@ -198,11 +257,16 @@ export function useMapView(
       return undefined;
     }
     
-    // Calculate viewport bounds based on zoom level
+    // Only calculate viewport bounds after initial bounds are set
+    // and when significantly zoomed in (to avoid unnecessary filtering)
+    if (zoom < 10) {
+      return undefined;
+    }
+    
+    // Calculate bounds
     const latRange = 360 / Math.pow(2, zoom + 1);
     const lonRange = 360 / Math.pow(2, zoom);
     
-    // Calculate bounds
     const minLon = longitude - lonRange / 2;
     const minLat = latitude - latRange / 2;
     const maxLon = longitude + lonRange / 2;
@@ -214,25 +278,46 @@ export function useMapView(
       return undefined;
     }
     
-    // Ensure we return exactly 4 numbers for 2D bounds
     return [minLon, minLat, maxLon, maxLat];
-  }, [viewState.longitude, viewState.latitude, viewState.zoom]); // Only depend on needed values
+  }, [viewState.longitude, viewState.latitude, viewState.zoom, initialBoundsSet, initialBounds]);
 
-  // Initialize view when bounds change
+  // Handle bounds updates after coordinate system verification
   useEffect(() => {
-    if (initialBounds) {
-      updateViewFromBounds(initialBounds).catch(error => {
-        console.error('Failed to update view from initial bounds:', error);
+    const updateBounds = async () => {
+      try {
+        // Wait for coordinate system verification
+        if (!coordinateSystemManager.isInitialized()) {
+          await coordinateSystemManager.initialize();
+        }
+
+        const isSupported = coordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
+        if (!isSupported) {
+          console.warn('[DEBUG] Cannot update bounds: unsupported coordinate system');
+          return;
+        }
+
+        if (initialBounds) {
+          console.debug('[DEBUG] Updating view with initial bounds:', {
+            bounds: initialBounds,
+            system: coordinateSystem
+          });
+          await updateViewFromBounds(initialBounds);
+        }
+      } catch (error) {
+        console.error('[DEBUG] Failed to update view from bounds:', error);
         setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
-      });
-    }
-  }, [initialBounds, updateViewFromBounds]);
+      }
+    };
+
+    updateBounds();
+  }, [initialBounds, coordinateSystem, updateViewFromBounds]);
 
   return {
     viewState,
     onMove,
     updateViewFromBounds,
     focusOnFeatures,
-    getViewportBounds
+    getViewportBounds,
+    initialBoundsSet
   };
 }

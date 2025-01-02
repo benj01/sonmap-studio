@@ -117,15 +117,29 @@ export class DxfProcessor extends StreamProcessor {
       const bounds = DxfAnalyzer.calculateBoundsFromEntities(entities);
       console.log('[DEBUG] Calculated bounds:', bounds);
 
-      // Detect coordinate system
-      const detectedSystem = DxfAnalyzer.detectCoordinateSystem(bounds, structure);
-      console.log('[DEBUG] Detected coordinate system:', detectedSystem);
+      // Detect coordinate system with enhanced validation
+      const detection = DxfAnalyzer.detectCoordinateSystem(bounds, structure);
+      console.log('[DEBUG] Coordinate system detection:', {
+        system: detection.system,
+        confidence: detection.confidence,
+        reason: detection.reason
+      });
 
-      // If no coordinate system detected or if it's 'none', use LV95 as default
-      const coordinateSystem = (detectedSystem === null || detectedSystem === COORDINATE_SYSTEMS.NONE) 
-        ? COORDINATE_SYSTEMS.SWISS_LV95 
-        : detectedSystem;
-      console.log('[DEBUG] Using coordinate system:', coordinateSystem);
+      // Determine coordinate system with fallback logic
+      const coordinateSystem = detection.system ?? COORDINATE_SYSTEMS.SWISS_LV95;
+      
+      // Log coordinate system decision
+      console.log('[DEBUG] Using coordinate system:', {
+        system: coordinateSystem,
+        fallback: detection.system === null,
+        confidence: detection.confidence,
+        reason: detection.reason
+      });
+
+      // Add warning if confidence is low
+      if (detection.confidence === 'low') {
+        console.warn('[DEBUG] Low confidence in coordinate system detection:', detection.reason);
+      }
 
       // Extract layers from structure
       const layers = DxfLayerProcessor.extractLayerNames(structure.layers || []);
@@ -134,15 +148,6 @@ export class DxfProcessor extends StreamProcessor {
       // Convert DXF entities to GeoJSON features
       const features = await DxfEntityProcessor.entitiesToFeatures(entities);
       console.log('[DEBUG] Converted entities to features:', features.length);
-
-      // Create preview manager with coordinate system configuration
-      const previewManager = createPreviewManager({
-        coordinateSystem: coordinateSystem
-      });
-      
-      // Set features using the correct API
-      previewManager.setFeatures(features);
-      console.log('[DEBUG] Added features to preview manager');
 
       // Create feature collection for preview
       const preview: FeatureCollection = {
@@ -260,11 +265,20 @@ export class DxfProcessor extends StreamProcessor {
 
       // Read file in chunks using streams if available
       const text = await file.text();
-      const structure = await this.parser.parse(text, parseOptions) as DxfStructure;
+      const parsedStructure = await this.parser.parse(text, parseOptions) as DxfStructure;
+
+      // Ensure structure has required arrays initialized
+      const structure: DxfStructure = {
+        ...parsedStructure,
+        blocks: parsedStructure.blocks || [],
+        entities: parsedStructure.entities || [],
+        layers: parsedStructure.layers || [],
+        entityTypes: parsedStructure.entityTypes || []
+      };
 
       // Collect all entities including blocks
       const allEntities = [
-        ...(structure.entities || []),
+        ...structure.entities,
         ...structure.blocks.flatMap(block => block.entities || [])
       ];
 

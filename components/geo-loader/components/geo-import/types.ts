@@ -3,6 +3,7 @@ import { CoordinateSystem } from '../../types/coordinates';
 import { DxfStructure } from '../../core/processors/implementations/dxf/types';
 import { PreviewManager } from '../../preview/preview-manager';
 import { AnalyzeResult, ProcessorResult } from '../../core/processors/base/types';
+import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
 
 export interface LogDetails {
   source?: 'points' | 'header' | 'fallback';
@@ -49,6 +50,7 @@ export interface PreviewAnalysis {
   }>;
   statistics?: ProcessorResult['statistics'];
   coordinateSystem?: CoordinateSystem;
+  preview?: FeatureCollection<Geometry, GeoJsonProperties>;
 }
 
 export interface PreviewSectionProps {

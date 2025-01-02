@@ -83,6 +83,7 @@ export interface UseMapViewResult {
   updateViewFromBounds: (bounds: { minX: number; minY: number; maxX: number; maxY: number }) => Promise<void>;
   focusOnFeatures: (features: Feature[], padding?: number) => Promise<void>;
   getViewportBounds: () => [number, number, number, number] | undefined;
+  initialBoundsSet: boolean;
 }
 
 export interface PreviewOptions {
