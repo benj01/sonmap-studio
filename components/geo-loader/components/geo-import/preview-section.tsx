@@ -14,7 +14,7 @@ export function PreviewSection({
   previewManager,
   bounds,
   coordinateSystem,
-  visibleLayers = ['0'], // Initialize with DXF default layer
+  visibleLayers,
   analysis
 }: PreviewSectionProps) {
   const [preview, setPreview] = useState<ExtendedProcessorResult>({
@@ -32,23 +32,32 @@ export function PreviewSection({
       errors: []
     },
     coordinateSystem: coordinateSystem || COORDINATE_SYSTEMS.WGS84,
-    previewManager // This is required by PreviewMap
+    previewManager // Required by PreviewMap
   });
   const [isLoading, setIsLoading] = useState(true);
 
-  // Keep track of preview manager instance
   const previewManagerRef = useRef(previewManager);
+
+  // Track whether this is the initial load
+  const isInitialLoadRef = useRef(true);
+
+  // Separate effect for previewManager changes to avoid unnecessary preview reloads
   useEffect(() => {
-    previewManagerRef.current = previewManager;
-    // Update preview state when previewManager changes
-    setPreview(prev => ({ ...prev, previewManager }));
+    if (previewManagerRef.current !== previewManager) {
+      previewManagerRef.current = previewManager;
+      // Only set loading on initial load or when manager changes
+      if (isInitialLoadRef.current || !previewManager) {
+        setIsLoading(true);
+      }
+    }
   }, [previewManager]);
 
-  // Load preview when preview manager, visible layers, or coordinate system changes
+  // Effect for loading preview data
   useEffect(() => {
     async function loadPreview() {
+      // Skip if we don't have a manager
       if (!previewManagerRef.current) return;
-      
+
       setIsLoading(true);
       console.debug('[DEBUG] Loading preview:', {
         visibleLayers,
@@ -63,15 +72,9 @@ export function PreviewSection({
           await coordinateSystemManager.initialize();
         }
 
-        // Validate coordinate system
-        // Initialize coordinate system manager if needed
-        if (!coordinateSystemManager.isInitialized()) {
-          await coordinateSystemManager.initialize();
-        }
-
         // For DXF files, default to Swiss LV95 if not specified
         let effectiveSystem = coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95;
-        
+
         // Verify system is supported
         if (!coordinateSystemManager.getSupportedSystems().includes(effectiveSystem)) {
           console.warn('[DEBUG] Unsupported coordinate system, falling back to WGS84');
@@ -87,25 +90,28 @@ export function PreviewSection({
           });
         }
 
-        // Update preview manager options after setting features
+        // Always update options to ensure consistent state
         previewManagerRef.current.setOptions({
           coordinateSystem: effectiveSystem,
+          visibleLayers,
           analysis: {
             warnings: [
               ...(analysis?.warnings?.map(w => w.message) || []),
-              ...(effectiveSystem === COORDINATE_SYSTEMS.WGS84 && coordinateSystem !== COORDINATE_SYSTEMS.WGS84 ? 
-                ['Unsupported coordinate system, using WGS84'] : [])
+              ...(effectiveSystem === COORDINATE_SYSTEMS.WGS84 && coordinateSystem !== COORDINATE_SYSTEMS.WGS84
+                ? ['Unsupported coordinate system, using WGS84']
+                : []
+              )
             ]
           }
         });
-        
-        // Get collections with updated options
+
+        // Get collections only if we need to update the preview
         const collections = await previewManagerRef.current.getPreviewCollections();
         if (!collections) {
           console.warn('[DEBUG] No preview collections available');
           return;
         }
-        
+
         // Combine all features into one collection for the map
         const combinedFeatures: FeatureCollection = {
           type: 'FeatureCollection',
@@ -115,7 +121,7 @@ export function PreviewSection({
             ...(collections.polygons?.features || [])
           ]
         };
-        
+
         console.debug('[DEBUG] Preview features loaded:', {
           points: collections.points?.features.length || 0,
           lines: collections.lines?.features.length || 0,
@@ -123,25 +129,33 @@ export function PreviewSection({
           coordinateSystem: effectiveSystem
         });
 
-        setPreview(prev => ({
-          ...prev,
-          features: combinedFeatures,
-          bounds: bounds || prev.bounds,
-          layers: visibleLayers || [],
-          statistics: {
-            featureCount: combinedFeatures.features.length,
-            layerCount: visibleLayers?.length || 0,
-            featureTypes: combinedFeatures.features.reduce((acc, f) => {
-              const type = f.geometry.type;
-              acc[type] = (acc[type] || 0) + 1;
-              return acc;
-            }, {} as Record<string, number>),
-            failedTransformations: 0,
-            errors: []
-          },
-          coordinateSystem: effectiveSystem,
-          previewManager: previewManagerRef.current
-        }));
+        // Always update state with new data to ensure consistency
+        if (collections) {
+          setPreview(prev => ({
+            ...prev,
+            features: combinedFeatures,
+            bounds: bounds || prev.bounds,
+            layers: visibleLayers || [],
+            statistics: {
+              featureCount: combinedFeatures.features.length,
+              layerCount: visibleLayers?.length || 0,
+              featureTypes: combinedFeatures.features.reduce((acc, f) => {
+                const type = f.geometry.type;
+                acc[type] = (acc[type] || 0) + 1;
+                return acc;
+              }, {} as Record<string, number>),
+              failedTransformations: 0,
+              errors: []
+            },
+            coordinateSystem: effectiveSystem,
+            previewManager: previewManagerRef.current
+          }));
+          
+          // Mark initial load as complete
+          if (isInitialLoadRef.current) {
+            isInitialLoadRef.current = false;
+          }
+        }
       } catch (error) {
         console.error('[DEBUG] Failed to load preview:', error);
       } finally {
@@ -149,17 +163,21 @@ export function PreviewSection({
       }
     }
 
-    loadPreview();
-  }, [previewManager, visibleLayers, coordinateSystem, bounds, analysis]);
+    if (previewManagerRef.current) {
+      loadPreview();
+    }
+  }, [coordinateSystem, bounds, analysis, visibleLayers]); // Remove previewManager from dependencies
 
-  const currentAnalysis: PreviewAnalysis = analysis ? {
-    ...analysis,
-    warnings: analysis.warnings || []
-  } : {
-    warnings: [],
-    statistics: preview.statistics,
-    coordinateSystem: preview.coordinateSystem
-  };
+  const currentAnalysis: PreviewAnalysis = analysis
+    ? {
+        ...analysis,
+        warnings: analysis.warnings || []
+      }
+    : {
+        warnings: [],
+        statistics: preview.statistics,
+        coordinateSystem: preview.coordinateSystem
+      };
 
   return (
     <div className="border rounded-lg p-4">

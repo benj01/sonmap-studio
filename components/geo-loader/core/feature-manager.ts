@@ -63,6 +63,8 @@ export class FeatureManager {
 
       if (this.currentChunk.length >= this.options.chunkSize) {
         await this.finalizeCurrentChunk();
+        // Give the UI a chance to update to avoid freezing
+        await new Promise(r => setTimeout(r, 0));
       }
     }
 
@@ -92,6 +94,8 @@ export class FeatureManager {
 
     if (this.currentChunk.length >= this.options.chunkSize) {
       await this.finalizeCurrentChunk();
+      // Give the UI a chance to update
+      await new Promise(r => setTimeout(r, 0));
     }
 
     // Check memory periodically
@@ -120,7 +124,7 @@ export class FeatureManager {
       usedMemoryMB = memory.usedJSHeapSize / 1024 / 1024;
     } else {
       // Fallback: estimate memory based on feature count
-      // Assume average feature size of 1KB
+      // Assume average feature size of ~1KB
       usedMemoryMB = (this.totalFeatures * 1) / 1024;
     }
 
@@ -238,6 +242,6 @@ export class FeatureManager {
       return memory.usedJSHeapSize / 1024 / 1024;
     }
     // Fallback: estimate based on feature count
-    return (this.totalFeatures * 1) / 1024; // Assume 1KB per feature
+    return (this.totalFeatures * 1) / 1024; // 1KB/feature
   }
 }

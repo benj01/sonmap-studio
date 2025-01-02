@@ -34,7 +34,7 @@ const initialState: FileAnalysisState = {
   analysis: null,
   dxfData: null,
   selectedLayers: [],
-  visibleLayers: [], // Empty array means all layers visible
+  visibleLayers: [], // Empty array means no layers visible
   selectedTemplates: [],
   previewManager: null
 };
@@ -56,12 +56,18 @@ export function useFileAnalysis({
   const [state, setState] = useState<FileAnalysisState>(initialState);
   const currentFileRef = useRef<File | null>(null);
 
+  // Use ref to track loading state to avoid dependency on state
+  const loadingRef = useRef(false);
+
   const analyzeFile = useCallback(async (file: File) => {
     // Prevent concurrent analysis
-    if (state.loading) {
+    if (loadingRef.current) {
+      console.debug('[DEBUG] Skipping analysis - already loading');
       return null;
     }
 
+    console.debug('[DEBUG] Starting analysis');
+    loadingRef.current = true;
     setState(prev => ({ ...prev, loading: true }));
 
     try {
@@ -97,13 +103,16 @@ export function useFileAnalysis({
       const layers = result.layers || [];
       console.log('[DEBUG] Detected layers:', layers);
 
+      // Create a new array for visible layers to avoid reference issues
+      const initialVisibleLayers = [...layers];
+
       // Initialize preview manager with streaming support
       console.log('[DEBUG] Creating preview manager...');
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
-        visibleLayers: layers, // Set visible layers to all detected layers
+        visibleLayers: initialVisibleLayers, // Explicitly set all layers as visible
         analysis: {
-          warnings: convertWarningsToAnalysis(processor.getWarnings())
+          warnings: processor.getWarnings() // Use raw warnings array directly
         },
         coordinateSystem: result.coordinateSystem,
         enableCaching: true,
@@ -124,7 +133,7 @@ export function useFileAnalysis({
         analysis: result,
         dxfData: result.dxfData,
         selectedLayers: layers,
-        visibleLayers: layers, // Set visible layers to all detected layers
+        visibleLayers: initialVisibleLayers, // Use the same array we passed to preview manager
         selectedTemplates: [],
         previewManager
       });
@@ -132,7 +141,8 @@ export function useFileAnalysis({
       console.log('[DEBUG] State initialized with:', {
         layers,
         selectedLayers: layers,
-        visibleLayers: layers, // Set visible layers to all detected layers
+        visibleLayers: initialVisibleLayers,
+        message: 'All layers initially visible by explicit inclusion'
       });
 
       return result;
@@ -145,8 +155,10 @@ export function useFileAnalysis({
       
       setState(initialState);
       return null;
+    } finally {
+      loadingRef.current = false;
     }
-  }, [state.loading, getProcessor, onError]);
+  }, [getProcessor, onError]); // Remove state.loading from dependencies
 
   // Handle layer selection
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
@@ -164,7 +176,7 @@ export function useFileAnalysis({
     }));
   }, []);
 
-  // Handle layer visibility
+  // Handle layer visibility - a layer is only visible if it's in the visibleLayers array
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
     console.debug('[DEBUG] Toggle layer visibility:', {
       layer,
@@ -173,38 +185,23 @@ export function useFileAnalysis({
     });
 
     setState(prev => {
-      const allLayers = prev.analysis?.layers || [];
       let newVisibleLayers: string[];
 
-      // If no layers are explicitly set as visible (empty array), all layers are visible
-      if (prev.visibleLayers.length === 0) {
-        if (visible) {
-          // Layer is being made visible when all layers are already visible - no change needed
-          newVisibleLayers = [];
-        } else {
-          // Hide one layer when all were visible - make all except this one visible
-          newVisibleLayers = allLayers.filter(l => l !== layer);
-        }
+      if (visible) {
+        // Add layer to visible layers if not already included
+        newVisibleLayers = prev.visibleLayers.includes(layer) 
+          ? prev.visibleLayers 
+          : [...prev.visibleLayers, layer];
       } else {
-        if (visible) {
-          // Add layer to visible layers
-          newVisibleLayers = [...prev.visibleLayers, layer];
-          // If all layers are now visible, use empty array
-          if (newVisibleLayers.length === allLayers.length) {
-            newVisibleLayers = [];
-          }
-        } else {
-          // Remove layer from visible layers
-          newVisibleLayers = prev.visibleLayers.filter(l => l !== layer);
-        }
+        // Remove layer from visible layers
+        newVisibleLayers = prev.visibleLayers.filter(l => l !== layer);
       }
 
       console.debug('[DEBUG] Layer visibility update:', {
         layer,
         visible,
         previousState: prev.visibleLayers,
-        newState: newVisibleLayers,
-        allLayersVisible: newVisibleLayers.length === 0
+        newState: newVisibleLayers
       });
 
       // Update preview manager with just the new visibility state
@@ -232,30 +229,39 @@ export function useFileAnalysis({
 
   // Effect to handle file changes
   useEffect(() => {
-    if (!file) {
-      currentFileRef.current = null;
+    const handleFileChange = async () => {
+      if (!file) {
+        console.debug('[DEBUG] No file, resetting state');
+        currentFileRef.current = null;
+        setState(initialState);
+        return;
+      }
+
+      // Check if this is the same file we already analyzed
+      const isSameFile = currentFileRef.current && 
+        currentFileRef.current.name === file.name &&
+        currentFileRef.current.size === file.size &&
+        currentFileRef.current.lastModified === file.lastModified;
+
+      if (isSameFile) {
+        console.debug('[DEBUG] Same file, skipping analysis');
+        return;
+      }
+
+      // New file to analyze
+      console.debug('[DEBUG] New file detected, starting analysis');
+      currentFileRef.current = file;
       setState(initialState);
-      return;
-    }
+      try {
+        await analyzeFile(file);
+      } catch (error) {
+        console.error('File analysis error:', error);
+        onError(`Failed to analyze file: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
 
-    // Check if this is the same file we already analyzed
-    const isSameFile = currentFileRef.current && 
-      currentFileRef.current.name === file.name &&
-      currentFileRef.current.size === file.size &&
-      currentFileRef.current.lastModified === file.lastModified;
-
-    if (isSameFile) {
-      return;
-    }
-
-    // New file to analyze
-    currentFileRef.current = file;
-    setState(initialState);
-    analyzeFile(file).catch(error => {
-      console.error('File analysis error:', error);
-      onError(`Failed to analyze file: ${error instanceof Error ? error.message : String(error)}`);
-    });
-  }, [file, analyzeFile, onError]);
+    handleFileChange();
+  }, [file]); // Only depend on file changes, not analyzeFile which depends on state
 
   return {
     ...state,

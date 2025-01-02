@@ -42,8 +42,8 @@ export interface PreviewOptions {
 export class PreviewManager {
   private readonly DEFAULT_MAX_FEATURES = 1000;
   private readonly BOUNDS_PADDING = 0.1; // 10% padding
-  private readonly MEMORY_LIMIT_MB = 512; // Increased memory limit for large files
-  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes cache TTL
+  private readonly MEMORY_LIMIT_MB = 512; 
+  private readonly CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
   private featureManager: FeatureManager;
   private options: Required<PreviewOptions>;
@@ -141,25 +141,23 @@ export class PreviewManager {
    */
   private getDefaultBounds(): Required<Bounds> {
     if (this.options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
-      // Swiss LV95 bounds covering most of Switzerland
-      // Reference: https://epsg.io/2056
+      // Changed these to match coordinate-system-manager (EPSG:2056)
       console.debug('[DEBUG] Using Swiss LV95 default bounds');
       return {
         minX: 2485000, // Western boundary
         minY: 1075000, // Southern boundary
-        maxX: 2834000, // Eastern boundary
-        maxY: 1296000  // Northern boundary
+        maxX: 2835000, // Eastern boundary (updated from 2834000)
+        maxY: 1295000  // Northern boundary (updated from 1296000)
       };
     }
 
     // WGS84 bounds covering Switzerland
-    // Reference: https://epsg.io/4326
     console.debug('[DEBUG] Using WGS84 default bounds');
     return {
-      minX: 5.9,  // Western boundary
-      minY: 45.8, // Southern boundary
-      maxX: 10.5, // Eastern boundary
-      maxY: 47.8  // Northern boundary
+      minX: 5.9,  
+      minY: 45.8,
+      maxX: 10.5,
+      maxY: 47.8
     };
   }
 
@@ -186,7 +184,7 @@ export class PreviewManager {
       return this.options.initialBounds as Required<Bounds>;
     }
 
-    // Finally try viewport bounds
+    // Then try viewport bounds
     if (this.options.viewportBounds && 
         this.options.viewportBounds.length === 4 &&
         this.options.viewportBounds.every(n => isFinite(n)) &&
@@ -254,7 +252,6 @@ export class PreviewManager {
 
     return {
       shouldIncludeFeature: (feature: GeoFeature) => {
-        // Apply progressive sampling based on total features
         if (totalFeatures >= this.options.maxFeatures) {
           return false;
         }
@@ -272,7 +269,6 @@ export class PreviewManager {
         const key = `${gridX}:${gridY}`;
 
         const count = grid.get(key) || 0;
-        // Dynamically adjust cell limit based on density
         const cellLimit = Math.max(1, Math.floor(this.options.maxFeatures / (gridSize * gridSize)));
         
         if (count >= cellLimit) {
@@ -287,7 +283,7 @@ export class PreviewManager {
   }
 
   /**
-   * Get preview collections for the current viewport with enhanced validation
+   * Get preview collections for the current viewport
    */
   async getPreviewCollections(): Promise<PreviewCollectionResult | null> {
     // Validate coordinate system configuration
@@ -408,7 +404,7 @@ export class PreviewManager {
     if (options.coordinateSystem && options.coordinateSystem !== oldSystem) {
       this.validateCoordinateSystem();
     } else {
-      // Invalidate cache for other option changes
+      // Invalidate cache for other changes
       this.invalidateCache('options updated');
     }
 
@@ -426,7 +422,7 @@ export class PreviewManager {
   }
 
   /**
-   * Set features directly for preview with coordinate system validation
+   * Set features directly for preview
    */
   public async setFeatures(features: Feature[] | FeatureCollection): Promise<void> {
     // Validate coordinate system before processing features

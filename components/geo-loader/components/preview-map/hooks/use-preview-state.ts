@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Feature, FeatureCollection } from 'geojson';
 import { PreviewManager } from '../../../preview/preview-manager';
 import type { CacheStats, CachedPreviewResult, CachedFeatureCollection } from '../../../types/cache';
@@ -47,6 +47,9 @@ export function usePreviewState({
     hitRate: 0
   });
 
+  // Track the last update request to prevent race conditions
+  const updateRequestRef = useRef(0);
+
   // Memoized cache key generation
   const getCacheKey = useCallback((bounds?: [number, number, number, number]) => {
     if (!bounds) return null;
@@ -87,8 +90,17 @@ export function usePreviewState({
       return;
     }
 
+    // Increment update request counter
+    const currentRequest = ++updateRequestRef.current;
+
     // Try to get from cache first
     const cacheKey = getCacheKey(viewportBounds);
+    console.debug('[DEBUG] Updating preview with:', {
+      hasViewportBounds: !!viewportBounds,
+      visibleLayers,
+      cacheKey
+    });
+
     if (cacheKey) {
       const cached = cacheManager.getCachedPreview('preview', {
         viewportBounds,
@@ -144,20 +156,24 @@ export function usePreviewState({
         previewManager.setOptions(options);
       }
 
-      // Filter by layer visibility - empty array means all layers visible
+      // Filter by layer visibility
       const filterFeatures = (fc: FeatureCollection) => {
         if (!fc.features.length) return fc;
         
+        // If no visible layers specified, treat all features as hidden
+        if (visibleLayers.length === 0) {
+          return { ...fc, features: [] };
+        }
+        
         const filtered = fc.features.filter((f: Feature) => {
           const layer = f.properties?.layer;
-          const isVisible = !layer || visibleLayers.length === 0 || visibleLayers.includes(layer);
+          // Only show features whose layer is in visibleLayers
+          const isVisible = layer && visibleLayers.includes(layer);
 
           console.debug('[DEBUG] Feature visibility check:', {
             layer,
-            visibleLayers,
             isVisible,
-            geometryType: f.geometry.type,
-            coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined
+            geometryType: f.geometry.type
           });
 
           return isVisible;
@@ -165,6 +181,12 @@ export function usePreviewState({
 
         return { ...fc, features: filtered };
       };
+
+      // Check if this update is still relevant
+      if (currentRequest !== updateRequestRef.current) {
+        console.debug('[DEBUG] Skipping stale update request');
+        return;
+      }
 
       console.debug('[DEBUG] Filtering collections:', {
         originalCounts: {
@@ -239,7 +261,7 @@ export function usePreviewState({
     } catch (error) {
       console.error('[DEBUG] Error updating preview:', error);
     }
-  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, splitFeatures]);
+  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, splitFeatures, getCacheKey, onUpdateBounds, onPreviewUpdate]);
 
   // Debounced update effect
   useEffect(() => {

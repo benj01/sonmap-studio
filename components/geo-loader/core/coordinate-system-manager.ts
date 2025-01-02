@@ -79,7 +79,6 @@ export class CoordinateSystemManager {
     this.transformationCache.set(this.getCacheKey(key), point);
   }
 
-
   /**
    * Initialize coordinate systems synchronously (registration only)
    */
