@@ -47,11 +47,74 @@ export function usePreviewState({
     hitRate: 0
   });
 
-  // Debounced preview update function
+  // Memoized cache key generation
+  const getCacheKey = useCallback((bounds?: [number, number, number, number]) => {
+    if (!bounds) return null;
+    return `${CACHE_KEY_PREFIX}:viewport:${bounds.join(',')}:layers:${visibleLayers.join(',')}`;
+  }, [visibleLayers]);
+
+  // Split features by geometry type
+  const splitFeatures = useCallback((features: Feature[]) => {
+    const points: Feature[] = [];
+    const lines: Feature[] = [];
+    const polygons: Feature[] = [];
+
+    features.forEach(feature => {
+      if (!feature.geometry) return;
+      
+      switch (feature.geometry.type) {
+        case 'Point':
+          points.push(feature);
+          break;
+        case 'LineString':
+        case 'MultiLineString':
+          lines.push(feature);
+          break;
+        case 'Polygon':
+        case 'MultiPolygon':
+          polygons.push(feature);
+          break;
+      }
+    });
+
+    return { points, lines, polygons };
+  }, []);
+
+  // Debounced preview update function with caching
   const updatePreview = useCallback(async () => {
     if (!previewManager) {
       console.debug('[DEBUG] No preview manager available');
       return;
+    }
+
+    // Try to get from cache first
+    const cacheKey = getCacheKey(viewportBounds);
+    if (cacheKey) {
+      const cached = cacheManager.getCachedPreview('preview', {
+        viewportBounds,
+        visibleLayers,
+        coordinateSystem: previewManager.getOptions().coordinateSystem
+      });
+      if (cached) {
+        console.debug('[DEBUG] Using cached preview');
+        const features = (cached as unknown as { features: { features: Feature[] } }).features;
+        const { points, lines, polygons } = splitFeatures(features.features);
+
+        setPreviewState({
+          points: { type: 'FeatureCollection', features: points },
+          lines: { type: 'FeatureCollection', features: lines },
+          polygons: { type: 'FeatureCollection', features: polygons },
+          totalCount: features.features.length,
+          visibleCount: points.length + lines.length + polygons.length
+        });
+        setCacheStats(prev => ({
+          hits: prev.hits + 1,
+          misses: prev.misses,
+          hitRate: (prev.hits + 1) / (prev.hits + prev.misses + 1)
+        }));
+        onPreviewUpdate?.();
+        return;
+      }
     }
 
     try {
@@ -139,29 +202,27 @@ export function usePreviewState({
       // Notify that preview has been updated
       onPreviewUpdate?.();
 
-      // Cache the filtered results
-      const combinedFeatures: Feature[] = [
-        ...filteredPoints.features,
-        ...filteredLines.features,
-        ...filteredPolygons.features
-      ];
-
-      const cacheResult: CachedPreviewResult = {
-        features: {
-          type: 'FeatureCollection',
-          features: combinedFeatures
-        },
-        viewportBounds,
-        layers: visibleLayers,
-        featureCount: filteredVisibleCount,
-        coordinateSystem: previewManager.getOptions().coordinateSystem || COORDINATE_SYSTEMS.WGS84
-      };
-
-      if (viewportBounds) {
-        const cacheKey = `${CACHE_KEY_PREFIX}:viewport:${viewportBounds.join(',')}`;
-        cacheManager.cachePreview(cacheKey, {
+      // Cache the new result
+      if (cacheKey) {
+        const cacheResult = {
+          features: {
+            type: 'FeatureCollection',
+            features: [
+              ...filteredPoints.features,
+              ...filteredLines.features,
+              ...filteredPolygons.features
+            ]
+          },
           viewportBounds,
-          visibleLayers
+          layers: visibleLayers,
+          featureCount: filteredVisibleCount,
+          coordinateSystem: previewManager.getOptions().coordinateSystem || COORDINATE_SYSTEMS.WGS84
+        } satisfies CachedPreviewResult;
+
+        cacheManager.cachePreview('preview', {
+          viewportBounds,
+          visibleLayers,
+          coordinateSystem: previewManager.getOptions().coordinateSystem
         }, cacheResult);
 
         setCacheStats(prev => ({
@@ -178,7 +239,7 @@ export function usePreviewState({
     } catch (error) {
       console.error('[DEBUG] Error updating preview:', error);
     }
-  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet]);
+  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, splitFeatures]);
 
   // Debounced update effect
   useEffect(() => {

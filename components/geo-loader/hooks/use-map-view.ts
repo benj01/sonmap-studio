@@ -46,11 +46,6 @@ export function useMapView(
     initManager();
   }, []);
 
-  // Reset initialBoundsSet when coordinate system changes
-  useEffect(() => {
-    setInitialBoundsSet(false);
-  }, [coordinateSystem]);
-
   // Verify coordinate system support
   useEffect(() => {
     const verifySystem = async () => {
@@ -154,8 +149,14 @@ export function useMapView(
   }, [coordinateSystem]);
 
   const updateViewFromBounds = useCallback(async (bounds: Bounds) => {
+    // Ensure coordinate system manager is initialized
     if (!coordinateSystemManager.isInitialized()) {
-      console.warn('[DEBUG] Coordinate system manager not initialized');
+      await coordinateSystemManager.initialize();
+    }
+
+    // Skip if bounds are already set and we're just changing coordinate systems
+    if (initialBoundsSet && viewState.zoom > 0) {
+      console.debug('[DEBUG] Skipping bounds update - view already initialized');
       return;
     }
 

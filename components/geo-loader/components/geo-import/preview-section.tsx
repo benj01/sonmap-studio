@@ -14,7 +14,7 @@ export function PreviewSection({
   previewManager,
   bounds,
   coordinateSystem,
-  visibleLayers,
+  visibleLayers = ['0'], // Initialize with DXF default layer
   analysis
 }: PreviewSectionProps) {
   const [preview, setPreview] = useState<ExtendedProcessorResult>({
@@ -64,12 +64,19 @@ export function PreviewSection({
         }
 
         // Validate coordinate system
-        const isSupported = coordinateSystemManager.getSupportedSystems().includes(coordinateSystem || COORDINATE_SYSTEMS.WGS84);
-        if (!isSupported) {
-          console.warn('[DEBUG] Unsupported coordinate system, falling back to WGS84');
+        // Initialize coordinate system manager if needed
+        if (!coordinateSystemManager.isInitialized()) {
+          await coordinateSystemManager.initialize();
         }
 
-        const effectiveSystem = isSupported ? coordinateSystem || COORDINATE_SYSTEMS.WGS84 : COORDINATE_SYSTEMS.WGS84;
+        // For DXF files, default to Swiss LV95 if not specified
+        let effectiveSystem = coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95;
+        
+        // Verify system is supported
+        if (!coordinateSystemManager.getSupportedSystems().includes(effectiveSystem)) {
+          console.warn('[DEBUG] Unsupported coordinate system, falling back to WGS84');
+          effectiveSystem = COORDINATE_SYSTEMS.WGS84;
+        }
 
         // Set features from analysis result if available
         if (analysis?.preview?.features) {
@@ -86,7 +93,8 @@ export function PreviewSection({
           analysis: {
             warnings: [
               ...(analysis?.warnings?.map(w => w.message) || []),
-              ...(!isSupported ? ['Unsupported coordinate system, using WGS84'] : [])
+              ...(effectiveSystem === COORDINATE_SYSTEMS.WGS84 && coordinateSystem !== COORDINATE_SYSTEMS.WGS84 ? 
+                ['Unsupported coordinate system, using WGS84'] : [])
             ]
           }
         });
