@@ -71,14 +71,24 @@ export class PreviewManager {
       selectedElement: ''
     };
 
+    // Always use provided visibleLayers array if it exists, even if empty
+    const visibleLayers = Array.isArray(options.visibleLayers)
+      ? options.visibleLayers
+      : defaultOptions.visibleLayers;
+
     this.options = {
       ...defaultOptions,
       ...options,
       viewportBounds: options.viewportBounds ?? defaultOptions.viewportBounds,
       initialBounds: options.initialBounds ?? defaultOptions.initialBounds,
-      visibleLayers: options.visibleLayers ?? defaultOptions.visibleLayers,
+      visibleLayers,
       selectedElement: options.selectedElement ?? defaultOptions.selectedElement
     };
+
+    console.debug('[DEBUG] PreviewManager visibleLayers:', {
+      provided: options.visibleLayers,
+      final: this.options.visibleLayers
+    });
 
     console.debug('[DEBUG] PreviewManager initialized:', {
       viewportBounds: this.options.viewportBounds,
@@ -357,12 +367,21 @@ export class PreviewManager {
         coordinateSystem: this.options.coordinateSystem
       });
 
+      // Filter features based on visible layers
+      const visibleLayersSet = new Set(this.options.visibleLayers);
+      const filterByVisibleLayers = (features: GeoFeature[]) =>
+        features.filter(f => f.properties?.layer && visibleLayersSet.has(f.properties.layer));
+
+      const visiblePoints = filterByVisibleLayers(points);
+      const visibleLines = filterByVisibleLayers(lines);
+      const visiblePolygons = filterByVisibleLayers(polygons);
+
       const result: PreviewCollectionResult = {
-        points: { type: 'FeatureCollection', features: points },
-        lines: { type: 'FeatureCollection', features: lines },
-        polygons: { type: 'FeatureCollection', features: polygons },
+        points: { type: 'FeatureCollection', features: visiblePoints },
+        lines: { type: 'FeatureCollection', features: visibleLines },
+        polygons: { type: 'FeatureCollection', features: visiblePolygons },
         totalCount: features.length,
-        visibleCount: points.length + lines.length + polygons.length,
+        visibleCount: visiblePoints.length + visibleLines.length + visiblePolygons.length,
         bounds
       };
 
@@ -395,10 +414,19 @@ export class PreviewManager {
     });
 
     const oldSystem = this.options.coordinateSystem;
+    
+    // Always update visibleLayers if provided, even if empty
+    const updatedOptions = { ...options };
+
     this.options = {
       ...this.options,
-      ...options
+      ...updatedOptions
     };
+
+    console.debug('[DEBUG] PreviewManager options updated:', {
+      visibleLayers: this.options.visibleLayers,
+      provided: options.visibleLayers
+    });
 
     // If coordinate system changed, validate and potentially invalidate cache
     if (options.coordinateSystem && options.coordinateSystem !== oldSystem) {
@@ -410,7 +438,8 @@ export class PreviewManager {
 
     console.debug('[DEBUG] Preview options updated:', {
       viewportBounds: this.options.viewportBounds,
-      coordinateSystem: this.options.coordinateSystem
+      coordinateSystem: this.options.coordinateSystem,
+      visibleLayers: this.options.visibleLayers
     });
   }
 

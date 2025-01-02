@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect } from 'react';
 import { AnalyzeResult } from '../../../processors';
 import { PreviewManager } from '../../../preview/preview-manager';

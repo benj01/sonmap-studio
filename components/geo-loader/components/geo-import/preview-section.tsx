@@ -1,3 +1,5 @@
+"use client";
+
 import { useState, useEffect, useRef } from 'react';
 import { PreviewSectionProps, PreviewAnalysis } from './types';
 import { PreviewMap } from '../preview-map/index';
@@ -90,10 +92,12 @@ export function PreviewSection({
           });
         }
 
-        // Always update options to ensure consistent state
+        // Always update options with current visibleLayers
+        const currentOptions = previewManagerRef.current.getOptions();
         previewManagerRef.current.setOptions({
           coordinateSystem: effectiveSystem,
-          visibleLayers,
+          // Always sync visibleLayers with current state
+          visibleLayers: visibleLayers || [],
           analysis: {
             warnings: [
               ...(analysis?.warnings?.map(w => w.message) || []),

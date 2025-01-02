@@ -29,15 +29,18 @@ interface FileAnalysisState {
   previewManager: PreviewManager | null;
 }
 
-const initialState: FileAnalysisState = {
+const createInitialState = (): FileAnalysisState => ({
   loading: false,
   analysis: null,
   dxfData: null,
   selectedLayers: [],
-  visibleLayers: [], // Empty array means no layers visible
+  visibleLayers: [], // Always start with empty array
   selectedTemplates: [],
   previewManager: null
-};
+});
+
+// Initialize state with all layers visible by default
+const initialState = createInitialState();
 
 function convertWarningsToAnalysis(warnings: string[] = []): Warning[] {
   return warnings.map(message => ({
@@ -55,12 +58,9 @@ export function useFileAnalysis({
 }: FileAnalysisProps) {
   const [state, setState] = useState<FileAnalysisState>(initialState);
   const currentFileRef = useRef<File | null>(null);
-
-  // Use ref to track loading state to avoid dependency on state
   const loadingRef = useRef(false);
 
   const analyzeFile = useCallback(async (file: File) => {
-    // Prevent concurrent analysis
     if (loadingRef.current) {
       console.debug('[DEBUG] Skipping analysis - already loading');
       return null;
@@ -73,7 +73,6 @@ export function useFileAnalysis({
     try {
       console.log('[DEBUG] Starting file analysis:', file.name);
 
-      // Ensure coordinate system manager is initialized
       if (!coordinateSystemManager.isInitialized()) {
         try {
           await coordinateSystemManager.initialize();
@@ -103,16 +102,16 @@ export function useFileAnalysis({
       const layers = result.layers || [];
       console.log('[DEBUG] Detected layers:', layers);
 
-      // Create a new array for visible layers to avoid reference issues
+      // All layers should be visible initially
       const initialVisibleLayers = [...layers];
 
-      // Initialize preview manager with streaming support
+      // Initialize preview manager with streaming support and matching visibility state
       console.log('[DEBUG] Creating preview manager...');
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
-        visibleLayers: initialVisibleLayers, // Explicitly set all layers as visible
+        visibleLayers: initialVisibleLayers, // All layers visible initially
         analysis: {
-          warnings: processor.getWarnings() // Use raw warnings array directly
+          warnings: processor.getWarnings()
         },
         coordinateSystem: result.coordinateSystem,
         enableCaching: true,
@@ -124,16 +123,17 @@ export function useFileAnalysis({
       // Set preview features in preview manager
       if (result.preview && result.preview.features.length > 0) {
         console.log('[DEBUG] Setting preview features in preview manager...');
-        previewManager.setFeatures(result.preview);
+        await previewManager.setFeatures(result.preview);
       }
 
       console.log('[DEBUG] Analysis complete, updating state...');
+      // Update state with all layers initially visible to match PreviewManager
       setState({
         loading: false,
         analysis: result,
         dxfData: result.dxfData,
         selectedLayers: layers,
-        visibleLayers: initialVisibleLayers, // Use the same array we passed to preview manager
+        visibleLayers: initialVisibleLayers, // Ensure this matches PreviewManager's state
         selectedTemplates: [],
         previewManager
       });
@@ -142,7 +142,7 @@ export function useFileAnalysis({
         layers,
         selectedLayers: layers,
         visibleLayers: initialVisibleLayers,
-        message: 'All layers initially visible by explicit inclusion'
+        message: 'All layers initially visible'
       });
 
       return result;
@@ -158,7 +158,7 @@ export function useFileAnalysis({
     } finally {
       loadingRef.current = false;
     }
-  }, [getProcessor, onError]); // Remove state.loading from dependencies
+  }, [getProcessor, onError]);
 
   // Handle layer selection
   const handleLayerToggle = useCallback((layer: string, enabled: boolean) => {
@@ -176,7 +176,7 @@ export function useFileAnalysis({
     }));
   }, []);
 
-  // Handle layer visibility - a layer is only visible if it's in the visibleLayers array
+  // Handle layer visibility with immediate updates
   const handleLayerVisibilityToggle = useCallback((layer: string, visible: boolean) => {
     console.debug('[DEBUG] Toggle layer visibility:', {
       layer,
@@ -185,26 +185,16 @@ export function useFileAnalysis({
     });
 
     setState(prev => {
-      let newVisibleLayers: string[];
-
-      if (visible) {
-        // Add layer to visible layers if not already included
-        newVisibleLayers = prev.visibleLayers.includes(layer) 
-          ? prev.visibleLayers 
-          : [...prev.visibleLayers, layer];
-      } else {
-        // Remove layer from visible layers
-        newVisibleLayers = prev.visibleLayers.filter(l => l !== layer);
+      // Skip if state wouldn't change
+      if (visible === prev.visibleLayers.includes(layer)) {
+        return prev;
       }
 
-      console.debug('[DEBUG] Layer visibility update:', {
-        layer,
-        visible,
-        previousState: prev.visibleLayers,
-        newState: newVisibleLayers
-      });
+      const newVisibleLayers = visible
+        ? [...prev.visibleLayers, layer]
+        : prev.visibleLayers.filter(l => l !== layer);
 
-      // Update preview manager with just the new visibility state
+      // Immediately update preview manager
       if (prev.previewManager) {
         prev.previewManager.setOptions({
           visibleLayers: newVisibleLayers
@@ -251,7 +241,13 @@ export function useFileAnalysis({
       // New file to analyze
       console.debug('[DEBUG] New file detected, starting analysis');
       currentFileRef.current = file;
-      setState(initialState);
+      
+      // Always start fresh with new file
+      setState({
+        ...initialState,
+        loading: true
+      });
+      
       try {
         await analyzeFile(file);
       } catch (error) {
@@ -261,7 +257,7 @@ export function useFileAnalysis({
     };
 
     handleFileChange();
-  }, [file]); // Only depend on file changes, not analyzeFile which depends on state
+  }, [file, analyzeFile, onError]);
 
   return {
     ...state,
