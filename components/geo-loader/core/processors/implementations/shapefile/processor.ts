@@ -156,6 +156,15 @@ export class ShapefileProcessor extends StreamProcessor {
   /**
    * Process Shapefile in streaming mode
    */
+  /**
+   * Get any warnings from processing
+   */
+  getWarnings(): string[] {
+    return this.state.statistics.errors
+      .map(error => error.message)
+      .filter((message): message is string => message !== undefined);
+  }
+
   protected async processStream(file: File): Promise<StreamProcessorResult> {
     try {
       this.resetState();

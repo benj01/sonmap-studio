@@ -7,7 +7,7 @@ import { getSignedUploadUrl } from 'utils/supabase/s3';
 import { Progress } from '../ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Alert, AlertDescription } from '../ui/alert';
-import { Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Upload, AlertCircle, CheckCircle2, FileIcon } from 'lucide-react';
 
 interface S3FileUploadProps {
   projectId: string;
@@ -16,9 +16,10 @@ interface S3FileUploadProps {
 
 // Shapefile extensions that should be grouped together
 const SHAPEFILE_EXTENSIONS = ['.shp', '.shx', '.dbf', '.prj'];
+const REQUIRED_SHAPEFILE_EXTENSIONS = ['.shp', '.shx', '.dbf'];
 
 export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps) {
-  const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [fileGroups, setFileGroups] = useState<{ [key: string]: File[] }>({});
@@ -26,42 +27,66 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files && event.target.files.length > 0) {
-      setSelectedFiles(event.target.files);
-      const groups = groupShapefileComponents(event.target.files);
-      setFileGroups(groups);
+  const findShapefileCompanions = (mainFile: File, fileList: FileList): File[] => {
+    const baseName = mainFile.name.substring(0, mainFile.name.lastIndexOf('.')).toLowerCase();
+    const companions: File[] = [mainFile];
+    
+    // Look for companion files in the FileList
+    for (let i = 0; i < fileList.length; i++) {
+      const file = fileList[i];
+      const fileName = file.name.toLowerCase();
+      const ext = fileName.substring(fileName.lastIndexOf('.'));
       
-      // Validate each shapefile group
-      const status: { [key: string]: boolean } = {};
-      Object.entries(groups).forEach(([baseName, files]) => {
-        status[baseName] = ['.shp', '.shx', '.dbf'].every(ext => 
-          files.some(f => f.name.toLowerCase().endsWith(ext))
-        );
-      });
-      setValidationStatus(status);
-      
-      setShowUploadDialog(true);
+      if (fileName.startsWith(baseName) && SHAPEFILE_EXTENSIONS.includes(ext) && file !== mainFile) {
+        companions.push(file);
+      }
     }
+    
+    return companions;
   };
 
-  // Group related shapefile components
-  const groupShapefileComponents = (files: FileList) => {
-    const groups: { [key: string]: File[] } = {};
-    
-    Array.from(files).forEach(file => {
-      const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-      if (SHAPEFILE_EXTENSIONS.includes(ext)) {
-        // Get the base name without extension
-        const baseName = file.name.substring(0, file.name.lastIndexOf('.'));
-        if (!groups[baseName]) {
-          groups[baseName] = [];
-        }
-        groups[baseName].push(file);
-      }
-    });
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    if (!event.target.files || event.target.files.length === 0) return;
 
-    return groups;
+    const files = Array.from(event.target.files);
+    const mainFile = files[0];
+    const ext = mainFile.name.substring(mainFile.name.lastIndexOf('.')).toLowerCase();
+    
+    // If it's a shapefile, automatically find and include companion files
+    if (ext === '.shp') {
+      const companions = findShapefileCompanions(mainFile, event.target.files);
+      const baseName = mainFile.name.substring(0, mainFile.name.lastIndexOf('.'));
+      
+      setSelectedFiles(companions);
+      const groups = { [baseName]: companions };
+      setFileGroups(groups);
+
+      // Validate that all required files are present
+      const status: { [key: string]: boolean } = {};
+      status[baseName] = REQUIRED_SHAPEFILE_EXTENSIONS.every(ext => 
+        companions.some(f => f.name.toLowerCase().endsWith(ext))
+      );
+      setValidationStatus(status);
+
+      if (!status[baseName]) {
+        const missingExts = REQUIRED_SHAPEFILE_EXTENSIONS.filter(ext => 
+          !companions.some(f => f.name.toLowerCase().endsWith(ext))
+        );
+        
+        toast({
+          title: 'Missing Required Files',
+          description: `Missing required companion files: ${missingExts.join(', ')}. These files should be in the same directory as ${mainFile.name}.`,
+          variant: 'destructive',
+        });
+      }
+    } else {
+      // For non-shapefile uploads, just use the selected file
+      setSelectedFiles([mainFile]);
+      setFileGroups({});
+      setValidationStatus({});
+    }
+    
+    setShowUploadDialog(true);
   };
 
   const uploadFile = async (file: File): Promise<string> => {
@@ -86,7 +111,7 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
   };
 
   const handleUpload = async () => {
-    if (!selectedFiles || selectedFiles.length === 0) {
+    if (selectedFiles.length === 0) {
       toast({
         title: 'No files selected',
         description: 'Please select files to upload.',
@@ -96,22 +121,24 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
     }
 
     try {
-      const shapefileGroups = groupShapefileComponents(selectedFiles);
-      
-      // Upload each group of files
-      for (const [baseName, files] of Object.entries(shapefileGroups)) {
+      // Handle shapefile groups
+      for (const [baseName, files] of Object.entries(fileGroups)) {
         const mainFile = files.find(f => f.name.toLowerCase().endsWith('.shp'));
         if (!mainFile) continue;
 
         // Check if we have all required components
-        const hasRequiredFiles = ['.shp', '.shx', '.dbf'].every(ext => 
+        const hasRequiredFiles = REQUIRED_SHAPEFILE_EXTENSIONS.every(ext => 
           files.some(f => f.name.toLowerCase().endsWith(ext))
         );
 
         if (!hasRequiredFiles) {
+          const missingExts = REQUIRED_SHAPEFILE_EXTENSIONS.filter(ext => 
+            !files.some(f => f.name.toLowerCase().endsWith(ext))
+          );
+          
           toast({
             title: 'Missing Files',
-            description: `Shapefile "${baseName}" is missing required components (.shp, .shx, .dbf)`,
+            description: `Shapefile "${baseName}" is missing required components: ${missingExts.join(', ')}`,
             variant: 'destructive',
           });
           continue;
@@ -129,11 +156,10 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
           }
           totalSize += file.size;
           
-          // Update progress for each file
-          setUploadProgress((prev) => prev + (100 / (files.length * Object.keys(shapefileGroups).length)));
+          setUploadProgress((prev) => prev + (100 / files.length));
         }
 
-        // Notify completion for the main .shp file with references to related files
+        // Notify completion with all related files
         onUploadComplete?.({
           name: mainFile.name,
           size: totalSize,
@@ -142,8 +168,8 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
         });
       }
 
-      // Upload non-shapefile files
-      const regularFiles = Array.from(selectedFiles).filter(file => {
+      // Handle non-shapefile uploads
+      const regularFiles = selectedFiles.filter(file => {
         const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
         return !SHAPEFILE_EXTENSIONS.includes(ext);
       });
@@ -155,7 +181,7 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
           size: file.size,
           type: file.type
         });
-        setUploadProgress((prev) => prev + (100 / (regularFiles.length + Object.keys(shapefileGroups).length)));
+        setUploadProgress((prev) => prev + (100 / regularFiles.length));
       }
 
       toast({
@@ -163,8 +189,9 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
         description: 'All files uploaded successfully',
       });
 
-      setSelectedFiles(null);
+      setSelectedFiles([]);
       setUploadProgress(0);
+      setShowUploadDialog(false);
     } catch (error: any) {
       console.error('Error uploading files:', error);
       toast({
@@ -184,9 +211,9 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
       <input 
         ref={fileInputRef}
         type="file" 
-        accept=".txt,.csv,.xyz,.dxf,.shp,.dbf,.shx,.prj"
+        accept=".shp,.shx,.dbf,.prj,.txt,.csv,.xyz,.dxf"
         onChange={handleFileChange}
-        multiple 
+        multiple
         className="hidden"
       />
       <Button onClick={triggerFileInput}>
@@ -210,27 +237,41 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
                     <AlertCircle className="h-5 w-5 text-yellow-500" />
                   )}
                   <h3 className="font-medium">{baseName}</h3>
+                  <span className="text-sm text-muted-foreground">(Shapefile)</span>
                 </div>
                 
                 {!validationStatus[baseName] && (
                   <Alert className="mb-2 border-yellow-500 text-yellow-700">
                     <AlertCircle className="h-4 w-4 text-yellow-500" />
                     <AlertDescription>
-                      Missing required files. A shapefile needs .shp, .shx, and .dbf files.
+                      Missing required files. A shapefile needs .shp, .shx, and .dbf files in the same directory.
                     </AlertDescription>
                   </Alert>
                 )}
                 
-                <div className="pl-7 text-sm text-muted-foreground">
+                <div className="pl-7 space-y-2 text-sm text-muted-foreground">
                   {files.map(file => (
                     <div key={file.name} className="flex items-center gap-2">
-                      <span>{file.name.substring(file.name.lastIndexOf('.'))}</span>
-                      <span>({Math.round(file.size / 1024)} KB)</span>
+                      <FileIcon className="h-4 w-4" />
+                      <span className="font-mono">{file.name}</span>
+                      <span className="text-xs">({Math.round(file.size / 1024)} KB)</span>
                     </div>
                   ))}
                 </div>
               </div>
             ))}
+            
+            {selectedFiles.length > 0 && !Object.keys(fileGroups).length && (
+              <div className="mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <FileIcon className="h-5 w-5" />
+                  <h3 className="font-medium">{selectedFiles[0].name}</h3>
+                </div>
+                <div className="pl-7 text-sm text-muted-foreground">
+                  <span>({Math.round(selectedFiles[0].size / 1024)} KB)</span>
+                </div>
+              </div>
+            )}
             
             {uploadProgress > 0 && (
               <Progress value={uploadProgress} className="mt-4" />
@@ -243,7 +284,11 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
             </Button>
             <Button 
               onClick={handleUpload} 
-              disabled={!selectedFiles || uploadProgress > 0 || Object.values(validationStatus).some(status => !status)}
+              disabled={
+                selectedFiles.length === 0 || 
+                uploadProgress > 0 || 
+                (Object.keys(fileGroups).length > 0 && Object.values(validationStatus).some(status => !status))
+              }
             >
               Upload Files
             </Button>

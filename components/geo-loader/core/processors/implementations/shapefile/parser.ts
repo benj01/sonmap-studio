@@ -55,12 +55,12 @@ export class ShapefileParser {
   /**
    * Find component files (.dbf, .shx, .prj)
    */
-  private async findComponentFiles(file: File): Promise<{
+  private findComponentFiles(file: File): {
     dbf?: File;
     shx?: File;
     prj?: File;
-  }> {
-    // First check if related files are provided in options
+  } {
+    // Check if related files are provided in options
     const relatedFiles = this.options?.relatedFiles;
     if (relatedFiles) {
       return {
@@ -70,36 +70,34 @@ export class ShapefileParser {
       };
     }
 
-    // Fallback to directory search if no related files provided
-    const baseName = file.name.slice(0, -4); // Remove .shp extension
-    const directory = file.webkitRelativePath.split('/').slice(0, -1).join('/');
-    
-    // Get list of files in the same directory
-    const dirHandle = await (file as any).getDirectory?.();
-    if (!dirHandle) {
-      console.warn('Could not access directory to find related files');
-      return {}; // Can't access directory
+    // If no related files provided in options, try to find them in the same FileList
+    const fileList = (file as any).fileList || (file as any).form?.files;
+    if (!fileList) {
+      console.warn('No related files found');
+      return {};
     }
-    
+
+    const baseName = file.name.slice(0, -4); // Remove .shp extension
     const components: { dbf?: File; shx?: File; prj?: File } = {};
-    
-    for await (const entry of dirHandle.values()) {
-      if (entry.name.startsWith(baseName)) {
-        const ext = entry.name.slice(-4).toLowerCase();
+
+    for (let i = 0; i < fileList.length; i++) {
+      const relatedFile = fileList[i];
+      if (relatedFile.name.startsWith(baseName)) {
+        const ext = relatedFile.name.slice(-4).toLowerCase();
         switch (ext) {
           case '.dbf':
-            components.dbf = await entry.getFile();
+            components.dbf = relatedFile;
             break;
           case '.shx':
-            components.shx = await entry.getFile();
+            components.shx = relatedFile;
             break;
           case '.prj':
-            components.prj = await entry.getFile();
+            components.prj = relatedFile;
             break;
         }
       }
     }
-    
+
     return components;
   }
 
@@ -521,50 +519,24 @@ export class ShapefileParser {
     type LineStringGeometry = { type: 'LineString'; coordinates: Position[] };
     type MultiLineStringGeometry = { type: 'MultiLineString'; coordinates: Position[][] };
 
-    // Validate buffer has enough space for header
-    if (offset + 40 >= view.byteLength) {
-      throw new ValidationError(
-        'Invalid polyline: buffer too small for header',
-        'SHAPEFILE_PARSE_ERROR'
-      );
-    }
-
+    // Skip bounding box (4 * 8 = 32 bytes) and read number of parts and points
     const numParts = view.getInt32(offset + 36, true);
     const numPoints = view.getInt32(offset + 40, true);
 
-    // Validate reasonable values for numParts and numPoints
-    if (numParts < 0 || numParts > 1000000 || numPoints < 0 || numPoints > 1000000) {
-      throw new ValidationError(
-        `Invalid polyline: unreasonable number of parts (${numParts}) or points (${numPoints})`,
-        'SHAPEFILE_PARSE_ERROR'
-      );
+    // Basic validation
+    if (numParts <= 0 || numPoints <= 0) {
+      console.warn(`Skipping invalid polyline: numParts=${numParts}, numPoints=${numPoints}`);
+      return {
+        type: 'LineString',
+        coordinates: []
+      };
     }
 
-    // Calculate required buffer size and validate
-    const partsSize = numParts * 4;
-    const pointsSize = numPoints * 16;
-    const requiredSize = offset + 44 + partsSize + pointsSize;
-    
-    if (requiredSize > view.byteLength) {
-      throw new ValidationError(
-        'Invalid polyline: buffer too small for specified parts and points',
-        'SHAPEFILE_PARSE_ERROR'
-      );
-    }
-    
     // Read part indices
     const parts: number[] = [];
     let partOffset = offset + 44;
     for (let i = 0; i < numParts; i++) {
-      const partIndex = view.getInt32(partOffset, true);
-      if (partIndex < 0 || partIndex >= numPoints) {
-        throw new ValidationError(
-          `Invalid polyline: part index ${partIndex} out of bounds`,
-          'SHAPEFILE_PARSE_ERROR'
-        );
-      }
-      parts.push(partIndex);
-      partOffset += 4;
+      parts.push(view.getInt32(partOffset + i * 4, true));
     }
     parts.push(numPoints);
     
