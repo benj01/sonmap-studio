@@ -1,10 +1,11 @@
 import { Feature, FeatureCollection, Position } from 'geojson';
 import { StreamProcessor } from '../../stream/stream-processor';
-import { AnalyzeResult, ProcessorResult } from '../../base/types';
+import { AnalyzeResult, ProcessorResult, ProcessorStats } from '../../base/types';
 import { StreamProcessorResult } from '../../stream/types';
 import { ShapefileParser } from './parser';
 import { ShapefileProcessorOptions, ShapefileParseOptions } from './types';
 import { ValidationError } from '../../../errors/types';
+import { CompressedFile } from '../../../compression/compression-handler';
 
 /**
  * Processor for Shapefile files
@@ -20,9 +21,73 @@ export class ShapefileProcessor extends StreamProcessor {
   private layers: string[] = [];
   private features: Feature[] = [];
 
+  /**
+   * Get bounds for a specific feature
+   */
+  protected getFeatureBounds(feature: Feature): ProcessorResult['bounds'] {
+    if (!feature.geometry) {
+      return {
+        minX: Infinity,
+        minY: Infinity,
+        maxX: -Infinity,
+        maxY: -Infinity
+      };
+    }
+    
+    const bounds = {
+      minX: Infinity,
+      minY: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity
+    };
+
+    if (feature.geometry.type === 'Point') {
+      const coords = feature.geometry.coordinates as Position;
+      bounds.minX = bounds.maxX = coords[0] as number;
+      bounds.minY = bounds.maxY = coords[1] as number;
+    } else if (feature.geometry.type === 'LineString') {
+      (feature.geometry.coordinates as Position[]).forEach(coords => {
+        bounds.minX = Math.min(bounds.minX, coords[0] as number);
+        bounds.minY = Math.min(bounds.minY, coords[1] as number);
+        bounds.maxX = Math.max(bounds.maxX, coords[0] as number);
+        bounds.maxY = Math.max(bounds.maxY, coords[1] as number);
+      });
+    } else if (feature.geometry.type === 'Polygon') {
+      (feature.geometry.coordinates as Position[][]).forEach(ring => {
+        ring.forEach(coords => {
+          bounds.minX = Math.min(bounds.minX, coords[0] as number);
+          bounds.minY = Math.min(bounds.minY, coords[1] as number);
+          bounds.maxX = Math.max(bounds.maxX, coords[0] as number);
+          bounds.maxY = Math.max(bounds.maxY, coords[1] as number);
+        });
+      });
+    }
+
+    return bounds;
+  }
+
+  /**
+   * Process a group of files (not used for shapefiles as we handle related files internally)
+   */
+  protected async processFileGroup(files: CompressedFile[]): Promise<Feature[]> {
+    // Not used for shapefiles as we handle related files internally
+    return [];
+  }
+
+  /**
+   * Update statistics for a feature type
+   */
+  protected updateStats(stats: ProcessorStats, type: string): void {
+    if (!stats.featureTypes[type]) {
+      stats.featureTypes[type] = 0;
+    }
+    stats.featureTypes[type]++;
+    stats.featureCount++;
+  }
+
   constructor(options: ShapefileProcessorOptions = {}) {
     super(options);
-    this.parser = new ShapefileParser();
+    this.parser = new ShapefileParser(options);
   }
 
   /**
@@ -44,11 +109,12 @@ export class ShapefileProcessor extends StreamProcessor {
 
       // Report any issues found during analysis
       result.issues?.forEach(issue => {
-        this.errorReporter.addWarning(
+        super.handleError(new ValidationError(
           issue.message,
           issue.type,
+          undefined,
           issue.details
-        );
+        ));
       });
 
       // Convert preview records to features
@@ -174,6 +240,26 @@ export class ShapefileProcessor extends StreamProcessor {
     };
     this.layers = ['shapes'];
     this.features = [];
+    this.state.statistics = {
+      featureCount: 0,
+      layerCount: 0,
+      featureTypes: {},
+      failedTransformations: 0,
+      errors: []
+    };
+  }
+
+  /**
+   * Create default statistics
+   */
+  protected createDefaultStats(): ProcessorStats {
+    return {
+      featureCount: 0,
+      layerCount: 0,
+      featureTypes: {},
+      failedTransformations: 0,
+      errors: []
+    };
   }
 
   /**

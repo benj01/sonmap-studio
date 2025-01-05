@@ -136,6 +136,15 @@ export interface ShapefileProcessorOptions extends ProcessorOptions {
   simplifyTolerance?: number;
   /** Maximum number of preview records */
   previewRecords?: number;
+  /** Related shapefile component files */
+  relatedFiles?: {
+    /** DBF file containing attributes */
+    dbf?: File;
+    /** SHX file containing shape index */
+    shx?: File;
+    /** PRJ file containing projection info */
+    prj?: File;
+  };
 }
 
 /**

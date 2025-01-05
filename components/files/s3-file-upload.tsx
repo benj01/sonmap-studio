@@ -1,10 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Button } from '../ui/button';
 import { useToast } from '../ui/use-toast';
 import { getSignedUploadUrl } from 'utils/supabase/s3';
 import { Progress } from '../ui/progress';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
+import { Alert, AlertDescription } from '../ui/alert';
+import { Upload, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface S3FileUploadProps {
   projectId: string;
@@ -17,11 +20,28 @@ const SHAPEFILE_EXTENSIONS = ['.shp', '.shx', '.dbf', '.prj'];
 export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps) {
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [fileGroups, setFileGroups] = useState<{ [key: string]: File[] }>({});
+  const [validationStatus, setValidationStatus] = useState<{ [key: string]: boolean }>({});
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files && event.target.files.length > 0) {
       setSelectedFiles(event.target.files);
+      const groups = groupShapefileComponents(event.target.files);
+      setFileGroups(groups);
+      
+      // Validate each shapefile group
+      const status: { [key: string]: boolean } = {};
+      Object.entries(groups).forEach(([baseName, files]) => {
+        status[baseName] = ['.shp', '.shx', '.dbf'].every(ext => 
+          files.some(f => f.name.toLowerCase().endsWith(ext))
+        );
+      });
+      setValidationStatus(status);
+      
+      setShowUploadDialog(true);
     }
   };
 
@@ -155,18 +175,81 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
     }
   };
 
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
   return (
-    <div>
+    <>
       <input 
+        ref={fileInputRef}
         type="file" 
         accept=".txt,.csv,.xyz,.dxf,.shp,.dbf,.shx,.prj"
         onChange={handleFileChange}
         multiple 
+        className="hidden"
       />
-      <Button onClick={handleUpload} disabled={!selectedFiles || uploadProgress > 0}>
-        Upload
+      <Button onClick={triggerFileInput}>
+        <Upload className="mr-2 h-4 w-4" />
+        Select Files
       </Button>
-      {uploadProgress > 0 && <Progress value={uploadProgress} className="mt-2" />}
-    </div>
+
+      <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle>Upload Files</DialogTitle>
+          </DialogHeader>
+          
+          <div className="py-4">
+            {Object.entries(fileGroups).map(([baseName, files]) => (
+              <div key={baseName} className="mb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  {validationStatus[baseName] ? (
+                    <CheckCircle2 className="h-5 w-5 text-green-500" />
+                  ) : (
+                    <AlertCircle className="h-5 w-5 text-yellow-500" />
+                  )}
+                  <h3 className="font-medium">{baseName}</h3>
+                </div>
+                
+                {!validationStatus[baseName] && (
+                  <Alert className="mb-2 border-yellow-500 text-yellow-700">
+                    <AlertCircle className="h-4 w-4 text-yellow-500" />
+                    <AlertDescription>
+                      Missing required files. A shapefile needs .shp, .shx, and .dbf files.
+                    </AlertDescription>
+                  </Alert>
+                )}
+                
+                <div className="pl-7 text-sm text-muted-foreground">
+                  {files.map(file => (
+                    <div key={file.name} className="flex items-center gap-2">
+                      <span>{file.name.substring(file.name.lastIndexOf('.'))}</span>
+                      <span>({Math.round(file.size / 1024)} KB)</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            
+            {uploadProgress > 0 && (
+              <Progress value={uploadProgress} className="mt-4" />
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowUploadDialog(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleUpload} 
+              disabled={!selectedFiles || uploadProgress > 0 || Object.values(validationStatus).some(status => !status)}
+            >
+              Upload Files
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }
