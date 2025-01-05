@@ -13,7 +13,7 @@ import {
   LoadingOverlay,
   ErrorOverlay,
   ProgressBar
-} from './components/map-controls';
+} from '../shared/controls/map-controls';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;

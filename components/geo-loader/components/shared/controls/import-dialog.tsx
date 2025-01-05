@@ -41,6 +41,24 @@ interface ImportDialogProps extends ControlProps {
   showPreview?: boolean;
   showLayerControl?: boolean;
   showCoordinateSystem?: boolean;
+  dxfData?: any;
+  analysis?: any;
+  options?: any;
+  selectedLayers?: string[];
+  visibleLayers?: string[];
+  selectedTemplates?: string[];
+  previewManager?: any;
+  logs?: any[];
+  loading?: boolean;
+  hasErrors?: boolean;
+  pendingCoordinateSystem?: string;
+  onLayerToggle?: (layer: string, enabled: boolean) => void;
+  onLayerVisibilityToggle?: (layer: string, visible: boolean) => void;
+  onTemplateSelect?: (template: string, enabled: boolean) => void;
+  onCoordinateSystemChange?: (value: string) => void;
+  onApplyCoordinateSystem?: () => void;
+  onClearAndClose?: () => void;
+  onImport?: () => void;
 }
 
 export function ImportDialog({
@@ -55,14 +73,32 @@ export function ImportDialog({
   showLayerControl = true,
   showCoordinateSystem = true,
   className = '',
-  disabled = false
+  disabled = false,
+  dxfData,
+  analysis,
+  options,
+  selectedLayers,
+  visibleLayers,
+  selectedTemplates,
+  previewManager,
+  logs,
+  loading,
+  hasErrors,
+  pendingCoordinateSystem,
+  onLayerToggle,
+  onLayerVisibilityToggle,
+  onTemplateSelect,
+  onCoordinateSystemChange,
+  onApplyCoordinateSystem,
+  onClearAndClose,
+  onImport
 }: ImportDialogProps) {
   const [currentPhase, setCurrentPhase] = useState<keyof typeof PROGRESS_PHASES | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingState, setLoadingState] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [coordinateSystem, setCoordinateSystem] = useState(defaultCoordinateSystem);
-  const [pendingCoordinateSystem, setPendingCoordinateSystem] = useState<string | null>(null);
+  const [pendingCoordinateSystemState, setPendingCoordinateSystemState] = useState<string | null>(null);
 
   // Initialize hooks
   const cache = useCache<Feature[]>();
@@ -95,10 +131,10 @@ export function ImportDialog({
   useEffect(() => {
     if (!isOpen) {
       setCurrentPhase(null);
-      setLoading(false);
+      setLoadingState(false);
       setError(null);
       setProgress(0);
-      setPendingCoordinateSystem(null);
+      setPendingCoordinateSystemState(null);
       cache.clear();
       layer.layers.forEach(l => layer.removeLayer(l.id));
     }
@@ -110,7 +146,7 @@ export function ImportDialog({
 
     const processFile = async () => {
       try {
-        setLoading(true);
+        setLoadingState(true);
         setError(null);
 
         // Validate file
@@ -135,7 +171,7 @@ export function ImportDialog({
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
-        setLoading(false);
+        setLoadingState(false);
       }
     };
 
@@ -145,7 +181,7 @@ export function ImportDialog({
   // Handle coordinate system changes
   const handleCoordinateSystemChange = useCallback(async (newSystem: string) => {
     try {
-      setPendingCoordinateSystem(newSystem);
+      setPendingCoordinateSystemState(newSystem);
       // TODO: Implement coordinate system transformation
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -157,7 +193,7 @@ export function ImportDialog({
     if (!file) return;
 
     try {
-      setLoading(true);
+      setLoadingState(true);
       setError(null);
 
       // Get visible and selected features
@@ -175,7 +211,7 @@ export function ImportDialog({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      setLoadingState(false);
     }
   }, [file, layer.visibleFeatures, validation, onImportComplete, onClose]);
 
@@ -191,7 +227,7 @@ export function ImportDialog({
 
         <div className="flex flex-col h-full gap-4 pt-4">
           {/* Progress and Error Display */}
-          {loading && (
+          {loadingState && (
             <ProgressBar
               info={{
                 progress: progress,
@@ -223,9 +259,9 @@ export function ImportDialog({
             <div className="flex items-center gap-2">
               <span className="text-sm">Coordinate System:</span>
               <select
-                value={pendingCoordinateSystem || coordinateSystem}
+                value={pendingCoordinateSystemState || coordinateSystem}
                 onChange={(e) => handleCoordinateSystemChange(e.target.value)}
-                disabled={loading || disabled}
+                disabled={loadingState || disabled}
                 className="text-sm border rounded px-2 py-1"
               >
                 <option value="EPSG:4326">WGS 84 (EPSG:4326)</option>
@@ -246,15 +282,15 @@ export function ImportDialog({
           <div className="flex justify-end gap-2">
             <ActionButton
               onClick={onClose}
-              disabled={loading || disabled}
+              disabled={loadingState || disabled}
               variant="secondary"
             >
               Cancel
             </ActionButton>
             <ActionButton
               onClick={handleImport}
-              disabled={loading || disabled || !!error}
-              loading={loading}
+              disabled={loadingState || disabled || !!error}
+              loading={loadingState}
             >
               Import
             </ActionButton>

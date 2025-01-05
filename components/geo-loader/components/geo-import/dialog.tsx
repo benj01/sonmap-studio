@@ -3,7 +3,7 @@ import { Dialog, DialogContent, DialogTitle, DialogDescription } from 'component
 import { GeoImportDialogProps } from './types';
 import { ImportHeader } from './components/import-header';
 import { ImportContent } from './components/import-content';
-import { ImportControls } from './components/import-controls';
+import { ImportDialog } from '../shared/controls/import-dialog';
 import { useImportLogs } from './hooks/use-import-logs';
 import { useFileAnalysis } from './hooks/use-file-analysis';
 import { useCoordinateSystem } from './hooks/use-coordinate-system';
@@ -279,46 +279,29 @@ export function GeoImportDialog({
   const loading = analysisLoading || coordinateSystemLoading;
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClearAndClose()}>
-      <DialogContent className="max-w-4xl h-[90vh]">
-        <DialogTitle>Import {file?.name}</DialogTitle>
-        <DialogDescription>
-          Configure import settings and preview the data
-        </DialogDescription>
-
-        <div className="flex flex-col h-full gap-4 pt-4">
-          <ImportContent
-            file={file}
-            dxfData={dxfData}
-            analysis={analysis}
-            options={options}
-            selectedLayers={selectedLayers}
-            visibleLayers={visibleLayers}
-            selectedTemplates={selectedTemplates}
-            previewManager={previewManager}
-            logs={logs}
-            loading={loading}
-            hasErrors={hasErrors}
-            pendingCoordinateSystem={pendingCoordinateSystem}
-            onLayerToggle={handleLayerToggleWrapper}
-            onLayerVisibilityToggle={handleLayerVisibilityToggleWrapper}
-            onTemplateSelect={handleTemplateSelectWrapper}
-            onCoordinateSystemChange={handleCoordinateSystemChangeWrapper}
-            onApplyCoordinateSystem={handleApplyCoordinateSystem}
-            onClearAndClose={handleClearAndClose}
-          />
-
-          <ImportControls
-            loading={loading}
-            hasErrors={hasErrors}
-            coordinateSystemChanged={coordinateSystemChanged}
-            pendingCoordinateSystem={pendingCoordinateSystem}
-            onClose={onClose}
-            onApplyCoordinateSystem={handleApplyCoordinateSystem}
-            onImport={handleImport}
-          />
-        </div>
-      </DialogContent>
-    </Dialog>
+    <ImportDialog
+      open={isOpen}
+      onOpenChange={(open) => !open && handleClearAndClose()}
+      file={file}
+      dxfData={dxfData}
+      analysis={analysis}
+      options={options}
+      selectedLayers={selectedLayers}
+      visibleLayers={visibleLayers}
+      selectedTemplates={selectedTemplates}
+      previewManager={previewManager}
+      logs={logs}
+      loading={loading}
+      hasErrors={hasErrors}
+      pendingCoordinateSystem={pendingCoordinateSystem}
+      onLayerToggle={handleLayerToggleWrapper}
+      onLayerVisibilityToggle={handleLayerVisibilityToggleWrapper}
+      onTemplateSelect={handleTemplateSelectWrapper}
+      onCoordinateSystemChange={handleCoordinateSystemChangeWrapper}
+      onApplyCoordinateSystem={handleApplyCoordinateSystem}
+      onClearAndClose={handleClearAndClose}
+      onClose={onClose}
+      onImport={handleImport}
+    />
   );
 }

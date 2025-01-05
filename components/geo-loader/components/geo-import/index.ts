@@ -1,7 +1,7 @@
 // Components
 export { ImportHeader } from './components/import-header';
 export { ImportContent } from './components/import-content';
-export { ImportControls } from './components/import-controls';
+export { ImportDialog } from '../shared/controls/import-dialog';
 
 // Hooks
 export { useImportLogs } from './hooks/use-import-logs';
