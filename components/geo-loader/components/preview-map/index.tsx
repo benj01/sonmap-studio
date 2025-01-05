@@ -5,15 +5,11 @@ import { PreviewMapProps, MapFeature } from '../../types/map';
 import { useMapView } from '../../hooks/use-map-view';
 import { usePreviewState } from './hooks/use-preview-state';
 import { MapLayers } from './components/map-layers';
-import {
-  MapAttribution,
-  StatsControl,
-  CoordinatesControl,
-  FeatureTooltip,
-  LoadingOverlay,
-  ErrorOverlay,
-  ProgressBar
-} from '../shared/controls/map-controls';
+import { ActionButton } from '../shared/controls/action-button';
+import { ErrorDisplay } from '../shared/controls/error-display';
+import { LayerControl } from '../shared/controls/layer-control';
+import { ProgressBar } from '../shared/controls/progress-bar';
+import { StatusMessage } from '../shared/controls/status-message';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
@@ -58,18 +54,13 @@ export function PreviewMap({
     getViewportBounds
   } = useMapView(bounds, coordinateSystem);
 
-  const { previewState, cacheStats } = usePreviewState({
+  const previewState = usePreviewState({
     onPreviewUpdate: () => {
       setIsLoading(false);
       console.debug('[DEBUG] Preview updated:', {
         coordinateSystem,
         viewState,
-        bounds,
-        features: {
-          points: previewState.points.features.length,
-          lines: previewState.lines.features.length,
-          polygons: previewState.polygons.features.length
-        }
+        bounds
       });
     },
     previewManager: preview?.previewManager ?? null,
@@ -120,9 +111,19 @@ export function PreviewMap({
 
   return (
     <div className="h-full w-full relative">
-      <LoadingOverlay isLoading={isLoading} />
-      <ProgressBar progress={streamProgress} />
-      <ErrorOverlay error={error} />
+      <ActionButton 
+        label={isLoading ? "Loading..." : "Ready"} 
+        loading={isLoading} 
+        onClick={() => {}}
+      />
+      <ProgressBar 
+        info={{ 
+          progress: streamProgress / 100, 
+          status: 'Loading preview...', 
+          details: 'Processing map data'
+        }} 
+      />
+      {error && <ErrorDisplay error={{ message: error, details: {} }} />}
 
       <div className="absolute inset-0 z-0">
         <Map
@@ -148,19 +149,32 @@ export function PreviewMap({
             />
           )}
 
-          <MapAttribution />
-
-          <StatsControl
-            visibleCount={previewState?.visibleCount || 0}
-            totalCount={previewState?.totalCount || 0}
-            pointsCount={previewState?.points?.features?.length || 0}
-            zoomLevel={viewState.zoom}
-            minZoomForUnclustered={MIN_ZOOM_FOR_UNCLUSTERED}
-            cacheHitRate={cacheStats?.hitRate || 0}
+          <LayerControl
+            layers={[
+              {
+                id: 'stats',
+                name: 'Statistics',
+                visible: true,
+                count: previewState?.points?.features?.length || 0
+              }
+            ]}
+            onVisibilityChange={() => {}}
+            showCounts={true}
           />
 
-          <CoordinatesControl coordinates={mouseCoords} />
-          <FeatureTooltip feature={hoveredFeature} />
+          {mouseCoords && (
+            <StatusMessage
+              message={`Lat: ${mouseCoords.lat.toFixed(6)}, Lng: ${mouseCoords.lng.toFixed(6)}`}
+              type="info"
+            />
+          )}
+          
+          {hoveredFeature && (
+            <StatusMessage
+              message={JSON.stringify(hoveredFeature.properties)}
+              type="info"
+            />
+          )}
         </Map>
       </div>
     </div>
