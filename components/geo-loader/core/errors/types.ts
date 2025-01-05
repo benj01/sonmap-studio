@@ -9,49 +9,32 @@ export class GeoLoaderError extends Error {
   ) {
     super(message);
     this.name = 'GeoLoaderError';
+    
+    // Ensure proper prototype chain for instanceof checks
+    Object.setPrototypeOf(this, new.target.prototype);
   }
-}
 
-/**
- * Error thrown when coordinate system operations fail
- */
-export class CoordinateSystemError extends GeoLoaderError {
-  constructor(
-    message: string,
-    details?: Record<string, unknown>
-  ) {
-    super(message, 'COORDINATE_SYSTEM_ERROR', details);
-    this.name = 'CoordinateSystemError';
+  /**
+   * Get a formatted string representation of the error
+   */
+  toString(): string {
+    let result = `${this.name}: ${this.message}`;
+    if (this.details) {
+      result += `\nDetails: ${JSON.stringify(this.details, null, 2)}`;
+    }
+    return result;
   }
-}
 
-/**
- * Error thrown when coordinate transformation fails
- */
-export class CoordinateTransformationError extends GeoLoaderError {
-  constructor(
-    message: string,
-    public point: { x: number; y: number },
-    public fromSystem: string,
-    public toSystem: string,
-    details?: Record<string, unknown>
-  ) {
-    super(message, 'COORDINATE_TRANSFORMATION_ERROR', details);
-    this.name = 'CoordinateTransformationError';
-  }
-}
-
-/**
- * Error thrown when invalid coordinates are provided
- */
-export class InvalidCoordinateError extends GeoLoaderError {
-  constructor(
-    message: string,
-    public point: { x: number; y: number },
-    details?: Record<string, unknown>
-  ) {
-    super(message, 'INVALID_COORDINATE_ERROR', details);
-    this.name = 'InvalidCoordinateError';
+  /**
+   * Convert error to a plain object for serialization
+   */
+  toJSON(): Record<string, unknown> {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      details: this.details,
+    };
   }
 }
 
@@ -65,7 +48,10 @@ export class ValidationError extends GeoLoaderError {
     public field?: string,
     details?: Record<string, unknown>
   ) {
-    super(message, code, details);
+    super(message, code, {
+      field,
+      ...details,
+    });
     this.name = 'ValidationError';
   }
 }
@@ -80,7 +66,10 @@ export class ParseError extends GeoLoaderError {
     public line?: number,
     details?: Record<string, unknown>
   ) {
-    super(message, code, details);
+    super(message, code, {
+      line,
+      ...details,
+    });
     this.name = 'ParseError';
   }
 }
@@ -89,9 +78,28 @@ export class ParseError extends GeoLoaderError {
  * Interface for error reporting
  */
 export interface ErrorReporter {
+  /**
+   * Add an error to the report
+   */
   addError(message: string, code: string, details?: Record<string, unknown>): void;
+  
+  /**
+   * Add a warning to the report
+   */
   addWarning(message: string, code: string, details?: Record<string, unknown>): void;
+  
+  /**
+   * Get all errors
+   */
   getErrors(): Array<{ message: string; code: string; details?: Record<string, unknown> }>;
+  
+  /**
+   * Get all warnings
+   */
   getWarnings(): Array<{ message: string; code: string; details?: Record<string, unknown> }>;
+  
+  /**
+   * Clear all errors and warnings
+   */
   clear(): void;
 }

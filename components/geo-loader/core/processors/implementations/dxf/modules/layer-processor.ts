@@ -8,20 +8,53 @@ export class DxfLayerProcessor {
    * Extract layer names from layer data
    */
   static extractLayerNames(layerData: Record<string, any>): string[] {
-    console.debug('[DEBUG] Extracting layer names from:', Object.keys(layerData));
+    // Initial data inspection
+    console.debug('[LAYER_DEBUG] Starting layer extraction with raw data:', {
+      keys: Object.keys(layerData),
+      rawData: layerData,
+      dataType: typeof layerData,
+      isArray: Array.isArray(layerData)
+    });
 
     const layerNames = new Set<string>();
     layerNames.add('0'); // Always include default layer
+    console.debug('[LAYER_DEBUG] Added default layer "0"');
+
+    // Validate input structure
+    if (!layerData || typeof layerData !== 'object') {
+      console.warn('[LAYER_DEBUG] Invalid layer data structure:', { layerData });
+      return ['0']; // Return only default layer if data is invalid
+    }
 
     // Process layer data
     Object.entries(layerData).forEach(([name, data]) => {
+      // Detailed inspection of each potential layer
+      console.debug('[LAYER_DEBUG] Processing potential layer:', {
+        name,
+        rawData: data,
+        dataType: typeof data,
+        hasName: data?.name !== undefined,
+        isSystemLayer: this.isSystemLayer(name),
+        isValid: this.validateLayer(data)
+      });
+
       if (!this.isSystemLayer(name) && this.validateLayer(data)) {
         layerNames.add(name);
+        console.debug('[LAYER_DEBUG] Added layer:', name);
+      } else {
+        console.debug('[LAYER_DEBUG] Skipped layer:', {
+          name,
+          reason: this.isSystemLayer(name) ? 'system layer' : 'invalid layer data'
+        });
       }
     });
 
     const layers = Array.from(layerNames);
-    console.debug('[DEBUG] Extracted layers:', layers);
+    console.debug('[LAYER_DEBUG] Final layer list:', {
+      count: layers.length,
+      layers,
+      setContents: Array.from(layerNames)
+    });
     
     return layers;
   }
@@ -30,25 +63,65 @@ export class DxfLayerProcessor {
    * Check if layer name is a system layer
    */
   private static isSystemLayer(name: string): boolean {
-    return this.SYSTEM_LAYERS.includes(name);
+    const isSystem = this.SYSTEM_LAYERS.includes(name);
+    console.debug('[LAYER_DEBUG] System layer check:', {
+      name,
+      isSystem,
+      systemLayers: this.SYSTEM_LAYERS
+    });
+    return isSystem;
   }
 
   /**
    * Validate layer data
    */
   private static validateLayer(layer: any): boolean {
+    // Basic type validation
     if (!layer || typeof layer !== 'object') {
-      console.warn('[DEBUG] Invalid layer data:', layer);
+      console.debug('[LAYER_DEBUG] Layer validation failed: not an object', {
+        layer,
+        type: typeof layer
+      });
       return false;
     }
 
-    // Basic validation - layer should have a name at minimum
-    if (!layer.name) {
-      console.warn('[DEBUG] Layer missing name:', layer);
-      return false;
+    // Check if it's a valid layer object
+    const validationChecks = {
+      hasValidName: typeof layer.name === 'string' && layer.name.length > 0,
+      hasValidColor: layer.color === undefined || typeof layer.color === 'number',
+      hasValidLineType: layer.lineType === undefined || typeof layer.lineType === 'string',
+      hasValidLineWeight: layer.lineWeight === undefined || typeof layer.lineWeight === 'number',
+      hasValidFlags: {
+        frozen: layer.frozen === undefined || typeof layer.frozen === 'boolean',
+        locked: layer.locked === undefined || typeof layer.locked === 'boolean',
+        off: layer.off === undefined || typeof layer.off === 'boolean'
+      }
+    };
+
+    console.debug('[LAYER_DEBUG] Layer validation checks:', {
+      layer,
+      checks: validationChecks
+    });
+
+    // All checks must pass
+    const isValid = validationChecks.hasValidName &&
+                   validationChecks.hasValidColor &&
+                   validationChecks.hasValidLineType &&
+                   validationChecks.hasValidLineWeight &&
+                   Object.values(validationChecks.hasValidFlags).every(flag => flag);
+
+    if (!isValid) {
+      console.debug('[LAYER_DEBUG] Layer validation failed:', {
+        layer,
+        failedChecks: Object.entries(validationChecks).filter(([_, value]) => 
+          typeof value === 'boolean' ? !value : Object.values(value).some(v => !v)
+        )
+      });
+    } else {
+      console.debug('[LAYER_DEBUG] Layer validation passed:', { layer });
     }
 
-    return true;
+    return isValid;
   }
 
   /**

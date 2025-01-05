@@ -1,5 +1,13 @@
 import { Feature } from 'geojson';
-import { DxfStructure, DxfAnalyzeResult, DxfBlock, DxfLayer, DxfEntityType } from '../types';
+import { 
+  DxfStructure, 
+  DxfAnalyzeResult, 
+  DxfBlock, 
+  DxfLayer, 
+  DxfEntityType,
+  DxfParseOptions,
+  DxfEntity 
+} from '../types';
 import { ValidationError } from '../../../../errors/types';
 import { validateStructure } from '../utils/validation/structure-validator';
 import { EntityConverter } from './services/entity-converter';
@@ -81,9 +89,30 @@ export class DxfParserWrapper {
         parseDimensions: options?.parseDimensions ?? true
       };
 
+      console.debug('[PARSER_DEBUG] Parsing with options:', parseOptions);
+
       // Parse DXF content with options
       const parsedDxf = this.parser.parseSync(content, parseOptions);
       
+      // Deep inspect the layer data structure
+      console.debug('[PARSER_DEBUG] Raw layer data inspection:', {
+        tablesExists: !!parsedDxf.tables,
+        layerTableExists: !!parsedDxf.tables?.layer,
+        rawLayerData: parsedDxf.tables?.layer,
+        layerKeys: parsedDxf.tables?.layer ? Object.keys(parsedDxf.tables.layer) : [],
+        layerTableType: parsedDxf.tables?.layer ? typeof parsedDxf.tables.layer : 'undefined',
+        isArray: Array.isArray(parsedDxf.tables?.layer)
+      });
+
+      console.debug('[PARSER_DEBUG] Raw parser output:', {
+        hasEntities: !!parsedDxf.entities,
+        entityCount: parsedDxf.entities?.length || 0,
+        hasLayers: !!parsedDxf.tables?.layer,
+        layerData: parsedDxf.tables?.layer,
+        hasBlocks: !!parsedDxf.blocks,
+        blockCount: Object.keys(parsedDxf.blocks || {}).length
+      });
+
       if (!parsedDxf || typeof parsedDxf !== 'object') {
         throw new Error('Parser returned invalid data');
       }
@@ -103,6 +132,14 @@ export class DxfParserWrapper {
         extents: this.getExtents(parsedDxf.header),
         units: this.getUnits(parsedDxf.header)
       };
+
+      console.debug('[PARSER_DEBUG] Converted structure:', {
+        layerCount: structure.layers.length,
+        layers: structure.layers,
+        entityCount: structure.entities.length,
+        blockCount: structure.blocks.length,
+        entityTypes: structure.entityTypes
+      });
 
       // Validate the converted structure
       const issues = validateStructure(structure);
@@ -128,15 +165,42 @@ export class DxfParserWrapper {
    * Convert dxf-parser layers to our format
    */
   private convertLayers(layers: Record<string, any>): DxfLayer[] {
-    return Object.entries(layers).map(([name, layer]) => ({
-      name,
-      color: typeof layer.color === 'number' ? layer.color : undefined,
-      lineType: typeof layer.lineType === 'string' ? layer.lineType : undefined,
-      lineWeight: typeof layer.lineWeight === 'number' ? layer.lineWeight : undefined,
-      frozen: typeof layer.frozen === 'boolean' ? layer.frozen : false,
-      locked: typeof layer.locked === 'boolean' ? layer.locked : false,
-      off: typeof layer.off === 'boolean' ? layer.off : false
-    }));
+    console.debug('[PARSER_DEBUG] Converting layers from dxf-parser:', {
+      rawLayers: layers,
+      layerKeys: Object.keys(layers)
+    });
+
+    const converted = Object.entries(layers).map(([name, layer]) => {
+      console.debug('[PARSER_DEBUG] Converting layer:', {
+        name,
+        rawLayer: layer
+      });
+
+      const dxfLayer: DxfLayer = {
+        name,
+        color: typeof layer.color === 'number' ? layer.color : undefined,
+        lineType: typeof layer.lineType === 'string' ? layer.lineType : undefined,
+        lineWeight: typeof layer.lineWeight === 'number' ? layer.lineWeight : undefined,
+        frozen: typeof layer.frozen === 'boolean' ? layer.frozen : false,
+        locked: typeof layer.locked === 'boolean' ? layer.locked : false,
+        off: typeof layer.off === 'boolean' ? layer.off : false
+      };
+
+      console.debug('[PARSER_DEBUG] Converted layer:', {
+        name,
+        result: dxfLayer
+      });
+
+      return dxfLayer;
+    });
+
+    console.debug('[PARSER_DEBUG] Layer conversion complete:', {
+      inputCount: Object.keys(layers).length,
+      outputCount: converted.length,
+      convertedLayers: converted
+    });
+
+    return converted;
   }
 
   /**

@@ -89,11 +89,11 @@ export class DxfProcessor extends StreamProcessor {
    */
   async analyze(file: File): Promise<AnalyzeResult> {
     try {
-      console.debug('[DEBUG] Starting DXF analysis for:', file.name);
+      console.debug('[DXF_DEBUG] Starting DXF analysis for:', file.name);
       
       // Read file content with progress monitoring
       const text = await file.text();
-      console.debug('[DEBUG] File content length:', text.length);
+      console.debug('[DXF_DEBUG] File content length:', text.length);
 
       // Configure parsing options
       const parseOptions: DxfParseOptions = {
@@ -103,15 +103,35 @@ export class DxfProcessor extends StreamProcessor {
         parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
         validate: (this.options as DxfProcessorOptions).validateGeometry
       };
+      console.debug('[DXF_DEBUG] Parse options:', parseOptions);
 
       // Parse DXF structure with options
       const structure = await this.parser.parse(text, parseOptions) as DxfStructure;
-      
-      console.debug('[DEBUG] Starting entity processing');
+      console.debug('[DXF_DEBUG] Parsed DXF structure:', {
+        layerCount: structure.layers?.length || 0,
+        rawLayers: structure.layers,
+        entityCount: structure.entities?.length || 0,
+        blockCount: structure.blocks?.length || 0
+      });
       
       // Extract entities from structure
       const entities = await DxfEntityProcessor.extractEntities(structure);
-      console.debug('[DEBUG] Extracted entities:', entities.length);
+      console.debug('[DXF_DEBUG] Extracted entities:', {
+        count: entities.length,
+        layerUsage: entities.reduce((acc, entity) => {
+          const layer = entity.attributes?.layer || '0';
+          acc[layer] = (acc[layer] || 0) + 1;
+          return acc;
+        }, {} as Record<string, number>)
+      });
+
+      // Extract layers from structure
+      const layers = DxfLayerProcessor.extractLayerNames(structure.layers || []);
+      console.debug('[DXF_DEBUG] Layer extraction result:', {
+        inputLayers: structure.layers,
+        extractedLayers: layers,
+        entityLayers: [...new Set(entities.map(e => e.attributes?.layer || '0'))]
+      });
 
       // Calculate bounds from entities
       const bounds = DxfAnalyzer.calculateBoundsFromEntities(entities);
@@ -140,10 +160,6 @@ export class DxfProcessor extends StreamProcessor {
       if (detection.confidence === 'low') {
         console.warn('[DEBUG] Low confidence in coordinate system detection:', detection.reason);
       }
-
-      // Extract layers from structure
-      const layers = DxfLayerProcessor.extractLayerNames(structure.layers || []);
-      console.debug('[DEBUG] Extracted layers:', layers);
 
       // Convert DXF entities to GeoJSON features
       const features = await DxfEntityProcessor.entitiesToFeatures(entities);
