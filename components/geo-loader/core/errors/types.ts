@@ -75,6 +75,24 @@ export class ParseError extends GeoLoaderError {
 }
 
 /**
+ * Error thrown when coordinate system operations fail
+ */
+export class CoordinateSystemError extends GeoLoaderError {
+  constructor(
+    message: string,
+    code: string,
+    public system?: string,
+    details?: Record<string, unknown>
+  ) {
+    super(message, code, {
+      system,
+      ...details,
+    });
+    this.name = 'CoordinateSystemError';
+  }
+}
+
+/**
  * Interface for error reporting
  */
 export interface ErrorReporter {

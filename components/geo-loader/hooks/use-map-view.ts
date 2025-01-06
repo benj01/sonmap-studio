@@ -9,7 +9,7 @@ import {
   isSwissSystem 
 } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
-import { coordinateSystemManager } from '../core/coordinate-system-manager';
+import { CoordinateSystemManager } from '../core/coordinate-systems/coordinate-system-manager';
 import proj4 from 'proj4';
 import WebMercatorViewport from '@math.gl/web-mercator';
 
@@ -32,8 +32,8 @@ export function useMapView(
   useEffect(() => {
     const initManager = async () => {
       try {
-        if (!coordinateSystemManager.isInitialized()) {
-          await coordinateSystemManager.initialize();
+        if (!CoordinateSystemManager.isInitialized()) {
+          await CoordinateSystemManager.initialize();
         }
       } catch (error) {
         console.error('[DEBUG] Failed to initialize coordinate system manager:', error);
@@ -50,16 +50,16 @@ export function useMapView(
   useEffect(() => {
     const verifySystem = async () => {
       try {
-        if (!coordinateSystemManager.isInitialized()) {
-          await coordinateSystemManager.initialize();
+        if (!CoordinateSystemManager.isInitialized()) {
+          await CoordinateSystemManager.initialize();
         }
 
-        const isSupported = coordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
+        const isSupported = CoordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
         console.debug('[DEBUG] Coordinate system verification:', {
           system: coordinateSystem,
           isSupported,
-          initialized: coordinateSystemManager.isInitialized(),
-          supportedSystems: coordinateSystemManager.getSupportedSystems()
+          initialized: CoordinateSystemManager.isInitialized(),
+          supportedSystems: CoordinateSystemManager.getSupportedSystems()
         });
 
         if (!isSupported) {
@@ -96,7 +96,7 @@ export function useMapView(
 
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
         try {
-          const transformed = await coordinateSystemManager.transform(
+          const transformed = await CoordinateSystemManager.transform(
             { x: coords[0], y: coords[1] },
             coordinateSystem,
             COORDINATE_SYSTEMS.WGS84
@@ -150,8 +150,8 @@ export function useMapView(
 
   const updateViewFromBounds = useCallback(async (bounds: Bounds) => {
     // Ensure coordinate system manager is initialized
-    if (!coordinateSystemManager.isInitialized()) {
-      await coordinateSystemManager.initialize();
+    if (!CoordinateSystemManager.isInitialized()) {
+      await CoordinateSystemManager.initialize();
     }
 
     // Skip if bounds are already set and we're just changing coordinate systems
@@ -172,12 +172,12 @@ export function useMapView(
       
       if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
         // Transform each corner separately
-        const minPoint = await coordinateSystemManager.transform(
+        const minPoint = await CoordinateSystemManager.transform(
           { x: bounds.minX, y: bounds.minY },
           coordinateSystem,
           COORDINATE_SYSTEMS.WGS84
         );
-        const maxPoint = await coordinateSystemManager.transform(
+        const maxPoint = await CoordinateSystemManager.transform(
           { x: bounds.maxX, y: bounds.maxY },
           coordinateSystem,
           COORDINATE_SYSTEMS.WGS84
@@ -287,11 +287,11 @@ export function useMapView(
     const updateBounds = async () => {
       try {
         // Wait for coordinate system verification
-        if (!coordinateSystemManager.isInitialized()) {
-          await coordinateSystemManager.initialize();
+        if (!CoordinateSystemManager.isInitialized()) {
+          await CoordinateSystemManager.initialize();
         }
 
-        const isSupported = coordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
+        const isSupported = CoordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
         if (!isSupported) {
           console.warn('[DEBUG] Cannot update bounds: unsupported coordinate system');
           return;

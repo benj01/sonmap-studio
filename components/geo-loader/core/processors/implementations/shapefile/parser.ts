@@ -542,19 +542,18 @@ export class ShapefileParser {
     
     // Read points for each part
     const coordinates: Position[][] = [];
-    let pointOffset = partOffset;
+    let pointOffset = partOffset + (numParts * 4);
     
     try {
       for (let i = 0; i < numParts; i++) {
         const partPoints: Position[] = [];
         const start = parts[i];
-        const end = parts[i + 1];
+        const end = i === numParts - 1 ? numPoints : parts[i + 1];
         
-        if (start > end) {
-          throw new ValidationError(
-            `Invalid polyline: part ${i} has invalid range (${start} > ${end})`,
-            'SHAPEFILE_PARSE_ERROR'
-          );
+        // Skip invalid parts but continue processing
+        if (start >= end || start < 0 || end > numPoints) {
+          console.warn(`Skipping invalid polyline part ${i}: start=${start}, end=${end}`);
+          continue;
         }
         
         for (let j = start; j < end; j++) {

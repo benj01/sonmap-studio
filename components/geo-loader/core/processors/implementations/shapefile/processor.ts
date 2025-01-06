@@ -1,11 +1,12 @@
 import { Feature, FeatureCollection, Position } from 'geojson';
-import { StreamProcessor } from '../../stream/stream-processor';
-import { AnalyzeResult, ProcessorResult, ProcessorStats } from '../../base/types';
-import { StreamProcessorResult } from '../../stream/types';
+import { StreamProcessor } from '../../../../../stream/stream-processor';
+import { AnalyzeResult, ProcessorResult, ProcessorStats } from '../../../../../base/types';
+import { StreamProcessorResult } from '../../../../../stream/types';
 import { ShapefileParser } from './parser';
 import { ShapefileProcessorOptions, ShapefileParseOptions } from './types';
-import { ValidationError } from '../../../errors/types';
-import { CompressedFile } from '../../../compression/compression-handler';
+import { ValidationError } from '../../../../../errors/types';
+import { CompressedFile } from '../../../../../compression/compression-handler';
+import { CoordinateSystemManager } from '../../../../../coordinate-systems/coordinate-system-manager';
 
 /**
  * Processor for Shapefile files
@@ -112,6 +113,32 @@ export class ShapefileProcessor extends StreamProcessor {
         ));
       });
 
+      // Determine coordinate system
+      let coordinateSystem = this.options.coordinateSystem;
+      
+      if (!coordinateSystem && result.coordinateSystem) {
+        try {
+          // Try to validate the coordinate system from .prj file
+          const manager = CoordinateSystemManager.getInstance();
+          const isValid = await manager.validateSystem(result.coordinateSystem);
+          
+          if (isValid) {
+            coordinateSystem = result.coordinateSystem;
+            console.debug('[ShapefileProcessor] Using coordinate system from .prj:', coordinateSystem);
+          } else {
+            console.warn('[ShapefileProcessor] Invalid coordinate system in .prj:', result.coordinateSystem);
+          }
+        } catch (error) {
+          console.warn('[ShapefileProcessor] Failed to validate coordinate system:', error);
+        }
+      }
+
+      // Fall back to WGS84 if no valid coordinate system found
+      if (!coordinateSystem) {
+        coordinateSystem = 'EPSG:4326';
+        console.debug('[ShapefileProcessor] Falling back to WGS84');
+      }
+
       // Convert preview records to features
       const previewFeatures = await this.parser.parseFeatures(file, {
         parseDbf: (this.options as ShapefileProcessorOptions).importAttributes,
@@ -130,7 +157,7 @@ export class ShapefileProcessor extends StreamProcessor {
 
       return {
         layers: this.layers,
-        coordinateSystem: this.options.coordinateSystem,
+        coordinateSystem,
         bounds,
         preview: {
           type: 'FeatureCollection',

@@ -1,5 +1,5 @@
 import { Feature } from 'geojson';
-import { CoordinateSystem } from '../../../types/coordinates';
+import { CoordinateSystemManager } from '../../../core/coordinate-systems/coordinate-system-manager';
 
 export class CoordinateSystemService {
   private static instance: CoordinateSystemService;
@@ -21,8 +21,8 @@ export class CoordinateSystemService {
    */
   async transform(
     features: Feature[],
-    from: CoordinateSystem,
-    to: CoordinateSystem
+    from: CoordinateSystemManager,
+    to: CoordinateSystemManager
   ): Promise<Feature[]> {
     if (from === to) {
       return features;
@@ -48,7 +48,7 @@ export class CoordinateSystemService {
   /**
    * Attempt to detect the coordinate system of features
    */
-  async detect(features: Feature[]): Promise<CoordinateSystem | undefined> {
+  async detect(features: Feature[]): Promise<CoordinateSystemManager | undefined> {
     try {
       // Implement coordinate system detection
       return undefined;
@@ -59,8 +59,8 @@ export class CoordinateSystemService {
   }
 
   private async getTransformer(
-    from: CoordinateSystem,
-    to: CoordinateSystem
+    from: CoordinateSystemManager,
+    to: CoordinateSystemManager
   ): Promise<Function> {
     const key = `${from}->${to}`;
     if (!this.transformCache.has(key)) {

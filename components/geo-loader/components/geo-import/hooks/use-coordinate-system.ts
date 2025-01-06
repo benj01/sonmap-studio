@@ -4,7 +4,7 @@ import { GeoLoaderError } from '../../../core/errors/types';
 import { AnalyzeResult } from '../../../core/processors/base/types';
 import { ProcessorOptions } from '../../../core/processors/base/types';
 import { PreviewManager } from '../../../preview/preview-manager';
-import { coordinateSystemManager } from '../../../core/coordinate-system-manager';
+import { CoordinateSystemManager } from '../../../core/coordinate-systems/coordinate-system-manager';
 
 interface CoordinateSystemHookProps {
   onWarning: (message: string) => void;
@@ -34,9 +34,9 @@ export function useCoordinateSystem({
   // Initialize coordinate system manager on mount
   useEffect(() => {
     const initializeManager = async () => {
-      if (!coordinateSystemManager.isInitialized()) {
+      if (!CoordinateSystemManager.isInitialized()) {
         try {
-          await coordinateSystemManager.initialize();
+          await CoordinateSystemManager.initialize();
         } catch (error) {
           console.error('Failed to initialize coordinate system manager:', error);
           onError(`Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`);
@@ -155,11 +155,11 @@ export function useCoordinateSystem({
       console.debug('[DEBUG] Initializing coordinate system:', system);
       
       // First validate the system with the manager
-      if (!coordinateSystemManager.isInitialized()) {
-        await coordinateSystemManager.initialize();
+      if (!CoordinateSystemManager.isInitialized()) {
+        await CoordinateSystemManager.initialize();
       }
       
-      const supported = coordinateSystemManager.getSupportedSystems().includes(system);
+      const supported = CoordinateSystemManager.getSupportedSystems().includes(system);
       if (!supported) {
         console.warn('[DEBUG] Detected system not supported:', system);
         onWarning(`Detected coordinate system ${system} is not supported, using WGS84`);

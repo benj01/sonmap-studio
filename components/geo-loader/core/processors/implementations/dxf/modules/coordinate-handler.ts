@@ -1,5 +1,5 @@
 import { CoordinateSystem } from '../../../../../types/coordinates';
-import { coordinateSystemManager } from '../../../../coordinate-system-manager';
+import { CoordinateSystemManager } from '../../../../coordinate-systems/coordinate-system-manager';
 import { DxfEntity } from '../types';
 import { DxfTransformer } from './transformer';
 import { DxfEntityProcessor } from './entity-processor';
@@ -17,13 +17,13 @@ export class DxfCoordinateHandler {
    * Initialize and verify coordinate system manager
    */
   static async initializeCoordinateSystem(sourceSystem: CoordinateSystem): Promise<void> {
-    if (!coordinateSystemManager.isInitialized()) {
+    if (!CoordinateSystemManager.isInitialized()) {
       console.debug('[DEBUG] Initializing coordinate system manager');
-      await coordinateSystemManager.initialize();
+      await CoordinateSystemManager.initialize();
 
       // Verify transformation with test point
       const testPoint = { x: 2645021, y: 1249991 };
-      const transformed = await coordinateSystemManager.transform(
+      const transformed = await CoordinateSystemManager.transform(
         testPoint,
         sourceSystem,
         'EPSG:4326'
@@ -163,14 +163,14 @@ export class DxfCoordinateHandler {
     });
 
     // Transform min point
-    const minPoint = await coordinateSystemManager.transform(
+    const minPoint = await CoordinateSystemManager.transform(
       { x: bounds.minX, y: bounds.minY },
       sourceSystem,
       'EPSG:4326'
     );
 
     // Transform max point
-    const maxPoint = await coordinateSystemManager.transform(
+    const maxPoint = await CoordinateSystemManager.transform(
       { x: bounds.maxX, y: bounds.maxY },
       sourceSystem,
       'EPSG:4326'
@@ -210,7 +210,7 @@ export class DxfCoordinateHandler {
     point: { x: number; y: number },
     system: CoordinateSystem
   ): boolean {
-    const definition = coordinateSystemManager.getSystemDefinition(system);
+    const definition = CoordinateSystemManager.getSystemDefinition(system);
     if (!definition?.bounds) return true;
 
     const { bounds } = definition;
@@ -240,6 +240,6 @@ export class DxfCoordinateHandler {
    * Get system bounds
    */
   static getSystemBounds(system: CoordinateSystem): Bounds | undefined {
-    return coordinateSystemManager.getSystemDefinition(system)?.bounds;
+    return CoordinateSystemManager.getSystemDefinition(system)?.bounds;
   }
 }

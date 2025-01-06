@@ -4,6 +4,8 @@ import { CoordinateSystem, COORDINATE_SYSTEMS } from '../../../../../types/coord
  * Common WKT projection strings and their corresponding coordinate systems
  */
 const PROJECTION_MAP: Record<string, CoordinateSystem> = {
+  'PROJCS["CH1903+_LV95"': COORDINATE_SYSTEMS.SWISS_LV95,  // Add this line
+  'CH1903+_LV95': COORDINATE_SYSTEMS.SWISS_LV95,           // Add this line
   'CH1903+': COORDINATE_SYSTEMS.SWISS_LV95,
   'CH1903': COORDINATE_SYSTEMS.SWISS_LV03,
   'EPSG:2056': COORDINATE_SYSTEMS.SWISS_LV95,
@@ -26,11 +28,10 @@ export class PrjReader {
     // Clean up content
     const normalizedContent = content.trim();
     
-    // Try exact matches first
-    for (const [key, value] of Object.entries(PROJECTION_MAP)) {
-      if (normalizedContent === key) {
-        return value;
-      }
+    // Parse WKT and check for CH1903+_LV95
+    const wktInfo = this.parseWKT(normalizedContent);
+    if (wktInfo.projection && wktInfo.projection.includes('CH1903+_LV95')) {
+      return COORDINATE_SYSTEMS.SWISS_LV95;
     }
     
     // Try partial matches
