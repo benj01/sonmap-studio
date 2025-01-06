@@ -25,7 +25,7 @@ interface S3FileUploadProps {
   onUploadComplete?: (file: UploadedFile) => void;
 }
 
-import { FILE_TYPE_CONFIGS, getFileTypeConfig, validateCompanionFiles } from '../geo-loader/core/file-type-config';
+import { FILE_TYPE_CONFIGS, getFileTypeConfig, validateCompanionFiles, getMimeType } from '../geo-loader/core/file-type-config';
 
 export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -242,11 +242,18 @@ const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
             };
           }
 
+          // Get and verify MIME type
+          const mimeType = getMimeType(group.mainFile.name);
+          console.log('Determined MIME type:', {
+            fileName: group.mainFile.name,
+            mimeType: mimeType
+          });
+
           // Notify completion with all related files
           onUploadComplete?.({
             name: group.mainFile.name,
             size: totalSize,
-            type: config.description,
+            type: mimeType,
             relatedFiles
           });
         } catch (error) {
@@ -262,10 +269,15 @@ const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
 
       for (const file of regularFiles) {
         await uploadFile(file);
+        const mimeType = getMimeType(file.name);
+        console.log('Determined MIME type for standalone file:', {
+          fileName: file.name,
+          mimeType: mimeType
+        });
         onUploadComplete?.({
           name: file.name,
           size: file.size,
-          type: file.type
+          type: mimeType
         });
         setUploadProgress((prev) => prev + (100 / regularFiles.length));
       }

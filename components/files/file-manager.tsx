@@ -31,10 +31,16 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       setIsLoading(true)
       
       // Get files with their companions using the new function
+      // Get files with companions and log raw response
       const { data: filesWithCompanions, error: filesError } = await supabase
         .rpc('get_project_files_with_companions', { project_id_param: projectId })
 
-      if (filesError) throw filesError
+      if (filesError) {
+        console.error('Error fetching files:', filesError);
+        throw filesError;
+      }
+
+      console.log('Raw database response:', filesWithCompanions);
 
       // Get imported files
       const { data: allFiles, error: importedError } = await supabase
@@ -51,6 +57,15 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       
       // First, add all main files with their companions
       ;(filesWithCompanions as FileWithCompanions[]).forEach((file) => {
+        // Log each file's details before processing
+        console.log('Processing file:', {
+          id: file.id,
+          name: file.name,
+          file_type: file.file_type,
+          is_shapefile_component: file.is_shapefile_component,
+          companion_files: file.companion_files?.length || 0
+        });
+        
         const projectFile: ProjectFile = {
           ...file,
           importedFiles: [],
@@ -104,6 +119,8 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
   const handleUploadComplete = async (uploadedFile: UploadedFile) => {
     try {
+      console.log('Handling upload complete:', uploadedFile);  // Debug log
+
       // Check if file with same name already exists
       const { data: existingFiles } = await supabase
         .from('project_files')
@@ -125,6 +142,12 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       const storagePath = `${projectId}/${uploadedFile.name}`
       
       if (uploadedFile.type === 'application/x-shapefile') {
+      console.log('Processing shapefile with details:', {
+        name: uploadedFile.name,
+        type: uploadedFile.type,
+        size: uploadedFile.size,
+        relatedFiles: uploadedFile.relatedFiles
+      });
         // For shapefiles, first insert the main file
         // Calculate main file size by subtracting companion file sizes from total
         const companionSizes = uploadedFile.relatedFiles 
@@ -132,20 +155,65 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           : 0;
         const mainFileSize = uploadedFile.size - companionSizes;
 
+        // Explicitly set the MIME type for shapefiles
+        const fileType = 'application/x-shapefile';
+        
+        // Ensure all required fields are present and correctly typed
+        const mainFileData = {
+          project_id: projectId,
+          name: uploadedFile.name,
+          size: mainFileSize,
+          file_type: fileType,
+          storage_path: storagePath,
+          is_shapefile_component: false,
+          uploaded_at: new Date().toISOString(), // Add timestamp
+          metadata: {} // Add empty metadata object
+        };
+        
+        console.log('Inserting main file with data:', mainFileData);
+
+        // Log the exact data we're sending to the database
+        console.log('Attempting to insert main file with exact data:', JSON.stringify(mainFileData, null, 2));
+        
         const { data: mainFile, error: mainError } = await supabase
           .from('project_files')
-          .insert({
-            project_id: projectId,
-            name: uploadedFile.name,
-            size: mainFileSize,
-            file_type: uploadedFile.type,
-            storage_path: storagePath,
-            is_shapefile_component: false
-          })
+          .insert(mainFileData)
           .select()
           .single()
 
-        if (mainError) throw mainError
+        if (mainError) {
+          console.error('Error inserting main file:', {
+            error: mainError,
+            data: mainFileData
+          });
+          throw mainError;
+        }
+
+        // Verify what was actually saved
+        const { data: verifyFile, error: verifyError } = await supabase
+          .from('project_files')
+          .select('*')
+          .eq('id', mainFile.id)
+          .single()
+
+        if (verifyError) {
+          console.error('Error verifying saved file:', verifyError);
+        } else {
+          console.log('Verified saved file data:', {
+            id: verifyFile.id,
+            name: verifyFile.name,
+            file_type: verifyFile.file_type,
+            is_shapefile_component: verifyFile.is_shapefile_component
+          });
+        }
+
+        console.log('Main file inserted successfully:', {
+          id: mainFile.id,
+          name: mainFile.name,
+          file_type: mainFile.file_type  // Log the file_type from the database response
+        });
+
+        console.log('Main file inserted:', mainFile);  // Debug log
 
         // Then insert companion files with their correct sizes
         if (uploadedFile.relatedFiles) {
@@ -157,8 +225,12 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
             storage_path: file.path,
             is_shapefile_component: true,
             main_file_id: mainFile.id,
-            component_type: ext.substring(1) // Remove the dot from extension
+            component_type: ext.substring(1), // Remove the dot from extension
+            uploaded_at: new Date().toISOString(), // Add timestamp
+            metadata: {} // Add empty metadata object
           }))
+
+          console.log('Inserting companion files:', companions);  // Debug log
 
           const { error: companionsError } = await supabase
             .from('project_files')
@@ -168,16 +240,22 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         }
       } else {
         // For non-shapefiles, just insert the single file
+        const fileData = {
+          project_id: projectId,
+          name: uploadedFile.name,
+          size: uploadedFile.size,
+          file_type: uploadedFile.type,
+          storage_path: storagePath,
+          is_shapefile_component: false,
+          uploaded_at: new Date().toISOString(),
+          metadata: {}
+        };
+
+        console.log('Inserting single file with data:', JSON.stringify(fileData, null, 2));
+
         const { error: fileError } = await supabase
           .from('project_files')
-          .insert({
-            project_id: projectId,
-            name: uploadedFile.name,
-            size: uploadedFile.size,
-            file_type: uploadedFile.type,
-            storage_path: storagePath,
-            is_shapefile_component: false
-          })
+          .insert(fileData)
 
         if (fileError) throw fileError
       }
@@ -256,7 +334,10 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           storage_path: storagePath,
           source_file_id: sourceFile.id,
           is_imported: true,
-          import_metadata: importMetadata
+          import_metadata: importMetadata,
+          uploaded_at: new Date().toISOString(),
+          metadata: {},
+          is_shapefile_component: false
         })
         .select()
         .single()

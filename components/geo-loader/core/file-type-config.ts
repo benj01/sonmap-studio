@@ -117,9 +117,47 @@ export const FILE_TYPE_CONFIGS: { [key: string]: FileTypeConfig } = {
 
 export function getFileTypeConfig(fileName: string): FileTypeConfig | undefined {
   const extension = fileName.substring(fileName.lastIndexOf('.')).toLowerCase();
-  return Object.values(FILE_TYPE_CONFIGS).find(config => 
-    config.mainExtension === extension
+  console.log('getFileTypeConfig:', {
+    fileName,
+    extension,
+    availableConfigs: Object.values(FILE_TYPE_CONFIGS).map(c => c.mainExtension)
+  });
+  
+  const config = Object.values(FILE_TYPE_CONFIGS).find(config => 
+    config.mainExtension.toLowerCase() === extension
   );
+  
+  console.log('Found config:', config);
+  return config;
+}
+
+export function getMimeType(fileName: string): string {
+  console.log('getMimeType called with:', fileName);
+  
+  const config = getFileTypeConfig(fileName);
+  console.log('getFileTypeConfig returned:', config);
+  
+  if (!config) {
+    console.log('No config found, returning application/octet-stream');
+    return 'application/octet-stream';
+  }
+
+  // Map file types to MIME types
+  const extension = config.mainExtension.toLowerCase();  // Ensure case-insensitive comparison
+  console.log('Checking extension:', extension);
+  
+  switch (extension) {
+    case '.shp':
+      console.log('Shapefile detected, returning application/x-shapefile');
+      return 'application/x-shapefile';
+    case '.dxf':
+      return 'application/dxf';
+    case '.csv':
+      return 'text/csv';
+    default:
+      console.log('Unknown file type:', fileName, extension);
+      return 'application/octet-stream';
+  }
 }
 
 export function validateCompanionFiles(
