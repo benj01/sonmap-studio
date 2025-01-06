@@ -170,7 +170,17 @@ export function validateCompanionFiles(
   message?: string;
 } {
   const config = getFileTypeConfig(mainFile.name);
+  console.log('Validating companion files:', {
+    mainFile: mainFile.name,
+    companionFiles: companionFiles.map(f => f.name),
+    config: config ? {
+      mainExtension: config.mainExtension,
+      companionFiles: config.companionFiles
+    } : null
+  });
+
   if (!config) {
+    console.log('No config found for file type');
     return {
       valid: true,
       groupedFiles: {},
@@ -181,25 +191,53 @@ export function validateCompanionFiles(
   const groupedFiles: { [key: string]: File } = {};
   const baseName = mainFile.name.substring(0, mainFile.name.lastIndexOf('.'));
 
+  console.log('Processing files with base name:', baseName);
+
   // Group companion files by extension
   companionFiles.forEach(file => {
     const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
     const fileBaseName = file.name.substring(0, file.name.lastIndexOf('.'));
     
+    // Ensure extension starts with a dot for comparison
+    const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`;
+    
+    console.log('Checking companion file:', {
+      file: file.name,
+      ext: normalizedExt,
+      fileBaseName,
+      isBaseNameMatch: fileBaseName.toLowerCase() === baseName.toLowerCase(),
+      isValidExtension: config.companionFiles.some(comp => comp.extension === normalizedExt),
+      availableExtensions: config.companionFiles.map(comp => comp.extension)
+    });
+    
     // Only include files that match the base name and are valid companion extensions
     if (fileBaseName.toLowerCase() === baseName.toLowerCase() && 
-        config.companionFiles.some(comp => comp.extension === ext)) {
-      groupedFiles[ext] = file;
+        config.companionFiles.some(comp => comp.extension === normalizedExt)) {
+      console.log('Adding companion file:', file.name);
+      groupedFiles[normalizedExt] = file;
     }
   });
 
+  console.log('Grouped files:', Object.keys(groupedFiles));
+
   // Check for missing required files
   const missingRequired = config.companionFiles
-    .filter(comp => comp.required && !groupedFiles[comp.extension])
+    .filter(comp => {
+      const hasFile = !!groupedFiles[comp.extension];
+      console.log('Checking required file:', {
+        extension: comp.extension,
+        required: comp.required,
+        hasFile
+      });
+      return comp.required && !hasFile;
+    })
     .map(comp => comp.extension);
+
+  console.log('Missing required files:', missingRequired);
 
   // Use custom validation if available
   if (config.validateCompanions) {
+    console.log('Using custom validation');
     const relatedFiles: { [key: string]: RelatedFile } = {};
     Object.entries(groupedFiles).forEach(([ext, file]) => {
       relatedFiles[ext] = {
@@ -210,6 +248,7 @@ export function validateCompanionFiles(
     });
     
     const validation = config.validateCompanions(relatedFiles);
+    console.log('Custom validation result:', validation);
     return {
       valid: validation.valid,
       groupedFiles,

@@ -21,7 +21,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showImportLog, setShowImportLog] = useState(false)
-  const [importLogs, setImportLogs] = useState<Array<{
+  const [logs, setLogs] = useState<Array<{
     type: 'info' | 'error' | 'success';
     message: string;
     timestamp: Date;
@@ -124,9 +124,18 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
     }
   }
 
-  const handleUploadComplete = async (uploadedFile: UploadedFile) => {
+const handleUploadComplete = async (uploadedFile: UploadedFile) => {
+    setLogs([])
+    setShowImportLog(true)
+    
+    const addLog = (type: 'info' | 'error' | 'success', message: string) => {
+      setLogs(logs => [...logs, { type, message, timestamp: new Date() }])
+    }
+
+    addLog('info', `Starting upload of ${uploadedFile.name}`)
+    
     try {
-      console.log('Handling upload complete:', uploadedFile);  // Debug log
+      console.log('Handling upload complete:', uploadedFile);
 
       // Check if file with same name already exists
       const { data: existingFiles } = await supabase
@@ -149,23 +158,24 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       const storagePath = `${projectId}/${uploadedFile.name}`
       
       if (uploadedFile.type === 'application/x-shapefile') {
-      console.log('Processing shapefile with details:', {
-        name: uploadedFile.name,
-        type: uploadedFile.type,
-        size: uploadedFile.size,
-        relatedFiles: uploadedFile.relatedFiles
-      });
+        addLog('info', 'Processing shapefile and companion files...')
+        console.log('Processing shapefile with details:', {
+          name: uploadedFile.name,
+          type: uploadedFile.type,
+          size: uploadedFile.size,
+          relatedFiles: uploadedFile.relatedFiles
+        });
+
         // For shapefiles, first insert the main file
-        // Calculate main file size by subtracting companion file sizes from total
         const companionSizes = uploadedFile.relatedFiles 
           ? Object.values(uploadedFile.relatedFiles).reduce((sum, file) => sum + file.size, 0)
           : 0;
         const mainFileSize = uploadedFile.size - companionSizes;
 
-        // Explicitly set the MIME type for shapefiles
         const fileType = 'application/x-shapefile';
         
-        // Ensure all required fields are present and correctly typed
+        addLog('info', 'Processing main shapefile...')
+        
         const mainFileData = {
           project_id: projectId,
           name: uploadedFile.name,
@@ -173,13 +183,11 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           file_type: fileType,
           storage_path: storagePath,
           is_shapefile_component: false,
-          uploaded_at: new Date().toISOString(), // Add timestamp
-          metadata: {} // Add empty metadata object
+          uploaded_at: new Date().toISOString(),
+          metadata: {}
         };
         
-        console.log('Inserting main file with data:', mainFileData);
-
-        // Log the exact data we're sending to the database
+        addLog('info', 'Saving main file to database...')
         console.log('Attempting to insert main file with exact data:', JSON.stringify(mainFileData, null, 2));
         
         const { data: mainFile, error: mainError } = await supabase
@@ -193,8 +201,10 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
             error: mainError,
             data: mainFileData
           });
+          addLog('error', `Failed to save main file: ${mainError.message}`)
           throw mainError;
         }
+        addLog('success', 'Main file saved successfully')
 
         // Verify what was actually saved
         const { data: verifyFile, error: verifyError } = await supabase
@@ -214,36 +224,89 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           });
         }
 
-        console.log('Main file inserted successfully:', {
-          id: mainFile.id,
-          name: mainFile.name,
-          file_type: mainFile.file_type  // Log the file_type from the database response
-        });
-
-        console.log('Main file inserted:', mainFile);  // Debug log
-
-        // Then insert companion files with their correct sizes
+        // Then insert companion files
         if (uploadedFile.relatedFiles) {
-          const companions = Object.entries(uploadedFile.relatedFiles).map(([ext, file]) => ({
-            project_id: projectId,
-            name: file.name,
-            size: file.size,
-            file_type: 'application/octet-stream',
-            storage_path: file.path,
-            is_shapefile_component: true,
-            main_file_id: mainFile.id,
-            component_type: ext.substring(1), // Remove the dot from extension
-            uploaded_at: new Date().toISOString(), // Add timestamp
-            metadata: {} // Add empty metadata object
-          }))
+          const companionCount = Object.keys(uploadedFile.relatedFiles).length;
+          addLog('info', `Processing ${companionCount} companion files...`);
+          console.log('Processing companion files:', uploadedFile.relatedFiles);
 
-          console.log('Inserting companion files:', companions);  // Debug log
+          // Function to map file extension to valid component type
+          const getComponentType = (ext: string): string | null => {
+            const normalized = ext.toLowerCase().replace(/^\./, '');
+            const validTypes = ['shp', 'shx', 'dbf', 'prj'];
+            return validTypes.includes(normalized) ? normalized : null;
+          };
 
-          const { error: companionsError } = await supabase
-            .from('project_files')
-            .insert(companions)
+          // Create companion records with valid component types
+          const companions = Object.entries(uploadedFile.relatedFiles)
+            .map(([ext, file]) => {
+              const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`;
+              const componentType = getComponentType(normalizedExt);
+              
+              if (!componentType) {
+                console.warn(`Skipping invalid component type for extension: ${normalizedExt}`);
+                return null;
+              }
 
-          if (companionsError) throw companionsError
+              addLog('info', `Processing companion file: ${file.name} (${componentType})`);
+              
+              const companion = {
+                project_id: projectId,
+                name: file.name,
+                size: file.size,
+                file_type: 'application/octet-stream',
+                storage_path: file.path,
+                is_shapefile_component: true,
+                main_file_id: mainFile.id,
+                component_type: componentType,
+                uploaded_at: new Date().toISOString(),
+                metadata: {}
+              };
+              
+              console.log('Created companion record:', companion);
+              return companion;
+            })
+            .filter((companion): companion is NonNullable<typeof companion> => companion !== null);
+
+          console.log('Inserting companion files:', companions);
+
+          if (companions.length > 0) {
+            const { data: companionFiles, error: companionsError } = await supabase
+              .from('project_files')
+              .insert(companions)
+              .select('*');
+
+            console.log('Companion files insert result:', {
+              success: !companionsError,
+              error: companionsError,
+              insertedFiles: companionFiles
+            });
+
+            if (companionsError) {
+              addLog('error', `Failed to save companion files: ${companionsError.message}`)
+              throw companionsError
+            }
+
+            // Update the main file with companion files for immediate UI update
+            const mainFileWithCompanions = {
+              ...mainFile,
+              companion_files: companionFiles
+            };
+            
+            // Update files state to include companion files
+            setFiles(prevFiles => {
+              const updatedFiles = [...prevFiles];
+              const mainFileIndex = updatedFiles.findIndex(f => f.id === mainFile.id);
+              if (mainFileIndex !== -1) {
+                updatedFiles[mainFileIndex] = mainFileWithCompanions;
+              } else {
+                updatedFiles.push(mainFileWithCompanions);
+              }
+              return updatedFiles;
+            });
+          }
+
+          addLog('success', 'All companion files processed successfully')
         }
       } else {
         // For non-shapefiles, just insert the single file
@@ -268,8 +331,10 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       }
 
       // Refresh files list to get the complete structure
+      addLog('info', 'Refreshing file list...')
       await loadFiles()
       await refreshProjectStorage()
+      addLog('success', 'Upload completed successfully')
 
       toast({
         title: 'Success',
@@ -279,6 +344,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       })
     } catch (error) {
       console.error('Error saving file:', error)
+      addLog('error', `Upload failed: ${error instanceof Error ? error.message : String(error)}`)
       toast({
         title: 'Error',
         description: 'Failed to save file to the database',
@@ -288,11 +354,11 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   }
 
   const handleImport = async (result: LoaderResult, sourceFile: ProjectFile) => {
-    setImportLogs([])
+    setLogs([])
     setShowImportLog(true)
     
     const addLog = (type: 'info' | 'error' | 'success', message: string) => {
-      setImportLogs(logs => [...logs, { type, message, timestamp: new Date() }])
+      setLogs(prevLogs => [...prevLogs, { type, message, timestamp: new Date() }])
     }
 
     try {
@@ -546,7 +612,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
     <ImportLogDialog 
       open={showImportLog}
       onOpenChange={setShowImportLog}
-      logs={importLogs}
+      logs={logs}
     />
     </>
   )
