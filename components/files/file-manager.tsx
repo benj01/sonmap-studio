@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from 'components/ui/card'
 import { Button } from 'components/ui/button'
-import { List, Grid } from 'lucide-react'
+import { List, Grid, FileIcon } from 'lucide-react'
 import { useToast } from 'components/ui/use-toast'
 import { S3FileUpload } from './s3-file-upload'
 import { FileItem } from './file-item'
@@ -9,6 +9,7 @@ import { createClient } from 'utils/supabase/client'
 import { LoaderResult, ImportMetadata } from 'types/geo'
 import { COORDINATE_SYSTEMS } from '../geo-loader/types/coordinates'
 import { ProjectFile, UploadedFile, FileWithCompanions, ProjectFileBase } from './types'
+import { ImportLogDialog } from './import-log-dialog'
 
 interface FileManagerProps {
   projectId: string
@@ -19,6 +20,12 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid')
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [showImportLog, setShowImportLog] = useState(false)
+  const [importLogs, setImportLogs] = useState<Array<{
+    type: 'info' | 'error' | 'success';
+    message: string;
+    timestamp: Date;
+  }>>([])
   const { toast } = useToast()
   const supabase = createClient()
 
@@ -281,26 +288,42 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   }
 
   const handleImport = async (result: LoaderResult, sourceFile: ProjectFile) => {
+    setImportLogs([])
+    setShowImportLog(true)
+    
+    const addLog = (type: 'info' | 'error' | 'success', message: string) => {
+      setImportLogs(logs => [...logs, { type, message, timestamp: new Date() }])
+    }
+
     try {
+      addLog('info', `Starting import of ${sourceFile.name}`)
       // Create GeoJSON file from import result
+      addLog('info', 'Converting to GeoJSON format...')
       const geoJsonContent = JSON.stringify({
         type: 'FeatureCollection',
         features: result.features
       })
+      addLog('success', `Successfully converted ${result.features.length} features to GeoJSON`)
 
       // Create a Blob and File from the GeoJSON content
       const blob = new Blob([geoJsonContent], { type: 'application/geo+json' })
       const geoJsonFile = new File([blob], `${sourceFile.name}.geojson`, { type: 'application/geo+json' })
 
       // Upload GeoJSON file to storage
+      addLog('info', 'Uploading converted file...')
       const storagePath = `${projectId}/imported/${geoJsonFile.name}`
       const { error: uploadError } = await supabase.storage
         .from('project-files')
         .upload(storagePath, geoJsonFile)
 
-      if (uploadError) throw uploadError
+      if (uploadError) {
+        addLog('error', `Upload failed: ${uploadError.message}`)
+        throw uploadError
+      }
+      addLog('success', 'File uploaded successfully')
 
       // Create import metadata
+      addLog('info', 'Processing import metadata...')
       const importMetadata: ImportMetadata = {
         sourceFile: {
           id: sourceFile.id,
@@ -324,6 +347,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       }
 
       // Save imported file record
+      addLog('info', 'Saving import record...')
       const { data: importedFile, error: dbError } = await supabase
         .from('project_files')
         .insert({
@@ -342,7 +366,11 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         .select()
         .single()
 
-      if (dbError) throw dbError
+      if (dbError) {
+        addLog('error', `Database error: ${dbError.message}`)
+        throw dbError
+      }
+      addLog('success', 'Import record saved successfully')
 
       // Update local state
       setFiles(prevFiles => {
@@ -365,12 +393,14 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         onGeoImport(result, importedFile)
       }
 
+      addLog('success', 'Import completed successfully')
       toast({
         title: 'Success',
         description: 'File imported and converted to GeoJSON successfully',
       })
     } catch (error) {
       console.error('Import error:', error)
+      addLog('error', `Import failed: ${error instanceof Error ? error.message : String(error)}`)
       toast({
         title: 'Error',
         description: 'Failed to import and convert file',
@@ -430,6 +460,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
   }
 
   return (
+    <>
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
@@ -477,17 +508,46 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         ) : (
           <div className={viewMode === 'grid' ? 'grid grid-cols-4 gap-4' : 'space-y-2'}>
             {files.map(file => (
-              <FileItem
-                key={file.id}
-                file={file}
-                viewMode={viewMode}
-                onDelete={handleDeleteFile}
-                onImport={(result) => handleImport(result, file)}
-              />
+                <div key={file.id} className={viewMode === 'grid' ? 'flex flex-col' : ''}>
+                  <FileItem
+                    file={file}
+                    viewMode={viewMode}
+                    onDelete={handleDeleteFile}
+                    onImport={(result) => handleImport(result, file)}
+                  />
+                  {file.companion_files && file.companion_files.length > 0 && (
+                    <div className={`
+                      ${viewMode === 'grid' ? 'mt-2 pl-4' : 'ml-8 mt-1'}
+                      space-y-1 border-l-2 border-muted pl-2
+                    `}>
+                      {file.companion_files.map(companion => (
+                        <div 
+                          key={companion.id}
+                          className="flex items-center gap-2 text-sm text-muted-foreground"
+                        >
+                          <FileIcon className="h-4 w-4" />
+                          <span className="font-mono">{companion.name}</span>
+                          <span className="text-xs">
+                            ({Math.round(companion.size / 1024)} KB)
+                          </span>
+                          <span className="text-xs bg-muted px-2 py-0.5 rounded">
+                            {companion.component_type?.toUpperCase()}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
             ))}
           </div>
         )}
       </CardContent>
     </Card>
+    <ImportLogDialog 
+      open={showImportLog}
+      onOpenChange={setShowImportLog}
+      logs={importLogs}
+    />
+    </>
   )
 }

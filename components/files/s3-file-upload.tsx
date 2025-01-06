@@ -354,16 +354,33 @@ const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
           <div className="py-4">
             {Object.entries(fileGroups).map(([baseName, group]) => (
               <div key={baseName} className="mb-4">
-                <div className="flex items-center gap-2 mb-2">
-                  {validationStatus[baseName]?.valid ? (
-                    <CheckCircle2 className="h-5 w-5 text-green-500" />
-                  ) : (
-                    <AlertCircle className="h-5 w-5 text-yellow-500" />
-                  )}
-                  <h3 className="font-medium">{baseName}</h3>
-                  <span className="text-sm text-muted-foreground">
-                    ({getFileTypeConfig(group.mainFile.name)?.description || 'File'})
-                  </span>
+                <div className="mb-4 p-3 bg-muted rounded-lg">
+                  <div className="flex items-center gap-2 mb-2">
+                    {validationStatus[baseName]?.valid ? (
+                      <CheckCircle2 className="h-5 w-5 text-green-500" />
+                    ) : (
+                      <AlertCircle className="h-5 w-5 text-yellow-500" />
+                    )}
+                    <h3 className="font-medium">{baseName}</h3>
+                    <span className="text-sm text-muted-foreground">
+                      ({getFileTypeConfig(group.mainFile.name)?.description || 'File'})
+                    </span>
+                  </div>
+                  
+                  {/* Show companion file requirements */}
+                  {(() => {
+                    const config = getFileTypeConfig(group.mainFile.name);
+                    const requiredFiles = config?.companionFiles
+                      ?.filter(comp => comp.required)
+                      ?.map(comp => comp.extension)
+                      ?.join(', ');
+                    
+                    return config?.companionFiles?.length ? (
+                      <div className="text-xs text-muted-foreground mb-2">
+                        Required files: {requiredFiles || 'None'}
+                      </div>
+                    ) : null;
+                  })()}
                 </div>
                 
                 {!validationStatus[baseName]?.valid && (
@@ -375,14 +392,33 @@ const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
                   </Alert>
                 )}
                 
-                <div className="pl-7 space-y-2 text-sm text-muted-foreground">
-                  {[group.mainFile, ...group.companions].map(file => (
-                    <div key={file.name} className="flex items-center gap-2">
-                      <FileIcon className="h-4 w-4" />
-                      <span className="font-mono">{file.name}</span>
-                      <span className="text-xs">({Math.round(file.size / 1024)} KB)</span>
-                    </div>
-                  ))}
+                <div className="pl-7 space-y-2 text-sm">
+                  {/* Main file */}
+                  <div className="flex items-center gap-2 text-primary">
+                    <FileIcon className="h-4 w-4" />
+                    <span className="font-mono font-medium">{group.mainFile.name}</span>
+                    <span className="text-xs text-muted-foreground">({Math.round(group.mainFile.size / 1024)} KB)</span>
+                    <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded">Main File</span>
+                  </div>
+                  
+                  {/* Companion files */}
+                  {group.companions.map(file => {
+                    const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
+                    const config = getFileTypeConfig(group.mainFile.name);
+                    const companionInfo = config?.companionFiles.find(comp => comp.extension === ext);
+                    
+                    return (
+                      <div key={file.name} className="flex items-center gap-2 text-muted-foreground">
+                        <FileIcon className="h-4 w-4" />
+                        <span className="font-mono">{file.name}</span>
+                        <span className="text-xs">({Math.round(file.size / 1024)} KB)</span>
+                        <span className="text-xs bg-muted px-2 py-0.5 rounded">
+                          {companionInfo?.description || 'Companion File'}
+                          {companionInfo?.required && ' (Required)'}
+                        </span>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             ))}
