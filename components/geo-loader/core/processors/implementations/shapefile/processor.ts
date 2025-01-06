@@ -25,21 +25,16 @@ export class ShapefileProcessor extends StreamProcessor {
    * Get bounds for a specific feature
    */
   protected getFeatureBounds(feature: Feature): ProcessorResult['bounds'] {
-    if (!feature.geometry) {
-      return {
-        minX: Infinity,
-        minY: Infinity,
-        maxX: -Infinity,
-        maxY: -Infinity
-      };
-    }
-    
     const bounds = {
       minX: Infinity,
       minY: Infinity,
       maxX: -Infinity,
       maxY: -Infinity
     };
+
+    if (!feature.geometry) {
+      return bounds;
+    }
 
     if (feature.geometry.type === 'Point') {
       const coords = feature.geometry.coordinates as Position;
@@ -276,28 +271,31 @@ export class ShapefileProcessor extends StreamProcessor {
    */
   private updateBounds(features: Feature[]): void {
     features.forEach(feature => {
-      if (feature.geometry.type === 'Point') {
-        const coords = feature.geometry.coordinates as Position;
-        this.bounds.minX = Math.min(this.bounds.minX, coords[0] as number);
-        this.bounds.minY = Math.min(this.bounds.minY, coords[1] as number);
-        this.bounds.maxX = Math.max(this.bounds.maxX, coords[0] as number);
-        this.bounds.maxY = Math.max(this.bounds.maxY, coords[1] as number);
-      } else if (feature.geometry.type === 'LineString') {
-        (feature.geometry.coordinates as Position[]).forEach(coords => {
-          this.bounds.minX = Math.min(this.bounds.minX, coords[0] as number);
-          this.bounds.minY = Math.min(this.bounds.minY, coords[1] as number);
-          this.bounds.maxX = Math.max(this.bounds.maxX, coords[0] as number);
-          this.bounds.maxY = Math.max(this.bounds.maxY, coords[1] as number);
-        });
-      } else if (feature.geometry.type === 'Polygon') {
-        (feature.geometry.coordinates as Position[][]).forEach(ring => {
-          ring.forEach(coords => {
-            this.bounds.minX = Math.min(this.bounds.minX, coords[0] as number);
-            this.bounds.minY = Math.min(this.bounds.minY, coords[1] as number);
-            this.bounds.maxX = Math.max(this.bounds.maxX, coords[0] as number);
-            this.bounds.maxY = Math.max(this.bounds.maxY, coords[1] as number);
+      if (!feature.geometry) return;
+
+      const updateCoords = (coords: Position) => {
+        if (!this.bounds) return;
+        const [x, y] = coords;
+        if (typeof x === 'number' && typeof y === 'number') {
+          this.bounds.minX = Math.min(this.bounds.minX, x);
+          this.bounds.minY = Math.min(this.bounds.minY, y);
+          this.bounds.maxX = Math.max(this.bounds.maxX, x);
+          this.bounds.maxY = Math.max(this.bounds.maxY, y);
+        }
+      };
+
+      switch (feature.geometry.type) {
+        case 'Point':
+          updateCoords(feature.geometry.coordinates as Position);
+          break;
+        case 'LineString':
+          (feature.geometry.coordinates as Position[]).forEach(updateCoords);
+          break;
+        case 'Polygon':
+          (feature.geometry.coordinates as Position[][]).forEach(ring => {
+            ring.forEach(updateCoords);
           });
-        });
+          break;
       }
     });
   }

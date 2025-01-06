@@ -3,16 +3,12 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from 'compo
 import { Button } from 'components/ui/button'
 import { List, Grid } from 'lucide-react'
 import { useToast } from 'components/ui/use-toast'
-import { Database } from 'types/supabase'
 import { S3FileUpload } from './s3-file-upload'
 import { FileItem } from './file-item'
 import { createClient } from 'utils/supabase/client'
 import { LoaderResult, ImportMetadata } from 'types/geo'
 import { COORDINATE_SYSTEMS } from '../geo-loader/types/coordinates'
-
-type ProjectFile = Database['public']['Tables']['project_files']['Row'] & {
-  importedFiles?: ProjectFile[]
-}
+import { ProjectFile, UploadedFile, FileWithCompanions, ProjectFileBase } from './types'
 
 interface FileManagerProps {
   projectId: string
@@ -34,30 +30,46 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
     try {
       setIsLoading(true)
       
-      // First, get all files for the project
-      const { data: allFiles, error: filesError } = await supabase
-        .from('project_files')
-        .select('*')
-        .eq('project_id', projectId)
-        .order('uploaded_at', { ascending: false })
+      // Get files with their companions using the new function
+      const { data: filesWithCompanions, error: filesError } = await supabase
+        .rpc('get_project_files_with_companions', { project_id_param: projectId })
 
       if (filesError) throw filesError
 
-      // Group imported files with their source files
-      const fileMap = new Map<string, ProjectFile & { importedFiles?: ProjectFile[] }>()
+      // Get imported files
+      const { data: allFiles, error: importedError } = await supabase
+        .from('project_files')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('is_imported', true)
+        .order('uploaded_at', { ascending: false })
+
+      if (importedError) throw importedError
+
+      // Combine companion files and imported files
+      const fileMap = new Map<string, ProjectFile>()
       
-      allFiles.forEach(file => {
-        if (file.source_file_id) {
-          // This is an imported file
-          const sourceFile = fileMap.get(file.source_file_id)
-          if (sourceFile) {
+      // First, add all main files with their companions
+      ;(filesWithCompanions as FileWithCompanions[]).forEach((file) => {
+        const projectFile: ProjectFile = {
+          ...file,
+          importedFiles: [],
+          companion_files: file.companion_files || []
+        }
+        fileMap.set(file.id, projectFile)
+      })
+
+      // Then, add imported files to their source files
+      ;(allFiles as ProjectFileBase[]).forEach((importedFile) => {
+        if (importedFile.source_file_id) {
+          const sourceFile = fileMap.get(importedFile.source_file_id)
+          if (sourceFile && !sourceFile.importedFiles?.some(f => f.id === importedFile.id)) {
             sourceFile.importedFiles = sourceFile.importedFiles || []
-            sourceFile.importedFiles.push(file)
-          }
-        } else {
-          // This is a source file
-          if (!fileMap.has(file.id)) {
-            fileMap.set(file.id, { ...file, importedFiles: [] })
+            sourceFile.importedFiles.push({
+              ...importedFile,
+              importedFiles: [],
+              companion_files: []
+            })
           }
         }
       })
@@ -90,50 +102,101 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
     }
   }
 
-  const handleUploadComplete = async (uploadedFile: { 
-    name: string
-    size: number
-    type: string
-    relatedFiles?: { [key: string]: string }
-  }) => {
+  const handleUploadComplete = async (uploadedFile: UploadedFile) => {
     try {
+      // Check if file with same name already exists
+      const { data: existingFiles } = await supabase
+        .from('project_files')
+        .select('name')
+        .eq('project_id', projectId)
+        .eq('name', uploadedFile.name)
+        .eq('is_shapefile_component', false)
+        .maybeSingle()
+
+      if (existingFiles) {
+        toast({
+          title: 'Error',
+          description: `A file named "${uploadedFile.name}" already exists. Please rename the file before uploading.`,
+          variant: 'destructive',
+        })
+        return
+      }
+
       const storagePath = `${projectId}/${uploadedFile.name}`
       
-      const { data: newFile, error } = await supabase
-        .from('project_files')
-        .insert({
-          project_id: projectId,
-          name: uploadedFile.name,
-          size: uploadedFile.size,
-          file_type: uploadedFile.type,
-          storage_path: storagePath,
-          metadata: uploadedFile.relatedFiles ? {
-            relatedFiles: uploadedFile.relatedFiles
-          } : null
-        })
-        .select()
-        .single()
+      if (uploadedFile.type === 'application/x-shapefile') {
+        // For shapefiles, first insert the main file
+        // Calculate main file size by subtracting companion file sizes from total
+        const companionSizes = uploadedFile.relatedFiles 
+          ? Object.values(uploadedFile.relatedFiles).reduce((sum, file) => sum + file.size, 0)
+          : 0;
+        const mainFileSize = uploadedFile.size - companionSizes;
 
-      if (error) throw error
+        const { data: mainFile, error: mainError } = await supabase
+          .from('project_files')
+          .insert({
+            project_id: projectId,
+            name: uploadedFile.name,
+            size: mainFileSize,
+            file_type: uploadedFile.type,
+            storage_path: storagePath,
+            is_shapefile_component: false
+          })
+          .select()
+          .single()
 
-      setFiles(prevFiles => [
-        { ...newFile, importedFiles: [] },
-        ...prevFiles
-      ])
-      
+        if (mainError) throw mainError
+
+        // Then insert companion files with their correct sizes
+        if (uploadedFile.relatedFiles) {
+          const companions = Object.entries(uploadedFile.relatedFiles).map(([ext, file]) => ({
+            project_id: projectId,
+            name: file.name,
+            size: file.size,
+            file_type: 'application/octet-stream',
+            storage_path: file.path,
+            is_shapefile_component: true,
+            main_file_id: mainFile.id,
+            component_type: ext.substring(1) // Remove the dot from extension
+          }))
+
+          const { error: companionsError } = await supabase
+            .from('project_files')
+            .insert(companions)
+
+          if (companionsError) throw companionsError
+        }
+      } else {
+        // For non-shapefiles, just insert the single file
+        const { error: fileError } = await supabase
+          .from('project_files')
+          .insert({
+            project_id: projectId,
+            name: uploadedFile.name,
+            size: uploadedFile.size,
+            file_type: uploadedFile.type,
+            storage_path: storagePath,
+            is_shapefile_component: false
+          })
+
+        if (fileError) throw fileError
+      }
+
+      // Refresh files list to get the complete structure
+      await loadFiles()
       await refreshProjectStorage()
 
       toast({
         title: 'Success',
         description: uploadedFile.relatedFiles
-          ? 'Shapefile and related components uploaded successfully'
+          ? 'Shapefile and companion files uploaded successfully'
           : 'File uploaded successfully',
       })
     } catch (error) {
-      console.error('Error uploading file:', error)
+      console.error('Error saving file:', error)
       toast({
         title: 'Error',
-        description: 'Failed to save uploaded file to the database',
+        description: 'Failed to save file to the database',
         variant: 'destructive',
       })
     }
@@ -159,7 +222,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
       if (uploadError) throw uploadError
 
-      // Create import metadata with proper coordinate system handling
+      // Create import metadata
       const importMetadata: ImportMetadata = {
         sourceFile: {
           id: sourceFile.id,
@@ -206,7 +269,11 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
           if (file.id === sourceFile.id) {
             return {
               ...file,
-              importedFiles: [...(file.importedFiles || []), importedFile]
+              importedFiles: [...(file.importedFiles || []), {
+                ...importedFile,
+                importedFiles: [],
+                companion_files: []
+              }]
             }
           }
           return file
@@ -239,24 +306,21 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         return
       }
 
-      // Get all related imported files
-      const { data: importedFiles } = await supabase
-        .rpc('get_imported_files', { source_file_id: fileId })
-
-      // Collect all storage paths to delete
+      // Get all storage paths to delete (main file + companions + imported files)
       const storagePaths = [
         fileToDelete.storage_path.replace(/^projects\//, ''),
-        ...(importedFiles || []).map((f: { storage_path: string }) => f.storage_path.replace(/^projects\//, ''))
+        ...(fileToDelete.companion_files || []).map(f => f.storage_path.replace(/^projects\//, '')),
+        ...(fileToDelete.importedFiles || []).map(f => f.storage_path.replace(/^projects\//, ''))
       ]
 
-      // Delete all files from storage
+      // Delete files from storage
       const { error: storageError } = await supabase.storage
         .from('project-files')
         .remove(storagePaths)
 
       if (storageError) throw storageError
 
-      // Delete from database (cascade will handle imported files)
+      // Delete from database (triggers will handle companions and imported files)
       const { error: dbError } = await supabase
         .from('project_files')
         .delete()
@@ -270,7 +334,7 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
 
       toast({
         title: 'Success',
-        description: 'File and related imports deleted successfully',
+        description: 'File and related files deleted successfully',
       })
     } catch (error) {
       console.error('Delete error:', error)

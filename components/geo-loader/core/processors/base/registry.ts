@@ -25,9 +25,28 @@ export class ProcessorRegistry {
     }
 
     try {
-      const processor = new ProcessorClass(options);
+      // Extract related files if available
+      const processorOptions = { ...options };
+      const relatedFiles = (file as any).relatedFiles;
+      
+      if (relatedFiles) {
+        processorOptions.relatedFiles = {
+          dbf: relatedFiles.dbf,
+          shx: relatedFiles.shx,
+          prj: relatedFiles.prj
+        };
+        console.debug('[DEBUG] Found companion files:', processorOptions.relatedFiles);
+      }
+
+      const processor = new ProcessorClass(processorOptions);
       const canProcess = await processor.canProcess(file);
-      return canProcess ? processor : null;
+      
+      if (!canProcess) {
+        console.debug('[DEBUG] Processor cannot handle file:', file.name);
+        return null;
+      }
+
+      return processor;
     } catch (error) {
       const errorReporter = options.errorReporter || createErrorReporter();
       errorReporter.addError(

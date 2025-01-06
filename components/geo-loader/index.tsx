@@ -1,8 +1,3 @@
-import { 
-  CoordinateSystemError,
-  CoordinateTransformationError,
-  InvalidCoordinateError
-} from './core/errors/types';
 import { coordinateSystemManager } from './core/coordinate-system-manager';
 import { 
   COORDINATE_SYSTEMS,
@@ -18,8 +13,10 @@ import {
   pointToPosition
 } from './types/coordinates';
 
-// Import processors synchronously
+// Import and initialize processors synchronously
 import './core/processors';
+import { ProcessorRegistry } from './core/processors/base/registry';
+console.debug('[DEBUG] Processors registered:', ProcessorRegistry.getSupportedExtensions());
 
 // Initialize coordinate systems
 const initPromise = (async () => {
@@ -82,9 +79,9 @@ export {
   pointToPosition
 };
 
-// Error and transformation utilities
-export {
-  CoordinateSystemError,
-  CoordinateTransformationError as TransformationError,
-  InvalidCoordinateError
+// Error types
+export { 
+  GeoLoaderError,
+  ValidationError,
+  ParseError
 } from './core/errors/types';

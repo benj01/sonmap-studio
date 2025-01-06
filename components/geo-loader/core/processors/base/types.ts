@@ -1,88 +1,97 @@
-import { FeatureCollection } from 'geojson';
 import { CoordinateSystem } from '../../../types/coordinates';
-import { DxfData } from '../../../utils/dxf/types';
-import { ErrorReporter } from '../../../core/errors/types';
+import { ErrorReporterImpl as ErrorReporter } from '../../../core/errors/reporter';
 
 /**
- * Options for file processing
+ * Base processor options
  */
 export interface ProcessorOptions {
-  /** Target coordinate system for output */
+  /** Target coordinate system */
   coordinateSystem?: CoordinateSystem;
-  /** Layers to include in processing */
+  /** Selected layers to process */
   selectedLayers?: string[];
-  /** Entity types to include in processing */
+  /** Selected types to process */
   selectedTypes?: string[];
-  /** Whether to import attribute data */
+  /** Whether to import attributes */
   importAttributes?: boolean;
-  /** Custom error reporter instance */
+  /** Error reporter instance */
   errorReporter?: ErrorReporter;
   /** Progress callback */
   onProgress?: (progress: number) => void;
+  /** Related files (e.g. shapefile components) */
+  relatedFiles?: {
+    /** DBF file containing attributes */
+    dbf?: File;
+    /** SHX file containing shape index */
+    shx?: File;
+    /** PRJ file containing projection info */
+    prj?: File;
+  };
 }
 
 /**
- * Statistics about processed features
+ * Processor statistics
  */
 export interface ProcessorStats {
-  /** Total number of features processed */
+  /** Total number of features */
   featureCount: number;
-  /** Number of layers found */
+  /** Number of layers */
   layerCount: number;
-  /** Count of each feature type */
+  /** Feature type counts */
   featureTypes: Record<string, number>;
-  /** Number of failed coordinate transformations */
+  /** Number of failed transformations */
   failedTransformations: number;
-  /** Processing errors by type */
+  /** Processing errors */
   errors: Array<{
-    type: string;
-    code: string;
-    message?: string;
-    count: number;
+    message: string;
     details?: Record<string, unknown>;
   }>;
 }
 
 /**
- * Result of file processing
+ * Result of processing
  */
 export interface ProcessorResult {
-  /** Processed GeoJSON features */
-  features: FeatureCollection;
-  /** Bounds of all features */
-  bounds: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-  };
-  /** Available layers */
-  layers: string[];
-  /** Coordinate system of output features */
-  coordinateSystem: CoordinateSystem;
+  /** Processed features */
+  features: any[];
   /** Processing statistics */
   statistics: ProcessorStats;
-  /** Optional DXF data for DXF processor */
-  dxfData?: DxfData;
-}
-
-/**
- * Result of file analysis
- */
-export interface AnalyzeResult {
-  /** Available layers */
-  layers: string[];
   /** Detected coordinate system */
   coordinateSystem?: CoordinateSystem;
-  /** Bounds of preview features */
+  /** Detected layers */
+  layers: string[];
+  /** Bounding box */
   bounds?: {
     minX: number;
     minY: number;
     maxX: number;
     maxY: number;
   };
-  /** Preview features */
-  preview: FeatureCollection;
-  /** Optional DXF data for DXF processor */
-  dxfData?: DxfData;
+}
+
+/**
+ * Result of file analysis
+ */
+export interface AnalyzeResult {
+  /** Detected layers */
+  layers: string[];
+  /** Detected coordinate system */
+  coordinateSystem?: CoordinateSystem;
+  /** Bounding box */
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  /** Preview data */
+  preview?: {
+    type: string;
+    features: any[];
+  };
+  /** Any issues found during analysis */
+  issues?: Array<{
+    type: string;
+    message: string;
+    details?: Record<string, unknown>;
+  }>;
 }
