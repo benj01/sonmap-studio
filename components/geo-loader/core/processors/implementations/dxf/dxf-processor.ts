@@ -2,8 +2,13 @@ import { StreamProcessor } from '../../stream/stream-processor';
 import { AnalyzeResult, ProcessorResult } from '../../base/types';
 import { ValidationError } from '../../../errors/types';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../../../types/coordinates';
-import { StreamProcessorResult } from '../../stream/types';
-import { DxfProcessorOptions, DxfPreview, DxfAnalyzeResult } from './types';
+import { StreamProcessorResult, StreamProcessorOptions } from '../../stream/types';
+import { 
+  DxfProcessorOptions, 
+  DxfProcessorBaseOptions,
+  DxfPreview, 
+  DxfAnalyzeResult 
+} from './types';
 import { PostGISFeature, PostGISFeatureCollection } from './types/postgis';
 import { DatabaseManager } from './modules/database-manager';
 import { StateManager } from './modules/state-manager';
@@ -31,20 +36,42 @@ const DEFAULT_BOUNDS: RequiredBounds = {
  * Processor for DXF files with direct PostGIS integration
  */
 export class DxfProcessor extends StreamProcessor {
-  private fileProcessor: FileProcessor;
-  private stateManager: StateManager;
+  private readonly fileProcessor: FileProcessor;
+  private readonly stateManager: StateManager;
   private dbManager: DatabaseManager | null = null;
   private lastImportResult: ProcessorResult | null = null;
+  private dxfOptions: DxfProcessorOptions;
 
   constructor(options: DxfProcessorOptions = {}) {
-    // Convert PostGISCoordinateSystem to base CoordinateSystem for super class
-    const baseOptions = {
-      ...options,
-      coordinateSystem: toBaseCoordinateSystem(options.coordinateSystem)
+    // Create base options for StreamProcessor with all required properties
+    const baseOptions: StreamProcessorOptions = {
+      // StreamProcessor specific options
+      chunkSize: options.chunkSize,
+      parallel: options.parallel,
+      maxParallel: options.maxParallel,
+      bufferSize: options.bufferSize,
+      // Base processor options
+      coordinateSystem: toBaseCoordinateSystem(options.coordinateSystem),
+      selectedLayers: options.selectedLayers,
+      selectedTypes: options.selectedTypes,
+      importAttributes: options.importAttributes,
+      errorReporter: options.errorReporter,
+      onProgress: options.onProgress,
+      relatedFiles: options.relatedFiles
     };
     super(baseOptions);
+
+    // Initialize instance properties
+    this.dxfOptions = options;
     this.fileProcessor = new FileProcessor();
     this.stateManager = new StateManager();
+  }
+
+  /**
+   * Get DXF-specific options
+   */
+  protected getDxfOptions(): DxfProcessorOptions {
+    return this.dxfOptions;
   }
 
   /**
@@ -129,33 +156,32 @@ export class DxfProcessor extends StreamProcessor {
 
     const file = files[0].data;
     const { entities, layers } = await this.fileProcessor.parseFile(file, {
-      parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
-      parseText: (this.options as DxfProcessorOptions).importText,
-      parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
-      validate: (this.options as DxfProcessorOptions).validateGeometry
+      parseBlocks: this.dxfOptions.importBlocks,
+      parseText: this.dxfOptions.importText,
+      parseDimensions: this.dxfOptions.importDimensions,
+      validate: this.dxfOptions.validateGeometry
     });
 
     if (!this.dbManager) {
       throw new ValidationError('Database client not initialized', 'IMPORT_ERROR');
     }
 
-    const options = this.options as DxfProcessorOptions;
-    const postgisSystem = toPostGISCoordinateSystem(options.coordinateSystem) || 
+    const postgisSystem = toPostGISCoordinateSystem(this.dxfOptions.coordinateSystem) || 
       createPostGISCoordinateSystem(COORDINATE_SYSTEMS.WGS84);
-    if (!options.projectFileId) {
+    if (!this.dxfOptions.projectFileId) {
       throw new ValidationError('Project file ID is required for PostGIS import', 'IMPORT_ERROR');
     }
 
     const importResult = await this.dbManager.importEntities(
-      options.projectFileId,
+      this.dxfOptions.projectFileId,
       entities,
       layers,
       {
-        validateGeometry: options.validateGeometry,
+        validateGeometry: this.dxfOptions.validateGeometry,
         transformCoordinates: true,
-        sourceSrid: options.postgis?.sourceSrid || postgisSystem.srid,
-        targetSrid: options.postgis?.targetSrid || postgisSystem.srid,
-        chunkSize: options.chunkSize || 1000
+        sourceSrid: this.dxfOptions.postgis?.sourceSrid || postgisSystem.srid,
+        targetSrid: this.dxfOptions.postgis?.targetSrid || postgisSystem.srid,
+        chunkSize: this.dxfOptions.chunkSize || 1000
       }
     );
 
@@ -167,7 +193,7 @@ export class DxfProcessor extends StreamProcessor {
     this.lastImportResult = {
       databaseResult: importResult,
       statistics: this.stateManager.getStatistics(),
-      coordinateSystem: toBaseCoordinateSystem(this.options.coordinateSystem),
+      coordinateSystem: toBaseCoordinateSystem(this.dxfOptions.coordinateSystem),
       layers,
       bounds: this.calculateBounds(),
       preview: TypeAdapter.createPreview(importResult.features)
@@ -184,36 +210,35 @@ export class DxfProcessor extends StreamProcessor {
       this.stateManager.setProcessing(true);
       
       const { entities, layers } = await this.fileProcessor.parseFile(file, {
-        parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
-        parseText: (this.options as DxfProcessorOptions).importText,
-        parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
-        validate: (this.options as DxfProcessorOptions).validateGeometry
+        parseBlocks: this.dxfOptions.importBlocks,
+        parseText: this.dxfOptions.importText,
+        parseDimensions: this.dxfOptions.importDimensions,
+        validate: this.dxfOptions.validateGeometry
       });
 
       this.stateManager.setFeatures(entities);
 
       // Process in chunks if needed
-      const options = this.options as DxfProcessorOptions;
-      const chunkSize = options.chunkSize || 1000;
-      const postgisSystem = toPostGISCoordinateSystem(options.coordinateSystem) || 
+      const chunkSize = this.dxfOptions.chunkSize || 1000;
+      const postgisSystem = toPostGISCoordinateSystem(this.dxfOptions.coordinateSystem) || 
         createPostGISCoordinateSystem(COORDINATE_SYSTEMS.WGS84);
 
       await this.fileProcessor.processInChunks(entities, chunkSize, async (chunk, index) => {
         if (!this.dbManager) return;
         
-        if (!options.projectFileId) {
+        if (!this.dxfOptions.projectFileId) {
           throw new ValidationError('Project file ID is required for PostGIS import', 'IMPORT_ERROR');
         }
 
         const { features } = await this.dbManager.importEntities(
-          options.projectFileId,
+          this.dxfOptions.projectFileId,
           chunk,
           layers,
           {
-            validateGeometry: options.validateGeometry,
+            validateGeometry: this.dxfOptions.validateGeometry,
             transformCoordinates: true,
-            sourceSrid: options.postgis?.sourceSrid || postgisSystem.srid,
-            targetSrid: options.postgis?.targetSrid || postgisSystem.srid,
+            sourceSrid: this.dxfOptions.postgis?.sourceSrid || postgisSystem.srid,
+            targetSrid: this.dxfOptions.postgis?.targetSrid || postgisSystem.srid,
             chunkSize
           }
         );
@@ -253,20 +278,65 @@ export class DxfProcessor extends StreamProcessor {
   async analyze(file: File): Promise<DxfAnalyzeResult> {
     try {
       const { structure, entities, layers } = await this.fileProcessor.parseFile(file, {
-        entityTypes: (this.options as DxfProcessorOptions).entityTypes,
-        parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
-        parseText: (this.options as DxfProcessorOptions).importText,
-        parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
-        validate: (this.options as DxfProcessorOptions).validateGeometry
+        entityTypes: this.dxfOptions.entityTypes,
+        parseBlocks: this.dxfOptions.importBlocks,
+        parseText: this.dxfOptions.importText,
+        parseDimensions: this.dxfOptions.importDimensions,
+        validate: this.dxfOptions.validateGeometry
       });
 
       const bounds = this.fileProcessor.calculateBounds(entities);
       const detection = this.fileProcessor.detectCoordinateSystem(bounds, structure);
-      const detectedSystem = detection.system ?? COORDINATE_SYSTEMS.SWISS_LV95;
+      // Ensure we have a valid coordinate system before proceeding
+      const detectedSystem = detection.system || COORDINATE_SYSTEMS.SWISS_LV95;
       const postgisSystem = createPostGISCoordinateSystem(detectedSystem);
       
-      // Store the PostGIS system for internal use
-      (this.options as DxfProcessorOptions).coordinateSystem = postgisSystem;
+      if (!postgisSystem) {
+        throw new ValidationError(
+          'Failed to create PostGIS coordinate system',
+          'COORDINATE_SYSTEM_ERROR'
+        );
+      }
+      
+      // Convert and store the coordinate system
+      const baseSystem = toBaseCoordinateSystem(postgisSystem);
+      if (!baseSystem) {
+        throw new ValidationError(
+          'Failed to convert PostGIS coordinate system to base system',
+          'COORDINATE_SYSTEM_ERROR'
+        );
+      }
+
+      // Update base StreamProcessor options with all required properties
+      const baseOptions: StreamProcessorOptions = {
+        // StreamProcessor specific options
+        chunkSize: this.options.chunkSize,
+        parallel: this.options.parallel,
+        maxParallel: this.options.maxParallel,
+        bufferSize: this.options.bufferSize,
+        // Base processor options
+        coordinateSystem: baseSystem,
+        selectedLayers: this.options.selectedLayers,
+        selectedTypes: this.options.selectedTypes,
+        importAttributes: this.options.importAttributes,
+        errorReporter: this.options.errorReporter,
+        onProgress: this.options.onProgress,
+        relatedFiles: this.options.relatedFiles
+      };
+      
+      // Update the options while preserving the prototype chain
+      Object.assign(this.options, baseOptions);
+
+      // Update DXF-specific options
+      this.dxfOptions = {
+        ...this.dxfOptions,
+        coordinateSystem: postgisSystem,
+        postgis: {
+          ...this.dxfOptions.postgis,
+          sourceSrid: postgisSystem.srid,
+          targetSrid: postgisSystem.srid
+        }
+      };
 
       // For analyze result, we can return the PostGIS system directly since
       // AnalyzeResult accepts PostGISCoordinateSystem
@@ -339,10 +409,10 @@ export class DxfProcessor extends StreamProcessor {
   async process(file: File): Promise<ProcessorResult> {
     try {
       const { structure, entities, layers } = await this.fileProcessor.parseFile(file, {
-        parseBlocks: (this.options as DxfProcessorOptions).importBlocks,
-        parseText: (this.options as DxfProcessorOptions).importText,
-        parseDimensions: (this.options as DxfProcessorOptions).importDimensions,
-        validate: (this.options as DxfProcessorOptions).validateGeometry
+        parseBlocks: this.dxfOptions.importBlocks,
+        parseText: this.dxfOptions.importText,
+        parseDimensions: this.dxfOptions.importDimensions,
+        validate: this.dxfOptions.validateGeometry
       });
 
       const bounds = this.fileProcessor.calculateBounds(entities);
@@ -374,7 +444,7 @@ export class DxfProcessor extends StreamProcessor {
           }
         },
         statistics: this.stateManager.getStatistics(),
-        coordinateSystem: this.options.coordinateSystem,
+        coordinateSystem: toBaseCoordinateSystem(this.dxfOptions.coordinateSystem),
         layers,
         bounds,
         preview

@@ -1,4 +1,5 @@
 import { ProcessorOptions, AnalyzeResult as BaseAnalyzeResult } from '../../../processors/base/types';
+import { StreamProcessorOptions } from '../../../processors/stream/types';
 import { CoordinateSystem } from '../../../../types/coordinates';
 import {
   PostGISGeometry,
@@ -10,9 +11,16 @@ import { PostGISCoordinateSystem } from './types/coordinate-system';
 export * from './types/postgis';
 
 /**
+ * Base processor options with strict coordinate system typing
+ */
+export interface DxfProcessorBaseOptions extends ProcessorOptions {
+  coordinateSystem?: CoordinateSystem;
+}
+
+/**
  * Extended processor options that support PostGIS coordinate systems
  */
-export interface DxfProcessorBaseOptions extends Omit<ProcessorOptions, 'coordinateSystem'> {
+export interface DxfProcessorExtendedOptions extends Omit<DxfProcessorBaseOptions, 'coordinateSystem'> {
   coordinateSystem?: CoordinateSystem | PostGISCoordinateSystem;
 }
 
@@ -334,9 +342,9 @@ export interface DxfStructure {
 }
 
 /**
- * DXF processor options
+ * DXF processor options combining extended DXF options and stream processing capabilities
  */
-export interface DxfProcessorOptions extends DxfProcessorBaseOptions {
+export interface DxfProcessorOptions extends DxfProcessorExtendedOptions, Omit<StreamProcessorOptions, 'coordinateSystem'> {
   /** Entity types to include */
   entityTypes?: DxfEntityType[];
   /** Whether to import block references */

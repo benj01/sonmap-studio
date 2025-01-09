@@ -10,8 +10,8 @@ import {
 } from '../types';
 import { ValidationError } from '../../../../errors/types';
 import { validateStructure } from '../utils/validation/structure-validator';
-import { EntityConverter } from './services/entity-converter';
-import { GeoJsonConverter } from './services/geo-json-converter';
+import { DxfEntityProcessor as EntityConverter } from '../modules/entity-processor';
+import { PostGISConverter as GeoJsonConverter } from '../modules/postgis-converter';
 import { toPoint3d, isValidPoint } from './utils/point-utils';
 
 /**
@@ -20,14 +20,9 @@ import { toPoint3d, isValidPoint } from './utils/point-utils';
  */
 export class DxfParserWrapper {
   private parser: any | null = null;
-  private entityConverter: EntityConverter;
-  private geoJsonConverter: GeoJsonConverter;
   private static instance: DxfParserWrapper | null = null;
 
-  private constructor() {
-    this.entityConverter = new EntityConverter();
-    this.geoJsonConverter = new GeoJsonConverter();
-  }
+  private constructor() {}
 
   /**
    * Get singleton instance of DxfParserWrapper
@@ -120,14 +115,15 @@ export class DxfParserWrapper {
       // Extract all entities (including those from blocks)
       const allEntities = [
         ...(parsedDxf.entities || []),
-        ...Object.values(parsedDxf.blocks || {}).flatMap(block => block.entities || [])
+        ...Object.values(parsedDxf.blocks || {}).flatMap((block) => (block as { entities?: any[] }).entities || [])
       ];
 
       // Convert to our structure format
+      const entities = await EntityConverter.extractEntities(parsedDxf.entities || []);
       const structure: DxfStructure = {
         layers: this.convertLayers(parsedDxf.tables?.layer || {}),
-        blocks: this.convertBlocks(parsedDxf.blocks || {}),
-        entities: this.entityConverter.convertEntities(parsedDxf.entities || []),
+        blocks: await this.convertBlocks(parsedDxf.blocks || {}),
+        entities,
         entityTypes: this.getEntityTypes(allEntities),
         extents: this.getExtents(parsedDxf.header),
         units: this.getUnits(parsedDxf.header)
@@ -206,8 +202,8 @@ export class DxfParserWrapper {
   /**
    * Convert dxf-parser blocks to our format
    */
-  private convertBlocks(blocks: Record<string, any>): DxfBlock[] {
-    return Object.entries(blocks).map(([name, block]) => {
+  private async convertBlocks(blocks: Record<string, any>): Promise<DxfBlock[]> {
+    const convertedBlocks = await Promise.all(Object.entries(blocks).map(async ([name, block]: [string, any]) => {
       const basePoint: [number, number, number] = block.position && isValidPoint(block.position) ? 
         toPoint3d(block.position) : 
         [0, 0, 0];
@@ -216,16 +212,18 @@ export class DxfParserWrapper {
         toPoint3d(block.origin) : 
         undefined;
 
+      const entities = await EntityConverter.extractEntities(block.entities || []);
       return {
         name,
         basePoint,
-        entities: this.entityConverter.convertEntities(block.entities || []),
+        entities,
         layer: typeof block.layer === 'string' ? block.layer : undefined,
         description: typeof block.description === 'string' ? block.description : undefined,
         origin,
         units: typeof block.units === 'string' ? block.units : undefined
       };
-    });
+    }));
+    return convertedBlocks;
   }
 
   /**
@@ -264,6 +262,6 @@ export class DxfParserWrapper {
    * Convert entities to GeoJSON features
    */
   async convertToFeatures(entities: DxfEntity[]): Promise<Feature[]> {
-    return this.geoJsonConverter.convertToFeatures(entities);
+    return EntityConverter.entitiesToFeatures(entities);
   }
 }
