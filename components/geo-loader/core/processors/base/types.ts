@@ -2,6 +2,32 @@ import { CoordinateSystem } from '../../../types/coordinates';
 import { ErrorReporterImpl as ErrorReporter } from '../../../core/errors/reporter';
 
 /**
+ * Result of database import operation
+ */
+export interface DatabaseImportResult {
+  /** Number of features successfully imported */
+  importedFeatures: number;
+  /** Collection ID in the database */
+  collectionId: string;
+  /** Layer IDs in the database */
+  layerIds: string[];
+  /** Failed features */
+  failedFeatures: Array<{
+    entity: any;
+    error: string;
+  }>;
+  /** Import statistics */
+  statistics: {
+    /** Time taken for import */
+    importTime: number;
+    /** Number of features validated */
+    validatedCount: number;
+    /** Number of features transformed */
+    transformedCount: number;
+  };
+}
+
+/**
  * Base processor options
  */
 export interface ProcessorOptions {
@@ -51,8 +77,8 @@ export interface ProcessorStats {
  * Result of processing
  */
 export interface ProcessorResult {
-  /** Processed features */
-  features: any[];
+  /** Database import result */
+  databaseResult: DatabaseImportResult;
   /** Processing statistics */
   statistics: ProcessorStats;
   /** Detected coordinate system */
@@ -65,6 +91,11 @@ export interface ProcessorResult {
     minY: number;
     maxX: number;
     maxY: number;
+  };
+  /** Preview data (if requested) */
+  preview?: {
+    type: string;
+    features: any[];
   };
 }
 

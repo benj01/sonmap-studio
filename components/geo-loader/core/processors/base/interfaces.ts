@@ -1,6 +1,7 @@
 import { File } from '@web-std/file';
-import { ProcessorOptions, ProcessorResult, AnalyzeResult } from './types';
+import { ProcessorOptions, ProcessorResult, AnalyzeResult, DatabaseImportResult } from './types';
 import { Feature } from 'geojson';
+import { PostGISClient } from '../../../database/client';
 
 /**
  * Core processor interface that all format processors must implement
@@ -18,12 +19,23 @@ export interface IProcessor {
   analyze(file: File): Promise<AnalyzeResult>;
 
   /**
-   * Process file and convert to GeoJSON
+   * Process file and import to database
    */
-  process(file: File): Promise<ProcessorResult>;
+  process(file: File, dbClient: PostGISClient): Promise<ProcessorResult>;
+
+  /**
+   * Import format-specific entities to database
+   */
+  importToDatabase(entities: any[], dbClient: PostGISClient): Promise<DatabaseImportResult>;
+
+  /**
+   * Validate data before import
+   */
+  validateData(entities: any[]): Promise<boolean>;
 
   /**
    * Convert format-specific entities to GeoJSON features
+   * @deprecated Use importToDatabase instead
    */
   convertToFeatures(entities: any[]): Promise<Feature[]>;
 
