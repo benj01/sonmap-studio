@@ -4,7 +4,7 @@ import { ProcessorOptions } from '../../../core/processors/base/types';
 import { CoordinateSystem } from '../../../types/coordinates';
 import { PreviewManager, createPreviewManager } from '../../../preview/preview-manager';
 import { GeoLoaderError } from '../../../core/errors/types';
-import { coordinateSystemManager } from '../../../core/coordinate-system-manager';
+import { coordinateSystemManager } from '../../../core/coordinate-systems/coordinate-system-manager';
 
 interface Warning {
   type: string;

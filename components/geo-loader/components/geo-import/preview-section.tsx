@@ -6,7 +6,7 @@ import { PreviewMap } from '../preview-map/index';
 import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
 import { ProcessorResult } from '../../core/processors/base/types';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
-import { coordinateSystemManager } from '../../core/coordinate-system-manager';
+import { coordinateSystemManager } from '../../core/coordinate-systems/coordinate-system-manager';
 
 type ExtendedProcessorResult = ProcessorResult & {
   previewManager: NonNullable<PreviewSectionProps['previewManager']>;
@@ -20,10 +20,7 @@ export function PreviewSection({
   analysis
 }: PreviewSectionProps) {
   const [preview, setPreview] = useState<ExtendedProcessorResult>({
-    features: {
-      type: 'FeatureCollection',
-      features: []
-    },
+    features: [],
     bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
     layers: [],
     statistics: {
@@ -77,9 +74,10 @@ export function PreviewSection({
         // For DXF files, default to Swiss LV95 if not specified
         let effectiveSystem = coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95;
 
-        // Verify system is supported
-        if (!coordinateSystemManager.getSupportedSystems().includes(effectiveSystem)) {
-          console.warn('[DEBUG] Unsupported coordinate system, falling back to WGS84');
+        // Verify system is valid
+        const isValid = await coordinateSystemManager.validateSystem(effectiveSystem);
+        if (!isValid) {
+          console.warn('[DEBUG] Invalid coordinate system, falling back to WGS84');
           effectiveSystem = COORDINATE_SYSTEMS.WGS84;
         }
 
@@ -116,15 +114,12 @@ export function PreviewSection({
           return;
         }
 
-        // Combine all features into one collection for the map
-        const combinedFeatures: FeatureCollection = {
-          type: 'FeatureCollection',
-          features: [
-            ...(collections.points?.features || []),
-            ...(collections.lines?.features || []),
-            ...(collections.polygons?.features || [])
-          ]
-        };
+        // Combine all features into an array
+        const combinedFeatures: Feature<Geometry, GeoJsonProperties>[] = [
+          ...(collections.points?.features || []),
+          ...(collections.lines?.features || []),
+          ...(collections.polygons?.features || [])
+        ];
 
         console.debug('[DEBUG] Preview features loaded:', {
           points: collections.points?.features.length || 0,
@@ -141,13 +136,13 @@ export function PreviewSection({
             bounds: bounds || prev.bounds,
             layers: visibleLayers || [],
             statistics: {
-              featureCount: combinedFeatures.features.length,
+              featureCount: combinedFeatures.length,
               layerCount: visibleLayers?.length || 0,
-              featureTypes: combinedFeatures.features.reduce((acc, f) => {
-                const type = f.geometry.type;
+              featureTypes: combinedFeatures.reduce<Record<string, number>>((acc, feature) => {
+                const type = feature.geometry.type;
                 acc[type] = (acc[type] || 0) + 1;
                 return acc;
-              }, {} as Record<string, number>),
+              }, {}),
               failedTransformations: 0,
               errors: []
             },
@@ -193,7 +188,13 @@ export function PreviewSection({
           </div>
         ) : (
           <PreviewMap
-            preview={preview}
+            preview={{
+              ...preview,
+              features: {
+                type: 'FeatureCollection',
+                features: preview.features
+              }
+            }}
             bounds={bounds}
             coordinateSystem={preview.coordinateSystem}
             visibleLayers={visibleLayers}

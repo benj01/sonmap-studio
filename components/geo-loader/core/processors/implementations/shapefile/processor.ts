@@ -1,12 +1,11 @@
-import { Feature, FeatureCollection, Position } from 'geojson';
-import { StreamProcessor } from '../../../../../stream/stream-processor';
-import { AnalyzeResult, ProcessorResult, ProcessorStats } from '../../../../../base/types';
-import { StreamProcessorResult } from '../../../../../stream/types';
+import { Feature, FeatureCollection, Position, Geometry, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, GeometryCollection } from 'geojson';
+import { StreamProcessor } from '../../../processors/stream/stream-processor';
+import { AnalyzeResult, ProcessorResult, ProcessorStats } from '../../../processors/base/types';
+import { StreamProcessorResult } from '../../../processors/stream/types';
 import { ShapefileParser } from './parser';
 import { ShapefileProcessorOptions, ShapefileParseOptions } from './types';
-import { ValidationError } from '../../../../../errors/types';
-import { CompressedFile } from '../../../../../compression/compression-handler';
-import { CoordinateSystemManager } from '../../../../../coordinate-systems/coordinate-system-manager';
+import { ValidationError } from '../../../errors/types';
+import { CompressedFile } from '../../../compression/compression-handler';
 
 /**
  * Processor for Shapefile files
@@ -25,41 +24,90 @@ export class ShapefileProcessor extends StreamProcessor {
   /**
    * Get bounds for a specific feature
    */
-  protected getFeatureBounds(feature: Feature): ProcessorResult['bounds'] {
-    const bounds = {
+  protected getFeatureBounds(feature: Feature<Geometry, any>): { minX: number; minY: number; maxX: number; maxY: number } {
+    // Initialize bounds with infinity values
+    const bounds: ProcessorResult['bounds'] = {
       minX: Infinity,
       minY: Infinity,
       maxX: -Infinity,
       maxY: -Infinity
     };
 
-    if (!feature.geometry) {
-      return bounds;
+    // Helper function to update bounds from coordinates
+    const updateBounds = (coords: number[]): void => {
+      const [x, y] = coords;
+      bounds.minX = Math.min(bounds.minX, x);
+      bounds.minY = Math.min(bounds.minY, y);
+      bounds.maxX = Math.max(bounds.maxX, x);
+      bounds.maxY = Math.max(bounds.maxY, y);
+    };
+
+    if (feature.geometry) {
+      const geometry = feature.geometry;
+      
+      switch (geometry.type) {
+        case 'Point':
+          updateBounds(geometry.coordinates);
+          break;
+
+        case 'LineString':
+          geometry.coordinates.forEach(updateBounds);
+          break;
+
+        case 'Polygon':
+          geometry.coordinates.forEach((ring: number[][]) => ring.forEach(updateBounds));
+          break;
+
+        case 'MultiPoint':
+          geometry.coordinates.forEach(updateBounds);
+          break;
+
+        case 'MultiLineString':
+          geometry.coordinates.forEach((line: number[][]) => line.forEach(updateBounds));
+          break;
+
+        case 'MultiPolygon':
+          geometry.coordinates.forEach((polygon: number[][][]) => 
+            polygon.forEach(ring => ring.forEach(updateBounds))
+          );
+          break;
+
+        case 'GeometryCollection': {
+          // Process each non-collection geometry
+          const nonCollectionGeometries = geometry.geometries.filter(
+            (g): g is Exclude<Geometry, GeometryCollection> => g.type !== 'GeometryCollection'
+          );
+
+          // Process each geometry
+          nonCollectionGeometries.forEach(g => {
+            // Create a new feature with the geometry
+            const subFeature: Feature<Exclude<Geometry, GeometryCollection>, null> = {
+              type: 'Feature',
+              geometry: g,
+              properties: null
+            };
+
+            // Get bounds for this geometry (we know it will return a valid bounds object)
+            const subBounds = this.getFeatureBounds(subFeature) as { minX: number; minY: number; maxX: number; maxY: number };
+
+            // Update main bounds
+            bounds.minX = Math.min(bounds.minX, subBounds.minX);
+            bounds.minY = Math.min(bounds.minY, subBounds.minY);
+            bounds.maxX = Math.max(bounds.maxX, subBounds.maxX);
+            bounds.maxY = Math.max(bounds.maxY, subBounds.maxY);
+          });
+          break;
+        }
+      }
     }
 
-    if (feature.geometry.type === 'Point') {
-      const coords = feature.geometry.coordinates as Position;
-      bounds.minX = bounds.maxX = coords[0] as number;
-      bounds.minY = bounds.maxY = coords[1] as number;
-    } else if (feature.geometry.type === 'LineString') {
-      (feature.geometry.coordinates as Position[]).forEach(coords => {
-        bounds.minX = Math.min(bounds.minX, coords[0] as number);
-        bounds.minY = Math.min(bounds.minY, coords[1] as number);
-        bounds.maxX = Math.max(bounds.maxX, coords[0] as number);
-        bounds.maxY = Math.max(bounds.maxY, coords[1] as number);
-      });
-    } else if (feature.geometry.type === 'Polygon') {
-      (feature.geometry.coordinates as Position[][]).forEach(ring => {
-        ring.forEach(coords => {
-          bounds.minX = Math.min(bounds.minX, coords[0] as number);
-          bounds.minY = Math.min(bounds.minY, coords[1] as number);
-          bounds.maxX = Math.max(bounds.maxX, coords[0] as number);
-          bounds.maxY = Math.max(bounds.maxY, coords[1] as number);
-        });
-      });
-    }
-
-    return bounds;
+    // Always return a valid bounds object
+    return {
+      minX: bounds.minX,
+      minY: bounds.minY,
+      maxX: bounds.maxX,
+      maxY: bounds.maxY
+    };
   }
 
   /**
@@ -113,31 +161,8 @@ export class ShapefileProcessor extends StreamProcessor {
         ));
       });
 
-      // Determine coordinate system
-      let coordinateSystem = this.options.coordinateSystem;
-      
-      if (!coordinateSystem && result.coordinateSystem) {
-        try {
-          // Try to validate the coordinate system from .prj file
-          const manager = CoordinateSystemManager.getInstance();
-          const isValid = await manager.validateSystem(result.coordinateSystem);
-          
-          if (isValid) {
-            coordinateSystem = result.coordinateSystem;
-            console.debug('[ShapefileProcessor] Using coordinate system from .prj:', coordinateSystem);
-          } else {
-            console.warn('[ShapefileProcessor] Invalid coordinate system in .prj:', result.coordinateSystem);
-          }
-        } catch (error) {
-          console.warn('[ShapefileProcessor] Failed to validate coordinate system:', error);
-        }
-      }
-
-      // Fall back to WGS84 if no valid coordinate system found
-      if (!coordinateSystem) {
-        coordinateSystem = 'EPSG:4326';
-        console.debug('[ShapefileProcessor] Falling back to WGS84');
-      }
+      // Determine coordinate system from options or default to WGS84
+      const coordinateSystem = this.options.coordinateSystem || 'EPSG:4326';
 
       // Convert preview records to features
       const previewFeatures = await this.parser.parseFeatures(file, {

@@ -1,5 +1,5 @@
 import { DxfEntity } from '../types';
-import { coordinateSystemManager } from '../../../../coordinate-system-manager';
+import { coordinateSystemManager } from '../../../../coordinate-systems/coordinate-system-manager';
 
 interface Bounds {
   minX: number;

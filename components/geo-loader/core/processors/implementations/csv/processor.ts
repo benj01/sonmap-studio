@@ -5,8 +5,10 @@ import { StreamProcessorResult } from '../../stream/types';
 import { CsvParser } from './parser';
 import { CsvProcessorOptions, CsvParseOptions } from './types';
 import { ValidationError } from '../../../errors/types';
-import { coordinateSystemManager } from '../../../coordinate-system-manager';
+import { coordinateSystemManager } from '../../../coordinate-systems/coordinate-system-manager';
 import { COORDINATE_SYSTEMS } from '../../../../types/coordinates';
+import { ErrorReporterImpl as ErrorReporter } from '../../../errors/reporter';
+import { CompressedFile } from '../../../compression/compression-handler';
 
 interface ProcessorState {
   bounds: {
@@ -22,10 +24,7 @@ interface ProcessorState {
     featureTypes: Record<string, number>;
     failedTransformations: number;
     errors: Array<{
-      type: string;
-      code: string;
-      message?: string;
-      count: number;
+      message: string;
       details?: Record<string, unknown>;
     }>;
   };
@@ -36,6 +35,52 @@ interface ProcessorState {
  */
 export class CsvProcessor extends StreamProcessor {
   private readonly parser: CsvParser;
+  protected readonly errorReporter: ErrorReporter;
+
+  protected getFeatureBounds(feature: Feature): { minX: number; minY: number; maxX: number; maxY: number; } {
+    // For non-point features or invalid geometries, return infinite bounds
+    if (!feature.geometry || feature.geometry.type !== 'Point') {
+      return {
+        minX: Infinity,
+        minY: Infinity,
+        maxX: -Infinity,
+        maxY: -Infinity
+      };
+    }
+
+    // For point features, use the point coordinates
+    const [x, y] = feature.geometry.coordinates;
+    return {
+      minX: x,
+      minY: y,
+      maxX: x,
+      maxY: y
+    };
+  }
+
+  protected async processFileGroup(files: CompressedFile[]): Promise<Feature[]> {
+    // CSV files are processed individually, not in groups
+    if (files.length === 0) return [];
+    
+    const file = files[0];
+    if (!(file.data instanceof File)) {
+      throw new ValidationError(
+        'Invalid file data',
+        'INVALID_FILE_DATA',
+        undefined,
+        { fileName: file.name }
+      );
+    }
+
+    const result = await this.process(file.data);
+    return result.features;
+  }
+
+  private updateStats(stats: ProcessorState['statistics'], type: string): void {
+    stats.featureCount++;
+    stats.featureTypes[type] = (stats.featureTypes[type] || 0) + 1;
+  }
+
   private readonly BUFFER_SIZE = 5000; // Size of each buffer in the pool
   private readonly MAX_BUFFERS = 3; // Maximum number of buffers to keep in memory
   private bufferPool: Feature[][] = [];
@@ -60,6 +105,7 @@ export class CsvProcessor extends StreamProcessor {
   constructor(options: CsvProcessorOptions = {}) {
     super(options);
     this.parser = new CsvParser();
+    this.errorReporter = options.errorReporter || new ErrorReporter();
     this.initializeBufferPool();
     this.initializeState();
   }
@@ -242,13 +288,10 @@ export class CsvProcessor extends StreamProcessor {
                   ? [transformed.x, transformed.y, z]
                   : [transformed.x, transformed.y];
               } catch (error) {
-                this.recordError(
-                  this.processorState.statistics,
-                  'coordinate_transformation',
-                  'TRANSFORM_ERROR',
-                  `Failed to transform coordinates: ${error instanceof Error ? error.message : String(error)}`,
-                  { coordinates: feature.geometry.coordinates }
-                );
+                this.processorState.statistics.errors.push({
+                  message: `Failed to transform coordinates: ${error instanceof Error ? error.message : String(error)}`,
+                  details: { coordinates: feature.geometry.coordinates }
+                });
                 this.processorState.statistics.failedTransformations++;
                 continue;
               }
@@ -262,13 +305,10 @@ export class CsvProcessor extends StreamProcessor {
               currentBuffer = this.getNextBuffer();
             }
           } catch (error) {
-            this.recordError(
-              this.processorState.statistics,
-              'parse_error',
-              'CSV_PARSE_ERROR',
-              `Failed to parse line: ${error instanceof Error ? error.message : String(error)}`,
-              { line }
-            );
+            this.processorState.statistics.errors.push({
+              message: `Failed to parse line: ${error instanceof Error ? error.message : String(error)}`,
+              details: { line }
+            });
           }
         }
 

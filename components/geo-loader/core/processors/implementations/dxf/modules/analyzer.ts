@@ -1,5 +1,4 @@
 import { DxfEntity, DxfStructure } from '../types';
-import { coordinateSystemManager } from '../../../../coordinate-system-manager';
 import { CoordinateSystem, COORDINATE_SYSTEMS, Bounds } from '../../../../../types/coordinates';
 
 type DetectedCoordinateSystem = {

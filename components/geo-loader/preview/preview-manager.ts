@@ -4,14 +4,9 @@ import { cacheManager } from '../core/cache-manager';
 import { geoErrorManager } from '../core/error-manager';
 import { ErrorSeverity } from '../../../types/errors';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
-import { coordinateSystemManager } from '../core/coordinate-system-manager';
+import { coordinateSystemManager } from '../core/coordinate-systems/coordinate-system-manager';
 import { calculateFeatureBounds, Bounds } from '../core/feature-manager/bounds';
 import { GeoFeature, GeoFeatureCollection } from '../../../types/geo';
-
-interface GeoFeatureCollection {
-  type: 'FeatureCollection';
-  features: GeoFeature[];
-}
 
 interface PreviewCollections {
   points: GeoFeatureCollection;
@@ -110,13 +105,14 @@ export class PreviewManager {
       streamingMode: true
     });
 
-    this.validateCoordinateSystem();
+    // Initialize coordinate system validation
+    void this.validateCoordinateSystem();
   }
 
   /**
    * Validate coordinate system configuration
    */
-  private validateCoordinateSystem(): void {
+  private async validateCoordinateSystem(): Promise<void> {
     const startTime = performance.now();
     
     if (!coordinateSystemManager.isInitialized()) {
@@ -125,20 +121,18 @@ export class PreviewManager {
     }
 
     const system = this.options.coordinateSystem;
-    const supported = coordinateSystemManager.getSupportedSystems().includes(system);
+    const isValid = await coordinateSystemManager.validateSystem(system);
     
     console.debug('[PreviewManager] Validating coordinate system:', {
       system,
-      supported,
-      available: coordinateSystemManager.getSupportedSystems(),
+      isValid,
       validationTime: Math.round(performance.now() - startTime)
     });
 
-    if (!supported) {
-      console.warn('[PreviewManager] Unsupported coordinate system:', {
+    if (!isValid) {
+      console.warn('[PreviewManager] Invalid coordinate system:', {
         requested: system,
-        fallback: COORDINATE_SYSTEMS.WGS84,
-        available: coordinateSystemManager.getSupportedSystems()
+        fallback: COORDINATE_SYSTEMS.WGS84
       });
       this.options.coordinateSystem = COORDINATE_SYSTEMS.WGS84;
       this.invalidateCache('unsupported coordinate system');
@@ -167,8 +161,8 @@ export class PreviewManager {
   /**
    * Get cache key for coordinate system
    */
-  private getCacheKey(coordinateSystem: CoordinateSystem): string {
-    return `preview:${coordinateSystem}:all-visible`;
+  private getCacheKey(): string {
+    return `preview:${this.options.coordinateSystem}:all-visible`;
   }
 
   /**
@@ -232,7 +226,12 @@ export class PreviewManager {
     }
 
     // Use default bounds as last resort
-    return this.getDefaultBounds();
+    return {
+      minX: -180,
+      minY: -90,
+      maxX: 180,
+      maxY: 90
+    };
   }
 
   /**
@@ -311,7 +310,7 @@ export class PreviewManager {
         old: this.options.visibleLayers,
         new: options.visibleLayers
       });
-      this.clearCache();
+      this.invalidateCache('layers changed');
       this.featureManager.setVisibleLayers(options.visibleLayers || []);
     }
 
@@ -507,7 +506,7 @@ export class PreviewManager {
   private async generateCollections(): Promise<PreviewCollectionResult> {
     console.debug('[PreviewManager] Generating new collections');
     
-    const visibleFeatures = this.featureManager.getVisibleFeatures();
+    const visibleFeatures = await this.featureManager.getVisibleFeatures();
     console.debug('[PreviewManager] Got visible features:', {
       count: visibleFeatures.length,
       visibleLayers: this.options.visibleLayers
@@ -639,6 +638,38 @@ export class PreviewManager {
   public async hasVisibleFeatures(): Promise<boolean> {
     const collections = await this.getPreviewCollections();
     return collections !== null && collections.totalCount > 0;
+  }
+
+  /**
+   * Clean up resources and dispose of the preview manager
+   */
+  public dispose(): void {
+    console.debug('[PreviewManager] Disposing preview manager');
+    
+    // Clear collections cache
+    this.invalidateCache('dispose');
+    
+    // Clean up feature manager
+    if (this.featureManager) {
+      // Clean up feature manager
+      this.featureManager.dispose();
+    }
+    
+    // Clear options
+    this.options = {
+      maxFeatures: this.DEFAULT_MAX_FEATURES,
+      coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+      visibleLayers: [],
+      viewportBounds: [-180, -90, 180, 90],
+      enableCaching: true,
+      smartSampling: true,
+      analysis: { warnings: [] },
+      initialBounds: null as unknown as Required<Bounds>,
+      onProgress: () => {},
+      selectedElement: ''
+    };
+
+    console.debug('[PreviewManager] Disposed successfully');
   }
 }
 

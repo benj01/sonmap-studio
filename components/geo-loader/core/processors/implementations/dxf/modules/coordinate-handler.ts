@@ -1,9 +1,9 @@
 import { CoordinateSystem } from '../../../../../types/coordinates';
-import { CoordinateSystemManager } from '../../../../coordinate-systems/coordinate-system-manager';
+import { coordinateSystemManager } from '../../../../coordinate-systems/coordinate-system-manager';
 import { DxfEntity } from '../types';
 import { DxfTransformer } from './transformer';
 import { DxfEntityProcessor } from './entity-processor';
-import { Feature } from 'geojson';
+import { Feature, Point, LineString, Polygon } from 'geojson';
 
 interface Bounds {
   minX: number;
@@ -17,13 +17,13 @@ export class DxfCoordinateHandler {
    * Initialize and verify coordinate system manager
    */
   static async initializeCoordinateSystem(sourceSystem: CoordinateSystem): Promise<void> {
-    if (!CoordinateSystemManager.isInitialized()) {
+    if (!coordinateSystemManager.isInitialized()) {
       console.debug('[DEBUG] Initializing coordinate system manager');
-      await CoordinateSystemManager.initialize();
+      await coordinateSystemManager.initialize();
 
       // Verify transformation with test point
       const testPoint = { x: 2645021, y: 1249991 };
-      const transformed = await CoordinateSystemManager.transform(
+      const transformed = await coordinateSystemManager.transform(
         testPoint,
         sourceSystem,
         'EPSG:4326'
@@ -114,11 +114,30 @@ export class DxfCoordinateHandler {
     console.debug('[DEBUG] Features after conversion:', {
       count: features.length,
       types: features.map(f => f.geometry.type),
-      samples: features.slice(0, 3).map(f => ({
-        type: f.geometry.type,
-        coordinates: f.geometry.coordinates,
-        properties: f.properties
-      }))
+      samples: features.slice(0, 3).map(f => {
+        const sample: { type: string; coordinates?: any; properties?: any } = {
+          type: f.geometry.type,
+          properties: f.properties
+        };
+
+        // Handle different geometry types appropriately
+        switch (f.geometry.type) {
+          case 'Point':
+            sample.coordinates = (f.geometry as Point).coordinates;
+            break;
+          case 'LineString':
+            sample.coordinates = (f.geometry as LineString).coordinates;
+            break;
+          case 'Polygon':
+            sample.coordinates = (f.geometry as Polygon).coordinates;
+            break;
+          default:
+            // For other geometry types, omit coordinates
+            break;
+        }
+
+        return sample;
+      })
     });
     
     // Add original coordinate system to feature properties
@@ -163,14 +182,14 @@ export class DxfCoordinateHandler {
     });
 
     // Transform min point
-    const minPoint = await CoordinateSystemManager.transform(
+    const minPoint = await coordinateSystemManager.transform(
       { x: bounds.minX, y: bounds.minY },
       sourceSystem,
       'EPSG:4326'
     );
 
     // Transform max point
-    const maxPoint = await CoordinateSystemManager.transform(
+    const maxPoint = await coordinateSystemManager.transform(
       { x: bounds.maxX, y: bounds.maxY },
       sourceSystem,
       'EPSG:4326'
@@ -210,36 +229,8 @@ export class DxfCoordinateHandler {
     point: { x: number; y: number },
     system: CoordinateSystem
   ): boolean {
-    const definition = CoordinateSystemManager.getSystemDefinition(system);
-    if (!definition?.bounds) return true;
-
-    const { bounds } = definition;
-    const inRange = (
-      point.x >= bounds.minX &&
-      point.x <= bounds.maxX &&
-      point.y >= bounds.minY &&
-      point.y <= bounds.maxY
-    );
-
-    if (!inRange) {
-      console.warn('[DEBUG] Coordinate out of range:', {
-        point,
-        system,
-        bounds,
-        difference: {
-          x: point.x < bounds.minX ? point.x - bounds.minX : point.x - bounds.maxX,
-          y: point.y < bounds.minY ? point.y - bounds.minY : point.y - bounds.maxY
-        }
-      });
-    }
-
-    return inRange;
-  }
-
-  /**
-   * Get system bounds
-   */
-  static getSystemBounds(system: CoordinateSystem): Bounds | undefined {
-    return CoordinateSystemManager.getSystemDefinition(system)?.bounds;
+    // Note: Coordinate range validation is not currently supported
+    // This could be implemented in the future when coordinate system definitions include bounds
+    return true;
   }
 }

@@ -1,4 +1,4 @@
-import { coordinateSystemManager } from './core/coordinate-system-manager';
+import { coordinateSystemManager } from './core/coordinate-systems/coordinate-system-manager';
 import { 
   COORDINATE_SYSTEMS,
   CoordinateSystem,
@@ -21,10 +21,7 @@ console.debug('[DEBUG] Processors registered:', ProcessorRegistry.getSupportedEx
 // Initialize coordinate systems
 const initPromise = (async () => {
   try {
-    // Perform synchronous initialization first
-    coordinateSystemManager.initSync();
-    
-    // Then start async verification
+    // Initialize coordinate systems
     await coordinateSystemManager.initialize();
   } catch (error) {
     console.error('Failed to initialize coordinate systems:', error);
@@ -40,7 +37,7 @@ export const isInitialized = () => coordinateSystemManager.isInitialized();
 const wrappedManager = new Proxy(coordinateSystemManager, {
   get(target: typeof coordinateSystemManager, prop: keyof typeof coordinateSystemManager) {
     const value = target[prop];
-    if (typeof value === 'function' && prop !== 'isInitialized' && prop !== 'initSync') {
+    if (typeof value === 'function' && prop !== 'isInitialized') {
       return async (...args: unknown[]) => {
         await initPromise;
         return (value as Function).apply(target, args);

@@ -50,12 +50,13 @@ export class CoordinateSystemManager {
 
       this.initialized = true;
       console.debug('[CoordinateSystemManager] Initialized with common systems');
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new CoordinateSystemError(
         'Failed to initialize coordinate systems',
         'COORDINATE_SYSTEM_INIT_ERROR',
         undefined,
-        { error: String(error) }
+        { error: errorMessage }
       );
     }
   }
@@ -74,9 +75,10 @@ export class CoordinateSystemManager {
       proj4(definition.proj4def, 'EPSG:4326', [0, 0]);
       this.systems.set(definition.code, definition);
       console.debug(`[CoordinateSystemManager] Registered system: ${definition.code}`);
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new CoordinateSystemError(
-        `Invalid coordinate system definition: ${error.message}`,
+        `Invalid coordinate system definition: ${errorMessage}`,
         'INVALID_COORDINATE_SYSTEM',
         definition.code
       );
@@ -108,7 +110,7 @@ export class CoordinateSystemManager {
       } catch {
         return false;
       }
-    } catch (error) {
+    } catch (error: unknown) {
       console.warn('[CoordinateSystemManager] Validation error:', error);
       return false;
     }
@@ -130,9 +132,10 @@ export class CoordinateSystemManager {
       const transformer = await this.getTransformer(fromSystem, toSystem);
       const [x, y] = transformer.forward([point.x, point.y]);
       return { x, y };
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new CoordinateSystemError(
-        `Failed to transform coordinates: ${error.message}`,
+        `Failed to transform coordinates: ${errorMessage}`,
         'COORDINATE_TRANSFORM_ERROR',
         `${fromSystem} -> ${toSystem}`,
         { point }
@@ -157,12 +160,16 @@ export class CoordinateSystemManager {
       const transformer = proj4(fromSystem, toSystem);
       this.transformers.set(key, transformer);
       return transformer;
-    } catch (error) {
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       throw new CoordinateSystemError(
-        `Failed to create coordinate transformer: ${error.message}`,
+        `Failed to create coordinate transformer: ${errorMessage}`,
         'TRANSFORMER_CREATE_ERROR',
         `${fromSystem} -> ${toSystem}`
       );
     }
   }
 }
+
+// Export the singleton instance
+export const coordinateSystemManager = CoordinateSystemManager.getInstance();
