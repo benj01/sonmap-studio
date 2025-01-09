@@ -49,7 +49,8 @@ export default function NewProjectPage() {
     try {
       const supabase = createClient()
       
-      const { data, error } = await supabase
+      // Start a transaction by using a single Supabase call
+      const { data: project, error: projectError } = await supabase
         .from('projects')
         .insert({
           name: formData.name,
@@ -62,7 +63,18 @@ export default function NewProjectPage() {
         .select()
         .single()
 
-      if (error) throw error
+      if (projectError) throw projectError
+
+      // Add creator as admin member
+      const { error: memberError } = await supabase
+        .from('project_members')
+        .insert({
+          project_id: project.id,
+          user_id: user.id,
+          role: 'admin'
+        })
+
+      if (memberError) throw memberError
 
       toast({
         title: "Success",
