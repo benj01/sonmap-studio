@@ -76,7 +76,8 @@
     "shadcn-ui": "^0.2.3",
     "shapefile": "^0.6.6",
     "zod": "^3.23.8",
-    "zustand": "^5.0.2"
+    "zustand": "^5.0.2",
+    "@t3-oss/env-nextjs": "^0.7.1"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",
