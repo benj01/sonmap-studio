@@ -1,4 +1,4 @@
-# DXF Processor Migration Plan: GeoJSON to PostGIS
+ # DXF Processor Migration Plan: GeoJSON to PostGIS
 
 This document outlines the plan for migrating the DXF processor from using GeoJSON as an intermediate format to directly importing into PostGIS.
 
@@ -123,177 +123,110 @@ This document outlines the plan for migrating the DXF processor from using GeoJS
 ## Implementation Steps
 
 1. **Phase 1: Cleanup**
-   - [ ] Remove deprecated GeoJSON converter
-   - [ ] Remove redundant entity parser
-   - [ ] Remove unused geometry utilities
-   - [ ] Update type definitions
+   - [x] Remove deprecated GeoJSON converter
+   - [x] Remove redundant entity parser
+   - [x] Remove unused geometry utilities
+   - [x] Update type definitions
 
 2. **Phase 2: PostGIS Integration**
-   - [ ] Create initial database schema
-   ```sql
-   -- migrations/001_initial_schema.sql
-   -- Enable PostGIS extension
-   CREATE EXTENSION IF NOT EXISTS postgis;
+   - [x] Create initial database schema
+   - [x] Create PostGIS type definitions with strict typing
+   - [x] Update database client with type-safe geometry handling
+   - [x] Implement coordinate system handling
+   - [x] Add type conversion utilities
+   - [x] Modularize coordinate system management
+   - [x] Implement type-safe geometry conversion
+   - [x] Complete direct geometry conversion
+   - [x] Add support for ARC, ELLIPSE, SPLINE entities
+   - [x] Add 3D coordinate support
+   - [x] Implement BLOCK reference handling
+   - [ ] Begin testing phase
 
-   -- Feature collections table
-   CREATE TABLE feature_collections (
-     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-     name TEXT NOT NULL,
-     description TEXT,
-     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-   );
-
-   -- Layers table
-   CREATE TABLE layers (
-     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-     collection_id UUID NOT NULL REFERENCES feature_collections(id) ON DELETE CASCADE,
-     name TEXT NOT NULL,
-     type TEXT NOT NULL,
-     properties JSONB DEFAULT '{}',
-     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-   );
-
-   -- Geo features table with PostGIS geometry
-   CREATE TABLE geo_features (
-     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-     layer_id UUID NOT NULL REFERENCES layers(id) ON DELETE CASCADE,
-     geometry GEOMETRY NOT NULL,
-     properties JSONB DEFAULT '{}',
-     srid INTEGER NOT NULL,
-     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-     CONSTRAINT valid_geometry CHECK (ST_IsValid(geometry))
-   );
-
-   -- Indexes for better query performance
-   CREATE INDEX geo_features_layer_id_idx ON geo_features(layer_id);
-   CREATE INDEX geo_features_geometry_idx ON geo_features USING GIST(geometry);
-   CREATE INDEX layers_collection_id_idx ON layers(collection_id);
-
-   -- Update timestamp triggers
-   CREATE OR REPLACE FUNCTION update_updated_at()
-   RETURNS TRIGGER AS $$
-   BEGIN
-     NEW.updated_at = NOW();
-     RETURN NEW;
-   END;
-   $$ LANGUAGE plpgsql;
-
-   CREATE TRIGGER update_feature_collections_updated_at
-     BEFORE UPDATE ON feature_collections
-     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-   CREATE TRIGGER update_layers_updated_at
-     BEFORE UPDATE ON layers
-     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-
-   CREATE TRIGGER update_geo_features_updated_at
-     BEFORE UPDATE ON geo_features
-     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
-   ```
-   - [ ] Create PostGIS geometry type definitions
    ```typescript
    // types/postgis.ts
-   interface PostGISGeometry {
+   type PostGISGeometryType = 
+     | 'POINT'
+     | 'LINESTRING'
+     | 'POLYGON'
+     | 'MULTIPOINT'
+     | 'MULTILINESTRING'
+     | 'MULTIPOLYGON'
+     | 'GEOMETRYCOLLECTION';
+
+   // Coordinate types for different geometry types
+   type Point = [number, number];
+   type LineString = Point[];
+   type Polygon = LineString[];
+   type MultiPoint = Point[];
+   type MultiLineString = LineString[];
+   type MultiPolygon = Polygon[];
+
+   // Base geometry interface
+   interface PostGISGeometryBase {
      srid: number;
-     type: 'POINT' | 'LINESTRING' | 'POLYGON' | 'MULTIPOLYGON';
-     coordinates: string; // WKT format
+     wkt: string;
+     attributes?: {
+       layer?: string;
+       lineType?: string;
+       color?: number;
+       lineWeight?: number;
+       [key: string]: unknown;
+     };
    }
+
+   // Type-safe geometry interfaces
+   interface PostGISPoint extends PostGISGeometryBase {
+     type: 'POINT';
+     coordinates: Point;
+   }
+
+   interface PostGISLineString extends PostGISGeometryBase {
+     type: 'LINESTRING';
+     coordinates: LineString;
+   }
+
+   interface PostGISPolygon extends PostGISGeometryBase {
+     type: 'POLYGON';
+     coordinates: Polygon;
+   }
+
+   interface PostGISMultiPoint extends PostGISGeometryBase {
+     type: 'MULTIPOINT';
+     coordinates: MultiPoint;
+   }
+
+   interface PostGISMultiLineString extends PostGISGeometryBase {
+     type: 'MULTILINESTRING';
+     coordinates: MultiLineString;
+   }
+
+   interface PostGISMultiPolygon extends PostGISGeometryBase {
+     type: 'MULTIPOLYGON';
+     coordinates: MultiPolygon;
+   }
+
+   interface PostGISGeometryCollection extends PostGISGeometryBase {
+     type: 'GEOMETRYCOLLECTION';
+     geometries: PostGISGeometry[];
+   }
+
+   // Union type for all geometry types
+   type PostGISGeometry = 
+     | PostGISPoint 
+     | PostGISLineString 
+     | PostGISPolygon 
+     | PostGISMultiPoint 
+     | PostGISMultiLineString 
+     | PostGISMultiPolygon 
+     | PostGISGeometryCollection;
    ```
-   - [ ] Implement direct PostGIS geometry conversion
-   - [ ] Add SRID management and validation
-   - [ ] Update preview generation to use PostGIS queries
-   - [ ] Implement efficient batch import strategies
 
 3. **Phase 3: Testing**
    - [ ] Add test data files
-     ```
-     test-data/dxf/
-     ├── testlinie.dxf           # Existing test file
-     ├── points.dxf              # Point entities test
-     ├── polylines.dxf           # LineString/Polygon test
-     ├── circles.dxf             # Circular geometry test
-     ├── mixed.dxf              # Mixed geometry types
-     ├── large.dxf              # Performance testing
-     └── invalid.dxf            # Error handling test
-     ```
-
-   - [ ] Update test environment
-     ```typescript
-     // __tests__/setup.ts
-     import { Pool } from 'pg';
-     
-     export const testPool = new Pool({
-       database: 'test_geo_db',
-       // ... test configuration
-     });
-     
-     beforeAll(async () => {
-       // Setup test database
-       await testPool.query(`
-         CREATE EXTENSION IF NOT EXISTS postgis;
-         -- Additional setup
-       `);
-     });
-     
-     afterAll(async () => {
-       await testPool.end();
-     });
-     ```
-   
+   - [ ] Setup test environment
    - [ ] Update parser tests
-     ```typescript
-     // __tests__/parser.test.ts
-     describe('PostGIS Integration', () => {
-       it('should convert DXF entities to PostGIS geometries', async () => {
-         const entity = // ... test entity
-         const geometry = await processor.entityToPostGIS(entity);
-         expect(geometry.type).toBe('LINESTRING');
-         expect(geometry.srid).toBeDefined();
-       });
-     
-       it('should validate PostGIS geometries', async () => {
-         // Test geometry validation
-       });
-     
-       it('should handle coordinate transformations', async () => {
-         // Test SRID transformations
-       });
-     });
-     ```
-   
    - [ ] Add database integration tests
-     ```typescript
-     // __tests__/database.test.ts
-     describe('Database Operations', () => {
-       it('should import features in batches', async () => {
-         // Test batch import
-       });
-     
-       it('should handle large datasets', async () => {
-         // Test performance with large files
-       });
-     
-       it('should maintain data integrity', async () => {
-         // Test constraints and validation
-       });
-     });
-     ```
-   
-   - [ ] Performance benchmarks
-     ```typescript
-     // __tests__/benchmarks.test.ts
-     describe('Performance Tests', () => {
-       it('should meet import speed requirements', async () => {
-         const startTime = Date.now();
-         // Test import performance
-         const duration = Date.now() - startTime;
-         expect(duration).toBeLessThan(IMPORT_TIMEOUT);
-       });
-     });
-     ```
+   - [ ] Run performance benchmarks
 
 4. **Phase 4: Documentation**
    - [ ] Update API documentation
@@ -317,6 +250,94 @@ This document outlines the plan for migrating the DXF processor from using GeoJS
    - Better error handling
    - Consistent data format
 
+## Entity Support
+
+### Supported DXF Entities
+
+1. **Basic Entities**
+   - POINT: Direct conversion to PostGIS POINT
+   - LINE: Direct conversion to PostGIS LINESTRING
+   - POLYLINE/LWPOLYLINE: Converted to LINESTRING or POLYGON based on closed flag
+   - CIRCLE: Interpolated to PostGIS POLYGON
+
+2. **Advanced Entities**
+   - ARC: Interpolated to PostGIS LINESTRING with configurable segments
+   - ELLIPSE: Interpolated to PostGIS POLYGON with configurable segments
+   - SPLINE: Interpolated to PostGIS LINESTRING using B-spline basis functions
+   - BLOCK: References expanded before conversion
+
+### Coordinate System Support
+
+1. **2D and 3D Coordinates**
+   - Full support for x, y coordinates
+   - Optional z coordinate support
+   - Automatic handling of missing z values
+   - Proper WKT formatting for both 2D and 3D points
+
+2. **Coordinate Transformations**
+   - Automatic SRID detection and assignment
+   - Support for common coordinate systems:
+     * WGS84 (SRID: 4326)
+     * Swiss LV95 (SRID: 2056)
+     * Swiss LV03 (SRID: 21781)
+   - Coordinate system validation
+   - Automatic transformation between systems
+
+### Entity Conversion Details
+
+1. **ARC Entity**
+   ```typescript
+   interface ArcData {
+     x: number;        // Center X
+     y: number;        // Center Y
+     z?: number;       // Optional Z coordinate
+     radius: number;   // Arc radius
+     startAngle: number; // Start angle in degrees
+     endAngle: number;   // End angle in degrees
+   }
+   ```
+   - Converted to LINESTRING
+   - Interpolated using configurable segments
+   - Preserves 3D information if available
+
+2. **ELLIPSE Entity**
+   ```typescript
+   interface EllipseData {
+     x: number;        // Center X
+     y: number;        // Center Y
+     z?: number;       // Optional Z coordinate
+     majorAxis: {      // Major axis vector
+       x: number;
+       y: number;
+     };
+     ratio: number;    // Minor/Major axis ratio
+   }
+   ```
+   - Converted to POLYGON
+   - Maintains ellipse properties through interpolation
+   - Handles rotation via major axis vector
+
+3. **SPLINE Entity**
+   ```typescript
+   interface SplineData {
+     controlPoints: Array<{x: number; y: number; z?: number}>;
+     knots?: number[];    // Knot vector
+     weights?: number[];  // Control point weights
+   }
+   ```
+   - Converted to LINESTRING
+   - Uses B-spline interpolation
+   - Supports weighted control points
+   - Handles both 2D and 3D control points
+
+4. **BLOCK References**
+   - Expanded before conversion
+   - Maintains transformation properties:
+     * Scale
+     * Rotation
+     * Translation
+   - Preserves nested block structures
+
 ## Notes
 
 - Test Data Requirements:
@@ -337,6 +358,6 @@ This document outlines the plan for migrating the DXF processor from using GeoJS
 ## Status
 
 - [x] Plan Created
-- [ ] Implementation Started
+- [x] Implementation Started
 - [ ] Testing Complete
 - [ ] Migration Complete

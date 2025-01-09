@@ -1,4 +1,52 @@
-import { ProcessorOptions } from '../../../processors/base/types';
+import { ProcessorOptions, AnalyzeResult as BaseAnalyzeResult } from '../../../processors/base/types';
+import { CoordinateSystem } from '../../../../types/coordinates';
+import {
+  PostGISGeometry,
+  PostGISImportOptions,
+  PostGISImportResult
+} from './types/postgis';
+import { PostGISCoordinateSystem } from './types/coordinate-system';
+
+export * from './types/postgis';
+
+/**
+ * Extended processor options that support PostGIS coordinate systems
+ */
+export interface DxfProcessorBaseOptions extends Omit<ProcessorOptions, 'coordinateSystem'> {
+  coordinateSystem?: CoordinateSystem | PostGISCoordinateSystem;
+}
+
+/**
+ * Preview data for DXF analysis
+ */
+export interface DxfPreview {
+  /** Preview type */
+  type: string;
+  /** Preview features */
+  features: DxfEntity[];
+  /** PostGIS preview geometries */
+  postgisFeatures?: PostGISGeometry[];
+}
+
+/**
+ * DXF-specific analyze result that supports PostGIS coordinate systems
+ */
+export interface DxfAnalyzeResult extends Omit<BaseAnalyzeResult, 'coordinateSystem' | 'preview'> {
+  /** Detected coordinate system (supports PostGIS) */
+  coordinateSystem?: CoordinateSystem | PostGISCoordinateSystem;
+  /** File structure */
+  structure: DxfStructure;
+  /** Preview data */
+  preview?: DxfPreview;
+  /** PostGIS import result */
+  postgisResult?: PostGISImportResult;
+  /** Any issues found during analysis */
+  issues?: Array<{
+    type: string;
+    message: string;
+    details?: Record<string, unknown>;
+  }>;
+}
 
 /**
  * 3D vector representation
@@ -288,7 +336,7 @@ export interface DxfStructure {
 /**
  * DXF processor options
  */
-export interface DxfProcessorOptions extends ProcessorOptions {
+export interface DxfProcessorOptions extends DxfProcessorBaseOptions {
   /** Entity types to include */
   entityTypes?: DxfEntityType[];
   /** Whether to import block references */
@@ -305,6 +353,19 @@ export interface DxfProcessorOptions extends ProcessorOptions {
   validateGeometry?: boolean;
   /** Maximum number of preview entities */
   previewEntities?: number;
+  /** Project file ID for PostGIS import */
+  projectFileId?: string;
+  /** Chunk size for batch processing */
+  chunkSize?: number;
+  /** PostGIS import options */
+  postgis?: PostGISImportOptions & {
+    /** Source coordinate system SRID */
+    sourceSrid?: number;
+    /** Target coordinate system SRID */
+    targetSrid?: number;
+  };
+  /** Override for coordinate system */
+  coordinateSystem?: CoordinateSystem | PostGISCoordinateSystem;
 }
 
 /**
@@ -323,20 +384,4 @@ export interface DxfParseOptions {
   validate?: boolean;
   /** Maximum number of entities to parse */
   maxEntities?: number;
-}
-
-/**
- * Result of DXF structure analysis
- */
-export interface DxfAnalyzeResult {
-  /** Detected file structure */
-  structure: DxfStructure;
-  /** Sample entities */
-  preview: DxfEntity[];
-  /** Any issues found during analysis */
-  issues?: Array<{
-    type: string;
-    message: string;
-    details?: Record<string, unknown>;
-  }>;
 }
