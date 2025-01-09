@@ -4,13 +4,14 @@ Last updated: 2025-01-05
 
 ## System Overview
 
-The data import system is designed to handle various geospatial file formats (Shapefile, DXF, CSV, etc.) and convert them into a unified GeoJSON format for further processing and visualization.
+The data import system handles various geospatial file formats (Shapefile, DXF, CSV, etc.) and processes them directly into PostGIS for efficient storage, processing, and visualization.
 
 ### Core Concepts
-- Universal GeoJSON conversion
+- Direct PostGIS integration
 - Format-specific processors
 - Preview capabilities using MapBox
 - Project-based data management
+- Shared service architecture
 
 ## Architecture
 
@@ -26,20 +27,21 @@ The data import system is designed to handle various geospatial file formats (Sh
    - Worker-based parallel processing
    - Progress reporting
 
-3. GeoJSON Conversion
-   - Standardized output format
-   - Coordinate system handling
-   - Attribute preservation
-   - Validation
+3. PostGIS Integration
+   - Direct database import
+   - Spatial data validation
+   - Coordinate system transformations
+   - Data integrity checks
 
 4. Preview Generation
    - MapBox integration
    - Performance optimization
    - Style handling
+   - Direct PostGIS queries
 
 5. Project Integration
    - Source file tracking
-   - Processed data management
+   - Database collection management
    - Status tracking
    - Version control
 
@@ -50,18 +52,35 @@ The data import system is designed to handle various geospatial file formats (Sh
 - Memory-managed processing
 - Worker support
 - Component file handling
+- Direct PostGIS import
 
 #### DXF
 - Format-specific processor
-- Entity conversion
+- Entity conversion to PostGIS
 - Layer handling
 - Style preservation
+- Spatial validation
 
 #### CSV
 - Coordinate parsing
 - Header detection
 - Data validation
 - Schema inference
+- PostGIS geometry creation
+
+### Database Structure
+
+#### Collections
+- Feature collections table
+- Layer management
+- Spatial indexing
+- Metadata storage
+
+#### Features
+- Geometry storage
+- Attribute data
+- Spatial relationships
+- Performance optimization
 
 ### UI Components
 
@@ -72,10 +91,10 @@ The data import system is designed to handle various geospatial file formats (Sh
   - Processing status
   - Action buttons
 
-- Processed Data section
-  - GeoJSON datasets
+- Database Collections
+  - PostGIS collections
   - Preview thumbnails
-  - Dataset metadata
+  - Collection metadata
   - Export options
 
 #### Import Interface
@@ -94,27 +113,26 @@ The data import system is designed to handle various geospatial file formats (Sh
 
 ### High Priority
 1. UI Enhancements
-   - [ ] Add dedicated processed data section
+   - [ ] Add dedicated collection browser
    - [ ] Improve processing status indicators
-   - [ ] Add dataset preview thumbnails
+   - [ ] Add collection preview thumbnails
    - [ ] Implement batch processing interface
 
 2. Data Management
-   - [ ] Implement dataset versioning
+   - [ ] Implement collection versioning
    - [ ] Add metadata management
-   - [ ] Create data indexing system
+   - [ ] Optimize spatial indexing
    - [ ] Add export functionality
 
 3. Processing
    - [ ] Add compressed file support
-   - [ ] Implement universal coordinate system handling
    - [ ] Add batch processing capabilities
    - [ ] Enhance progress reporting
 
 ### Medium Priority
 1. Performance
-   - [ ] Implement caching system
-   - [ ] Add spatial indexing
+   - [ ] Optimize database queries
+   - [ ] Implement connection pooling
    - [ ] Optimize preview generation
    - [ ] Add lazy loading for large datasets
 
@@ -135,24 +153,23 @@ The data import system is designed to handle various geospatial file formats (Sh
 
 ### Phase 1: Core Enhancements
 1. UI Updates
-   - Create processed data section
+   - Create collection browser
    - Improve status indicators
    - Add preview thumbnails
 
 2. Processing Improvements
    - Implement compressed file support
-   - Add universal coordinate handling
    - Enhance progress reporting
 
 3. Data Management
-   - Implement dataset versioning
+   - Implement collection versioning
    - Add metadata system
-   - Create indexing system
+   - Optimize indexing
 
 ### Phase 2: Performance & UX
 1. Performance Optimization
-   - Implement caching
-   - Add spatial indexing
+   - Optimize queries
+   - Implement pooling
    - Optimize previews
 
 2. User Experience
@@ -175,21 +192,25 @@ The data import system is designed to handle various geospatial file formats (Sh
 
 ### 2025-01-05
 - Initial system analysis completed
-- Shapefile processor implemented with:
-  - Memory management
-  - Worker support
-  - Error handling
+- Core processors implemented
 - Documentation structure created
 - Core improvement areas identified
+- PostGIS integration completed:
+  - Database schema created
+  - Client implementation
+  - Direct import pipeline
+  - Spatial processing
 
 ## Next Steps
-1. Implement compressed file support (affects all formats)
-2. Create processed data section in UI
+1. Implement compressed file support
+2. Create collection browser UI
 3. Enhance progress reporting system
-4. Implement universal coordinate system handling
+4. Optimize database queries
 
 ## Notes
 - Consider implementing a plugin system for new file formats
 - Need to establish standard metadata format
 - Consider implementing a data validation pipeline
 - May need to optimize MapBox integration for large datasets
+- Connection pooling implementation in progress
+- Consider adding spatial analysis tools

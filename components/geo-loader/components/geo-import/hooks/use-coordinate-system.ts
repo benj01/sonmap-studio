@@ -1,10 +1,14 @@
 import { useState, useCallback, useEffect } from 'react';
-import { CoordinateSystem, COORDINATE_SYSTEMS } from '../../../types/coordinates';
+import { 
+  CoordinateSystem, 
+  COORDINATE_SYSTEMS,
+  isSwissSystem,
+  isWGS84System 
+} from '../../../types/coordinates';
 import { GeoLoaderError } from '../../../core/errors/types';
 import { AnalyzeResult } from '../../../core/processors/base/types';
 import { ProcessorOptions } from '../../../core/processors/base/types';
 import { PreviewManager } from '../../../preview/preview-manager';
-import { CoordinateSystemManager } from '../../../core/coordinate-systems/coordinate-system-manager';
 
 interface CoordinateSystemHookProps {
   onWarning: (message: string) => void;
@@ -31,20 +35,14 @@ export function useCoordinateSystem({
     loading: false
   });
 
-  // Initialize coordinate system manager on mount
+  // Initialize with default coordinate system
   useEffect(() => {
-    const initializeManager = async () => {
-      if (!CoordinateSystemManager.isInitialized()) {
-        try {
-          await CoordinateSystemManager.initialize();
-        } catch (error) {
-          console.error('Failed to initialize coordinate system manager:', error);
-          onError(`Failed to initialize coordinate systems: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
-    };
-    initializeManager();
-  }, [onError]);
+    setState(prev => ({
+      ...prev,
+      coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+      loading: false
+    }));
+  }, []);
 
   const handleCoordinateSystemChange = useCallback((value: string) => {
     try {
@@ -154,12 +152,8 @@ export function useCoordinateSystem({
     if (system && Object.values(COORDINATE_SYSTEMS).includes(system)) {
       console.debug('[DEBUG] Initializing coordinate system:', system);
       
-      // First validate the system with the manager
-      if (!CoordinateSystemManager.isInitialized()) {
-        await CoordinateSystemManager.initialize();
-      }
-      
-      const supported = CoordinateSystemManager.getSupportedSystems().includes(system);
+      // Validate the coordinate system
+      const supported = isSwissSystem(system) || isWGS84System(system);
       if (!supported) {
         console.warn('[DEBUG] Detected system not supported:', system);
         onWarning(`Detected coordinate system ${system} is not supported, using WGS84`);

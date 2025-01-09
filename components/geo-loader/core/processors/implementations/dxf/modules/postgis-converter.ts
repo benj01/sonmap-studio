@@ -548,8 +548,33 @@ export class PostGISConverter {
       
       case 'POLYLINE':
       case 'LWPOLYLINE':
-        return Array.isArray(entity.data.vertices) && 
-               entity.data.vertices.length >= 2 &&
+        // Allow multi-part polylines by validating each part separately
+        if (!Array.isArray(entity.data.vertices)) return false;
+        
+        // For multi-part polylines, each part should have at least 2 vertices
+        const numParts = typeof entity.data.numParts === 'number' ? entity.data.numParts : 1;
+        if (numParts > 1) {
+          // Split vertices into parts based on null points which act as separators
+          const parts = entity.data.vertices.reduce((acc: Point2D[][], vertex) => {
+            // null vertex indicates a new part
+            if (!vertex) {
+              acc.push([]);
+              return acc;
+            }
+            // Add vertex to current part
+            if (acc.length === 0) acc.push([]);
+            if (this.isPoint2D(vertex)) {
+              acc[acc.length - 1].push(vertex);
+            }
+            return acc;
+          }, []);
+          
+          // Each part should have at least 2 vertices
+          return parts.every(part => part.length >= 2 && part.every(v => this.isPoint2D(v)));
+        }
+        
+        // For single-part polylines, just check if we have at least 2 valid vertices
+        return entity.data.vertices.length >= 2 && 
                entity.data.vertices.every(v => this.isPoint2D(v));
       
       case 'CIRCLE':

@@ -6,14 +6,28 @@ import {
   CoordinateSystem, 
   Bounds, 
   DEFAULT_CENTER,
-  isSwissSystem 
+  isSwissSystem,
+  isWGS84System 
 } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
-import { CoordinateSystemManager } from '../core/coordinate-systems/coordinate-system-manager';
 import proj4 from 'proj4';
 import WebMercatorViewport from '@math.gl/web-mercator';
 
-// Padding for bounds (in degrees for WGS84)
+// Define projections for Swiss coordinate systems
+const SWISS_PROJECTIONS: Record<string, string> = {
+  [COORDINATE_SYSTEMS.SWISS_LV95]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs',
+  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
+};
+
+// Helper to get projection string for a coordinate system
+const getProjection = (system: CoordinateSystem): string | null => {
+  if (isSwissSystem(system)) {
+    return SWISS_PROJECTIONS[system];
+  }
+  return null;
+};
+
+// Padding for bounds
 const BOUNDS_PADDING_DEGREES = 0.1;  // About 10km at Swiss latitudes
 const BOUNDS_PADDING_PERCENT = 0.2;   // 20% padding for better context
 
@@ -28,58 +42,32 @@ export function useMapView(
   });
   const [initialBoundsSet, setInitialBoundsSet] = useState(false);
 
-  // Initialize coordinate system manager
-  useEffect(() => {
-    const initManager = async () => {
-      try {
-        if (!CoordinateSystemManager.isInitialized()) {
-          await CoordinateSystemManager.initialize();
-        }
-      } catch (error) {
-        console.error('[DEBUG] Failed to initialize coordinate system manager:', error);
-        setViewState(prev => ({
-          ...prev,
-          ...DEFAULT_CENTER
-        }));
+  // Transform coordinates between systems
+  const transformCoordinates = useCallback(async (
+    point: { x: number, y: number },
+    fromSystem: CoordinateSystem,
+    toSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84
+  ): Promise<{ x: number, y: number }> => {
+    if (fromSystem === toSystem) return point;
+
+    try {
+      if (isSwissSystem(fromSystem) && isWGS84System(toSystem)) {
+        const projection = getProjection(fromSystem);
+        if (!projection) return point;
+        const [lon, lat] = proj4(projection, 'WGS84', [point.x, point.y]);
+        return { x: lon, y: lat };
+      } else if (isWGS84System(fromSystem) && isSwissSystem(toSystem)) {
+        const projection = getProjection(toSystem);
+        if (!projection) return point;
+        const [x, y] = proj4('WGS84', projection, [point.x, point.y]);
+        return { x, y };
       }
-    };
-    initManager();
+      return point;
+    } catch (error) {
+      console.error('Coordinate transformation error:', error);
+      return point;
+    }
   }, []);
-
-  // Verify coordinate system support
-  useEffect(() => {
-    const verifySystem = async () => {
-      try {
-        if (!CoordinateSystemManager.isInitialized()) {
-          await CoordinateSystemManager.initialize();
-        }
-
-        const isSupported = CoordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
-        console.debug('[DEBUG] Coordinate system verification:', {
-          system: coordinateSystem,
-          isSupported,
-          initialized: CoordinateSystemManager.isInitialized(),
-          supportedSystems: CoordinateSystemManager.getSupportedSystems()
-        });
-
-        if (!isSupported) {
-          console.warn(`[DEBUG] Unsupported coordinate system: ${coordinateSystem}, falling back to WGS84`);
-          setViewState(prev => ({
-            ...prev,
-            ...DEFAULT_CENTER
-          }));
-        }
-      } catch (error) {
-        console.error('[DEBUG] Error verifying coordinate system:', error);
-        setViewState(prev => ({
-          ...prev,
-          ...DEFAULT_CENTER
-        }));
-      }
-    };
-
-    verifySystem();
-  }, [coordinateSystem]);
 
   const calculateBoundsFromFeatures = useCallback(async (features: Feature[]): Promise<Bounds | null> => {
     if (!features.length) return null;
@@ -95,19 +83,13 @@ export function useMapView(
       let lat = coords[1];
 
       if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        try {
-          const transformed = await CoordinateSystemManager.transform(
-            { x: coords[0], y: coords[1] },
-            coordinateSystem,
-            COORDINATE_SYSTEMS.WGS84
-          );
-          // Manager handles coordinate order
-          lon = transformed.x;
-          lat = transformed.y;
-        } catch (error) {
-          console.error('Failed to transform coordinates:', error);
-          return;
-        }
+        const transformed = await transformCoordinates(
+          { x: coords[0], y: coords[1] },
+          coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84
+        );
+        lon = transformed.x;
+        lat = transformed.y;
       }
 
       if (isFinite(lon) && isFinite(lat)) {
@@ -146,14 +128,9 @@ export function useMapView(
     }
 
     return { minX, minY, maxX, maxY };
-  }, [coordinateSystem]);
+  }, [coordinateSystem, transformCoordinates]);
 
   const updateViewFromBounds = useCallback(async (bounds: Bounds) => {
-    // Ensure coordinate system manager is initialized
-    if (!CoordinateSystemManager.isInitialized()) {
-      await CoordinateSystemManager.initialize();
-    }
-
     // Skip if bounds are already set and we're just changing coordinate systems
     if (initialBoundsSet && viewState.zoom > 0) {
       console.debug('[DEBUG] Skipping bounds update - view already initialized');
@@ -171,13 +148,12 @@ export function useMapView(
       let transformedBounds = bounds;
       
       if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        // Transform each corner separately
-        const minPoint = await CoordinateSystemManager.transform(
+        const minPoint = await transformCoordinates(
           { x: bounds.minX, y: bounds.minY },
           coordinateSystem,
           COORDINATE_SYSTEMS.WGS84
         );
-        const maxPoint = await CoordinateSystemManager.transform(
+        const maxPoint = await transformCoordinates(
           { x: bounds.maxX, y: bounds.maxY },
           coordinateSystem,
           COORDINATE_SYSTEMS.WGS84
@@ -223,7 +199,7 @@ export function useMapView(
     } catch (error) {
       console.error('[DEBUG] Error updating view from bounds:', error);
     }
-  }, [coordinateSystem, viewState]);
+  }, [coordinateSystem, viewState, initialBoundsSet]);
 
   const focusOnFeatures = useCallback(async (features: Feature[], padding: number = 50): Promise<void> => {
     const bounds = await calculateBoundsFromFeatures(features);
@@ -238,7 +214,6 @@ export function useMapView(
 
   const getViewportBounds = useCallback((): [number, number, number, number] | undefined => {
     if (!viewState || !initialBoundsSet) {
-      // During initial load, use initial bounds if available
       if (initialBounds) {
         return [
           initialBounds.minX,
@@ -252,19 +227,15 @@ export function useMapView(
 
     const { longitude, latitude, zoom } = viewState;
     
-    // Validate all values are finite numbers
     if (!isFinite(longitude) || !isFinite(latitude) || !isFinite(zoom)) {
       console.debug('[DEBUG] Invalid viewState values:', { longitude, latitude, zoom });
       return undefined;
     }
     
-    // Only calculate viewport bounds after initial bounds are set
-    // and when significantly zoomed in (to avoid unnecessary filtering)
     if (zoom < 10) {
       return undefined;
     }
     
-    // Calculate bounds
     const latRange = 360 / Math.pow(2, zoom + 1);
     const lonRange = 360 / Math.pow(2, zoom);
     
@@ -273,7 +244,6 @@ export function useMapView(
     const maxLon = longitude + lonRange / 2;
     const maxLat = latitude + latRange / 2;
     
-    // Validate calculated bounds
     if (!isFinite(minLon) || !isFinite(minLat) || !isFinite(maxLon) || !isFinite(maxLat)) {
       console.debug('[DEBUG] Invalid calculated bounds:', { minLon, minLat, maxLon, maxLat });
       return undefined;
@@ -286,14 +256,10 @@ export function useMapView(
   useEffect(() => {
     const updateBounds = async () => {
       try {
-        // Wait for coordinate system verification
-        if (!CoordinateSystemManager.isInitialized()) {
-          await CoordinateSystemManager.initialize();
-        }
-
-        const isSupported = CoordinateSystemManager.getSupportedSystems().includes(coordinateSystem);
-        if (!isSupported) {
-          console.warn('[DEBUG] Cannot update bounds: unsupported coordinate system');
+        // Verify coordinate system support
+        const supported = isSwissSystem(coordinateSystem) || isWGS84System(coordinateSystem);
+        if (!supported) {
+          console.warn('[DEBUG] Unsupported coordinate system:', coordinateSystem);
           return;
         }
 

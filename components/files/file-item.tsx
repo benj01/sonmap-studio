@@ -181,11 +181,22 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
             continue
           }
 
-          companionFiles[companion.component_type] = new File(
+          // Get the file extension (e.g., .shx, .dbf, .prj)
+          const ext = companion.name.substring(companion.name.lastIndexOf('.')).toLowerCase();
+          // Ensure extension starts with a dot
+          const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`;
+          
+          companionFiles[normalizedExt] = new File(
             [companionData],
             companion.name,
             { type: 'application/octet-stream' }
-          )
+          );
+          
+          console.log('Added companion file:', {
+            name: companion.name,
+            ext: normalizedExt,
+            type: companion.component_type
+          });
         }
 
         // Add companion files to the main file object for the processor to use

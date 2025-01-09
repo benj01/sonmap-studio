@@ -3,7 +3,7 @@
 Last updated: 2025-01-05
 
 ## Overview
-The Geo Import component is responsible for handling the import of various geographic data formats into the application. It provides a user interface for file selection, preview, settings configuration, and progress monitoring.
+The Geo Import component handles the import of various geographic data formats into PostGIS. It provides a user interface for file selection, preview, settings configuration, and progress monitoring.
 
 ## Directory Structure
 
@@ -25,12 +25,11 @@ geo-import/
 - Main import dialog component
 - Manages the overall import flow
 - Coordinates between different sections
-- Handles file selection and import completion
 - Size: 10.3 KB
 
 Key Features:
 - File validation
-- Import process management
+- Database import management
 - Error handling
 - Progress tracking
 - Section coordination
@@ -38,7 +37,6 @@ Key Features:
 ### Logs Section (logs-section.tsx)
 - Displays import process logs
 - Shows errors, warnings, and info messages
-- Provides clear/close functionality
 - Size: 2.6 KB
 
 Features:
@@ -56,21 +54,20 @@ Features:
 Features:
 - Map preview
 - Feature highlighting
-- Coordinate system display
 - Statistics overview
 - Warning display
+- Direct PostGIS queries
 
 ### Settings Section (settings-section.tsx)
 - Manages import settings
 - Handles layer selection
-- Configures coordinate systems
 - Size: 5.1 KB
 
 Features:
 - Layer visibility toggles
 - Template selection
-- Coordinate system configuration
-- File-specific settings
+- Database configuration
+- Import options
 
 ### Types (types.ts)
 - Core type definitions
@@ -82,22 +79,14 @@ Key Types:
 - ImportOptions & ImportState
 - PreviewAnalysis
 - Section Props
-
-## Hooks
-
-The hooks directory contains custom React hooks for:
-- Import process management
-- File handling
-- State management
-- Preview generation
-- Settings persistence
+- Database Types
 
 ## Integration Points
 
 1. Data Processing
-   - Connects with geo-loader core
-   - Handles file processing
-   - Manages coordinate transformations
+   - Connects with PostGIS client
+   - Handles database operations
+   - Uses shared services
 
 2. UI Integration
    - Works with preview-map component
@@ -106,19 +95,19 @@ The hooks directory contains custom React hooks for:
 
 3. State Management
    - Manages import process state
-   - Handles settings persistence
+   - Handles database connections
    - Coordinates between sections
 
 ## Potential Improvements
 
 ### High Priority
 1. Memory Management
-   - [ ] Add cleanup for large previews
+   - [ ] Add cleanup for large imports
    - [ ] Implement progressive loading
    - [ ] Add memory usage monitoring
 
 2. Error Handling
-   - [ ] Improve error messages
+   - [ ] Improve database error messages
    - [ ] Add recovery options
    - [ ] Implement retry mechanism
 
@@ -129,14 +118,14 @@ The hooks directory contains custom React hooks for:
 
 ### Medium Priority
 1. Performance
-   - [ ] Optimize preview generation
-   - [ ] Add caching mechanism
+   - [ ] Optimize database queries
+   - [ ] Add query caching
    - [ ] Improve large file handling
 
 2. Features
    - [ ] Add file type detection
-   - [ ] Improve coordinate system selection
    - [ ] Add template management
+   - [ ] Improve companion file handling
 
 ### Low Priority
 1. UI Improvements
@@ -146,6 +135,7 @@ The hooks directory contains custom React hooks for:
 
 ## Notes
 - Consider splitting preview-section.tsx due to size
-- Look into potential memory leaks in preview generation
+- Look into query optimization for large datasets
 - Consider adding file type validation
 - May need better error recovery mechanisms
+- Connection pooling implementation in progress

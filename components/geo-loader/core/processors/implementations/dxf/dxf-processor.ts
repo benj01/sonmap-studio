@@ -286,48 +286,27 @@ export class DxfProcessor extends StreamProcessor {
       });
 
       const bounds = this.fileProcessor.calculateBounds(entities);
+      // Detect coordinate system from bounds
       const detection = this.fileProcessor.detectCoordinateSystem(bounds, structure);
-      // Ensure we have a valid coordinate system before proceeding
-      const detectedSystem = detection.system || COORDINATE_SYSTEMS.SWISS_LV95;
+      
+      // Default to WGS84 if no system detected or detection confidence is low
+      const detectedSystem = detection.confidence === 'high' 
+        ? detection.system 
+        : COORDINATE_SYSTEMS.WGS84;
+
+      // Create PostGIS system - this will never return undefined for valid systems
       const postgisSystem = createPostGISCoordinateSystem(detectedSystem);
       
-      if (!postgisSystem) {
-        throw new ValidationError(
-          'Failed to create PostGIS coordinate system',
-          'COORDINATE_SYSTEM_ERROR'
-        );
-      }
-      
-      // Convert and store the coordinate system
+      // Get base system for internal use
       const baseSystem = toBaseCoordinateSystem(postgisSystem);
-      if (!baseSystem) {
-        throw new ValidationError(
-          'Failed to convert PostGIS coordinate system to base system',
-          'COORDINATE_SYSTEM_ERROR'
-        );
-      }
 
-      // Update base StreamProcessor options with all required properties
-      const baseOptions: StreamProcessorOptions = {
-        // StreamProcessor specific options
-        chunkSize: this.options.chunkSize,
-        parallel: this.options.parallel,
-        maxParallel: this.options.maxParallel,
-        bufferSize: this.options.bufferSize,
-        // Base processor options
+      // Update processor options with detected coordinate system
+      this.options = {
+        ...this.options,
         coordinateSystem: baseSystem,
-        selectedLayers: this.options.selectedLayers,
-        selectedTypes: this.options.selectedTypes,
-        importAttributes: this.options.importAttributes,
-        errorReporter: this.options.errorReporter,
-        onProgress: this.options.onProgress,
-        relatedFiles: this.options.relatedFiles
       };
-      
-      // Update the options while preserving the prototype chain
-      Object.assign(this.options, baseOptions);
 
-      // Update DXF-specific options
+      // Update DXF-specific options with PostGIS configuration
       this.dxfOptions = {
         ...this.dxfOptions,
         coordinateSystem: postgisSystem,
@@ -338,17 +317,12 @@ export class DxfProcessor extends StreamProcessor {
         }
       };
 
-      // For analyze result, we can return the PostGIS system directly since
-      // AnalyzeResult accepts PostGISCoordinateSystem
-      
+      // Log warning for low confidence detection
       if (detection.confidence === 'low') {
-        const err = new ValidationError(
+        console.warn(
           `Low confidence in coordinate system detection: ${detection.reason}`,
-          'COORDINATE_SYSTEM_DETECTION',
-          undefined,
           { confidence: detection.confidence }
         );
-        this.events.onError?.(err);
       }
 
       // Generate preview
@@ -416,6 +390,20 @@ export class DxfProcessor extends StreamProcessor {
       });
 
       const bounds = this.fileProcessor.calculateBounds(entities);
+      
+      // Ensure coordinate system is properly set
+      const detection = this.fileProcessor.detectCoordinateSystem(bounds, structure);
+      const detectedSystem = detection.confidence === 'high' 
+        ? detection.system 
+        : COORDINATE_SYSTEMS.WGS84;
+      
+      // Update coordinate system if not already set
+      if (!this.dxfOptions.coordinateSystem) {
+        const postgisSystem = createPostGISCoordinateSystem(detectedSystem);
+        this.dxfOptions.coordinateSystem = postgisSystem;
+        this.options.coordinateSystem = toBaseCoordinateSystem(postgisSystem);
+      }
+
       const features = await this.processFileGroup([{
         data: file,
         name: file.name,

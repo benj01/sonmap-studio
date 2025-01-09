@@ -17,12 +17,12 @@ Both hooks manage feature state and processing, with overlapping functionality:
 - Feature filtering
 - State updates
 - Cache management
-- Coordinate system handling
+- Database queries
 
 **Recommendation:**
 Create a shared hook `useGeoFeatureState` that handles:
 - Feature state management
-- Caching logic
+- Query caching
 - Basic filtering
 Then extend it for specific needs in each component.
 
@@ -49,27 +49,56 @@ shared/
 │   └── action-button.tsx
 ```
 
-### 3. Coordinate System Handling
+### 3. Database Implementation
 
-#### Current Situation
-- `geo-import/hooks/use-coordinate-system.ts` (7.3 KB)
-- Preview map has embedded coordinate system logic
+#### Current Implementation
+The database handling has been consolidated into a service-based approach with:
 
-**Recommendation:**
-Extract coordinate system logic into a shared service:
-```
-services/
-├── coordinate-system/
-│   ├── transform.ts
-│   ├── validation.ts
-│   └── detection.ts
+1. Database Client (`database/client.ts`):
+- Connection management
+- Query execution
+- Error handling
+- Connection pooling
+
+2. PostGIS Integration:
+- Direct geometry handling
+- Spatial operations
+- Coordinate system transformations
+- Feature collections management
+
+3. Integration Points:
+- DXF processor uses PostGIS types
+- Import dialog uses database client
+- Preview queries collections directly
+- Layer management through database
+
+Example Usage:
+```typescript
+// Get database client
+const client = await PostGISClient.connect();
+
+// Import features
+await client.importFeatures(
+  projectId,
+  features,
+  {
+    srid: 4326,
+    validateGeometry: true
+  }
+);
+
+// Query features
+const collection = await client.getFeatureCollection(collectionId);
+
+// Spatial operations
+const bounds = await client.getFeatureBounds(featureId);
 ```
 
 ### 4. Feature Processing
 
 #### Current Situation
 - Both components implement feature processing logic
-- Duplicate transformation code
+- Duplicate database queries
 - Separate caching mechanisms
 
 **Recommendation:**
@@ -77,7 +106,7 @@ Create a shared feature processing service:
 ```
 services/
 ├── feature-processing/
-│   ├── transform.ts
+│   ├── database.ts
 │   ├── cache.ts
 │   └── validation.ts
 ```
@@ -91,92 +120,22 @@ components/
 │   ├── hooks/          # Shared hooks
 │   └── types/          # Shared type definitions
 ├── services/           # Shared services
+│   ├── database/       # Database operations
+│   └── processing/     # Feature processing
 ├── geo-import/         # Import-specific components
 └── preview-map/        # Preview-specific components
-```
-
-## Specific Improvements
-
-### 1. State Management
-```typescript
-// shared/hooks/useGeoFeatureState.ts
-export function useGeoFeatureState<T extends Feature>() {
-  // Common state management logic
-  return {
-    features,
-    filteredFeatures,
-    cache,
-    updateFeatures,
-    filterFeatures,
-    // ...
-  };
-}
-
-// Component-specific extensions
-export function useImportState() {
-  const baseState = useGeoFeatureState();
-  // Add import-specific logic
-  return { ...baseState, importSpecific };
-}
-
-export function usePreviewState() {
-  const baseState = useGeoFeatureState();
-  // Add preview-specific logic
-  return { ...baseState, previewSpecific };
-}
-```
-
-### 2. UI Components
-```typescript
-// shared/controls/progress-bar.tsx
-export function ProgressBar({ 
-  progress, 
-  status,
-  onCancel 
-}: ProgressBarProps) {
-  // Shared progress bar implementation
-}
-
-// Use in both components
-<ProgressBar 
-  progress={progress}
-  status={status}
-  onCancel={handleCancel}
-/>
-```
-
-### 3. Coordinate System Service
-```typescript
-// services/coordinate-system/index.ts
-export class CoordinateSystemService {
-  transform(features: Feature[], from: string, to: string): Feature[];
-  validate(system: string): boolean;
-  detect(features: Feature[]): string;
-}
-```
-
-### 4. Feature Processing Service
-```typescript
-// services/feature-processing/index.ts
-export class FeatureProcessor {
-  cache: FeatureCache;
-  
-  process(features: Feature[]): ProcessedFeatures;
-  transform(features: Feature[]): TransformedFeatures;
-  validate(features: Feature[]): ValidationResult;
-}
 ```
 
 ## Benefits of Consolidation
 
 1. **Reduced Code Duplication**
-   - Shared logic in one place
+   - Shared database logic
    - Easier maintenance
    - Consistent behavior
 
 2. **Better Performance**
-   - Shared caching
-   - Optimized processing
+   - Connection pooling
+   - Query optimization
    - Reduced memory usage
 
 3. **Improved Maintainability**
@@ -193,16 +152,16 @@ export class FeatureProcessor {
 
 1. High Priority
    - Create shared UI component library
-   - Implement shared coordinate system service
    - Extract common hooks
+   - Implement shared database service
 
 2. Medium Priority
    - Implement feature processing service
    - Consolidate state management
-   - Create shared types
+   - Add advanced features
 
 3. Low Priority
-   - Optimize caching
+   - Optimize queries
    - Add advanced features
    - Enhance documentation
 
@@ -210,7 +169,7 @@ export class FeatureProcessor {
 
 1. **Phase 1: Preparation**
    - Create shared directory structure
-   - Set up shared services
+   - Set up database services
    - Create shared types
 
 2. **Phase 2: Component Migration**
@@ -228,3 +187,5 @@ export class FeatureProcessor {
 - Add proper TypeScript types for all shared code
 - Consider adding unit tests for shared components
 - Document all shared APIs thoroughly
+- Ensure proper database connection management
+- Consider implementing query builders

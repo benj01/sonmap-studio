@@ -1,5 +1,17 @@
 import { Feature } from 'geojson';
-import { CoordinateSystemManager } from '../../../core/coordinate-systems/coordinate-system-manager';
+import { 
+  COORDINATE_SYSTEMS, 
+  CoordinateSystem,
+  isSwissSystem,
+  isWGS84System 
+} from '../../../types/coordinates';
+import proj4 from 'proj4';
+
+// Define projections for Swiss coordinate systems
+const SWISS_PROJECTIONS: Record<string, string> = {
+  [COORDINATE_SYSTEMS.SWISS_LV95]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs',
+  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
+};
 
 export class CoordinateSystemService {
   private static instance: CoordinateSystemService;
@@ -21,8 +33,8 @@ export class CoordinateSystemService {
    */
   async transform(
     features: Feature[],
-    from: CoordinateSystemManager,
-    to: CoordinateSystemManager
+    from: CoordinateSystem,
+    to: CoordinateSystem
   ): Promise<Feature[]> {
     if (from === to) {
       return features;
@@ -37,8 +49,8 @@ export class CoordinateSystemService {
    */
   async validate(system: string): Promise<boolean> {
     try {
-      // Implement coordinate system validation
-      return true;
+      return isSwissSystem(system as CoordinateSystem) || 
+             isWGS84System(system as CoordinateSystem);
     } catch (error) {
       console.error('Coordinate system validation failed:', error);
       return false;
@@ -46,27 +58,100 @@ export class CoordinateSystemService {
   }
 
   /**
-   * Attempt to detect the coordinate system of features
+   * Attempt to detect the coordinate system of features based on coordinate ranges
    */
-  async detect(features: Feature[]): Promise<CoordinateSystemManager | undefined> {
+  async detect(features: Feature[]): Promise<CoordinateSystem | undefined> {
     try {
-      // Implement coordinate system detection
-      return undefined;
+      if (!features.length) return undefined;
+
+      // Extract all coordinates
+      const coords: number[][] = [];
+      const processGeometry = (geometry: any) => {
+        if (!geometry) return;
+        
+        switch (geometry.type) {
+          case 'Point':
+            coords.push(geometry.coordinates);
+            break;
+          case 'LineString':
+          case 'MultiPoint':
+            coords.push(...geometry.coordinates);
+            break;
+          case 'Polygon':
+          case 'MultiLineString':
+            geometry.coordinates.forEach((ring: number[][]) => coords.push(...ring));
+            break;
+          case 'MultiPolygon':
+            geometry.coordinates.forEach((polygon: number[][][]) => 
+              polygon.forEach(ring => coords.push(...ring))
+            );
+            break;
+        }
+      };
+
+      features.forEach(feature => processGeometry(feature.geometry));
+
+      if (!coords.length) return undefined;
+
+      // Calculate coordinate ranges
+      const ranges = coords.reduce(
+        (acc, [x, y]) => ({
+          minX: Math.min(acc.minX, x),
+          maxX: Math.max(acc.maxX, x),
+          minY: Math.min(acc.minY, y),
+          maxY: Math.max(acc.maxY, y)
+        }),
+        { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity }
+      );
+
+      // Check coordinate ranges against known systems
+      if (
+        ranges.minX >= 2485000 && ranges.maxX <= 2834000 &&
+        ranges.minY >= 1075000 && ranges.maxY <= 1299000
+      ) {
+        return COORDINATE_SYSTEMS.SWISS_LV95;
+      } else if (
+        ranges.minX >= 485000 && ranges.maxX <= 834000 &&
+        ranges.minY >= 75000 && ranges.maxY <= 299000
+      ) {
+        return COORDINATE_SYSTEMS.SWISS_LV03;
+      } else if (
+        ranges.minX >= -180 && ranges.maxX <= 180 &&
+        ranges.minY >= -90 && ranges.maxY <= 90
+      ) {
+        return COORDINATE_SYSTEMS.WGS84;
+      }
+
+      return COORDINATE_SYSTEMS.WGS84; // Default to WGS84 if no match
     } catch (error) {
       console.error('Coordinate system detection failed:', error);
-      return undefined;
+      return COORDINATE_SYSTEMS.WGS84;
     }
   }
 
   private async getTransformer(
-    from: CoordinateSystemManager,
-    to: CoordinateSystemManager
+    from: CoordinateSystem,
+    to: CoordinateSystem
   ): Promise<Function> {
     const key = `${from}->${to}`;
+    
     if (!this.transformCache.has(key)) {
-      // Implement transformer creation and caching
-      this.transformCache.set(key, (coord: number[]) => coord);
+      let transformer: Function;
+
+      if (isSwissSystem(from) && isWGS84System(to)) {
+        const projection = SWISS_PROJECTIONS[from];
+        transformer = (coord: number[]) => proj4(projection, 'WGS84', coord);
+      } else if (isWGS84System(from) && isSwissSystem(to)) {
+        const projection = SWISS_PROJECTIONS[to];
+        transformer = (coord: number[]) => proj4('WGS84', projection, coord);
+      } else {
+        // Identity transform for unsupported conversions
+        transformer = (coord: number[]) => coord;
+      }
+
+      this.transformCache.set(key, transformer);
     }
+
     return this.transformCache.get(key)!;
   }
 
