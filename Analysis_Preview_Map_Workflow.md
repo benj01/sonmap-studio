@@ -31,6 +31,8 @@ This document provides a structured analysis of the "preview map" workflow based
 ### Coordinate Systems
 - `coordinate-system-manager.ts` and `coordinate-system-select.tsx` handle initialization, transformations, and user input for coordinate systems.
 - All components requiring coordinate transformation interact with the `coordinateSystemManager`.
+- Shapefile processing now includes automatic PRJ file detection and coordinate system transformation.
+- Enhanced error handling and fallback mechanisms for coordinate system detection.
 
 ### Feature Management
 - `feature-manager.ts` provides backend support for chunking, visibility, and feature memory management.
@@ -50,5 +52,26 @@ This document provides a structured analysis of the "preview map" workflow based
 To troubleshoot the "preview map" issues:
 1. Validate whether `PreviewManager` is correctly initialized and has access to required feature collections.
 2. Check for potential memory or caching overflows in `feature-manager.ts`.
-3. Confirm coordinate transformations are accurate and validated in `coordinate-system-manager.ts`.
-4. Ensure debounced updates in `use-preview-state.ts` are not causing delays in map rendering.
+3. Test preview rendering with various coordinate systems and PRJ files.
+4. Verify coordinate transformations in the shapefile preview pipeline.
+5. Monitor memory usage during large file processing.
+6. Test error recovery mechanisms with invalid or missing PRJ files.
+
+## Recent Improvements
+
+1. Coordinate System Handling:
+   - Added automatic PRJ file detection for shapefiles
+   - Implemented coordinate system transformation pipeline
+   - Enhanced error handling and logging
+   - Added fallback to WGS84 when needed
+
+2. Preview Pipeline:
+   - Improved feature loading with coordinate awareness
+   - Enhanced bounds calculation after transformation
+   - Added validation for transformed coordinates
+   - Optimized memory usage during transformation
+
+3. Error Handling:
+   - Added comprehensive error reporting
+   - Improved recovery mechanisms
+   - Enhanced debug logging throughout the pipeline

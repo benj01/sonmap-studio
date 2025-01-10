@@ -1,119 +1,48 @@
+import { ProcessorResult, ProcessorStats, AnalyzeResult } from '../base/types';
+import { StreamProcessorEvents, StreamProcessorResult } from './types';
+import { ValidationError } from '../../errors/types';
 import { Feature } from 'geojson';
-import { BaseProcessor } from '../base/base-processor';
-import { ProcessorResult } from '../base/types';
-import { StreamProcessorOptions, StreamProcessorEvents, StreamProcessorState, StreamProcessorResult } from './types';
+import { CompressedFile } from '../../compression/compression-handler';
 
 /**
- * Abstract base class for stream-based processors
+ * Base class for stream processors
  */
-export abstract class StreamProcessor extends BaseProcessor {
-  protected options: StreamProcessorOptions;
+export abstract class StreamProcessor<R = any, F = Feature> {
+  protected state: {
+    statistics: ProcessorStats;
+  };
+
+  protected options: Record<string, any>;
   protected events: StreamProcessorEvents;
-  protected state: StreamProcessorState;
 
-  constructor(options: StreamProcessorOptions = {}, events: StreamProcessorEvents = {}) {
-    super(options);
-    this.options = {
-      chunkSize: 1000,
-      parallel: false,
-      maxParallel: 4,
-      bufferSize: 5000,
-      ...options
-    };
+  constructor(options: Record<string, any> = {}, events: StreamProcessorEvents = {}) {
+    this.options = options;
     this.events = events;
-    this.state = this.createInitialState();
-  }
-
-  /**
-   * Process file using streaming approach
-   */
-  async process(file: File): Promise<ProcessorResult> {
-    try {
-      this.state = this.createInitialState();
-      const result = await this.processStream(file);
-      
-      if (!result.success) {
-        throw new Error(result.error);
+    this.state = {
+      statistics: {
+        featureCount: 0,
+        layerCount: 0,
+        featureTypes: {},
+        failedTransformations: 0,
+        errors: []
       }
-
-      return {
-        features: {
-          type: 'FeatureCollection',
-          features: []  // Features are handled by stream events
-        },
-        bounds: this.calculateBounds(),
-        layers: this.getLayers(),
-        coordinateSystem: this.options.coordinateSystem!,
-        statistics: result.statistics
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.events.onError?.(error instanceof Error ? error : new Error(message));
-      throw error;
-    }
+    };
   }
 
   /**
-   * Process features in streaming mode
+   * Check if file can be processed
    */
-  protected abstract processStream(file: File): Promise<StreamProcessorResult>;
+  abstract canProcess(file: File): Promise<boolean>;
+
+  /**
+   * Analyze file structure
+   */
+  abstract analyze(file: File): Promise<AnalyzeResult<R, F>>;
 
   /**
    * Process a chunk of features
    */
-  protected abstract processChunk(features: Feature[], chunkIndex: number): Promise<Feature[]>;
-
-  /**
-   * Get current processing state
-   */
-  getState(): StreamProcessorState {
-    return { ...this.state };
-  }
-
-  /**
-   * Check if processor is currently active
-   */
-  isProcessing(): boolean {
-    return this.state.isProcessing;
-  }
-
-  /**
-   * Update processing progress
-   */
-  protected updateProgress(progress: number): void {
-    this.state.progress = Math.min(1, Math.max(0, progress));
-    this.events.onProgress?.(this.state.progress);
-    this.emitProgress(this.state.progress);
-  }
-
-  /**
-   * Handle processed feature
-   */
-  protected handleFeature(feature: Feature): void {
-    this.state.featuresProcessed++;
-    this.events.onFeature?.(feature);
-  }
-
-  /**
-   * Handle processed chunk
-   */
-  protected handleChunk(features: Feature[], chunkIndex: number): void {
-    this.state.chunksProcessed++;
-    this.events.onChunk?.(features, chunkIndex);
-  }
-
-  /**
-   * Create initial processor state
-   */
-  private createInitialState(): StreamProcessorState {
-    return {
-      isProcessing: false,
-      progress: 0,
-      featuresProcessed: 0,
-      chunksProcessed: 0,
-      statistics: this.createDefaultStats()
-    };
-  }
+  protected abstract processChunk(features: F[], chunkIndex: number): Promise<F[]>;
 
   /**
    * Calculate bounds from processed features
@@ -124,4 +53,42 @@ export abstract class StreamProcessor extends BaseProcessor {
    * Get available layers
    */
   protected abstract getLayers(): string[];
+
+  /**
+   * Get bounds for a specific feature
+   */
+  protected abstract getFeatureBounds(feature: F): Required<ProcessorResult>['bounds'];
+
+  /**
+   * Process file stream
+   */
+  protected abstract processStream(file: File): Promise<StreamProcessorResult>;
+
+  /**
+   * Process a group of files
+   */
+  protected abstract processFileGroup(files: CompressedFile[]): Promise<F[]>;
+
+  /**
+   * Clean up resources
+   */
+  abstract cleanup(): Promise<void>;
+
+  /**
+   * Update progress
+   */
+  protected updateProgress(progress: number): void {
+    if (this.events.onProgress) {
+      this.events.onProgress(progress);
+    }
+  }
+
+  /**
+   * Handle error
+   */
+  protected handleError(error: ValidationError): void {
+    if (this.events.onError) {
+      this.events.onError(error);
+    }
+  }
 }

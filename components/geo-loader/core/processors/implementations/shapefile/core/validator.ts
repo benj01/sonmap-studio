@@ -1,11 +1,26 @@
 import { ShapeType, ShapefileStructure } from '../types';
 import { WasmValidator } from './wasm-bridge';
+import { ValidationError } from '../../../../errors/types';
 
 export class ShapefileValidator {
   private wasmValidator: WasmValidator;
 
   constructor() {
     this.wasmValidator = new WasmValidator();
+  }
+
+  /**
+   * Ensure WebAssembly is initialized
+   */
+  private ensureInitialized(): void {
+    if (!this.wasmValidator) {
+      throw new ValidationError(
+        'Shapefile validator not properly initialized',
+        'INITIALIZATION_ERROR',
+        undefined,
+        { detail: 'WebAssembly module not initialized. Make sure geo-loader is properly initialized before processing shapefiles.' }
+      );
+    }
   }
 
   /**
@@ -19,14 +34,15 @@ export class ShapefileValidator {
     message: string;
     details?: Record<string, unknown>;
   }> {
+    this.ensureInitialized();
     const issues: Array<{
       type: string;
       message: string;
       details?: Record<string, unknown>;
     }> = [];
 
-    // Validate file code using WebAssembly
     try {
+      // Validate file code using WebAssembly
       this.wasmValidator.validateFileCode(structure.shapeHeader.fileCode);
     } catch (error) {
       issues.push({
@@ -53,5 +69,107 @@ export class ShapefileValidator {
     }
 
     return issues;
+  }
+
+  /**
+   * Validate header buffer
+   */
+  validateHeaderBuffer(buffer: ArrayBuffer): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validateHeaderBuffer(buffer.byteLength);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid shapefile header buffer',
+        'HEADER_VALIDATION_ERROR',
+        undefined,
+        { bufferLength: buffer.byteLength }
+      );
+    }
+  }
+
+  /**
+   * Validate file code
+   */
+  validateFileCode(fileCode: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validateFileCode(fileCode);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid shapefile file code',
+        'FILE_CODE_ERROR',
+        undefined,
+        { fileCode }
+      );
+    }
+  }
+
+  /**
+   * Validate file length
+   */
+  validateFileLength(fileLength: number, bufferLength: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validateFileLength(fileLength, bufferLength);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid shapefile length',
+        'FILE_LENGTH_ERROR',
+        undefined,
+        { fileLength, bufferLength }
+      );
+    }
+  }
+
+  /**
+   * Validate version
+   */
+  validateVersion(version: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validateVersion(version);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid shapefile version',
+        'VERSION_ERROR',
+        undefined,
+        { version }
+      );
+    }
+  }
+
+  /**
+   * Validate bounding box
+   */
+  validateBoundingBox(xMin: number, yMin: number, xMax: number, yMax: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validateBoundingBox(xMin, yMin, xMax, yMax);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid shapefile bounding box',
+        'BBOX_ERROR',
+        undefined,
+        { bbox: { xMin, yMin, xMax, yMax } }
+      );
+    }
+  }
+
+  /**
+   * Validate record content length
+   */
+  validateRecordContentLength(contentLength: number, recordNumber: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validateRecordContentLength(contentLength, recordNumber);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid record content length',
+        'RECORD_LENGTH_ERROR',
+        undefined,
+        { contentLength, recordNumber }
+      );
+    }
   }
 }

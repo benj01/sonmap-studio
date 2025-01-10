@@ -1,5 +1,9 @@
-import { ProcessorOptions } from '../../../processors/base/types';
+import { ProcessorOptions, PreviewData } from '../../base/types';
 import { PostGISBatchOptions } from '../../../../types/postgis';
+import { ShapefileRecord, ShapefileData, ShapefileAttributes } from './types/records';
+import { Feature } from 'geojson';
+
+export type { ShapefileRecord, ShapefileData, ShapefileAttributes };
 
 /**
  * Shapefile geometry types
@@ -22,104 +26,57 @@ export enum ShapeType {
 }
 
 /**
- * Shapefile record attributes
- */
-export interface ShapefileAttributes {
-  /** Record number */
-  recordNumber: number;
-  /** Field values */
-  [key: string]: unknown;
-}
-
-/**
- * Shapefile field definition
- */
-export interface ShapefileField {
-  /** Field name */
-  name: string;
-  /** Field type */
-  type: 'C' | 'N' | 'F' | 'L' | 'D';
-  /** Field length */
-  length: number;
-  /** Decimal count for numeric fields */
-  decimals?: number;
-}
-
-/**
- * Shapefile header information
- */
-export interface ShapefileHeader {
-  /** File code (should be 9994) */
-  fileCode: number;
-  /** File length in 16-bit words */
-  fileLength: number;
-  /** Version number */
-  version: number;
-  /** Shape type */
-  shapeType: ShapeType;
-  /** Bounding box */
-  bbox: {
-    xMin: number;
-    yMin: number;
-    xMax: number;
-    yMax: number;
-    zMin?: number;
-    zMax?: number;
-    mMin?: number;
-    mMax?: number;
-  };
-}
-
-/**
- * DBF file header information
- */
-export interface DbfHeader {
-  /** Version number */
-  version: number;
-  /** Last update date */
-  lastUpdate: Date;
-  /** Number of records */
-  recordCount: number;
-  /** Header length in bytes */
-  headerLength: number;
-  /** Record length in bytes */
-  recordLength: number;
-  /** Field descriptors */
-  fields: ShapefileField[];
-}
-
-/**
- * Shapefile record
- */
-export interface ShapefileRecord {
-  /** Record header */
-  header: {
-    recordNumber: number;
-    contentLength: number;
-  };
-  /** Shape type */
-  shapeType: ShapeType;
-  /** Shape data */
-  data: Record<string, unknown>;
-  /** DBF attributes */
-  attributes?: ShapefileAttributes;
-}
-
-/**
  * Shapefile structure
  */
 export interface ShapefileStructure {
   /** Shape file header */
-  shapeHeader: ShapefileHeader;
+  shapeHeader: {
+    fileCode: number;
+    fileLength: number;
+    version: number;
+    shapeType: ShapeType;
+    bbox: {
+      xMin: number;
+      yMin: number;
+      xMax: number;
+      yMax: number;
+      zMin?: number;
+      zMax?: number;
+      mMin?: number;
+      mMax?: number;
+    };
+  };
   /** DBF file header */
-  dbfHeader?: DbfHeader;
+  dbfHeader?: {
+    version: number;
+    lastUpdate: Date;
+    recordCount: number;
+    headerLength: number;
+    recordLength: number;
+    fields: Array<{
+      name: string;
+      type: 'C' | 'N' | 'F' | 'L' | 'D';
+      length: number;
+      decimals?: number;
+    }>;
+  };
   /** Available fields */
-  fields: ShapefileField[];
+  fields: Array<{
+    name: string;
+    type: 'C' | 'N' | 'F' | 'L' | 'D';
+    length: number;
+    decimals?: number;
+  }>;
   /** Shape type */
   shapeType: ShapeType;
   /** Record count */
   recordCount: number;
 }
+
+/**
+ * Preview data structure
+ */
+export type ShapefilePreviewData = PreviewData<ShapefileRecord, Feature>;
 
 /**
  * Shapefile processor options
@@ -162,52 +119,16 @@ export interface ShapefileProcessorOptions extends ProcessorOptions {
 }
 
 /**
- * Shapefile parsing options
+ * Analysis issue type
  */
-export interface ShapefileParseOptions {
-  /** Whether to parse DBF */
-  parseDbf?: boolean;
-  /** Whether to validate geometry */
-  validate?: boolean;
-  /** Whether to repair geometry */
-  repair?: boolean;
-  /** Whether to simplify geometry */
-  simplify?: boolean;
-  /** Simplification tolerance */
-  tolerance?: number;
-  /** Maximum number of records to parse */
-  maxRecords?: number;
-  /** PostGIS import options */
-  postgis?: {
-    /** Whether to convert directly to PostGIS format */
-    directConversion?: boolean;
-    /** Target SRID for conversion */
-    targetSrid?: number;
-    /** Whether to force 2D geometries */
-    force2D?: boolean;
-  };
+export interface AnalysisIssue {
+  type: 'WARNING' | 'ERROR';
+  message: string;
+  details?: Record<string, unknown>;
 }
 
 /**
- * PostGIS conversion result
- */
-export interface PostGISConversionResult {
-  /** WKT geometry string */
-  wkt: string;
-  /** Original SRID */
-  sourceSrid: number;
-  /** Target SRID */
-  targetSrid: number;
-  /** Geometry type */
-  geometryType: string;
-  /** Whether conversion was successful */
-  success: boolean;
-  /** Error message if conversion failed */
-  error?: string;
-}
-
-/**
- * Result of shapefile structure analysis
+ * Analysis result
  */
 export interface ShapefileAnalyzeResult {
   /** Detected file structure */
@@ -215,9 +136,5 @@ export interface ShapefileAnalyzeResult {
   /** Sample records */
   preview: ShapefileRecord[];
   /** Any issues found during analysis */
-  issues?: Array<{
-    type: string;
-    message: string;
-    details?: Record<string, unknown>;
-  }>;
+  issues?: AnalysisIssue[];
 }

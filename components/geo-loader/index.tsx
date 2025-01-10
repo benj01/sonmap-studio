@@ -13,17 +13,29 @@ import {
   pointToPosition
 } from './types/coordinates';
 
+// Import WebAssembly initialization
+import { initWasm } from './core/processors/implementations/shapefile/core/wasm-bridge';
+
 // Import and initialize processors synchronously
 import './core/processors';
 import { ProcessorRegistry } from './core/processors/base/registry';
 console.debug('[DEBUG] Processors registered:', ProcessorRegistry.getSupportedExtensions());
 
-// Initialize coordinate systems
-const initPromise = coordinateSystemManager.initialize();
+// Initialize coordinate systems and WebAssembly
+const initPromises = Promise.all([
+  coordinateSystemManager.initialize(),
+  initWasm().catch(error => {
+    console.error('Failed to initialize WebAssembly:', error);
+    throw error;
+  })
+]);
 
 // Export initialization helpers
-export const initialize = () => initPromise;
-export const isInitialized = () => coordinateSystemManager.isInitialized();
+export const initialize = () => initPromises;
+export const isInitialized = () => {
+  return coordinateSystemManager.isInitialized() && 
+         ProcessorRegistry.getSupportedExtensions().includes('shp');
+};
 
 // Export the coordinate system manager instance
 export { coordinateSystemManager };

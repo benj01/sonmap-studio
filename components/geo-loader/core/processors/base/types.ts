@@ -1,148 +1,98 @@
-import { CoordinateSystem } from '../../../types/coordinates';
-import { ErrorReporterImpl as ErrorReporter } from '../../../core/errors/reporter';
-import { PostGISBatchOptions } from '../../../types/postgis';
+/**
+ * Base types for processors
+ */
+
+export interface ProcessorStats {
+  featureCount: number;
+  layerCount: number;
+  featureTypes: Record<string, number>;
+  failedTransformations: number;
+  errors: string[];
+}
+
+export interface ProcessorResult {
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+  success: boolean;
+  error?: string;
+  statistics: ProcessorStats;
+}
+
+/**
+ * Preview data structure
+ */
+export interface PreviewData<R = any, F = any> {
+  records: R[];
+  features: F[];
+}
+
+/**
+ * Analysis result
+ */
+export interface AnalyzeResult<R = any, F = any> {
+  layers: string[];
+  coordinateSystem: string;
+  bounds: Required<ProcessorResult>['bounds'];
+  preview: PreviewData<R, F>;
+}
 
 /**
  * Base processor options
  */
 export interface ProcessorOptions {
-  /** Target coordinate system */
-  coordinateSystem?: CoordinateSystem;
-  /** Selected layers to process */
-  selectedLayers?: string[];
-  /** Selected types to process */
-  selectedTypes?: string[];
+  /** Coordinate system identifier */
+  coordinateSystem?: string;
+  /** Maximum number of preview records */
+  previewRecords?: number;
   /** Whether to import attributes */
   importAttributes?: boolean;
-  /** Error reporter instance */
-  errorReporter?: ErrorReporter;
-  /** Progress callback */
-  onProgress?: (progress: number) => void;
-  /** Related files (e.g. shapefile components) */
-  relatedFiles?: {
-    /** DBF file containing attributes */
-    dbf?: File;
-    /** SHX file containing shape index */
-    shx?: File;
-    /** PRJ file containing projection info */
-    prj?: File;
-  };
-  /** PostGIS batch processing options */
-  postgis?: PostGISBatchOptions & {
-    /** Table name for import */
-    tableName?: string;
-    /** Schema name for import */
-    schemaName?: string;
-  };
 }
 
 /**
- * Processor statistics
- */
-export interface ProcessorStats {
-  /** Total number of features */
-  featureCount: number;
-  /** Number of layers */
-  layerCount: number;
-  /** Feature type counts */
-  featureTypes: Record<string, number>;
-  /** Number of failed transformations */
-  failedTransformations: number;
-  /** Processing errors */
-  errors: Array<{
-    message: string;
-    details?: Record<string, unknown>;
-  }>;
-}
-
-/**
- * Result of database import operation
+ * Database import result
  */
 export interface DatabaseImportResult {
-  /** Number of features successfully imported */
   importedFeatures: number;
-  /** Collection ID in the database */
   collectionId: string;
-  /** Layer IDs in the database */
   layerIds: string[];
-  /** Failed features */
   failedFeatures: Array<{
     entity: any;
     error: string;
   }>;
-  /** Import statistics */
   statistics: {
-    /** Time taken for import */
     importTime: number;
-    /** Number of features validated */
     validatedCount: number;
-    /** Number of features transformed */
     transformedCount: number;
-    /** Number of batches processed */
-    batchesProcessed?: number;
-    /** Number of transactions committed */
-    transactionsCommitted?: number;
-    /** Number of transaction rollbacks */
-    transactionRollbacks?: number;
+    batchesProcessed: number;
+    transactionsCommitted: number;
+    transactionRollbacks: number;
   };
-  /** PostGIS-specific results */
-  postgis?: {
-    /** Table name where data was imported */
+  postgis: {
     tableName: string;
-    /** Schema name where data was imported */
     schemaName: string;
-    /** SRID of imported geometries */
     srid: number;
-    /** Geometry types imported */
     geometryTypes: string[];
   };
 }
 
 /**
- * Result of processing operation
+ * Stream processor result
  */
-export interface ProcessorResult {
-  /** Database import result */
-  databaseResult: DatabaseImportResult;
-  /** Processing statistics */
-  statistics: ProcessorStats;
-  /** Detected coordinate system */
-  coordinateSystem?: CoordinateSystem;
-  /** Detected layers */
-  layers: string[];
-  /** Bounding box */
-  bounds?: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-  };
+export interface StreamProcessorResult extends ProcessorResult {
+  databaseResult?: DatabaseImportResult;
 }
 
 /**
- * Result of file analysis
+ * Stream processor events
  */
-export interface AnalyzeResult {
-  /** Detected layers */
-  layers: string[];
-  /** Detected coordinate system */
-  coordinateSystem?: CoordinateSystem;
-  /** Bounding box */
-  bounds?: {
-    minX: number;
-    minY: number;
-    maxX: number;
-    maxY: number;
-  };
-  /** Preview data */
-  preview?: {
-    type: string;
-    features: any[];
-  };
-  /** Any issues found during analysis */
-  issues?: Array<{
-    type: string;
-    message: string;
-    details?: Record<string, unknown>;
-  }>;
+export interface StreamProcessorEvents {
+  onProgress?: (progress: number) => void;
+  onWarning?: (message: string) => void;
+  onError?: (error: Error) => void;
+  onBatchComplete?: (batchNumber: number, totalBatches: number) => void;
+  onTransactionStatus?: (status: 'begin' | 'commit' | 'rollback') => void;
 }

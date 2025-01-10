@@ -72,6 +72,7 @@ export function useFileAnalysis({
     try {
       console.log('[DEBUG] Starting file analysis:', file.name);
 
+      // Ensure geo-loader is fully initialized (coordinate systems and WebAssembly)
       if (!coordinateSystemManager.isInitialized()) {
         try {
           await coordinateSystemManager.initialize();
@@ -79,6 +80,20 @@ export function useFileAnalysis({
           throw new GeoLoaderError(
             'Failed to initialize coordinate systems',
             'COORDINATE_SYSTEM_INIT_ERROR',
+            { originalError: error instanceof Error ? error.message : String(error) }
+          );
+        }
+      }
+
+      // Import and check geo-loader initialization
+      const { initialize, isInitialized } = await import('../../../index');
+      if (!isInitialized()) {
+        try {
+          await initialize();
+        } catch (error) {
+          throw new GeoLoaderError(
+            'Failed to initialize geo-loader',
+            'INITIALIZATION_ERROR',
             { originalError: error instanceof Error ? error.message : String(error) }
           );
         }

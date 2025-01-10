@@ -1,30 +1,38 @@
-import { StreamProcessor } from '../../../processors/stream/stream-processor';
-import { AnalyzeResult, ProcessorResult, ProcessorStats, DatabaseImportResult } from '../../../processors/base/types';
-import { StreamProcessorResult, StreamProcessorEvents } from '../../../processors/stream/types';
-import { Feature } from 'geojson';
+import { StreamProcessor } from '../../stream/stream-processor';
+import { StreamProcessorResult, StreamProcessorEvents } from '../../stream/types';
+import { AnalyzeResult, ProcessorResult } from '../../base/types';
+import { Feature, FeatureCollection } from 'geojson';
 import { ShapefileParser } from './parser';
-import { ShapefileProcessorOptions, ShapefileParseOptions, ShapeType, PostGISConversionResult } from './types';
-import { ValidationError } from '../../../errors/types';
+import { COORDINATE_SYSTEMS } from '../../../../types/coordinates';
+import { coordinateSystemManager } from '../../../coordinate-systems/coordinate-system-manager';
+import { 
+  ShapefileProcessorOptions, 
+  ShapefileRecord, 
+  ShapefilePreviewData,
+  AnalysisIssue,
+  ShapefileAnalyzeResult
+} from './types';
+import { ValidationError, createErrorDetails } from '../../../errors/types';
 import { CompressedFile } from '../../../compression/compression-handler';
 import { PostGISClient } from '../../../../database/client';
-import { PostGISGeometry, PostGISFeature } from '../../../../types/postgis';
 import EventEmitter from 'events';
+
+// Import modular components
+import { convertToGeoJSON, convertToPostGIS } from './converters';
+import { calculateBoundsFromRecords, updateBounds, getFeatureBounds } from './utils/bounds';
+import { createDefaultStats, updateStats, addError, resetStats } from './utils/stats';
+import { TransactionManager } from './database';
+import { prjReader } from './utils/prj-reader';
 
 /**
  * Processor for Shapefile files with PostGIS support
  */
-export class ShapefileProcessor extends StreamProcessor {
+export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature> {
   private parser: ShapefileParser;
-  protected dbClient: PostGISClient | null = null;
-  private bounds: ProcessorResult['bounds'] = {
-    minX: Infinity,
-    minY: Infinity,
-    maxX: -Infinity,
-    maxY: -Infinity
-  };
+  private transactionManager: TransactionManager | null = null;
+  private bounds = createDefaultBounds();
   private layers: string[] = [];
-  private records: any[] = [];
-  private transactionActive = false;
+  private records: ShapefileRecord[] = [];
   private eventEmitter: EventEmitter;
   private warnings: string[] = [];
 
@@ -59,298 +67,20 @@ export class ShapefileProcessor extends StreamProcessor {
   }
 
   /**
-   * Analyze Shapefile
-   */
-  async analyze(file: File): Promise<AnalyzeResult> {
-    try {
-      const result = await this.parser.analyzeStructure(file, {
-        previewRecords: (this.options as ShapefileProcessorOptions).previewRecords,
-        parseDbf: (this.options as ShapefileProcessorOptions).importAttributes
-      });
-
-      // Report any issues found during analysis
-      result.issues?.forEach(issue => {
-        if (issue.type === 'WARNING') {
-          this.addWarning(issue.message);
-        } else {
-          super.handleError(new ValidationError(
-            issue.message,
-            issue.type,
-            undefined,
-            issue.details
-          ));
-        }
-      });
-
-      // Determine coordinate system from options or default to WGS84
-      const coordinateSystem = this.options.coordinateSystem || 'EPSG:4326';
-
-      // Convert preview records to PostGIS format
-      const previewFeatures = await this.convertToPostGIS(result.preview);
-
-      // Update layers (in shapefile case, it's just one layer)
-      this.layers = ['shapes'];
-
-      // Calculate preview bounds
-      const bounds = this.calculateBoundsFromRecords(result.preview);
-
-      return {
-        layers: this.layers,
-        coordinateSystem,
-        bounds,
-        preview: {
-          type: 'PostGISFeatureCollection',
-          features: previewFeatures
-        }
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new ValidationError(
-        `Failed to analyze Shapefile: ${message}`,
-        'SHAPEFILE_ANALYSIS_ERROR',
-        undefined,
-        { error: message }
-      );
-    }
-  }
-
-  /**
-   * Process Shapefile with PostGIS support
-   */
-  protected async processStream(file: File): Promise<StreamProcessorResult> {
-    try {
-      this.resetState();
-
-      // Get PostGIS options
-      const postgisOptions = (this.options as ShapefileProcessorOptions).postgis;
-      if (!postgisOptions?.tableName) {
-        throw new Error('PostGIS table name is required');
-      }
-
-      // Configure parsing options
-      const parseOptions: ShapefileParseOptions = {
-        parseDbf: (this.options as ShapefileProcessorOptions).importAttributes,
-        validate: (this.options as ShapefileProcessorOptions).validateGeometry,
-        repair: (this.options as ShapefileProcessorOptions).repairGeometry,
-        simplify: (this.options as ShapefileProcessorOptions).simplifyGeometry,
-        tolerance: (this.options as ShapefileProcessorOptions).simplifyTolerance,
-        postgis: {
-          directConversion: true,
-          targetSrid: postgisOptions.srid,
-          force2D: true
-        }
-      };
-
-      // Parse records
-      this.records = await this.parser.parseFeatures(file, parseOptions);
-
-      // Process records in batches
-      const batchSize = postgisOptions.batchSize || 1000;
-      const useTransaction = postgisOptions.useTransaction ?? true;
-      const importResult: DatabaseImportResult = {
-        importedFeatures: 0,
-        collectionId: '',
-        layerIds: [],
-        failedFeatures: [],
-        statistics: {
-          importTime: 0,
-          validatedCount: 0,
-          transformedCount: 0,
-          batchesProcessed: 0,
-          transactionsCommitted: 0,
-          transactionRollbacks: 0
-        },
-        postgis: {
-          tableName: postgisOptions.tableName,
-          schemaName: postgisOptions.schemaName || 'public',
-          srid: postgisOptions.srid || 4326,
-          geometryTypes: []
-        }
-      };
-
-      const startTime = Date.now();
-
-      try {
-        if (useTransaction) {
-          await this.dbClient?.beginTransaction();
-          this.transactionActive = true;
-          this.handleTransactionStatus('begin');
-        }
-
-        for (let i = 0; i < this.records.length; i += batchSize) {
-          const batch = this.records.slice(i, i + batchSize);
-          const features = await this.convertToPostGIS(batch);
-          
-          try {
-            const result = await this.dbClient?.insertFeatures(
-              postgisOptions.tableName,
-              features,
-              {
-                batchSize,
-                useTransaction,
-                onProgress: (progress) => this.updateProgress((i + batch.length * progress) / this.records.length),
-                onBatchComplete: (batchNumber, totalBatches) => {
-                  if (importResult.statistics) {
-                    importResult.statistics.batchesProcessed = batchNumber;
-                  }
-                  this.handleBatchComplete(batchNumber, totalBatches);
-                }
-              }
-            );
-
-            if (result) {
-              importResult.importedFeatures += result.inserted;
-              importResult.failedFeatures.push(...batch
-                .slice(result.inserted)
-                .map(record => ({
-                  entity: record,
-                  error: 'Failed to insert into PostGIS'
-                }))
-              );
-            }
-          } catch (error) {
-            if (useTransaction) {
-              throw error; // Will trigger rollback
-            }
-            // If not using transaction, log error and continue
-            console.error('Batch insert failed:', error);
-            importResult.failedFeatures.push(...batch.map(record => ({
-              entity: record,
-              error: error instanceof Error ? error.message : String(error)
-            })));
-          }
-
-          // Update bounds and statistics
-          this.updateBounds(batch);
-          this.updateStats(this.state.statistics, batch);
-        }
-
-        if (useTransaction) {
-          await this.dbClient?.commitTransaction();
-          this.transactionActive = false;
-          if (importResult.statistics) {
-            importResult.statistics.transactionsCommitted = 
-              (importResult.statistics.transactionsCommitted || 0) + 1;
-          }
-          this.handleTransactionStatus('commit');
-        }
-
-        // Create spatial index if requested
-        if (postgisOptions.createSpatialIndex) {
-          await this.createSpatialIndex(postgisOptions.tableName);
-        }
-
-      } catch (error) {
-        if (this.transactionActive) {
-          await this.dbClient?.rollbackTransaction();
-          this.transactionActive = false;
-          if (importResult.statistics) {
-            importResult.statistics.transactionRollbacks = 
-              (importResult.statistics.transactionRollbacks || 0) + 1;
-          }
-          this.handleTransactionStatus('rollback');
-        }
-        throw error;
-      }
-
-      importResult.statistics.importTime = Date.now() - startTime;
-
-      return {
-        statistics: this.state.statistics,
-        success: true,
-        databaseResult: importResult
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      return {
-        statistics: this.state.statistics,
-        success: false,
-        error: `Failed to process Shapefile: ${message}`
-      };
-    }
-  }
-
-  /**
-   * Convert shapefile records to PostGIS format
-   */
-  private async convertToPostGIS(records: any[]): Promise<PostGISFeature[]> {
-    return Promise.all(records.map(async (record): Promise<PostGISFeature> => {
-      const geometry = await this.convertGeometryToPostGIS(record);
-      return {
-        geometry,
-        properties: record.attributes || {},
-        srid: (this.options as ShapefileProcessorOptions).postgis?.srid || 4326
-      };
-    }));
-  }
-
-  /**
-   * Convert shapefile geometry to PostGIS format
-   */
-  private async convertGeometryToPostGIS(record: any): Promise<PostGISGeometry> {
-    const { shapeType, data } = record;
-    const coordinates = data.coordinates;
-    
-    let type: string;
-    switch (shapeType) {
-      case ShapeType.POINT:
-      case ShapeType.POINTZ:
-      case ShapeType.POINTM:
-        type = 'POINT';
-        break;
-      case ShapeType.POLYLINE:
-      case ShapeType.POLYLINEZ:
-      case ShapeType.POLYLINEM:
-        type = 'LINESTRING';
-        break;
-      case ShapeType.POLYGON:
-      case ShapeType.POLYGONZ:
-      case ShapeType.POLYGONM:
-        type = 'POLYGON';
-        break;
-      case ShapeType.MULTIPOINT:
-      case ShapeType.MULTIPOINTZ:
-      case ShapeType.MULTIPOINTM:
-        type = 'MULTIPOINT';
-        break;
-      default:
-        throw new Error(`Unsupported shape type: ${shapeType}`);
-    }
-
-    return {
-      type: type as any,
-      coordinates,
-      srid: (this.options as ShapefileProcessorOptions).postgis?.srid || 4326
-    };
-  }
-
-  /**
-   * Create spatial index for imported data
-   */
-  private async createSpatialIndex(tableName: string): Promise<void> {
-    if (!this.dbClient) return;
-
-    const schemaName = (this.options as ShapefileProcessorOptions).postgis?.schemaName || 'public';
-    const indexName = `${tableName}_geometry_idx`;
-    
-    await this.dbClient.executeQuery(
-      `CREATE INDEX IF NOT EXISTS ${indexName} ON ${schemaName}.${tableName} USING GIST (geometry)`
-    );
-  }
-
-  /**
    * Process a chunk of features
    */
   protected async processChunk(features: Feature[], chunkIndex: number): Promise<Feature[]> {
     // Update statistics
     features.forEach(feature => {
       if (feature.geometry) {
-        this.updateStats(this.state.statistics, feature.geometry.type.toLowerCase());
+        updateStats(this.state.statistics, feature.geometry.type.toLowerCase());
       }
     });
 
     // Emit chunk
-    this.handleChunk(features, chunkIndex);
+    if (this.events.onBatchComplete) {
+      this.events.onBatchComplete(chunkIndex, features.length);
+    }
 
     return features;
   }
@@ -373,120 +103,212 @@ export class ShapefileProcessor extends StreamProcessor {
    * Get bounds for a specific feature
    */
   protected getFeatureBounds(feature: Feature): Required<ProcessorResult>['bounds'] {
-    const defaultBounds = {
-      minX: 0,
-      minY: 0,
-      maxX: 0,
-      maxY: 0
-    };
+    return getFeatureBounds(feature);
+  }
 
-    if (!feature.geometry) {
-      return defaultBounds;
-    }
+  /**
+   * Analyze Shapefile
+   */
+  async analyze(file: File): Promise<AnalyzeResult<ShapefileRecord, Feature>> {
+    try {
+      const result = await this.parser.analyzeStructure(file, {
+        previewRecords: (this.options as ShapefileProcessorOptions).previewRecords,
+        parseDbf: (this.options as ShapefileProcessorOptions).importAttributes
+      });
 
-    const bounds = {
-      minX: Infinity,
-      minY: Infinity,
-      maxX: -Infinity,
-      maxY: -Infinity
-    };
+      // Report any issues found during analysis
+      result.issues?.forEach((issue: AnalysisIssue) => {
+        if (issue.type === 'WARNING') {
+          this.addWarning(issue.message);
+        } else {
+          super.handleError(new ValidationError(
+            issue.message,
+            issue.type,
+            undefined,
+            issue.details
+          ));
+        }
+      });
 
-    // Try to use bbox if available
-    if (feature.bbox && feature.bbox.length >= 4) {
-      bounds.minX = feature.bbox[0];
-      bounds.minY = feature.bbox[1];
-      bounds.maxX = feature.bbox[2];
-      bounds.maxY = feature.bbox[3];
-      return bounds;
-    }
-
-    // Calculate from coordinates
-    switch (feature.geometry.type) {
-      case 'Point': {
-        const coords = feature.geometry.coordinates as [number, number];
-        bounds.minX = bounds.maxX = coords[0];
-        bounds.minY = bounds.maxY = coords[1];
-        break;
-      }
-
-      case 'LineString': {
-        const coords = feature.geometry.coordinates as [number, number][];
-        coords.forEach(([x, y]) => {
-          bounds.minX = Math.min(bounds.minX, x);
-          bounds.minY = Math.min(bounds.minY, y);
-          bounds.maxX = Math.max(bounds.maxX, x);
-          bounds.maxY = Math.max(bounds.maxY, y);
-        });
-        break;
-      }
-
-      case 'Polygon': {
-        const coords = feature.geometry.coordinates as [number, number][][];
-        coords[0].forEach(([x, y]) => {
-          bounds.minX = Math.min(bounds.minX, x);
-          bounds.minY = Math.min(bounds.minY, y);
-          bounds.maxX = Math.max(bounds.maxX, x);
-          bounds.maxY = Math.max(bounds.maxY, y);
-        });
-        break;
-      }
-
-      case 'MultiPoint': {
-        const coords = feature.geometry.coordinates as [number, number][];
-        coords.forEach(([x, y]) => {
-          bounds.minX = Math.min(bounds.minX, x);
-          bounds.minY = Math.min(bounds.minY, y);
-          bounds.maxX = Math.max(bounds.maxX, x);
-          bounds.maxY = Math.max(bounds.maxY, y);
-        });
-        break;
-      }
-
-      case 'MultiLineString': {
-        const coords = feature.geometry.coordinates as [number, number][][];
-        coords.forEach(line => {
-          line.forEach(([x, y]) => {
-            bounds.minX = Math.min(bounds.minX, x);
-            bounds.minY = Math.min(bounds.minY, y);
-            bounds.maxX = Math.max(bounds.maxX, x);
-            bounds.maxY = Math.max(bounds.maxY, y);
-          });
-        });
-        break;
-      }
-
-      case 'MultiPolygon': {
-        const coords = feature.geometry.coordinates as [number, number][][][];
-        coords.forEach(polygon => {
-          polygon[0].forEach(([x, y]) => {
-            bounds.minX = Math.min(bounds.minX, x);
-            bounds.minY = Math.min(bounds.minY, y);
-            bounds.maxX = Math.max(bounds.maxX, x);
-            bounds.maxY = Math.max(bounds.maxY, y);
-          });
-        });
-        break;
-      }
-
-      case 'GeometryCollection': {
-        feature.geometry.geometries.forEach(geom => {
-          const geomBounds = this.getFeatureBounds({
-            type: 'Feature',
-            geometry: geom,
-            properties: null
-          });
-          if (geomBounds) {
-            bounds.minX = Math.min(bounds.minX, geomBounds.minX);
-            bounds.minY = Math.min(bounds.minY, geomBounds.minY);
-            bounds.maxX = Math.max(bounds.maxX, geomBounds.maxX);
-            bounds.maxY = Math.max(bounds.maxY, geomBounds.maxY);
+      // Try to detect coordinate system from PRJ file
+      let coordinateSystem = this.options.coordinateSystem;
+      
+      if (!coordinateSystem) {
+        try {
+          // Look for PRJ file with same name as SHP
+          const prjFileName = file.name.replace(/\.shp$/i, '.prj');
+          const prjFile = await this.findAssociatedFile(file, prjFileName);
+          
+          if (prjFile) {
+            console.debug('[ShapefileProcessor] Found PRJ file:', prjFileName);
+            const prjContent = await prjReader.readPrjContent(prjFile);
+            const detectedSystem = await prjReader.detectCoordinateSystem(prjContent);
+            
+            if (detectedSystem) {
+              console.debug('[ShapefileProcessor] Detected coordinate system:', detectedSystem);
+              coordinateSystem = detectedSystem;
+            } else {
+              console.debug('[ShapefileProcessor] Could not detect coordinate system from PRJ');
+            }
+          } else {
+            console.debug('[ShapefileProcessor] No PRJ file found');
           }
-        });
-        break;
+        } catch (error) {
+          console.warn('[ShapefileProcessor] Error reading PRJ file:', error);
+          this.addWarning(`Failed to read PRJ file: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
-    }
 
-    return isFinite(bounds.minX) ? bounds : defaultBounds;
+      // Default to WGS84 if no coordinate system detected or provided
+      coordinateSystem = coordinateSystem || COORDINATE_SYSTEMS.WGS84;
+
+      // Convert preview records to GeoJSON features
+      let previewFeatures = convertToGeoJSON(result.preview);
+
+      // Transform coordinates if needed
+      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        console.debug('[ShapefileProcessor] Transforming coordinates:', {
+          from: coordinateSystem,
+          to: COORDINATE_SYSTEMS.WGS84,
+          featureCount: previewFeatures.length
+        });
+
+        try {
+          previewFeatures = await coordinateSystemManager.transform(
+            previewFeatures,
+            coordinateSystem,
+            COORDINATE_SYSTEMS.WGS84
+          );
+        } catch (error) {
+          console.error('[ShapefileProcessor] Coordinate transformation failed:', error);
+          this.addWarning(`Coordinate transformation failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
+      // Create feature collection for preview manager
+      const featureCollection: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: previewFeatures
+      };
+
+      // Update layers (in shapefile case, it's just one layer)
+      this.layers = ['shapes'];
+
+      // Calculate preview bounds
+      const bounds = calculateBoundsFromRecords(result.preview);
+
+      // Create preview data structure
+      const preview: ShapefilePreviewData = {
+        records: result.preview,
+        features: previewFeatures
+      };
+
+      // Log preview data for debugging
+      console.debug('[ShapefileProcessor] Preview data:', {
+        recordCount: result.preview.length,
+        featureCount: previewFeatures.length,
+        bounds,
+        layers: this.layers
+      });
+
+      return {
+        layers: this.layers,
+        coordinateSystem,
+        bounds,
+        preview
+      };
+    } catch (error) {
+      throw new ValidationError(
+        `Failed to analyze Shapefile: ${error instanceof Error ? error.message : String(error)}`,
+        'SHAPEFILE_ANALYSIS_ERROR',
+        error instanceof Error ? error : undefined,
+        createErrorDetails(error)
+      );
+    }
+  }
+
+  /**
+   * Process Shapefile with PostGIS support
+   */
+  protected async processStream(file: File): Promise<StreamProcessorResult> {
+    try {
+      this.resetState();
+
+      // Get PostGIS options
+      const postgisOptions = (this.options as ShapefileProcessorOptions).postgis;
+      if (!postgisOptions?.tableName) {
+        throw new Error('PostGIS table name is required');
+      }
+
+      // Configure parsing options
+      const parseOptions = {
+        parseDbf: (this.options as ShapefileProcessorOptions).importAttributes,
+        validate: (this.options as ShapefileProcessorOptions).validateGeometry,
+        repair: (this.options as ShapefileProcessorOptions).repairGeometry,
+        simplify: (this.options as ShapefileProcessorOptions).simplifyGeometry,
+        tolerance: (this.options as ShapefileProcessorOptions).simplifyTolerance,
+        convertToPostGIS: true,
+        postgis: {
+          targetSrid: postgisOptions.srid,
+          force2D: true
+        }
+      };
+
+      // Parse records
+      this.records = await this.parser.parseFeatures(file, parseOptions);
+
+      // Process records in batches
+      const batchSize = postgisOptions.batchSize || 1000;
+      const useTransaction = postgisOptions.useTransaction ?? true;
+
+      // Convert to PostGIS features
+      const features = await convertToPostGIS(this.records, postgisOptions.srid);
+
+      if (!this.transactionManager) {
+        throw new Error('PostGIS client not set');
+      }
+
+      // Process using transaction manager
+      const result = await this.transactionManager.insertFeatures(
+        postgisOptions.tableName,
+        features,
+        {
+          batchSize,
+          useTransaction,
+          onProgress: progress => this.updateProgress(progress),
+          onBatchComplete: (batchNumber, totalBatches) => {
+            if (this.events.onBatchComplete) {
+              this.events.onBatchComplete(batchNumber, totalBatches);
+            }
+          }
+        }
+      );
+
+      // Create spatial index if requested
+      if (postgisOptions.createSpatialIndex) {
+        await this.transactionManager.createSpatialIndex(
+          postgisOptions.tableName,
+          postgisOptions.schemaName
+        );
+      }
+
+      // Update bounds and statistics
+      this.bounds = updateBounds(this.bounds, this.records);
+      updateStats(this.state.statistics, this.records);
+
+      return {
+        statistics: this.state.statistics,
+        success: true,
+        databaseResult: result
+      };
+
+    } catch (error) {
+      return {
+        statistics: this.state.statistics,
+        success: false,
+        error: `Failed to process Shapefile: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
   }
 
   /**
@@ -498,164 +320,68 @@ export class ShapefileProcessor extends StreamProcessor {
   }
 
   /**
-   * Calculate bounds from records
-   */
-  private calculateBoundsFromRecords(records: any[]): Required<ProcessorResult>['bounds'] {
-    const bounds = {
-      minX: Infinity,
-      minY: Infinity,
-      maxX: -Infinity,
-      maxY: -Infinity
-    };
-
-    records.forEach(record => {
-      const bbox = record?.data?.bbox;
-      if (bbox && 
-          typeof bbox.xMin === 'number' && !isNaN(bbox.xMin) &&
-          typeof bbox.yMin === 'number' && !isNaN(bbox.yMin) &&
-          typeof bbox.xMax === 'number' && !isNaN(bbox.xMax) &&
-          typeof bbox.yMax === 'number' && !isNaN(bbox.yMax)) {
-        bounds.minX = Math.min(bounds.minX, bbox.xMin);
-        bounds.minY = Math.min(bounds.minY, bbox.yMin);
-        bounds.maxX = Math.max(bounds.maxX, bbox.xMax);
-        bounds.maxY = Math.max(bounds.maxY, bbox.yMax);
-      }
-    });
-
-    // Return default bounds if no valid coordinates were found
-    if (!isFinite(bounds.minX)) {
-      return {
-        minX: 0,
-        minY: 0,
-        maxX: 0,
-        maxY: 0
-      };
-    }
-
-    return bounds;
-  }
-
-  /**
-   * Update bounds with new records
-   */
-  private updateBounds(records: any[]): void {
-    const currentBounds = this.bounds ?? {
-      minX: Infinity,
-      minY: Infinity,
-      maxX: -Infinity,
-      maxY: -Infinity
-    };
-
-    records.forEach(record => {
-      const bbox = record?.data?.bbox;
-      if (bbox && 
-          typeof bbox.xMin === 'number' && !isNaN(bbox.xMin) &&
-          typeof bbox.yMin === 'number' && !isNaN(bbox.yMin) &&
-          typeof bbox.xMax === 'number' && !isNaN(bbox.xMax) &&
-          typeof bbox.yMax === 'number' && !isNaN(bbox.yMax)) {
-        currentBounds.minX = Math.min(currentBounds.minX, bbox.xMin);
-        currentBounds.minY = Math.min(currentBounds.minY, bbox.yMin);
-        currentBounds.maxX = Math.max(currentBounds.maxX, bbox.xMax);
-        currentBounds.maxY = Math.max(currentBounds.maxY, bbox.yMax);
-      }
-    });
-
-    // Ensure valid bounds
-    this.bounds = isFinite(currentBounds.minX) ? currentBounds : {
-      minX: 0,
-      minY: 0,
-      maxX: 0,
-      maxY: 0
-    };
-  }
-
-  /**
-   * Update statistics with batch of records
-   */
-  private updateStats(stats: ProcessorStats, records: any[] | string): void {
-    if (typeof records === 'string') {
-      // Handle string input (geometry type)
-      const type = records.toLowerCase();
-      if (!stats.featureTypes[type]) {
-        stats.featureTypes[type] = 0;
-      }
-      stats.featureTypes[type]++;
-      stats.featureCount++;
-    } else {
-      // Handle array input (batch of records)
-      records.forEach(record => {
-        const type = ShapeType[record.shapeType].toLowerCase();
-        if (!stats.featureTypes[type]) {
-          stats.featureTypes[type] = 0;
-        }
-        stats.featureTypes[type]++;
-        stats.featureCount++;
-      });
-    }
-  }
-
-  /**
-   * Handle batch completion
-   */
-  private handleBatchComplete(batchNumber: number, totalBatches: number): void {
-    if (this.events.onBatchComplete) {
-      this.events.onBatchComplete(batchNumber, totalBatches);
-    }
-  }
-
-  /**
-   * Handle transaction status changes
-   */
-  private handleTransactionStatus(status: 'begin' | 'commit' | 'rollback'): void {
-    if (this.events.onTransactionStatus) {
-      this.events.onTransactionStatus(status);
-    }
-  }
-
-  /**
-   * Reset processor state
-   */
-  private resetState(): void {
-    this.bounds = {
-      minX: Infinity,
-      minY: Infinity,
-      maxX: -Infinity,
-      maxY: -Infinity
-    };
-    this.layers = ['shapes'];
-    this.records = [];
-    this.warnings = [];
-    this.state.statistics = this.createDefaultStats();
-  }
-
-  /**
-   * Create default statistics
-   */
-  protected createDefaultStats(): ProcessorStats {
-    return {
-      featureCount: 0,
-      layerCount: 0,
-      featureTypes: {},
-      failedTransformations: 0,
-      errors: []
-    };
-  }
-
-  /**
    * Set PostGIS client
    */
   setPostGISClient(client: PostGISClient): void {
-    this.dbClient = client;
+    this.transactionManager = new TransactionManager(client);
   }
 
   /**
    * Clean up resources
    */
   async cleanup(): Promise<void> {
-    if (this.transactionActive) {
-      await this.dbClient?.rollbackTransaction();
+    if (this.transactionManager?.isTransactionActive()) {
+      await this.transactionManager.rollbackTransaction();
     }
-    this.dbClient = null;
+    this.transactionManager = null;
     this.resetState();
   }
+
+  /**
+   * Reset processor state
+   */
+  /**
+   * Find an associated file with the same name but different extension
+   */
+  private async findAssociatedFile(mainFile: File, targetFileName: string): Promise<File | null> {
+    // If the file is from a FileList (e.g., drag-and-drop or file input)
+    if (mainFile.webkitRelativePath) {
+      const directory = mainFile.webkitRelativePath.split('/').slice(0, -1).join('/');
+      // TODO: Implement directory scanning if needed
+      return null;
+    }
+
+    // If we have access to the file system
+    try {
+      const directory = (mainFile as any).path?.split(/[\\/]/).slice(0, -1).join('/');
+      if (directory) {
+        const files = await (mainFile as any).directory?.getFiles();
+        return files?.find((f: File) => f.name.toLowerCase() === targetFileName.toLowerCase()) || null;
+      }
+    } catch (error) {
+      console.debug('[ShapefileProcessor] Error finding associated file:', error);
+    }
+
+    return null;
+  }
+
+  private resetState(): void {
+    this.bounds = createDefaultBounds();
+    this.layers = ['shapes'];
+    this.records = [];
+    this.warnings = [];
+    resetStats(this.state.statistics);
+  }
+}
+
+/**
+ * Create default bounds object
+ */
+function createDefaultBounds(): Required<ProcessorResult>['bounds'] {
+  return {
+    minX: Infinity,
+    minY: Infinity,
+    maxX: -Infinity,
+    maxY: -Infinity
+  };
 }
