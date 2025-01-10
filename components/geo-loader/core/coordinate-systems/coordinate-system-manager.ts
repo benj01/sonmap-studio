@@ -13,8 +13,8 @@ const SWISS_PROJECTIONS: Record<string, string> = {
   [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
 };
 
-export class coordinateSystemManager {
-  private static instance: coordinateSystemManager;
+class CoordinateSystemManager {
+  private static instance: CoordinateSystemManager;
   private transformCache: Map<string, Function>;
   private initialized: boolean = false;
 
@@ -22,11 +22,11 @@ export class coordinateSystemManager {
     this.transformCache = new Map();
   }
 
-  static getInstance(): coordinateSystemManager {
-    if (!coordinateSystemManager.instance) {
-      coordinateSystemManager.instance = new coordinateSystemManager();
+  static getInstance(): CoordinateSystemManager {
+    if (!CoordinateSystemManager.instance) {
+      CoordinateSystemManager.instance = new CoordinateSystemManager();
     }
-    return coordinateSystemManager.instance;
+    return CoordinateSystemManager.instance;
   }
 
   /**
@@ -227,3 +227,6 @@ export class coordinateSystemManager {
     return this.validate(system);
   }
 }
+
+// Export the singleton instance
+export const coordinateSystemManager = CoordinateSystemManager.getInstance();

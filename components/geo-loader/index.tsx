@@ -19,36 +19,14 @@ import { ProcessorRegistry } from './core/processors/base/registry';
 console.debug('[DEBUG] Processors registered:', ProcessorRegistry.getSupportedExtensions());
 
 // Initialize coordinate systems
-const initPromise = (async () => {
-  try {
-    // Initialize coordinate systems
-    await coordinateSystemManager.initialize();
-  } catch (error) {
-    console.error('Failed to initialize coordinate systems:', error);
-    throw error;
-  }
-})();
+const initPromise = coordinateSystemManager.initialize();
 
 // Export initialization helpers
 export const initialize = () => initPromise;
 export const isInitialized = () => coordinateSystemManager.isInitialized();
 
-// Create a proxy to ensure initialization before any coordinate system operations
-const wrappedManager = new Proxy(coordinateSystemManager, {
-  get(target: typeof coordinateSystemManager, prop: keyof typeof coordinateSystemManager) {
-    const value = target[prop];
-    if (typeof value === 'function' && prop !== 'isInitialized') {
-      return async (...args: unknown[]) => {
-        await initPromise;
-        return (value as Function).apply(target, args);
-      };
-    }
-    return value;
-  }
-});
-
-// Export the wrapped manager as the only instance
-export { wrappedManager as coordinateSystemManager };
+// Export the coordinate system manager instance
+export { coordinateSystemManager };
 
 // Remove the original export to avoid duplicates
 
