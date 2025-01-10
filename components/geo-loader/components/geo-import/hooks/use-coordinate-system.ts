@@ -8,7 +8,7 @@ import {
 import { GeoLoaderError } from '../../../core/errors/types';
 import { AnalyzeResult } from '../../../core/processors/base/types';
 import { ProcessorOptions } from '../../../core/processors/base/types';
-import { PreviewManager } from '../../../preview/preview-manager';
+import { PreviewManager, createPreviewManager } from '../../../preview/preview-manager';
 
 interface CoordinateSystemHookProps {
   onWarning: (message: string) => void;

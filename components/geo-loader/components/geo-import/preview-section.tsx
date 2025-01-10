@@ -6,10 +6,11 @@ import { PreviewMap } from '../preview-map/index';
 import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
 import { ProcessorResult } from '../../core/processors/base/types';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
-import { coordinateSystemManager } from '../../core/coordinate-systems/coordinate-system-manager';
+import { coordinateSystemManager } from '../../core/coordinate-systems';
 
-type ExtendedProcessorResult = ProcessorResult & {
+type ExtendedProcessorResult = Omit<ProcessorResult, 'preview'> & {
   previewManager: NonNullable<PreviewSectionProps['previewManager']>;
+  features: Feature<Geometry, GeoJsonProperties>[];
 };
 
 export function PreviewSection({
@@ -20,7 +21,7 @@ export function PreviewSection({
   analysis
 }: PreviewSectionProps) {
   const [preview, setPreview] = useState<ExtendedProcessorResult>({
-    features: [],
+    features: [] as Feature<Geometry, GeoJsonProperties>[],
     bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
     layers: [],
     statistics: {
@@ -31,7 +32,18 @@ export function PreviewSection({
       errors: []
     },
     coordinateSystem: coordinateSystem || COORDINATE_SYSTEMS.WGS84,
-    previewManager // Required by PreviewMap
+    previewManager, // Required by PreviewMap
+    databaseResult: {
+      importedFeatures: 0,
+      collectionId: '',
+      layerIds: [],
+      failedFeatures: [],
+      statistics: {
+        importTime: 0,
+        validatedCount: 0,
+        transformedCount: 0
+      }
+    }
   });
   const [isLoading, setIsLoading] = useState(true);
 
@@ -66,16 +78,19 @@ export function PreviewSection({
       });
 
       try {
+        // Get coordinate system manager instance
+        const manager = coordinateSystemManager.getInstance();
+
         // Ensure coordinate system manager is initialized
-        if (!coordinateSystemManager.isInitialized()) {
-          await coordinateSystemManager.initialize();
+        if (!manager.isInitialized()) {
+          await manager.initialize();
         }
 
         // For DXF files, default to Swiss LV95 if not specified
         let effectiveSystem = coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95;
 
         // Verify system is valid
-        const isValid = await coordinateSystemManager.validateSystem(effectiveSystem);
+        const isValid = await manager.validateSystem(effectiveSystem);
         if (!isValid) {
           console.warn('[DEBUG] Invalid coordinate system, falling back to WGS84');
           effectiveSystem = COORDINATE_SYSTEMS.WGS84;
@@ -147,7 +162,8 @@ export function PreviewSection({
               errors: []
             },
             coordinateSystem: effectiveSystem,
-            previewManager: previewManagerRef.current
+            previewManager: previewManagerRef.current,
+            databaseResult: prev.databaseResult // Preserve existing database result
           }));
           
           // Mark initial load as complete

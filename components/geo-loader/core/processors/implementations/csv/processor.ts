@@ -5,7 +5,7 @@ import { StreamProcessorResult } from '../../stream/types';
 import { CsvParser } from './parser';
 import { CsvProcessorOptions, CsvParseOptions } from './types';
 import { ValidationError } from '../../../errors/types';
-import { coordinateSystemManager } from '../../../coordinate-systems/coordinate-system-manager';
+import { coordinateSystemManager } from '../../../coordinate-systems';
 import { COORDINATE_SYSTEMS } from '../../../../types/coordinates';
 import { ErrorReporterImpl as ErrorReporter } from '../../../errors/reporter';
 import { CompressedFile } from '../../../compression/compression-handler';
@@ -73,7 +73,8 @@ export class CsvProcessor extends StreamProcessor {
     }
 
     const result = await this.process(file.data);
-    return result.features;
+    // Extract features from preview if available
+    return result.preview?.features || [];
   }
 
   private updateStats(stats: ProcessorState['statistics'], type: string): void {
@@ -226,8 +227,9 @@ export class CsvProcessor extends StreamProcessor {
     try {
       this.initializeState();
 
-      if (!coordinateSystemManager.isInitialized()) {
-        await coordinateSystemManager.initialize();
+      const manager = coordinateSystemManager.getInstance();
+      if (!manager.isInitialized()) {
+        await manager.initialize();
       }
 
       const targetSystem = this.options.coordinateSystem || COORDINATE_SYSTEMS.WGS84;
@@ -277,16 +279,16 @@ export class CsvProcessor extends StreamProcessor {
             if (!feature) continue;
 
             if (feature.geometry.type === 'Point') {
-              const [x, y, z] = feature.geometry.coordinates;
               try {
-                const transformed = await coordinateSystemManager.transform(
-                  { x, y },
+                const [transformedFeature] = await manager.transform(
+                  [feature],
                   COORDINATE_SYSTEMS.SWISS_LV95,
                   targetSystem
                 );
-                feature.geometry.coordinates = z !== undefined 
-                  ? [transformed.x, transformed.y, z]
-                  : [transformed.x, transformed.y];
+                
+                if (transformedFeature.geometry.type === 'Point') {
+                  (feature.geometry as Point).coordinates = (transformedFeature.geometry as Point).coordinates;
+                }
               } catch (error) {
                 this.processorState.statistics.errors.push({
                   message: `Failed to transform coordinates: ${error instanceof Error ? error.message : String(error)}`,
