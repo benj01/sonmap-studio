@@ -1,0 +1,26 @@
+[package]
+name = "shapefile-wasm"
+version = "0.1.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "WebAssembly module for shapefile parsing and geometry calculations"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+js-sys = "0.3"
+geom = "0.2"           # For geometric calculations
+geo-types = "0.7"      # Common geometric types
+serde = { version = "1.0", features = ["derive"] }
+serde-wasm-bindgen = "0.5"
+console_error_panic_hook = "0.1"  # Better error messages in browser console
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[profile.release]
+opt-level = 3          # Maximum optimization
+lto = true            # Link-time optimization
+codegen-units = 1     # Optimize for size

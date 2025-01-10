@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogPortal, DialogOverlay } from 'components/ui/dialog';
-import { Feature } from 'geojson';
+import { Feature, FeatureCollection } from 'geojson';
+import { PreviewMap } from '../preview-map';
 import { GeoImportDialogProps } from './types';
 import { useImportLogs } from './hooks/use-import-logs';
 import { useFileAnalysis } from './hooks/use-file-analysis';
@@ -9,6 +10,12 @@ import { useImportProcess } from './hooks/use-import-process';
 import { useProcessor } from './hooks/use-processor';
 import { AnalyzeResult } from '../../core/processors/base/types';
 import { LoaderResult, GeoFeature } from 'types/geo';
+
+// Empty feature collection for initialization
+const emptyFeatureCollection: FeatureCollection = {
+  type: "FeatureCollection" as const,
+  features: [] as Feature[]
+};
 
 // Progress phases with descriptions
 const PROGRESS_PHASES = {
@@ -314,7 +321,7 @@ export function GeoImportDialog({
             Configure import settings and preview the data
           </DialogDescription>
 
-          <div className="flex flex-col h-full gap-4 pt-4">
+          <div className="grid h-full gap-4 pt-4" style={{ gridTemplateColumns: '300px 1fr', gridTemplateRows: 'auto 1fr auto' }}>
             {/* Error Display */}
             {hasErrors && logs && logs.length > 0 && (
               <div className="bg-red-50 border border-red-200 rounded p-4">
@@ -326,67 +333,104 @@ export function GeoImportDialog({
               </div>
             )}
 
-            {/* Coordinate System Selection */}
-            <div className="flex items-center gap-2">
-              <span className="text-sm">Coordinate System:</span>
-              <select
-                value={pendingCoordinateSystem || coordinateSystem}
-                onChange={(e) => handleCoordinateSystemChangeWrapper(e.target.value)}
-                disabled={loading}
-                className="text-sm border rounded px-2 py-1"
-              >
-                <option value="EPSG:4326">WGS 84 (EPSG:4326)</option>
-                <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
-              </select>
-              {pendingCoordinateSystem && (
-                <button
-                  onClick={handleApplyCoordinateSystem}
-                  className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
-                >
-                  Apply
-                </button>
+            {/* Left Column - Top: Coordinate System */}
+            <div className="col-span-1 space-y-2">
+              <div className="border rounded-lg p-4 bg-background shadow-sm">
+                <h3 className="text-sm font-medium mb-3">Coordinate System</h3>
+                {analysis?.coordinateSystem && (
+                  <div className="text-sm text-muted-foreground mb-3">
+                    Detected: {analysis.coordinateSystem}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <select
+                    id="coordinate-system"
+                    value={pendingCoordinateSystem || coordinateSystem}
+                    onChange={(e) => handleCoordinateSystemChangeWrapper(e.target.value)}
+                    disabled={loading}
+                    className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <option value="EPSG:4326">WGS 84 (EPSG:4326)</option>
+                    <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
+                  </select>
+                  {pendingCoordinateSystem && (
+                    <button
+                      onClick={handleApplyCoordinateSystem}
+                      className="w-full inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-4 py-2"
+                    >
+                      Apply
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Right Column - Preview Map */}
+            <div className="col-span-1 row-span-2 border rounded-lg bg-background shadow-sm overflow-hidden">
+              {previewManager && analysis && (
+                <div className="h-full">
+                  <PreviewMap
+                    preview={{
+                      features: analysis.preview || emptyFeatureCollection,
+                      bounds: analysis.bounds,
+                      layers: selectedLayers || [],
+                      previewManager: previewManager
+                    }}
+                    bounds={analysis.bounds}
+                    coordinateSystem={coordinateSystem}
+                    visibleLayers={visibleLayers}
+                    selectedElement={{
+                      type: "feature",
+                      layer: selectedLayers?.[0] || "default"
+                    }}
+                    analysis={{
+                      warnings: analysis.issues?.map(issue => ({
+                        type: issue.type,
+                        message: issue.message
+                      })) || []
+                    }}
+                  />
+                </div>
               )}
             </div>
 
-            {/* Layer Controls */}
-            {selectedLayers && selectedLayers.length > 0 && (
-              <div className="border rounded p-4">
-                <h3 className="font-medium mb-2">Layers</h3>
-                <div className="space-y-2">
-                  {selectedLayers.map((layer) => (
-                    <div key={layer} className="flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        id={layer}
-                        checked={visibleLayers?.includes(layer)}
-                        onChange={(e) => handleLayerVisibilityToggleWrapper(layer, e.target.checked)}
-                      />
-                      <label htmlFor={layer}>{layer}</label>
-                    </div>
-                  ))}
+            {/* Left Column - Bottom: Layer Controls */}
+            <div className="col-span-1">
+              {selectedLayers && selectedLayers.length > 0 && (
+                <div className="border rounded-lg p-4 bg-background shadow-sm">
+                  <h3 className="text-sm font-medium mb-3">Layers</h3>
+                  <div className="space-y-3">
+                    {selectedLayers.map((layer) => (
+                      <div key={layer} className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          id={layer}
+                          checked={visibleLayers?.includes(layer)}
+                          onChange={(e) => handleLayerVisibilityToggleWrapper(layer, e.target.checked)}
+                          className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+                        />
+                        <label htmlFor={layer} className="text-sm">
+                          {layer}
+                        </label>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
 
-            {/* Preview Section */}
-            {previewManager && (
-              <div className="flex-1 min-h-[400px] border rounded">
-                {/* Preview content will be rendered by the preview manager */}
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex justify-end gap-2 mt-4">
+            {/* Bottom Row - Action Buttons */}
+            <div className="col-span-2 flex justify-end gap-3">
               <button
                 onClick={handleClearAndClose}
-                className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-4 py-2"
               >
                 Cancel
               </button>
               <button
                 onClick={handleImport}
                 disabled={loading || hasErrors}
-                className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+                className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-4 py-2"
               >
                 Import
               </button>

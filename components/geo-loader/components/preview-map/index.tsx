@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Map, MapRef, ViewStateChangeEvent, MapMouseEvent } from 'react-map-gl';
 import { COORDINATE_SYSTEMS } from '../../types/coordinates';
 import { PreviewMapProps, MapFeature } from '../../types/map';
+import { PreviewManager } from '../../preview/preview-manager';
 import { useMapView } from '../../hooks/use-map-view';
 import { usePreviewState } from './hooks/use-preview-state';
 import { MapLayers } from './components/map-layers';
@@ -26,20 +27,22 @@ export function PreviewMap({
   
   // Update loading state when preview manager changes
   useEffect(() => {
+    const manager = preview instanceof PreviewManager ? preview : preview?.previewManager;
     console.debug('[DEBUG] PreviewMap state update:', {
       hasPreview: !!preview,
       hasBounds: !!bounds,
-      previewManager: preview?.previewManager ? 'initialized' : 'null',
+      previewManager: manager ? 'initialized' : 'null',
       boundsData: bounds,
       visibleLayers
     });
     
-    if (!preview?.previewManager) {
+    if (!manager) {
       setIsLoading(true);
       return;
     }
     // Loading will be set to false by onPreviewUpdate callback
-  }, [preview?.previewManager]);
+  }, [preview, bounds, visibleLayers]);
+
   const [error, setError] = useState<string | null>(null);
   const [hoveredFeature, setHoveredFeature] = useState<MapFeature | null>(null);
   const [mouseCoords, setMouseCoords] = useState<{ lng: number; lat: number } | null>(null);
@@ -63,7 +66,7 @@ export function PreviewMap({
         bounds
       });
     },
-    previewManager: preview?.previewManager ?? null,
+    previewManager: preview instanceof PreviewManager ? preview : preview?.previewManager ?? null,
     viewportBounds: getViewportBounds(),
     visibleLayers,
     initialBoundsSet,

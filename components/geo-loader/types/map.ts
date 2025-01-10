@@ -5,7 +5,7 @@ import { ViewStateChangeEvent } from 'react-map-gl';
 
 export interface PreviewMapProps {
   /** Preview data from processor */
-  preview: {
+  preview: PreviewManager | {
     features: FeatureCollection;
     bounds?: {
       minX: number;
