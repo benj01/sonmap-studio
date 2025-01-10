@@ -1,17 +1,38 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 // Constants matching TypeScript implementation
 const HEADER_LENGTH: usize = 100;
-const RECORD_HEADER_LENGTH: usize = 8;
 const FILE_CODE: i32 = 9994;
 const VERSION: i32 = 1000;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
+pub struct ValidationDetails {
+    code: String,
+    info: String,
+}
+
+#[derive(Serialize)]
 pub struct ValidationIssue {
     issue_type: String,
     message: String,
-    details: Option<serde_wasm_bindgen::Value>,
+    details: Option<ValidationDetails>,
+}
+
+impl ValidationIssue {
+    pub fn new(issue_type: &str, message: &str, code: Option<&str>, info: Option<&str>) -> Self {
+        ValidationIssue {
+            issue_type: issue_type.to_string(),
+            message: message.to_string(),
+            details: match (code, info) {
+                (Some(c), Some(i)) => Some(ValidationDetails {
+                    code: c.to_string(),
+                    info: i.to_string(),
+                }),
+                _ => None,
+            },
+        }
+    }
 }
 
 // Validate shapefile header buffer length

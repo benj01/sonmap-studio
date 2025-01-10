@@ -2,7 +2,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "npm run build:wasm && next build",
+    "build:wasm": "node components/geo-loader/core/processors/implementations/shapefile/wasm/build.js",
     "start": "next start",
     "test": "jest",
     "test:watch": "jest --watch"

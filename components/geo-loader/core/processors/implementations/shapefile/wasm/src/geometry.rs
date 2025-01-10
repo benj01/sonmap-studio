@@ -1,6 +1,7 @@
-use geo_types::{Coord, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
+
+use crate::geojson::{LineString, MultiPoint, MultiPolygon, Point, Polygon};
 
 #[derive(Serialize, Deserialize)]
 pub struct Bounds {
@@ -82,31 +83,28 @@ pub fn convert_multi_point(coordinates: &[f64]) -> Result<JsValue, JsError> {
         return Err(JsError::new("Coordinates array must have even length"));
     }
 
-    let points: Vec<Point<f64>> = coordinates
+    let points: Vec<Vec<f64>> = coordinates
         .chunks(2)
-        .map(|chunk| Point::new(chunk[0], chunk[1]))
+        .map(|chunk| vec![chunk[0], chunk[1]])
         .collect();
 
-    let multi_point = MultiPoint(points);
+    let multi_point = MultiPoint::new(points);
     serde_wasm_bindgen::to_value(&multi_point).map_err(|e| JsError::new(&e.to_string()))
 }
 
-// Convert array of line coordinates to LineString or MultiLineString
+// Convert array of line coordinates to LineString
 #[wasm_bindgen]
 pub fn convert_polyline(coordinates: &[f64]) -> Result<JsValue, JsError> {
     if coordinates.len() % 2 != 0 {
         return Err(JsError::new("Coordinates array must have even length"));
     }
 
-    let points: Vec<Coord<f64>> = coordinates
+    let points: Vec<Vec<f64>> = coordinates
         .chunks(2)
-        .map(|chunk| Coord {
-            x: chunk[0],
-            y: chunk[1],
-        })
+        .map(|chunk| vec![chunk[0], chunk[1]])
         .collect();
 
-    let line_string = LineString(points);
+    let line_string = LineString::new(points);
     serde_wasm_bindgen::to_value(&line_string).map_err(|e| JsError::new(&e.to_string()))
 }
 
@@ -117,50 +115,44 @@ pub fn convert_polygon(coordinates: &[f64], ring_sizes: &[usize]) -> Result<JsVa
         return Err(JsError::new("Coordinates array must have even length"));
     }
 
-    let mut rings: Vec<LineString<f64>> = Vec::new();
+    let mut rings: Vec<Vec<Vec<f64>>> = Vec::new();
     let mut offset = 0;
 
     for &size in ring_sizes {
         let ring_coords = &coordinates[offset..offset + size * 2];
-        let points: Vec<Coord<f64>> = ring_coords
+        let points: Vec<Vec<f64>> = ring_coords
             .chunks(2)
-            .map(|chunk| Coord {
-                x: chunk[0],
-                y: chunk[1],
-            })
+            .map(|chunk| vec![chunk[0], chunk[1]])
             .collect();
-        rings.push(LineString(points));
+        rings.push(points);
         offset += size * 2;
     }
 
-    let mut polygons: Vec<Polygon<f64>> = Vec::new();
-    let mut current_polygon = Vec::new();
+    let mut polygons: Vec<Vec<Vec<Vec<f64>>>> = Vec::new();
+    let mut current_polygon: Vec<Vec<Vec<f64>>> = Vec::new();
 
     for ring in rings {
-        if is_clockwise(&ring.0.iter().flat_map(|c| vec![c.x, c.y]).collect::<Vec<f64>>())? {
+        let ring_coords: Vec<f64> = ring.iter().flat_map(|p| p.iter().copied()).collect();
+        if is_clockwise(&ring_coords)? {
             if !current_polygon.is_empty() {
-                polygons.push(Polygon::new(
-                    current_polygon[0].clone(),
-                    current_polygon[1..].to_vec(),
-                ));
+                polygons.push(current_polygon);
+                current_polygon = Vec::new();
             }
-            current_polygon = vec![ring];
+            current_polygon.push(ring);
         } else {
             current_polygon.push(ring);
         }
     }
 
     if !current_polygon.is_empty() {
-        polygons.push(Polygon::new(
-            current_polygon[0].clone(),
-            current_polygon[1..].to_vec(),
-        ));
+        polygons.push(current_polygon);
     }
 
     if polygons.len() == 1 {
-        serde_wasm_bindgen::to_value(&polygons[0]).map_err(|e| JsError::new(&e.to_string()))
+        let polygon = Polygon::new(polygons[0].clone());
+        serde_wasm_bindgen::to_value(&polygon).map_err(|e| JsError::new(&e.to_string()))
     } else {
-        let multi_polygon = MultiPolygon(polygons);
+        let multi_polygon = MultiPolygon::new(polygons);
         serde_wasm_bindgen::to_value(&multi_polygon).map_err(|e| JsError::new(&e.to_string()))
     }
 }

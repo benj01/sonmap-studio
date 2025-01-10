@@ -1,27 +1,34 @@
+/**
+ * Shared constants for shapefile processing
+ * Used by both TypeScript and Rust (via WebAssembly) code
+ */
 export const SHAPEFILE_CONSTANTS = {
-  // Format constants
+  // Header constants
   HEADER_LENGTH: 100,
   RECORD_HEADER_LENGTH: 8,
   FILE_CODE: 9994,
   VERSION: 1000,
 
-  // Shape type constants
-  SHAPE_NULL: 0,
-  SHAPE_POINT: 1,
-  SHAPE_POLYLINE: 3,
-  SHAPE_POLYGON: 5,
-  SHAPE_MULTIPOINT: 8,
-  SHAPE_POINTZ: 11,
-  SHAPE_POLYLINEZ: 13,
-  SHAPE_POLYGONZ: 15,
-  SHAPE_MULTIPOINTZ: 18,
-  SHAPE_POINTM: 21,
-  SHAPE_POLYLINEM: 23,
-  SHAPE_POLYGONM: 25,
-  SHAPE_MULTIPOINTM: 28,
-  SHAPE_MULTIPATCH: 31,
+  // Validation limits
+  MAX_RECORD_LENGTH: 1000000,
+  MAX_PARTS: 1000000,
+  MAX_POINTS: 1000000,
 
-  // Geometry type flags
-  HAS_Z: 0x80000000,
-  HAS_M: 0x40000000
+  // Shape types
+  SHAPE_TYPES: {
+    NULL: 0,
+    POINT: 1,
+    POLYLINE: 3,
+    POLYGON: 5,
+    MULTIPOINT: 8,
+    POINT_Z: 11,
+    POLYLINE_Z: 13,
+    POLYGON_Z: 15,
+    MULTIPOINT_Z: 18,
+    POINT_M: 21,
+    POLYLINE_M: 23,
+    POLYGON_M: 25,
+    MULTIPOINT_M: 28,
+    MULTIPATCH: 31
+  }
 } as const;

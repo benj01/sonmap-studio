@@ -1,7 +1,6 @@
 import type { Feature, Geometry } from 'geojson';
 import init, { 
   ShapefileProcessor,
-  calculate_bounds,
   is_clockwise,
   convert_point,
   convert_multi_point,
@@ -21,7 +20,17 @@ import init, {
   validate_shape_type
 } from '../wasm/pkg/shapefile_wasm';
 
-let wasmModule: typeof ShapefileProcessor | null = null;
+// Convert JavaScript array to Float64Array for WebAssembly
+function toFloat64Array(arr: number[]): Float64Array {
+  return Float64Array.from(arr);
+}
+
+// Convert JavaScript array to Uint32Array for ring sizes
+function toUint32Array(arr: number[]): Uint32Array {
+  return Uint32Array.from(arr);
+}
+
+let wasmModule: ShapefileProcessor | null = null;
 let isInitialized = false;
 
 /**
@@ -31,7 +40,7 @@ export async function initWasm(): Promise<void> {
   if (!isInitialized) {
     try {
       await init();
-      wasmModule = ShapefileProcessor;
+      wasmModule = new ShapefileProcessor();
       isInitialized = true;
     } catch (error) {
       console.error('Failed to initialize WebAssembly module:', error);
@@ -44,21 +53,19 @@ export async function initWasm(): Promise<void> {
  * Geometry operations using WebAssembly
  */
 export class WasmGeometryConverter {
-  private processor: ShapefileProcessor;
-
-  constructor() {
-    if (!isInitialized) {
-      throw new Error('WebAssembly module not initialized. Call initWasm() first.');
-    }
-    this.processor = new wasmModule!();
-  }
-
   /**
    * Calculate bounds for coordinates
    */
   calculateBounds(coordinates: number[]): [number, number, number, number] {
     try {
-      const bounds = calculate_bounds(coordinates);
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
+      // calculate_bounds is not exported by the Wasm module, we'll use the processor instead
+      if (!wasmModule) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
+      const bounds = wasmModule.process_geometry(0, toFloat64Array(coordinates)) as number[];
       return [bounds[0], bounds[1], bounds[2], bounds[3]];
     } catch (error) {
       console.error('Failed to calculate bounds:', error);
@@ -71,7 +78,10 @@ export class WasmGeometryConverter {
    */
   isClockwise(coordinates: number[]): boolean {
     try {
-      return is_clockwise(coordinates);
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
+      return is_clockwise(toFloat64Array(coordinates));
     } catch (error) {
       console.error('Failed to check ring orientation:', error);
       throw error;
@@ -79,49 +89,39 @@ export class WasmGeometryConverter {
   }
 
   /**
-   * Convert point coordinates to GeoJSON geometry
+   * Process geometry based on shape type
    */
-  convertPoint(x: number, y: number): Geometry {
+  processGeometry(shapeType: number, coordinates: number[], ringSizes?: number[]): Geometry {
     try {
-      return convert_point(x, y) as Geometry;
+      if (!isInitialized || !wasmModule) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
+      const coordArray = toFloat64Array(coordinates);
+      
+      switch (shapeType) {
+        case 1: // Point
+          if (coordinates.length !== 2) {
+            throw new Error('Point must have exactly 2 coordinates');
+          }
+          return convert_point(coordinates[0], coordinates[1]) as Geometry;
+        
+        case 3: // PolyLine
+          return convert_polyline(coordArray) as Geometry;
+        
+        case 5: // Polygon
+          if (!ringSizes) {
+            throw new Error('Ring sizes are required for polygon geometry');
+          }
+          return convert_polygon(coordArray, toUint32Array(ringSizes)) as Geometry;
+        
+        case 8: // MultiPoint
+          return convert_multi_point(coordArray) as Geometry;
+        
+        default:
+          throw new Error(`Unsupported shape type: ${shapeType}`);
+      }
     } catch (error) {
-      console.error('Failed to convert point:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Convert multipoint coordinates to GeoJSON geometry
-   */
-  convertMultiPoint(coordinates: number[]): Geometry {
-    try {
-      return convert_multi_point(coordinates) as Geometry;
-    } catch (error) {
-      console.error('Failed to convert multipoint:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Convert polyline coordinates to GeoJSON geometry
-   */
-  convertPolyline(coordinates: number[]): Geometry {
-    try {
-      return convert_polyline(coordinates) as Geometry;
-    } catch (error) {
-      console.error('Failed to convert polyline:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Convert polygon rings to GeoJSON geometry
-   */
-  convertPolygon(coordinates: number[], ringSizes: number[]): Geometry {
-    try {
-      return convert_polygon(coordinates, ringSizes) as Geometry;
-    } catch (error) {
-      console.error('Failed to convert polygon:', error);
+      console.error('Failed to process geometry:', error);
       throw error;
     }
   }
@@ -136,6 +136,9 @@ export class WasmValidator {
    */
   validateHeaderBuffer(bufferLength: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_header_buffer(bufferLength);
     } catch (error) {
       console.error('Header buffer validation failed:', error);
@@ -148,6 +151,9 @@ export class WasmValidator {
    */
   validateFileCode(fileCode: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_file_code(fileCode);
     } catch (error) {
       console.error('File code validation failed:', error);
@@ -160,6 +166,9 @@ export class WasmValidator {
    */
   validateFileLength(fileLength: number, bufferLength: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_file_length(fileLength, bufferLength);
     } catch (error) {
       console.error('File length validation failed:', error);
@@ -172,6 +181,9 @@ export class WasmValidator {
    */
   validateVersion(version: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_version(version);
     } catch (error) {
       console.error('Version validation failed:', error);
@@ -184,6 +196,9 @@ export class WasmValidator {
    */
   validateBoundingBox(xMin: number, yMin: number, xMax: number, yMax: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_bounding_box(xMin, yMin, xMax, yMax);
     } catch (error) {
       console.error('Bounding box validation failed:', error);
@@ -196,6 +211,9 @@ export class WasmValidator {
    */
   validateRecordContentLength(contentLength: number, recordNumber: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_record_content_length(contentLength, recordNumber);
     } catch (error) {
       console.error('Record content length validation failed:', error);
@@ -213,6 +231,9 @@ export class WasmValidator {
     recordNumber: number
   ): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_record_buffer_space(offset, recordSize, bufferLength, recordNumber);
     } catch (error) {
       console.error('Record buffer space validation failed:', error);
@@ -230,6 +251,9 @@ export class WasmValidator {
     pointIndex: number
   ): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_point_coordinates(x, y, partIndex, pointIndex);
     } catch (error) {
       console.error('Point coordinates validation failed:', error);
@@ -242,6 +266,9 @@ export class WasmValidator {
    */
   validatePartsAndPoints(numParts: number, numPoints: number, shapeType: string): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_parts_and_points(numParts, numPoints, shapeType);
     } catch (error) {
       console.error('Parts and points validation failed:', error);
@@ -254,6 +281,9 @@ export class WasmValidator {
    */
   validatePartIndex(partIndex: number, numPoints: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_part_index(partIndex, numPoints);
     } catch (error) {
       console.error('Part index validation failed:', error);
@@ -266,6 +296,9 @@ export class WasmValidator {
    */
   validatePartRange(start: number, end: number, partIndex: number): void {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       validate_part_range(start, end, partIndex);
     } catch (error) {
       console.error('Part range validation failed:', error);
@@ -278,6 +311,9 @@ export class WasmValidator {
    */
   validateShapeType(shapeType: number): boolean {
     try {
+      if (!isInitialized) {
+        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+      }
       return validate_shape_type(shapeType);
     } catch (error) {
       console.error('Shape type validation failed:', error);

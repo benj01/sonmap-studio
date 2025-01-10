@@ -1,5 +1,8 @@
 use wasm_bindgen::prelude::*;
-use console_error_panic_hook;
+
+mod geometry;
+mod validation;
+mod geojson;
 
 // Initialize better error handling for Wasm
 #[wasm_bindgen(start)]
@@ -7,9 +10,31 @@ pub fn init() {
     console_error_panic_hook::set_once();
 }
 
-// Re-export modules
-pub mod geometry;
-pub mod validation;
+// Re-export geometry functions
+pub use geometry::{
+    calculate_bounds,
+    convert_point,
+    convert_multi_point,
+    convert_polyline,
+    convert_polygon,
+    is_clockwise,
+};
+
+// Re-export validation functions
+pub use validation::{
+    validate_header_buffer,
+    validate_file_code,
+    validate_file_length,
+    validate_version,
+    validate_bounding_box,
+    validate_record_content_length,
+    validate_record_buffer_space,
+    validate_point_coordinates,
+    validate_parts_and_points,
+    validate_part_index,
+    validate_part_range,
+    validate_shape_type,
+};
 
 // Main WebAssembly interface
 #[wasm_bindgen]
@@ -24,18 +49,34 @@ impl ShapefileProcessor {
         ShapefileProcessor {}
     }
 
-    // Geometry calculation methods will be added here
     #[wasm_bindgen]
-    pub fn calculate_bounds(&self, coordinates: &[f64]) -> Result<Vec<f64>, JsError> {
-        // This will be implemented in geometry.rs
-        geometry::calculate_bounds(coordinates)
-    }
+    pub fn process_geometry(&self, shape_type: u32, coordinates: &[f64]) -> Result<JsValue, JsError> {
+        // Validate shape type first
+        if !validation::validate_shape_type(shape_type)? {
+            return Err(JsError::new("Invalid or null shape type"));
+        }
 
-    // Validation methods will be added here
-    #[wasm_bindgen]
-    pub fn validate_shape_type(&self, shape_type: u32) -> Result<bool, JsError> {
-        // This will be implemented in validation.rs
-        validation::validate_shape_type(shape_type)
+        // Process based on shape type
+        match shape_type {
+            1 => { // Point
+                if coordinates.len() != 2 {
+                    return Err(JsError::new("Point must have exactly 2 coordinates"));
+                }
+                geometry::convert_point(coordinates[0], coordinates[1])
+            },
+            3 => { // PolyLine
+                geometry::convert_polyline(coordinates)
+            },
+            5 => { // Polygon
+                // For polygons, we need ring sizes. For now, treat as one ring
+                let ring_sizes = vec![coordinates.len() / 2];
+                geometry::convert_polygon(coordinates, &ring_sizes)
+            },
+            8 => { // MultiPoint
+                geometry::convert_multi_point(coordinates)
+            },
+            _ => Err(JsError::new("Unsupported shape type")),
+        }
     }
 }
 
@@ -48,6 +89,14 @@ mod tests {
     #[wasm_bindgen_test]
     fn test_processor_creation() {
         let processor = ShapefileProcessor::new();
-        assert!(processor.validate_shape_type(1).unwrap());
+        assert!(validate_shape_type(1).unwrap());
+    }
+
+    #[wasm_bindgen_test]
+    fn test_process_point() {
+        let processor = ShapefileProcessor::new();
+        let coords = vec![1.0, 2.0];
+        let result = processor.process_geometry(1, &coords);
+        assert!(result.is_ok());
     }
 }

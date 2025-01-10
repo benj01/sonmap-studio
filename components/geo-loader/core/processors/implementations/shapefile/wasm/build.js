@@ -1,26 +1,19 @@
-const { build } = require("@wasm-tool/wasm-pack-plugin");
-const path = require("path");
+const { execSync } = require('child_process');
+const path = require('path');
 
-async function buildWasm() {
-  try {
-    console.log("Building WebAssembly module...");
-    
-    const wasmPath = path.resolve(__dirname);
-    
-    await build({
-      path: wasmPath,
-      target: "web",
-      release: true,
-      outDir: "pkg",
-      outName: "shapefile_wasm",
-      extraArgs: "--no-typescript", // We'll create our own TypeScript types
-    });
+try {
+  console.log('Building WebAssembly module...');
+  
+  const wasmPath = path.resolve(__dirname);
+  
+  // Build using wasm-pack CLI
+  execSync('wasm-pack build --target web --out-dir pkg', {
+    cwd: wasmPath,
+    stdio: 'inherit'
+  });
 
-    console.log("WebAssembly build complete!");
-  } catch (error) {
-    console.error("WebAssembly build failed:", error);
-    process.exit(1);
-  }
+  console.log('WebAssembly build complete!');
+} catch (error) {
+  console.error('WebAssembly build failed:', error);
+  process.exit(1);
 }
-
-buildWasm();
