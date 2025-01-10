@@ -1,5 +1,5 @@
 import { Feature } from 'geojson';
-import { ProcessorOptions, ProcessorStats } from '../base/types';
+import { ProcessorOptions, ProcessorStats, DatabaseImportResult } from '../base/types';
 
 /**
  * Options for stream processing
@@ -25,12 +25,24 @@ export interface StreamProcessorResult {
   success: boolean;
   /** Error message if processing failed */
   error?: string;
+  /** Database import results */
+  databaseResult?: DatabaseImportResult;
+}
+
+/**
+ * Stream processor batch events
+ */
+export interface StreamProcessorBatchEvents {
+  /** Emitted when a batch is completed */
+  onBatchComplete?: (batchNumber: number, totalBatches: number) => void;
+  /** Emitted when a transaction status changes */
+  onTransactionStatus?: (status: 'begin' | 'commit' | 'rollback') => void;
 }
 
 /**
  * Stream processor events
  */
-export interface StreamProcessorEvents {
+export interface StreamProcessorEvents extends StreamProcessorBatchEvents {
   /** Emitted when a feature is processed */
   onFeature?: (feature: Feature) => void;
   /** Emitted when a chunk is processed */
@@ -39,6 +51,8 @@ export interface StreamProcessorEvents {
   onProgress?: (progress: number) => void;
   /** Emitted when processing errors occur */
   onError?: (error: Error) => void;
+  /** Emitted when warnings occur */
+  onWarning?: (message: string) => void;
 }
 
 /**

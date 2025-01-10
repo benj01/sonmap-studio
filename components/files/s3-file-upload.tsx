@@ -283,27 +283,28 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
             // Upload companion files
             for (const file of group.companions) {
               const ext = file.name.substring(file.name.lastIndexOf('.')).toLowerCase();
-              const uploadedUrl = await uploadFile(file, (fileProgress) => {
-                const fileContribution = (fileProgress / 100) * progressPerFile;
-                setUploadProgress(prev => {
-                  const baseProgress = Math.floor(prev / progressPerFile) * progressPerFile;
-                  return baseProgress + fileContribution;
-                });
-              });
+          const uploadedUrl = await uploadFile(file, (fileProgress) => {
+            const fileContribution = (fileProgress / 100) * progressPerFile;
+            setUploadProgress(prev => {
+              const baseProgress = Math.floor(prev / progressPerFile) * progressPerFile;
+              return baseProgress + fileContribution;
+            });
+          });
 
-              // Ensure extension starts with a dot for consistency
-              const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`;
-              console.log('Adding companion file to relatedFiles:', {
-                file: file.name,
-                ext: normalizedExt,
-                url: uploadedUrl
-              });
-  
-              relatedFiles[normalizedExt] = {
-                path: uploadedUrl,
-                size: file.size,
-                name: file.name
-              };
+          // Ensure extension starts with a dot for consistency
+          const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`;
+          const storagePath = `${projectId}/${file.name}`;
+          console.log('Adding companion file to relatedFiles:', {
+            file: file.name,
+            ext: normalizedExt,
+            path: storagePath
+          });
+
+          relatedFiles[normalizedExt] = {
+            path: storagePath,
+            size: file.size,
+            name: file.name
+          };
             }
 
             console.log('Final relatedFiles structure:', relatedFiles);

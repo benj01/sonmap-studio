@@ -1,15 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Dialog, DialogContent, DialogTitle, DialogDescription } from 'components/ui/dialog';
+import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogPortal, DialogOverlay } from 'components/ui/dialog';
+import { Feature } from 'geojson';
 import { GeoImportDialogProps } from './types';
-import { ImportHeader } from './components/import-header';
-import { ImportContent } from './components/import-content';
-import { ImportDialog } from '../shared/controls/import-dialog';
 import { useImportLogs } from './hooks/use-import-logs';
 import { useFileAnalysis } from './hooks/use-file-analysis';
 import { useCoordinateSystem } from './hooks/use-coordinate-system';
 import { useImportProcess } from './hooks/use-import-process';
 import { useProcessor } from './hooks/use-processor';
 import { AnalyzeResult } from '../../core/processors/base/types';
+import { LoaderResult, GeoFeature } from 'types/geo';
 
 // Progress phases with descriptions
 const PROGRESS_PHASES = {
@@ -267,41 +266,134 @@ export function GeoImportDialog({
     }
   };
 
-  if (!file) return null;
+  // Get list of supported formats
+  const supportedFormats = ['.geojson', '.json', '.kml', '.gpx', '.dxf', '.shp', '.csv', '.xyz', '.txt'];
+  const shapefileFormats = ['.shp', '.dbf', '.shx', '.prj'];
 
-  const options = {
-    selectedLayers,
-    visibleLayers,
-    selectedTemplates,
-    coordinateSystem
-  };
+  if (!file) return null;
 
   const loading = analysisLoading || coordinateSystemLoading;
 
+  // Check file format support
+  const fileExtension = `.${file.name.split('.').pop()?.toLowerCase()}`;
+  const isFormatSupported = supportedFormats.includes(fileExtension);
+  const isShapefileComponent = shapefileFormats.some(ext => file.name.toLowerCase().endsWith(ext));
+
+  // Validate file format and components
+  useEffect(() => {
+    if (!isFormatSupported) {
+      if (isShapefileComponent) {
+        // For shapefiles, check if we have all required companion files
+        const relatedFiles = (file as any).relatedFiles || {};
+        const missingFiles = [];
+        
+        if (!file.name.toLowerCase().endsWith('.shp')) {
+          onError(`Please select the main .shp file to import a shapefile.`);
+          return;
+        }
+        
+        if (!relatedFiles['.dbf']) missingFiles.push('.dbf');
+        if (!relatedFiles['.shx']) missingFiles.push('.shx');
+        
+        if (missingFiles.length > 0) {
+          onError(`Missing required shapefile components: ${missingFiles.join(', ')}. A complete shapefile requires .shp, .dbf, and .shx files.`);
+        }
+      } else {
+        onError(`Unsupported file format. Supported formats: ${supportedFormats.join(', ')}`);
+      }
+    }
+  }, [isFormatSupported, isShapefileComponent, onError, supportedFormats, file]);
+
   return (
-    <ImportDialog
-      open={isOpen}
-      onOpenChange={(open) => !open && handleClearAndClose()}
-      file={file}
-      dxfData={dxfData}
-      analysis={analysis}
-      options={options}
-      selectedLayers={selectedLayers}
-      visibleLayers={visibleLayers}
-      selectedTemplates={selectedTemplates}
-      previewManager={previewManager}
-      logs={logs}
-      loading={loading}
-      hasErrors={hasErrors}
-      pendingCoordinateSystem={pendingCoordinateSystem}
-      onLayerToggle={handleLayerToggleWrapper}
-      onLayerVisibilityToggle={handleLayerVisibilityToggleWrapper}
-      onTemplateSelect={handleTemplateSelectWrapper}
-      onCoordinateSystemChange={handleCoordinateSystemChangeWrapper}
-      onApplyCoordinateSystem={handleApplyCoordinateSystem}
-      onClearAndClose={handleClearAndClose}
-      onClose={onClose}
-      onImport={handleImport}
-    />
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClearAndClose()}>
+      <DialogPortal>
+        <DialogOverlay className="bg-black/80" />
+        <DialogContent className="max-w-4xl h-[90vh] overflow-y-auto fixed z-50">
+          <DialogTitle>Import {file.name}</DialogTitle>
+          <DialogDescription>
+            Configure import settings and preview the data
+          </DialogDescription>
+
+          <div className="flex flex-col h-full gap-4 pt-4">
+            {/* Error Display */}
+            {hasErrors && logs && logs.length > 0 && (
+              <div className="bg-red-50 border border-red-200 rounded p-4">
+                {logs.map((log, index) => (
+                  <div key={index} className="text-red-700">
+                    {log.message}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Coordinate System Selection */}
+            <div className="flex items-center gap-2">
+              <span className="text-sm">Coordinate System:</span>
+              <select
+                value={pendingCoordinateSystem || coordinateSystem}
+                onChange={(e) => handleCoordinateSystemChangeWrapper(e.target.value)}
+                disabled={loading}
+                className="text-sm border rounded px-2 py-1"
+              >
+                <option value="EPSG:4326">WGS 84 (EPSG:4326)</option>
+                <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
+              </select>
+              {pendingCoordinateSystem && (
+                <button
+                  onClick={handleApplyCoordinateSystem}
+                  className="px-2 py-1 text-sm bg-blue-500 text-white rounded hover:bg-blue-600"
+                >
+                  Apply
+                </button>
+              )}
+            </div>
+
+            {/* Layer Controls */}
+            {selectedLayers && selectedLayers.length > 0 && (
+              <div className="border rounded p-4">
+                <h3 className="font-medium mb-2">Layers</h3>
+                <div className="space-y-2">
+                  {selectedLayers.map((layer) => (
+                    <div key={layer} className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id={layer}
+                        checked={visibleLayers?.includes(layer)}
+                        onChange={(e) => handleLayerVisibilityToggleWrapper(layer, e.target.checked)}
+                      />
+                      <label htmlFor={layer}>{layer}</label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Preview Section */}
+            {previewManager && (
+              <div className="flex-1 min-h-[400px] border rounded">
+                {/* Preview content will be rendered by the preview manager */}
+              </div>
+            )}
+
+            {/* Action Buttons */}
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={handleClearAndClose}
+                className="px-4 py-2 text-sm border rounded hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImport}
+                disabled={loading || hasErrors}
+                className="px-4 py-2 text-sm bg-blue-500 text-white rounded hover:bg-blue-600 disabled:opacity-50"
+              >
+                Import
+              </button>
+            </div>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </Dialog>
   );
 }

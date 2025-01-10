@@ -1,7 +1,7 @@
 import { File } from '@web-std/file';
 import { ProcessorOptions, ProcessorResult, AnalyzeResult, DatabaseImportResult } from './types';
-import { Feature } from 'geojson';
 import { PostGISClient } from '../../../database/client';
+import { PostGISGeometry } from '../../../types/postgis';
 
 /**
  * Core processor interface that all format processors must implement
@@ -19,25 +19,40 @@ export interface IProcessor {
   analyze(file: File): Promise<AnalyzeResult>;
 
   /**
-   * Process file and import to database
+   * Process file and import to database with transaction support
+   * @param file File to process
+   * @param dbClient PostGIS client instance
+   * @param options Processing options including batch size
    */
-  process(file: File, dbClient: PostGISClient): Promise<ProcessorResult>;
+  process(
+    file: File, 
+    dbClient: PostGISClient, 
+    options?: ProcessorOptions & { 
+      batchSize?: number;
+      useTransaction?: boolean;
+    }
+  ): Promise<ProcessorResult>;
 
   /**
-   * Import format-specific entities to database
+   * Import format-specific entities to database with batch processing
+   * @param entities Array of entities to import
+   * @param dbClient PostGIS client instance
+   * @param options Import options including batch size
    */
-  importToDatabase(entities: any[], dbClient: PostGISClient): Promise<DatabaseImportResult>;
+  importToDatabase(
+    entities: any[], 
+    dbClient: PostGISClient,
+    options?: {
+      batchSize?: number;
+      useTransaction?: boolean;
+    }
+  ): Promise<DatabaseImportResult>;
 
   /**
    * Validate data before import
+   * @param entities Array of entities to validate
    */
   validateData(entities: any[]): Promise<boolean>;
-
-  /**
-   * Convert format-specific entities to GeoJSON features
-   * @deprecated Use importToDatabase instead
-   */
-  convertToFeatures(entities: any[]): Promise<Feature[]>;
 
   /**
    * Get all errors from this processor
@@ -73,6 +88,16 @@ export interface IProcessorEvents {
    * Report errors during processing
    */
   onError(message: string, details?: Record<string, unknown>): void;
+
+  /**
+   * Report batch completion during processing
+   */
+  onBatchComplete?(batchNumber: number, totalBatches: number): void;
+
+  /**
+   * Report transaction status
+   */
+  onTransactionStatus?(status: 'begin' | 'commit' | 'rollback'): void;
 }
 
 /**
@@ -121,21 +146,46 @@ export interface ICoordinateTransformer {
 }
 
 /**
- * Interface for feature cache operations
+ * Interface for PostGIS geometry operations
  */
-export interface IFeatureCache {
+export interface IPostGISGeometryHandler {
   /**
-   * Add features to cache
+   * Convert entity to PostGIS geometry
    */
-  addFeatures(features: GeoJSON.Feature[]): void;
+  toPostGISGeometry(entity: any): Promise<PostGISGeometry>;
 
   /**
-   * Get features from cache
+   * Get SRID for PostGIS geometry
    */
-  getFeatures(): GeoJSON.Feature[];
+  getSRID(): number;
 
   /**
-   * Clear cache
+   * Get geometry type for PostGIS
    */
-  clear(): void;
+  getGeometryType(): string;
+}
+
+/**
+ * Interface for database transaction management
+ */
+export interface ITransactionManager {
+  /**
+   * Begin a transaction
+   */
+  beginTransaction(): Promise<void>;
+
+  /**
+   * Commit a transaction
+   */
+  commitTransaction(): Promise<void>;
+
+  /**
+   * Rollback a transaction
+   */
+  rollbackTransaction(): Promise<void>;
+
+  /**
+   * Check if a transaction is active
+   */
+  isTransactionActive(): boolean;
 }

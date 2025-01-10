@@ -30,15 +30,31 @@ export class ProcessorRegistry {
       const relatedFiles = (file as any).relatedFiles;
       
       if (relatedFiles) {
+        // Log the raw related files for debugging
+        console.debug('[DEBUG] Raw related files:', relatedFiles);
+        
+        // Normalize file extensions to ensure they match expected format
+        const normalizedFiles: Record<string, File> = {};
+        Object.entries(relatedFiles).forEach(([ext, file]) => {
+          // Ensure extension starts with a dot and is lowercase
+          const normalizedExt = ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`;
+          normalizedFiles[normalizedExt] = file as File;
+        });
+
         processorOptions.relatedFiles = {
-          dbf: relatedFiles.dbf,
-          shx: relatedFiles.shx,
-          prj: relatedFiles.prj
+          dbf: normalizedFiles['.dbf'],
+          shx: normalizedFiles['.shx'],
+          prj: normalizedFiles['.prj']
         };
-        console.debug('[DEBUG] Found companion files:', processorOptions.relatedFiles);
+        
+        console.debug('[DEBUG] Normalized companion files:', processorOptions.relatedFiles);
       }
 
       const processor = new ProcessorClass(processorOptions);
+      console.debug('[DEBUG] Created processor with options:', {
+        hasRelatedFiles: !!processorOptions.relatedFiles,
+        relatedFileTypes: processorOptions.relatedFiles ? Object.keys(processorOptions.relatedFiles) : []
+      });
       const canProcess = await processor.canProcess(file);
       
       if (!canProcess) {

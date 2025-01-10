@@ -59,7 +59,7 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
         // Download main file
         const { data: mainData, error: mainError } = await supabase.storage
           .from('project-files')
-          .download(file.storage_path.replace(/^projects\//, ''))
+          .download(file.storage_path)
         
         if (mainError) throw mainError
         zip.file(file.name, mainData)
@@ -68,10 +68,15 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
         for (const companion of file.companion_files) {
           const { data: companionData, error: companionError } = await supabase.storage
             .from('project-files')
-            .download(companion.storage_path.replace(/^projects\//, ''))
+            .download(companion.storage_path)
           
           if (companionError) {
-            console.error(`Error downloading companion file ${companion.name}:`, companionError)
+            console.error(`Error downloading companion file:`, {
+              name: companion.name,
+              path: companion.storage_path,
+              error: companionError,
+              type: companion.component_type
+            })
             continue
           }
           
@@ -92,9 +97,16 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
         // For non-shapefiles, download single file
         const { data, error } = await supabase.storage
           .from('project-files')
-          .download(file.storage_path.replace(/^projects\//, ''))
+          .download(file.storage_path)
 
-        if (error) throw error
+        if (error) {
+          console.error('Download error:', {
+            name: file.name,
+            path: file.storage_path,
+            error
+          })
+          throw error
+        }
 
         const url = window.URL.createObjectURL(data)
         const link = document.createElement('a')
@@ -119,11 +131,11 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
         const urls = await Promise.all([
           supabase.storage
             .from('project-files')
-            .createSignedUrl(file.storage_path.replace(/^projects\//, ''), 3600),
+            .createSignedUrl(file.storage_path, 3600),
           ...file.companion_files.map(companion =>
             supabase.storage
               .from('project-files')
-              .createSignedUrl(companion.storage_path.replace(/^projects\//, ''), 3600)
+              .createSignedUrl(companion.storage_path, 3600)
           )
         ])
 
@@ -145,7 +157,7 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
         // For non-shapefiles, share single file URL
         const { data, error } = await supabase.storage
           .from('project-files')
-          .createSignedUrl(file.storage_path.replace(/^projects\//, ''), 3600)
+          .createSignedUrl(file.storage_path, 3600)
 
         if (error) throw error
         await navigator.clipboard.writeText(data.signedUrl)
@@ -156,13 +168,22 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
   }
 
   const handleImportClick = async () => {
+    console.debug('[DEBUG] Starting import click handler');
     try {
+      console.debug('[DEBUG] Attempting to download main file');
       // Download main file
       const { data: mainData, error: mainError } = await supabase.storage
         .from('project-files')
-        .download(file.storage_path.replace(/^projects\//, ''))
+        .download(file.storage_path)
 
-      if (mainError) throw mainError
+      if (mainError) {
+        console.error('Error downloading main file:', {
+          name: file.name,
+          path: file.storage_path,
+          error: mainError
+        })
+        throw mainError
+      }
 
       // Convert the downloaded blob to a File object
       const mainFile = new File([mainData], file.name, { type: file.file_type })
@@ -174,10 +195,15 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
         for (const companion of file.companion_files) {
           const { data: companionData, error: companionError } = await supabase.storage
             .from('project-files')
-            .download(companion.storage_path.replace(/^projects\//, ''))
+            .download(companion.storage_path)
 
           if (companionError) {
-            console.error(`Error downloading companion file ${companion.name}:`, companionError)
+            console.error(`Error downloading companion file:`, {
+              name: companion.name,
+              path: companion.storage_path,
+              error: companionError,
+              type: companion.component_type
+            })
             continue
           }
 
@@ -199,15 +225,33 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
           });
         }
 
-        // Add companion files to the main file object for the processor to use
-        Object.defineProperty(mainFile, 'relatedFiles', {
-          value: companionFiles,
-          enumerable: true
-        })
+          // Add companion files to the main file object for the processor to use
+          const relatedFiles: { [key: string]: File } = {};
+          Object.entries(companionFiles).forEach(([ext, file]) => {
+            // Ensure extension starts with a dot
+            const normalizedExt = ext.startsWith('.') ? ext : `.${ext}`;
+            relatedFiles[normalizedExt] = file;
+          });
+          
+          Object.defineProperty(mainFile, 'relatedFiles', {
+            value: relatedFiles,
+            enumerable: true,
+            configurable: true
+          });
+          
+          console.debug('Added companion files to main file:', {
+            mainFile: mainFile.name,
+            companions: Object.keys(relatedFiles)
+          });
       }
 
-      setFileForImport(mainFile)
-      setIsImportDialogOpen(true)
+      console.debug('[DEBUG] Setting up dialog with file:', mainFile.name);
+      console.debug('[DEBUG] Setting up import dialog:', { mainFile });
+      setFileForImport(mainFile);
+      console.debug('[DEBUG] File for import set');
+      setIsImportDialogOpen(true);
+      console.debug('[DEBUG] Import dialog state updated:', { isImportDialogOpen: true });
+      console.debug('[DEBUG] Dialog state updated:', { isImportDialogOpen: true, fileForImport: mainFile.name });
     } catch (error) {
       console.error('Import preparation error:', error)
     }
@@ -223,183 +267,187 @@ export function FileItem({ file, viewMode, onDelete, onImport }: FileItemProps) 
   const isShapefileSet = file.file_type === 'application/x-shapefile' && file.companion_files && file.companion_files.length > 0;
   
   return (
-    <TooltipProvider>
-      <div className={cn(
-        containerClasses,
-        isShapefileSet && 'border-primary bg-muted/30'
-      )}>
-        {/* Shapefile Set Header */}
-        {isShapefileSet && (
-          <div className="flex items-center gap-2 pb-2 mb-2 border-b">
-            <Icon className="h-5 w-5 text-primary" />
-            <h3 className="text-sm font-medium">Shapefile Set</h3>
-            <span className="text-xs text-muted-foreground">
-              ({formatBytes(file.size + (file.companion_files?.reduce((sum, f) => sum + f.size, 0) || 0))})
-            </span>
-          </div>
-        )}
-
-        {/* Main File */}
+    <>
+      <TooltipProvider>
         <div className={cn(
-          'flex items-center gap-3',
-          viewMode === 'list' ? 'flex-1' : 'w-full',
-          isShapefileSet && 'pl-4'
+          containerClasses,
+          isShapefileSet && 'border-primary bg-muted/30'
         )}>
-          <div className="flex-shrink-0">
-            <Icon className={cn(
-              "h-8 w-8",
-              isShapefileSet ? "text-primary" : "text-muted-foreground"
-            )} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <p className="text-sm font-medium truncate">{file.name}</p>
-              {isShapefileSet && (
-                <span className="text-xs text-primary font-medium">Main File</span>
-              )}
+          {/* Shapefile Set Header */}
+          {isShapefileSet && (
+            <div className="flex items-center gap-2 pb-2 mb-2 border-b">
+              <Icon className="h-5 w-5 text-primary" />
+              <h3 className="text-sm font-medium">Shapefile Set</h3>
+              <span className="text-xs text-muted-foreground">
+                ({formatBytes(file.size + (file.companion_files?.reduce((sum, f) => sum + f.size, 0) || 0))})
+              </span>
             </div>
-            <p className="text-xs text-muted-foreground">
-              {formatBytes(file.size)}
-            </p>
+          )}
+
+          {/* Main File */}
+          <div className={cn(
+            'flex items-center gap-3',
+            viewMode === 'list' ? 'flex-1' : 'w-full',
+            isShapefileSet && 'pl-4'
+          )}>
+            <div className="flex-shrink-0">
+              <Icon className={cn(
+                "h-8 w-8",
+                isShapefileSet ? "text-primary" : "text-muted-foreground"
+              )} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <p className="text-sm font-medium truncate">{file.name}</p>
+                {isShapefileSet && (
+                  <span className="text-xs text-primary font-medium">Main File</span>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {formatBytes(file.size)}
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div className={cn(
-          'flex items-center gap-2',
-          viewMode === 'list' ? 'flex-shrink-0' : 'w-full justify-end'
-        )}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleDownload}
-                disabled={isDownloading}
-              >
-                <Download className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>
-                {isShapefileSet 
-                  ? `Download shapefile set (${formatBytes(file.size + (file.companion_files?.reduce((sum, f) => sum + f.size, 0) || 0))})`
-                  : 'Download file'}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleShare}
-              >
-                <Share2 className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>
-                {isShapefileSet 
-                  ? 'Share shapefile set (copies download links)'
-                  : 'Share file (copies link)'}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => onDelete(file.id)}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>
-                {isShapefileSet 
-                  ? 'Delete shapefile set'
-                  : 'Delete file'}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-
-          {isGeoFile && !file.is_imported && (
+          <div className={cn(
+            'flex items-center gap-2',
+            viewMode === 'list' ? 'flex-shrink-0' : 'w-full justify-end'
+          )}>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={handleImportClick}
+                  onClick={handleDownload}
+                  disabled={isDownloading}
                 >
-                  <Import className="h-4 w-4" />
+                  <Download className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Import geo data</p>
+                <p>
+                  {isShapefileSet 
+                    ? `Download shapefile set (${formatBytes(file.size + (file.companion_files?.reduce((sum, f) => sum + f.size, 0) || 0))})`
+                    : 'Download file'}
+                </p>
               </TooltipContent>
             </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={handleShare}
+                >
+                  <Share2 className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>
+                  {isShapefileSet 
+                    ? 'Share shapefile set (copies download links)'
+                    : 'Share file (copies link)'}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => onDelete(file.id)}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>
+                  {isShapefileSet 
+                    ? 'Delete shapefile set'
+                    : 'Delete file'}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+
+            {isGeoFile && !file.is_imported && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleImportClick}
+                  >
+                    <Import className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Import geo data</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+
+          {/* Companion Files Section */}
+          {file.companion_files && file.companion_files.length > 0 && (
+            <div className={cn(
+              "mt-2",
+              isShapefileSet ? "pl-8 border-l-2 border-primary/30" : "pl-4 border-l border-muted"
+            )}>
+              {!isShapefileSet && (
+                <p className="text-xs font-medium text-muted-foreground mb-1">Companion Files:</p>
+              )}
+              {file.companion_files.map(companion => (
+                <div key={companion.id} className="flex items-center gap-2 py-1">
+                  <FileIcon className={cn(
+                    "h-4 w-4",
+                    isShapefileSet ? "text-primary/70" : "text-muted-foreground"
+                  )} />
+                  <span className="text-xs font-mono">{companion.name}</span>
+                  <span className={cn(
+                    "text-xs px-1.5 py-0.5 rounded-full",
+                    isShapefileSet ? "bg-primary/10 text-primary" : "text-muted-foreground"
+                  )}>
+                    {companion.component_type}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Imported Files Section */}
+          {file.importedFiles && file.importedFiles.length > 0 && (
+            <div className="mt-2 pl-4 border-l border-muted">
+              <p className="text-xs font-medium text-muted-foreground mb-1">Imported Files:</p>
+              {file.importedFiles.map(importedFile => (
+                <div key={importedFile.id} className="flex items-center gap-2 py-1">
+                  <FileJson className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-xs font-mono">{importedFile.name}</span>
+                  <span className="text-xs text-muted-foreground">
+                    ({formatBytes(importedFile.size)})
+                  </span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
+      </TooltipProvider>
 
-        {/* Companion Files Section */}
-        {file.companion_files && file.companion_files.length > 0 && (
-          <div className={cn(
-            "mt-2",
-            isShapefileSet ? "pl-8 border-l-2 border-primary/30" : "pl-4 border-l border-muted"
-          )}>
-            {!isShapefileSet && (
-              <p className="text-xs font-medium text-muted-foreground mb-1">Companion Files:</p>
-            )}
-            {file.companion_files.map(companion => (
-              <div key={companion.id} className="flex items-center gap-2 py-1">
-                <FileIcon className={cn(
-                  "h-4 w-4",
-                  isShapefileSet ? "text-primary/70" : "text-muted-foreground"
-                )} />
-                <span className="text-xs font-mono">{companion.name}</span>
-                <span className={cn(
-                  "text-xs px-1.5 py-0.5 rounded-full",
-                  isShapefileSet ? "bg-primary/10 text-primary" : "text-muted-foreground"
-                )}>
-                  {companion.component_type}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Imported Files Section */}
-        {file.importedFiles && file.importedFiles.length > 0 && (
-          <div className="mt-2 pl-4 border-l border-muted">
-            <p className="text-xs font-medium text-muted-foreground mb-1">Imported Files:</p>
-            {file.importedFiles.map(importedFile => (
-              <div key={importedFile.id} className="flex items-center gap-2 py-1">
-                <FileJson className="h-4 w-4 text-muted-foreground" />
-                <span className="text-xs font-mono">{importedFile.name}</span>
-                <span className="text-xs text-muted-foreground">
-                  ({formatBytes(importedFile.size)})
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Import Dialog */}
-        {fileForImport && (
-          <GeoImportDialog
-            isOpen={isImportDialogOpen}
-            onClose={() => {
-              setIsImportDialogOpen(false)
-              setFileForImport(null)
-            }}
-            file={fileForImport}
-            onImportComplete={onImport}
-          />
-        )}
-      </div>
-    </TooltipProvider>
+      {/* Import Dialog - Only mount when we have a file */}
+      {fileForImport && (
+        <GeoImportDialog
+          isOpen={isImportDialogOpen}
+          key={`${fileForImport.name}-${isImportDialogOpen}`}
+          onClose={() => {
+            console.debug('[DEBUG] Dialog close triggered');
+            setIsImportDialogOpen(false);
+            setFileForImport(null);
+          }}
+          file={fileForImport}
+          onImportComplete={onImport}
+        />
+      )}
+    </>
   )
 }

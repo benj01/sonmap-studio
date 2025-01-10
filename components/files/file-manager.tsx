@@ -255,7 +255,7 @@ const handleUploadComplete = async (uploadedFile: UploadedFile) => {
                 name: file.name,
                 size: file.size,
                 file_type: 'application/octet-stream',
-                storage_path: file.path,
+                storage_path: `${projectId}/${file.name}`,
                 is_shapefile_component: true,
                 main_file_id: mainFile.id,
                 component_type: componentType,
@@ -485,9 +485,9 @@ const handleUploadComplete = async (uploadedFile: UploadedFile) => {
 
       // Get all storage paths to delete (main file + companions + imported files)
       const storagePaths = [
-        fileToDelete.storage_path.replace(/^projects\//, ''),
-        ...(fileToDelete.companion_files || []).map(f => f.storage_path.replace(/^projects\//, '')),
-        ...(fileToDelete.importedFiles || []).map(f => f.storage_path.replace(/^projects\//, ''))
+        fileToDelete.storage_path,
+        ...(fileToDelete.companion_files || []).map(f => f.storage_path),
+        ...(fileToDelete.importedFiles || []).map(f => f.storage_path)
       ]
 
       // Delete files from storage

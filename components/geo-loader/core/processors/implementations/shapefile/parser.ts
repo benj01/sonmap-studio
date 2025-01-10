@@ -60,45 +60,58 @@ export class ShapefileParser {
     shx?: File;
     prj?: File;
   } {
+    console.debug('[DEBUG] Finding component files for:', file.name);
+    
     // Check if related files are provided in options
     const relatedFiles = this.options?.relatedFiles;
     if (relatedFiles) {
-      return {
+      console.debug('[DEBUG] Found related files in options:', {
+        hasDbf: !!relatedFiles.dbf,
+        hasShx: !!relatedFiles.shx,
+        hasPrj: !!relatedFiles.prj
+      });
+      
+      const components = {
         dbf: relatedFiles.dbf,
         shx: relatedFiles.shx,
         prj: relatedFiles.prj
       };
-    }
-
-    // If no related files provided in options, try to find them in the same FileList
-    const fileList = (file as any).fileList || (file as any).form?.files;
-    if (!fileList) {
-      console.warn('No related files found');
-      return {};
-    }
-
-    const baseName = file.name.slice(0, -4); // Remove .shp extension
-    const components: { dbf?: File; shx?: File; prj?: File } = {};
-
-    for (let i = 0; i < fileList.length; i++) {
-      const relatedFile = fileList[i];
-      if (relatedFile.name.startsWith(baseName)) {
-        const ext = relatedFile.name.slice(-4).toLowerCase();
-        switch (ext) {
-          case '.dbf':
-            components.dbf = relatedFile;
-            break;
-          case '.shx':
-            components.shx = relatedFile;
-            break;
-          case '.prj':
-            components.prj = relatedFile;
-            break;
-        }
+      
+      if (!components.dbf) {
+        console.warn('[WARN] Missing DBF file in shapefile set');
       }
+      if (!components.shx) {
+        console.warn('[WARN] Missing SHX file in shapefile set');
+      }
+      
+      return components;
     }
 
-    return components;
+    // Check for companion files attached to the file object
+    const companionFiles = (file as any).relatedFiles;
+    if (companionFiles) {
+      console.debug('[DEBUG] Found companion files on file object:', 
+        Object.keys(companionFiles).map(ext => ({ ext, type: companionFiles[ext]?.type }))
+      );
+      
+      const components = {
+        dbf: companionFiles['.dbf'],
+        shx: companionFiles['.shx'],
+        prj: companionFiles['.prj']
+      };
+      
+      if (!components.dbf) {
+        console.warn('[WARN] Missing DBF file in shapefile set');
+      }
+      if (!components.shx) {
+        console.warn('[WARN] Missing SHX file in shapefile set');
+      }
+      
+      return components;
+    }
+
+    console.warn('[WARN] No companion files found for shapefile:', file.name);
+    return {};
   }
 
   /**
@@ -111,9 +124,38 @@ export class ShapefileParser {
       parseDbf?: boolean;
     } = {}
   ): Promise<ShapefileAnalyzeResult> {
+    console.debug('[DEBUG] Starting shapefile analysis:', {
+      fileName: file.name,
+      fileSize: file.size,
+      options
+    });
     try {
+      // Validate file type
+      if (!file.name.toLowerCase().endsWith('.shp')) {
+        throw new ValidationError(
+          'Invalid file: Must be a .shp file',
+          'INVALID_FILE_TYPE',
+          undefined,
+          { fileName: file.name }
+        );
+      }
+
       // Find component files
       const components = await this.findComponentFiles(file);
+
+      // Validate required companion files
+      if (!components.dbf || !components.shx) {
+        const missing = [];
+        if (!components.dbf) missing.push('.dbf');
+        if (!components.shx) missing.push('.shx');
+        
+        throw new ValidationError(
+          `Missing required companion files: ${missing.join(', ')}`,
+          'MISSING_COMPANION_FILES',
+          undefined,
+          { missing }
+        );
+      }
       
       // Read main shapefile header
       const shpBuffer = await file.arrayBuffer();

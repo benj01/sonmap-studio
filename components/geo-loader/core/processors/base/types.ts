@@ -1,31 +1,6 @@
 import { CoordinateSystem } from '../../../types/coordinates';
 import { ErrorReporterImpl as ErrorReporter } from '../../../core/errors/reporter';
-
-/**
- * Result of database import operation
- */
-export interface DatabaseImportResult {
-  /** Number of features successfully imported */
-  importedFeatures: number;
-  /** Collection ID in the database */
-  collectionId: string;
-  /** Layer IDs in the database */
-  layerIds: string[];
-  /** Failed features */
-  failedFeatures: Array<{
-    entity: any;
-    error: string;
-  }>;
-  /** Import statistics */
-  statistics: {
-    /** Time taken for import */
-    importTime: number;
-    /** Number of features validated */
-    validatedCount: number;
-    /** Number of features transformed */
-    transformedCount: number;
-  };
-}
+import { PostGISBatchOptions } from '../../../types/postgis';
 
 /**
  * Base processor options
@@ -52,6 +27,13 @@ export interface ProcessorOptions {
     /** PRJ file containing projection info */
     prj?: File;
   };
+  /** PostGIS batch processing options */
+  postgis?: PostGISBatchOptions & {
+    /** Table name for import */
+    tableName?: string;
+    /** Schema name for import */
+    schemaName?: string;
+  };
 }
 
 /**
@@ -74,7 +56,50 @@ export interface ProcessorStats {
 }
 
 /**
- * Result of processing
+ * Result of database import operation
+ */
+export interface DatabaseImportResult {
+  /** Number of features successfully imported */
+  importedFeatures: number;
+  /** Collection ID in the database */
+  collectionId: string;
+  /** Layer IDs in the database */
+  layerIds: string[];
+  /** Failed features */
+  failedFeatures: Array<{
+    entity: any;
+    error: string;
+  }>;
+  /** Import statistics */
+  statistics: {
+    /** Time taken for import */
+    importTime: number;
+    /** Number of features validated */
+    validatedCount: number;
+    /** Number of features transformed */
+    transformedCount: number;
+    /** Number of batches processed */
+    batchesProcessed?: number;
+    /** Number of transactions committed */
+    transactionsCommitted?: number;
+    /** Number of transaction rollbacks */
+    transactionRollbacks?: number;
+  };
+  /** PostGIS-specific results */
+  postgis?: {
+    /** Table name where data was imported */
+    tableName: string;
+    /** Schema name where data was imported */
+    schemaName: string;
+    /** SRID of imported geometries */
+    srid: number;
+    /** Geometry types imported */
+    geometryTypes: string[];
+  };
+}
+
+/**
+ * Result of processing operation
  */
 export interface ProcessorResult {
   /** Database import result */
@@ -91,11 +116,6 @@ export interface ProcessorResult {
     minY: number;
     maxX: number;
     maxY: number;
-  };
-  /** Preview data (if requested) */
-  preview?: {
-    type: string;
-    features: any[];
   };
 }
 

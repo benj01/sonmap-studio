@@ -1,4 +1,5 @@
 import { ProcessorOptions } from '../../../processors/base/types';
+import { PostGISBatchOptions } from '../../../../types/postgis';
 
 /**
  * Shapefile geometry types
@@ -145,6 +146,19 @@ export interface ShapefileProcessorOptions extends ProcessorOptions {
     /** PRJ file containing projection info */
     prj?: File;
   };
+  /** PostGIS-specific options */
+  postgis?: PostGISBatchOptions & {
+    /** Table name for import */
+    tableName?: string;
+    /** Schema name for import */
+    schemaName?: string;
+    /** SRID for geometry import */
+    srid?: number;
+    /** Whether to create spatial indexes */
+    createSpatialIndex?: boolean;
+    /** Whether to validate geometry in PostGIS */
+    validateInPostGIS?: boolean;
+  };
 }
 
 /**
@@ -163,6 +177,33 @@ export interface ShapefileParseOptions {
   tolerance?: number;
   /** Maximum number of records to parse */
   maxRecords?: number;
+  /** PostGIS import options */
+  postgis?: {
+    /** Whether to convert directly to PostGIS format */
+    directConversion?: boolean;
+    /** Target SRID for conversion */
+    targetSrid?: number;
+    /** Whether to force 2D geometries */
+    force2D?: boolean;
+  };
+}
+
+/**
+ * PostGIS conversion result
+ */
+export interface PostGISConversionResult {
+  /** WKT geometry string */
+  wkt: string;
+  /** Original SRID */
+  sourceSrid: number;
+  /** Target SRID */
+  targetSrid: number;
+  /** Geometry type */
+  geometryType: string;
+  /** Whether conversion was successful */
+  success: boolean;
+  /** Error message if conversion failed */
+  error?: string;
 }
 
 /**

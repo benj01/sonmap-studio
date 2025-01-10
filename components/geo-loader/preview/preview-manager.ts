@@ -1,7 +1,7 @@
 import { Feature, FeatureCollection, Point } from 'geojson';
 import { FeatureManager } from '../core/feature-manager';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
-import { coordinateSystemManager } from '../core/coordinate-systems';
+import { coordinateSystemManager } from '../core/coordinate-systems/coordinate-system-manager';
 import { calculateFeatureBounds, Bounds } from '../core/feature-manager/bounds';
 import { GeoFeature } from '../../../types/geo';
 import { PreviewCacheManager } from './cache-manager';
@@ -83,7 +83,7 @@ export class PreviewManager {
   private async validateCoordinateSystem(): Promise<void> {
     const startTime = performance.now();
     
-    const manager = coordinateSystemManager.getInstance();
+    const manager = coordinateSystemManager;
     if (!manager.isInitialized()) {
       console.warn('[PreviewManager] Coordinate system manager not initialized');
       await manager.initialize();
