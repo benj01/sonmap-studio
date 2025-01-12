@@ -3,7 +3,7 @@ import { AnalyzeResult } from '../../../core/processors/base/types';
 import { ProcessorOptions } from '../../../core/processors/base/types';
 import { CoordinateSystem } from '../../../types/coordinates';
 import { PreviewManager, createPreviewManager } from '../../../preview/preview-manager';
-import { GeoLoaderError } from '../../../core/errors/types';
+import { GeoLoaderError, createErrorDetails } from '../../../core/errors/types';
 import { coordinateSystemManager } from '../../../core/coordinate-systems/coordinate-system-manager';
 
 interface Warning {
@@ -80,7 +80,8 @@ export function useFileAnalysis({
           throw new GeoLoaderError(
             'Failed to initialize coordinate systems',
             'COORDINATE_SYSTEM_INIT_ERROR',
-            { originalError: error instanceof Error ? error.message : String(error) }
+            undefined,
+            createErrorDetails(error)
           );
         }
       }
@@ -94,7 +95,8 @@ export function useFileAnalysis({
           throw new GeoLoaderError(
             'Failed to initialize geo-loader',
             'INITIALIZATION_ERROR',
-            { originalError: error instanceof Error ? error.message : String(error) }
+            undefined,
+            createErrorDetails(error)
           );
         }
       }
@@ -279,70 +281,63 @@ export function useFileAnalysis({
       }
     });
 
-    setState(prev => {
-      // Skip if state wouldn't change
-      const isCurrentlyVisible = prev.visibleLayers.includes(layer);
-      console.debug('[DEBUG] Layer visibility check:', {
-        layer,
-        requestedVisible: visible,
-        isCurrentlyVisible,
-        wouldChange: visible !== isCurrentlyVisible
-      });
+    // Skip if state wouldn't change
+    const isCurrentlyVisible = stateRef.current.visibleLayers.includes(layer);
+    if (visible === isCurrentlyVisible) {
+      console.debug('[DEBUG] useFileAnalysis skipping visibility update - no change needed');
+      return;
+    }
 
-      if (visible === isCurrentlyVisible) {
-        console.debug('[DEBUG] useFileAnalysis skipping visibility update - no change needed');
-        return prev;
-      }
+    const newVisibleLayers = visible
+      ? [...stateRef.current.visibleLayers, layer]
+      : stateRef.current.visibleLayers.filter(l => l !== layer);
 
-      const newVisibleLayers = visible
-        ? [...prev.visibleLayers, layer]
-        : prev.visibleLayers.filter(l => l !== layer);
-
-      // Immediately update preview manager
-      if (prev.previewManager) {
-        console.debug('[DEBUG] useFileAnalysis updating preview manager visibility:', {
-          layer,
-          visible,
-          currentVisibleLayers: prev.visibleLayers,
-          newVisibleLayers
-        });
-        
-        try {
-          prev.previewManager.setOptions({
-            visibleLayers: newVisibleLayers
-          });
-          console.debug('[DEBUG] Preview manager visibility updated successfully');
-        } catch (error) {
-          console.error('[ERROR] Failed to update preview manager visibility:', error);
-          onError(`Failed to update layer visibility: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      } else {
-        console.debug('[DEBUG] No preview manager available for visibility update');
-      }
-
-      console.debug('[DEBUG] useFileAnalysis layer visibility state update:', {
+    // Update preview manager first
+    if (stateRef.current.previewManager) {
+      console.debug('[DEBUG] useFileAnalysis updating preview manager visibility:', {
         layer,
         visible,
-        before: prev.visibleLayers,
-        after: newVisibleLayers,
-        change: `${visible ? 'showing' : 'hiding'} layer "${layer}"`
+        currentVisibleLayers: stateRef.current.visibleLayers,
+        newVisibleLayers
       });
-
-      const newState = {
-        ...prev,
-        visibleLayers: newVisibleLayers
-      };
-
-      // Update the ref immediately to ensure consistent state
-      stateRef.current = newState;
       
-      // Dispatch a custom event to notify of visibility change
-      window.dispatchEvent(new CustomEvent('layer-visibility-changed', {
-        detail: { layer, visible, visibleLayers: newVisibleLayers }
-      }));
+      try {
+        // Update preview manager synchronously
+        stateRef.current.previewManager.setOptions({
+          visibleLayers: newVisibleLayers
+        });
+        console.debug('[DEBUG] Preview manager visibility updated successfully');
 
-      return newState;
-    });
+        // Only update state if preview manager update was successful
+        setState(prev => {
+          const newState = {
+            ...prev,
+            visibleLayers: newVisibleLayers
+          };
+          stateRef.current = newState;
+          return newState;
+        });
+
+        // Dispatch event after successful update
+        window.dispatchEvent(new CustomEvent('layer-visibility-changed', {
+          detail: { layer, visible, visibleLayers: newVisibleLayers }
+        }));
+      } catch (error) {
+        console.error('[ERROR] Failed to update preview manager visibility:', error);
+        onError(`Failed to update layer visibility: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else {
+      console.debug('[DEBUG] No preview manager available for visibility update');
+      // Update state directly if no preview manager
+      setState(prev => {
+        const newState = {
+          ...prev,
+          visibleLayers: newVisibleLayers
+        };
+        stateRef.current = newState;
+        return newState;
+      });
+    }
   }, [onError]);
 
   // Handle template selection with debug logging

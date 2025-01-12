@@ -39,6 +39,16 @@ export interface Bounds {
   maxX: number;
   /** Maximum y coordinate */
   maxY: number;
+  /** Flag indicating if coordinates are transformed */
+  _transformedCoordinates?: boolean;
+}
+
+/**
+ * Represents a bounding box with transformed coordinates
+ */
+export interface TransformedBounds extends Bounds {
+  /** Flag indicating coordinates are transformed (always true) */
+  _transformedCoordinates: true;
 }
 
 /** GeoJSON coordinate type alias */
@@ -146,4 +156,13 @@ export function positionToPoint(position: Position): CoordinatePoint {
  */
 export function pointToPosition(point: CoordinatePoint): Position {
   return [point.x, point.y];
+}
+
+/**
+ * Check if bounds have been transformed
+ * @param bounds The bounds to check
+ * @returns true if the bounds are transformed, false otherwise
+ */
+export function isTransformedBounds(bounds: Bounds): bounds is TransformedBounds {
+  return bounds._transformedCoordinates === true;
 }

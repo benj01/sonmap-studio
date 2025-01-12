@@ -2,7 +2,6 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { Feature, FeatureCollection } from 'geojson';
 import { PreviewManager } from '../../../preview/preview-manager';
 import type { 
-  CacheStats, 
   CachedPreviewResult, 
   CachedFeatureCollection,
   PreviewCollections 
@@ -23,7 +22,7 @@ interface PreviewState {
   progress: number;
 }
 
-interface CacheStats {
+interface PreviewCacheStats {
   hitRate: number;
   missRate: number;
   size: number;
@@ -73,6 +72,15 @@ export function usePreviewState({
       return;
     }
 
+    // Skip updates if viewport bounds haven't changed significantly
+    const boundsKey = viewportBounds ? viewportBounds.join(',') : '';
+    const prevBoundsRef = useRef(boundsKey);
+    if (boundsKey && boundsKey === prevBoundsRef.current) {
+      console.debug('[usePreviewState] Skipping update - bounds unchanged');
+      return;
+    }
+    prevBoundsRef.current = boundsKey;
+
     console.debug('[usePreviewState] Updating preview collections:', {
       viewportBounds,
       visibleLayers,
@@ -89,7 +97,8 @@ export function usePreviewState({
         previewManager.setOptions({
           viewportBounds,
           visibleLayers,
-          enableCaching: true
+          enableCaching: true,
+          skipTransform: true // Skip coordinate transformation if already transformed
         });
 
         // Get preview collections
@@ -106,17 +115,69 @@ export function usePreviewState({
           return;
         }
 
+        // Validate coordinates in collections
+        const validateFeatures = (features: Feature[]): Feature[] => {
+          return features.map(feature => {
+            // Skip validation if coordinates are already transformed
+            if (feature.properties?._transformedCoordinates) {
+              return feature;
+            }
+
+            // Validate coordinates
+            if (feature.geometry && 'coordinates' in feature.geometry) {
+              const validateCoord = (coord: number): number => {
+                return isFinite(coord) ? coord : 0;
+              };
+
+              const processCoordinates = (coords: any[]): any[] => {
+                if (typeof coords[0] === 'number') {
+                  return coords.map(validateCoord);
+                }
+                return coords.map(c => processCoordinates(c));
+              };
+
+              return {
+                ...feature,
+                geometry: {
+                  ...feature.geometry,
+                  coordinates: processCoordinates(feature.geometry.coordinates)
+                }
+              };
+            }
+            return feature;
+          });
+        };
+
+        // Validate and update collections
+        const validatedCollections = {
+          points: {
+            ...collections.points,
+            features: validateFeatures(collections.points.features)
+          },
+          lines: {
+            ...collections.lines,
+            features: validateFeatures(collections.lines.features)
+          },
+          polygons: {
+            ...collections.polygons,
+            features: validateFeatures(collections.polygons.features)
+          }
+        };
+
         console.debug('[usePreviewState] Setting preview state:', {
-          points: collections.points.features?.length || 0,
-          lines: collections.lines.features?.length || 0,
-          polygons: collections.polygons.features?.length || 0,
-          bounds: collections.bounds
+          points: validatedCollections.points.features?.length || 0,
+          lines: validatedCollections.lines.features?.length || 0,
+          polygons: validatedCollections.polygons.features?.length || 0,
+          bounds: collections.bounds,
+          hasTransformedFeatures: validatedCollections.points.features.some(f => f.properties?._transformedCoordinates) ||
+                                validatedCollections.lines.features.some(f => f.properties?._transformedCoordinates) ||
+                                validatedCollections.polygons.features.some(f => f.properties?._transformedCoordinates)
         });
 
         setState({
-          points: collections.points || emptyCollection,
-          lines: collections.lines || emptyCollection,
-          polygons: collections.polygons || emptyCollection,
+          points: validatedCollections.points || emptyCollection,
+          lines: validatedCollections.lines || emptyCollection,
+          polygons: validatedCollections.polygons || emptyCollection,
           totalCount: collections.totalCount || 0,
           loading: false,
           progress: 1

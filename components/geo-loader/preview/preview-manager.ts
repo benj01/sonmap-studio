@@ -183,14 +183,22 @@ export class PreviewManager {
     const cached = this.cacheManager.get(cacheKey);
     
     if (cached) {
-      console.debug('[PreviewManager] Using cached collections:', {
-        cacheKey,
-        visibleLayers: this.options.visibleLayers,
-        points: cached.points.features.length,
-        lines: cached.lines.features.length,
-        polygons: cached.polygons.features.length
-      });
-      return cached;
+      // Check if features are already transformed
+      const hasTransformedFeatures = 
+        cached.points.features.some(f => f.properties?._transformedCoordinates) ||
+        cached.lines.features.some(f => f.properties?._transformedCoordinates) ||
+        cached.polygons.features.some(f => f.properties?._transformedCoordinates);
+
+      if (hasTransformedFeatures) {
+        console.debug('[PreviewManager] Using cached transformed collections:', {
+          cacheKey,
+          visibleLayers: this.options.visibleLayers,
+          points: cached.points.features.length,
+          lines: cached.lines.features.length,
+          polygons: cached.polygons.features.length
+        });
+        return cached;
+      }
     }
 
     try {
@@ -200,13 +208,40 @@ export class PreviewManager {
         visibleLayers: this.options.visibleLayers
       });
 
-      const collections = this.featureProcessor.categorizeFeatures(visibleFeatures);
+      // Check if features are already transformed
+      const hasTransformedFeatures = visibleFeatures.some(f => f.properties?._transformedCoordinates);
+
+      let processedFeatures = visibleFeatures;
+      if (!hasTransformedFeatures && this.options.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        console.debug('[PreviewManager] Transforming coordinates:', {
+          from: this.options.coordinateSystem,
+          to: COORDINATE_SYSTEMS.WGS84
+        });
+        const transformedFeatures = await coordinateSystemManager.transform(
+          visibleFeatures,
+          this.options.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
+          COORDINATE_SYSTEMS.WGS84
+        );
+
+        // Convert to GeoFeatures with required properties
+        processedFeatures = transformedFeatures.map(feature => ({
+          ...feature,
+          properties: {
+            ...feature.properties,
+            layer: feature.properties?.layer || 'default',
+            type: feature.properties?.type || feature.geometry?.type || 'unknown',
+            _transformedCoordinates: true
+          }
+        })) as GeoFeature[];
+      }
+
+      const collections = this.featureProcessor.categorizeFeatures(processedFeatures);
       const bounds = this.featureProcessor.calculateBounds(collections);
       
       const result: PreviewCollectionResult = {
         ...collections,
         bounds,
-        totalCount: visibleFeatures.length,
+        totalCount: processedFeatures.length,
         coordinateSystem: this.options.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
         timestamp: Date.now()
       };
@@ -292,6 +327,68 @@ export class PreviewManager {
       ? { type: 'FeatureCollection', features }
       : features;
 
+    // Calculate bounds before transformation
+    const originalBounds = this.featureProcessor.calculateBounds({
+      points: { 
+        type: 'FeatureCollection', 
+        features: collection.features.filter(f => 
+          f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint'
+        )
+      },
+      lines: { 
+        type: 'FeatureCollection', 
+        features: collection.features.filter(f => 
+          f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString'
+        )
+      },
+      polygons: { 
+        type: 'FeatureCollection', 
+        features: collection.features.filter(f => 
+          f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'
+        )
+      }
+    });
+
+    console.debug('[PreviewManager] Original bounds:', originalBounds);
+
+    // Transform coordinates if needed
+    if (this.options.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+      console.debug('[PreviewManager] Transforming coordinates:', {
+        from: this.options.coordinateSystem,
+        to: COORDINATE_SYSTEMS.WGS84,
+        featureCount: collection.features.length,
+        originalBounds
+      });
+
+      try {
+        // Transform all features at once and store both original and transformed coordinates
+        const transformedFeatures = await coordinateSystemManager.transform(
+          collection.features,
+          this.options.coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84
+        );
+
+        // Store both original and transformed coordinates with required GeoFeature properties
+        collection.features = transformedFeatures.map((feature, index) => ({
+          ...feature,
+          properties: {
+            ...feature.properties,
+            layer: feature.properties?.layer || 'default',
+            type: feature.properties?.type || feature.geometry?.type || 'unknown',
+            originalSystem: this.options.coordinateSystem,
+            originalBounds,
+            originalGeometry: collection.features[index].geometry,
+            _transformedCoordinates: true
+          }
+        })) as GeoFeature[];
+
+        console.debug('[PreviewManager] Features transformed successfully');
+      } catch (error) {
+        console.error('[PreviewManager] Coordinate transformation failed:', error);
+        throw error;
+      }
+    }
+
     // Determine if we should use streaming mode
     const useStreaming = collection.features.length > PreviewManager.STREAM_THRESHOLD;
     
@@ -305,6 +402,12 @@ export class PreviewManager {
 
     // Set features in feature manager
     await this.featureManager.setFeatures(collection);
+
+    console.debug('[PreviewManager] Features set successfully:', {
+      count: collection.features.length,
+      coordinateSystem: this.options.coordinateSystem,
+      transformed: this.options.coordinateSystem !== COORDINATE_SYSTEMS.WGS84
+    });
   }
 
   /**

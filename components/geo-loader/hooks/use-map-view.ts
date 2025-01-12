@@ -78,18 +78,24 @@ export function useMapView(
     let maxY = -Infinity;
 
     const updateBounds = async (coords: [number, number]): Promise<void> => {
-      // Transform coordinates to WGS84 if needed
+      // Use coordinates directly if already transformed, otherwise transform
       let lon = coords[0];
       let lat = coords[1];
 
-      if (coordinateSystem && coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        const transformed = await transformCoordinates(
-          { x: coords[0], y: coords[1] },
-          coordinateSystem,
-          COORDINATE_SYSTEMS.WGS84
-        );
-        lon = transformed.x;
-        lat = transformed.y;
+      // Only transform if needed and not already transformed
+      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        // Check if feature has already been transformed
+        const isTransformed = features.some(f => f.properties?._transformedCoordinates);
+        
+        if (!isTransformed) {
+          const transformed = await transformCoordinates(
+            { x: coords[0], y: coords[1] },
+            coordinateSystem,
+            COORDINATE_SYSTEMS.WGS84
+          );
+          lon = transformed.x;
+          lat = transformed.y;
+        }
       }
 
       if (isFinite(lon) && isFinite(lat)) {
@@ -100,20 +106,29 @@ export function useMapView(
       }
     };
 
-    const processCoordinates = async (coords: any): Promise<void> => {
+    const processCoordinates = async (coords: any, isTransformed: boolean = false): Promise<void> => {
       if (!Array.isArray(coords)) return;
       if (typeof coords[0] === 'number' && coords.length >= 2) {
-        await updateBounds(coords as [number, number]);
+        if (isTransformed) {
+          // Use coordinates directly if already transformed
+          minX = Math.min(minX, coords[0]);
+          minY = Math.min(minY, coords[1]);
+          maxX = Math.max(maxX, coords[0]);
+          maxY = Math.max(maxY, coords[1]);
+        } else {
+          await updateBounds(coords as [number, number]);
+        }
       } else {
         for (const c of coords) {
-          await processCoordinates(c);
+          await processCoordinates(c, isTransformed);
         }
       }
     };
 
     for (const feature of features) {
       if (feature.geometry && 'coordinates' in feature.geometry) {
-        await processCoordinates(feature.geometry.coordinates);
+        const isTransformed = feature.properties?._transformedCoordinates === true;
+        await processCoordinates(feature.geometry.coordinates, isTransformed);
       }
     }
 
@@ -144,27 +159,42 @@ export function useMapView(
         currentView: viewState
       });
 
-      // Transform bounds to WGS84 if needed
+      // Use bounds directly if they're already in WGS84
       let transformedBounds = bounds;
       
-      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        const minPoint = await transformCoordinates(
-          { x: bounds.minX, y: bounds.minY },
-          coordinateSystem,
-          COORDINATE_SYSTEMS.WGS84
-        );
-        const maxPoint = await transformCoordinates(
-          { x: bounds.maxX, y: bounds.maxY },
-          coordinateSystem,
-          COORDINATE_SYSTEMS.WGS84
-        );
-        
-        transformedBounds = {
-          minX: minPoint.x,
-          minY: minPoint.y,
-          maxX: maxPoint.x,
-          maxY: maxPoint.y
-        };
+      // Only transform if needed and bounds aren't already transformed
+      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84 && !bounds._transformedCoordinates) {
+        try {
+          const minPoint = await transformCoordinates(
+            { x: bounds.minX, y: bounds.minY },
+            coordinateSystem,
+            COORDINATE_SYSTEMS.WGS84
+          );
+          const maxPoint = await transformCoordinates(
+            { x: bounds.maxX, y: bounds.maxY },
+            coordinateSystem,
+            COORDINATE_SYSTEMS.WGS84
+          );
+
+          // Validate transformed coordinates
+          if (isFinite(minPoint.x) && isFinite(minPoint.y) && 
+              isFinite(maxPoint.x) && isFinite(maxPoint.y)) {
+            transformedBounds = {
+              minX: minPoint.x,
+              minY: minPoint.y,
+              maxX: maxPoint.x,
+              maxY: maxPoint.y,
+              _transformedCoordinates: true
+            };
+          } else {
+            console.warn('[DEBUG] Invalid transformed bounds, using original:', {
+              minPoint,
+              maxPoint
+            });
+          }
+        } catch (error) {
+          console.error('[DEBUG] Error transforming bounds:', error);
+        }
       }
 
       console.debug('[DEBUG] Transformed bounds:', {
@@ -213,43 +243,57 @@ export function useMapView(
   }, []);
 
   const getViewportBounds = useCallback((): [number, number, number, number] | undefined => {
+    // If view isn't initialized, use initial bounds
     if (!viewState || !initialBoundsSet) {
       if (initialBounds) {
-        return [
-          initialBounds.minX,
-          initialBounds.minY,
-          initialBounds.maxX,
-          initialBounds.maxY
-        ];
+        // If initial bounds are in WGS84 or already transformed, use them directly
+        if (coordinateSystem === COORDINATE_SYSTEMS.WGS84 || initialBounds._transformedCoordinates) {
+          return [
+            initialBounds.minX,
+            initialBounds.minY,
+            initialBounds.maxX,
+            initialBounds.maxY
+          ];
+        }
+        // Otherwise, skip bounds calculation until transformation is complete
+        return undefined;
       }
       return undefined;
     }
 
     const { longitude, latitude, zoom } = viewState;
     
+    // Skip bounds calculation for invalid view state
     if (!isFinite(longitude) || !isFinite(latitude) || !isFinite(zoom)) {
       console.debug('[DEBUG] Invalid viewState values:', { longitude, latitude, zoom });
       return undefined;
     }
     
+    // Skip bounds calculation for low zoom levels
     if (zoom < 10) {
       return undefined;
     }
     
-    const latRange = 360 / Math.pow(2, zoom + 1);
-    const lonRange = 360 / Math.pow(2, zoom);
-    
-    const minLon = longitude - lonRange / 2;
-    const minLat = latitude - latRange / 2;
-    const maxLon = longitude + lonRange / 2;
-    const maxLat = latitude + latRange / 2;
-    
-    if (!isFinite(minLon) || !isFinite(minLat) || !isFinite(maxLon) || !isFinite(maxLat)) {
-      console.debug('[DEBUG] Invalid calculated bounds:', { minLon, minLat, maxLon, maxLat });
+    try {
+      const latRange = 360 / Math.pow(2, zoom + 1);
+      const lonRange = 360 / Math.pow(2, zoom);
+      
+      const minLon = longitude - lonRange / 2;
+      const minLat = latitude - latRange / 2;
+      const maxLon = longitude + lonRange / 2;
+      const maxLat = latitude + latRange / 2;
+      
+      // Validate calculated bounds
+      if (!isFinite(minLon) || !isFinite(minLat) || !isFinite(maxLon) || !isFinite(maxLat)) {
+        console.debug('[DEBUG] Invalid calculated bounds:', { minLon, minLat, maxLon, maxLat });
+        return undefined;
+      }
+      
+      return [minLon, minLat, maxLon, maxLat];
+    } catch (error) {
+      console.error('[DEBUG] Error calculating viewport bounds:', error);
       return undefined;
     }
-    
-    return [minLon, minLat, maxLon, maxLat];
   }, [viewState.longitude, viewState.latitude, viewState.zoom, initialBoundsSet, initialBounds]);
 
   // Handle bounds updates after coordinate system verification

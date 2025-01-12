@@ -262,24 +262,36 @@ export class ShapefileParser {
       currentOffset += 4;
     }
 
-    // Read points
-    const coordinates: Position[] = [];
+    // Read all points first
+    const allPoints: Position[] = [];
     for (let i = 0; i < numPoints; i++) {
       const x = view.getFloat64(currentOffset, true);
       const y = view.getFloat64(currentOffset + 8, true);
-      coordinates.push([x, y]);
+      allPoints.push([x, y]);
       currentOffset += 16;
     }
 
+    // Split points into parts
+    const coordinates: Position[][] = [];
+    for (let i = 0; i < numParts; i++) {
+      const start = parts[i];
+      const end = i + 1 < numParts ? parts[i + 1] : numPoints;
+      const partPoints = allPoints.slice(start, end);
+      coordinates.push(partPoints);
+    }
+
     console.debug('[ShapefileParser] Polyline read complete:', {
+      numParts,
       parts,
-      numCoordinates: coordinates.length,
+      totalPoints: numPoints,
+      pointsPerPart: coordinates.map(part => part.length),
       bbox,
       length: currentOffset - offset
     });
 
+    // Always return array of parts for proper MultiLineString handling
     return {
-      coordinates,
+      coordinates: coordinates,
       bbox,
       length: currentOffset - offset
     };

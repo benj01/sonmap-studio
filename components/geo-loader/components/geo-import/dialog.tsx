@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogPortal, DialogOverlay } from 'components/ui/dialog';
-import { Feature, FeatureCollection } from 'geojson';
+import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
 import { PreviewMap } from '../preview-map';
 import { GeoImportDialogProps } from './types';
 import { useImportLogs } from './hooks/use-import-logs';
@@ -171,9 +172,14 @@ export function GeoImportDialog({
 
   // Enhanced error handling for coordinate system changes
   const handleCoordinateSystemChangeWrapper = useCallback(async (newSystem: string) => {
+    // Validate that the new system is a valid coordinate system
+    if (!Object.values(COORDINATE_SYSTEMS).includes(newSystem as CoordinateSystem)) {
+      onError(`Invalid coordinate system: ${newSystem}`);
+      return;
+    }
     try {
       onInfo(`Attempting to change coordinate system to ${newSystem}`);
-      await handleCoordinateSystemChange(newSystem);
+      await handleCoordinateSystemChange(newSystem as CoordinateSystem);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       onError(`Failed to change coordinate system: ${message}`);
@@ -189,14 +195,43 @@ export function GeoImportDialog({
 
   // Initialize coordinate system once when analysis first completes
   const analysisRef = useRef<AnalyzeResult | null>(null);
-  useEffect(() => {
-    // Only initialize if this is the first time we get analysis
-    if (analysis?.coordinateSystem && analysis !== analysisRef.current) {
-      console.debug('Initializing coordinate system from analysis:', analysis.coordinateSystem);
-      initializeCoordinateSystem(analysis.coordinateSystem);
-      analysisRef.current = analysis;
+  const initializeCoordinateSystemOnce = useCallback(() => {
+    if (!analysis?.coordinateSystem || analysis === analysisRef.current) return;
+
+    console.debug('[DEBUG] Analysis state:', {
+      coordinateSystem: analysis.coordinateSystem,
+      featureCount: analysis.preview?.features?.length || 0,
+      bounds: analysis.bounds,
+      layers: analysis.layers
+    });
+
+    // Validate that it's a known coordinate system
+    const system = Object.values(COORDINATE_SYSTEMS).find(sys => sys === analysis.coordinateSystem);
+    if (system) {
+      console.debug('[DEBUG] Initializing detected coordinate system:', system);
+      initializeCoordinateSystem(system);
+    } else {
+      console.warn('[DEBUG] Unknown coordinate system:', analysis.coordinateSystem);
+      onWarning(`Unknown coordinate system detected: ${analysis.coordinateSystem}, using WGS84`);
+      initializeCoordinateSystem(COORDINATE_SYSTEMS.WGS84);
     }
-  }, [analysis, initializeCoordinateSystem]);
+
+    // Log preview state
+    if (previewManager) {
+      console.debug('[DEBUG] Preview manager state:', {
+        features: analysis.preview?.features?.length || 0,
+        coordinateSystem: system || COORDINATE_SYSTEMS.WGS84,
+        bounds: analysis.bounds,
+        layers: selectedLayers
+      });
+    }
+
+    analysisRef.current = analysis;
+  }, [analysis, initializeCoordinateSystem, onWarning, previewManager, selectedLayers]);
+
+  useEffect(() => {
+    initializeCoordinateSystemOnce();
+  }, [initializeCoordinateSystemOnce]);
 
   // Reset everything when dialog closes
   useEffect(() => {
@@ -228,13 +263,26 @@ export function GeoImportDialog({
     if (!file) return;
     
     onInfo('Applying coordinate system changes...');
+    console.debug('[DEBUG] Applying coordinate system:', {
+      current: coordinateSystem,
+      pending: pendingCoordinateSystem,
+      fileType: file.name.split('.').pop()?.toLowerCase(),
+      hasAnalysis: !!analysis,
+      hasPreviewManager: !!previewManager
+    });
 
     try {
       const result = await applyCoordinateSystem(file, analysis, previewManager);
       if (result) {
+        console.debug('[DEBUG] Coordinate system applied:', {
+          newSystem: pendingCoordinateSystem,
+          featureCount: result.preview?.features?.length || 0,
+          bounds: result.bounds
+        });
         onInfo(`Successfully applied coordinate system: ${pendingCoordinateSystem}`);
       }
     } catch (error) {
+      console.error('[DEBUG] Coordinate system application failed:', error);
       const message = error instanceof Error ? error.message : String(error);
       onError(`Failed to apply coordinate system: ${message}`);
     }
@@ -244,6 +292,12 @@ export function GeoImportDialog({
     if (!file) return;
 
     onInfo(`Starting import of ${file.name}...`);
+    console.debug('[DEBUG] Starting import:', {
+      fileType: file.name.split('.').pop()?.toLowerCase(),
+      coordinateSystem,
+      selectedLayers,
+      featureCount: analysis?.preview?.features?.length || 0
+    });
 
     try {
       const result = await importFile(file, {
@@ -346,12 +400,13 @@ export function GeoImportDialog({
                   <select
                     id="coordinate-system"
                     value={pendingCoordinateSystem || coordinateSystem}
-                    onChange={(e) => handleCoordinateSystemChangeWrapper(e.target.value)}
+                    onChange={(e) => handleCoordinateSystemChangeWrapper(e.target.value as string)}
                     disabled={loading}
                     className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    <option value="EPSG:4326">WGS 84 (EPSG:4326)</option>
-                    <option value="EPSG:3857">Web Mercator (EPSG:3857)</option>
+                    <option value={COORDINATE_SYSTEMS.WGS84}>WGS 84 (EPSG:4326)</option>
+                    <option value={COORDINATE_SYSTEMS.SWISS_LV95}>Swiss LV95 (EPSG:2056)</option>
+                    <option value={COORDINATE_SYSTEMS.SWISS_LV03}>Swiss LV03 (EPSG:21781)</option>
                   </select>
                   {pendingCoordinateSystem && (
                     <button
@@ -371,7 +426,10 @@ export function GeoImportDialog({
                 <div className="h-full">
                   <PreviewMap
                     preview={{
-                      features: analysis.preview || emptyFeatureCollection,
+                      features: {
+                        type: "FeatureCollection" as const,
+                        features: analysis.preview?.features || []
+                      },
                       bounds: analysis.bounds,
                       layers: selectedLayers || [],
                       previewManager: previewManager
@@ -384,10 +442,10 @@ export function GeoImportDialog({
                       layer: selectedLayers?.[0] || "default"
                     }}
                     analysis={{
-                      warnings: analysis.issues?.map(issue => ({
-                        type: issue.type,
-                        message: issue.message
-                      })) || []
+                      warnings: (analysis.preview?.features || []).length === 0 ? [{
+                        type: 'warning',
+                        message: 'No features available for preview'
+                      }] : []
                     }}
                   />
                 </div>

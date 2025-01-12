@@ -1,13 +1,46 @@
 import React, { useState, useEffect } from 'react';
 import { Source, Layer } from 'react-map-gl';
-import { FeatureCollection, Position, LineString } from 'geojson';
+import { FeatureCollection, Position, LineString, MultiLineString, Feature, Geometry, GeoJsonProperties } from 'geojson';
+
+// Define local interfaces since we can't access the global types
+interface GeoFeatureProperties {
+  layer?: string;
+  type?: string;
+  originalGeometry?: Geometry;
+  _transformedCoordinates?: boolean;
+  [key: string]: any;
+}
+
+interface GeoFeature extends Omit<Feature, 'properties'> {
+  properties: GeoFeatureProperties;
+}
+
+interface GeoFeatureCollection extends Omit<FeatureCollection, 'features'> {
+  features: GeoFeature[];
+}
 
 const CLUSTER_RADIUS = 50;
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
 
 interface LayerProps {
-  data: FeatureCollection;
+  data: GeoFeatureCollection;
 }
+
+// Helper function to ensure feature has required properties
+const ensureGeoFeature = (feature: Feature): GeoFeature => ({
+  ...feature,
+  properties: {
+    layer: 'shapes',
+    type: feature.geometry?.type || 'unknown',
+    ...feature.properties
+  }
+});
+
+// Helper function to ensure collection has required properties
+const ensureGeoFeatureCollection = (collection: FeatureCollection): GeoFeatureCollection => ({
+  ...collection,
+  features: collection.features.map(ensureGeoFeature)
+});
 
 export const PointLayer: React.FC<LayerProps> = ({ data }) => {
   if (data.features.length === 0) return null;
@@ -61,7 +94,10 @@ export const PointLayer: React.FC<LayerProps> = ({ data }) => {
       <Layer
         id="points"
         type="circle"
-        filter={['!', ['has', 'point_count']]}
+        filter={['all',
+          ['!', ['has', 'point_count']],
+          ['==', ['get', 'layer'], 'shapes']
+        ]}
         paint={{
           'circle-color': '#11b4da',
           'circle-radius': 4,
@@ -76,17 +112,10 @@ export const PointLayer: React.FC<LayerProps> = ({ data }) => {
 export const LineLayer: React.FC<LayerProps> = ({ data }) => {
   console.debug('[DEBUG] Line layer data:', {
     featureCount: data.features.length,
-    features: data.features.map(f => ({
+    features: data.features.map((f: GeoFeature) => ({
       type: f.geometry.type,
       coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined,
       properties: f.properties,
-      bounds: f.geometry.type === 'LineString' ? {
-        minX: Math.min(...((f.geometry as LineString).coordinates).map(c => c[0])),
-        minY: Math.min(...((f.geometry as LineString).coordinates).map(c => c[1])),
-        maxX: Math.max(...((f.geometry as LineString).coordinates).map(c => c[0])),
-        maxY: Math.max(...((f.geometry as LineString).coordinates).map(c => c[1]))
-      } : undefined,
-      coordinateSystem: f.properties?.originalSystem || 'unknown',
       layer: f.properties?.layer
     }))
   });
@@ -96,31 +125,68 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
     return null;
   }
 
-  // Add tolerance for coordinate precision
-  const tolerance = 0.000001; // ~0.1m at equator
-  const roundCoordinate = (coord: number): number => Math.round(coord / tolerance) * tolerance;
-
-  // Create a new FeatureCollection with rounded coordinates
-  const roundedData = {
-    ...data,
-    features: data.features.map(f => ({
-      ...f,
-      geometry: f.geometry.type === 'LineString' ? {
-        ...f.geometry,
-        coordinates: ((f.geometry as LineString).coordinates).map((coord: Position) => 
-          coord.map((c: number) => roundCoordinate(c))
-        )
-      } : f.geometry
-    }))
+  // Validate and process coordinates
+  const processCoordinates = (coords: number[]): number[] => {
+    return coords.map(c => {
+      // Ensure coordinate is a finite number
+      if (!isFinite(c)) {
+        console.warn('[DEBUG] Invalid coordinate found:', c);
+        return 0; // Default to 0 for invalid coordinates
+      }
+      return c;
+    });
   };
 
-  console.debug('[DEBUG] Rounded line data:', {
-    featureCount: roundedData.features.length,
-    firstFeature: roundedData.features[0] ? {
-      type: roundedData.features[0].geometry.type,
-      coordinates: 'coordinates' in roundedData.features[0].geometry ? roundedData.features[0].geometry.coordinates : undefined,
-      properties: roundedData.features[0].properties,
-      layer: roundedData.features[0].properties?.layer
+  // Create a new FeatureCollection with validated coordinates
+  const validatedData: GeoFeatureCollection = {
+    type: 'FeatureCollection',
+    features: data.features.map((f: GeoFeature) => {
+      // Skip validation if coordinates are already transformed
+      if (f.properties?._transformedCoordinates) {
+        return f;
+      }
+
+      // Use original geometry if it exists in properties (for non-WGS84 display)
+      const geometry = f.properties?.originalGeometry || f.geometry;
+      
+      return {
+        ...f,
+        geometry: (() => {
+          if (geometry.type === 'LineString') {
+            return {
+              ...geometry,
+              coordinates: (geometry as LineString).coordinates.map((coord: Position) => 
+                processCoordinates(coord)
+              )
+            };
+          } else if (geometry.type === 'MultiLineString') {
+            return {
+              ...geometry,
+              coordinates: (geometry as MultiLineString).coordinates.map((line: Position[]) =>
+                line.map((coord: Position) =>
+                  processCoordinates(coord)
+                )
+              )
+            };
+          }
+          return geometry;
+        })(),
+        properties: {
+          ...f.properties,
+          _transformedCoordinates: true
+        }
+      } as GeoFeature;
+    })
+  };
+
+  console.debug('[DEBUG] Validated line data:', {
+    featureCount: validatedData.features.length,
+    firstFeature: validatedData.features[0] ? {
+      type: validatedData.features[0].geometry.type,
+      coordinates: 'coordinates' in validatedData.features[0].geometry ? validatedData.features[0].geometry.coordinates : undefined,
+      properties: validatedData.features[0].properties,
+      layer: validatedData.features[0].properties?.layer,
+      hasOriginalGeometry: !!validatedData.features[0].properties?.originalGeometry
     } : null
   });
 
@@ -128,16 +194,40 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
     <Source 
       key="lines" 
       type="geojson" 
-      data={roundedData}
-      tolerance={tolerance}
+      data={validatedData}
       generateId={true}
     >
       <Layer
         id="lines"
         type="line"
+        filter={['==', ['get', 'layer'], 'shapes']} // Only show features from 'shapes' layer
         paint={{
           'line-color': '#4a90e2',
-          'line-width': 2
+          'line-width': 3,
+          'line-opacity': 1
+        }}
+        layout={{
+          'line-join': 'round',
+          'line-cap': 'round',
+          'visibility': 'visible'
+        }}
+      />
+      <Layer
+        id="lines-hover"
+        type="line"
+        filter={['all',
+          ['==', ['get', 'layer'], 'shapes'],
+          ['==', ['id'], '']
+        ]}
+        paint={{
+          'line-color': '#4a90e2',
+          'line-width': 5,
+          'line-opacity': 0.5
+        }}
+        layout={{
+          'line-join': 'round',
+          'line-cap': 'round',
+          'visibility': 'visible'
         }}
       />
     </Source>
@@ -152,6 +242,7 @@ export const PolygonLayer: React.FC<LayerProps> = ({ data }) => {
       <Layer
         id="polygons-fill"
         type="fill"
+        filter={['==', ['get', 'layer'], 'shapes']}
         paint={{
           'fill-color': '#4a90e2',
           'fill-opacity': 0.2
@@ -160,6 +251,7 @@ export const PolygonLayer: React.FC<LayerProps> = ({ data }) => {
       <Layer
         id="polygons-outline"
         type="line"
+        filter={['==', ['get', 'layer'], 'shapes']}
         paint={{
           'line-color': '#4a90e2',
           'line-width': 1
@@ -170,9 +262,9 @@ export const PolygonLayer: React.FC<LayerProps> = ({ data }) => {
 };
 
 interface MapLayersProps {
-  points: FeatureCollection;
-  lines: FeatureCollection;
-  polygons: FeatureCollection;
+  points: GeoFeatureCollection;
+  lines: GeoFeatureCollection;
+  polygons: GeoFeatureCollection;
 }
 
 export function MapLayers({
@@ -180,77 +272,30 @@ export function MapLayers({
   lines,
   polygons
 }: MapLayersProps): React.ReactElement {
-  const [loaded, setLoaded] = useState(false);
-
   useEffect(() => {
     console.debug('[DEBUG] MapLayers received collections:', {
       points: points.features.length,
       lines: lines.features.length,
-      polygons: polygons.features.length
+      polygons: polygons.features.length,
+      lineDetails: lines.features.map((f: GeoFeature) => ({
+        type: f.geometry.type,
+        coordinates: f.geometry.type === 'LineString' ? 
+          (f.geometry as LineString).coordinates.length :
+          f.geometry.type === 'MultiLineString' ?
+            (f.geometry as MultiLineString).coordinates.reduce((sum, line) => sum + line.length, 0) : 0,
+        properties: f.properties,
+        layer: f.properties?.layer
+      }))
     });
-    setLoaded(true);
   }, [points, lines, polygons]);
-
-  if (!loaded) {
-    console.debug('[DEBUG] MapLayers not yet loaded');
-    return null;
-  }
 
   return (
     <>
-      {lines.features.length > 0 && (
-        <Source
-          id="lines"
-          type="geojson"
-          data={lines}
-        >
-          <Layer
-            id="lines"
-            type="line"
-            paint={{
-              'line-color': '#4a90e2',
-              'line-width': 2
-            }}
-          />
-        </Source>
-      )}
-
-      {points.features.length > 0 && (
-        <Source
-          id="points"
-          type="geojson"
-          data={points}
-        >
-          <Layer
-            id="points"
-            type="circle"
-            paint={{
-              'circle-radius': 6,
-              'circle-color': '#4a90e2',
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#ffffff'
-            }}
-          />
-        </Source>
-      )}
-
-      {polygons.features.length > 0 && (
-        <Source
-          id="polygons"
-          type="geojson"
-          data={polygons}
-        >
-          <Layer
-            id="polygons"
-            type="fill"
-            paint={{
-              'fill-color': '#4a90e2',
-              'fill-opacity': 0.5,
-              'fill-outline-color': '#ffffff'
-            }}
-          />
-        </Source>
-      )}
+      <PointLayer data={points} />
+      <LineLayer data={lines} />
+      <PolygonLayer data={polygons} />
     </>
   );
 }
+
+export { ensureGeoFeatureCollection };
