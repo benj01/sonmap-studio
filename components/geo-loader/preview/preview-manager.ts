@@ -1,4 +1,4 @@
-import { Feature, FeatureCollection, Point } from 'geojson';
+import { Feature, FeatureCollection, Point, Geometry, GeoJsonProperties } from 'geojson';
 import { FeatureManager } from '../core/feature-manager';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-systems/coordinate-system-manager';
@@ -314,6 +314,99 @@ export class PreviewManager {
   }
 
   /**
+   * Validate and transform bounds to ensure they are within valid ranges
+   */
+  private async validateAndTransformBounds(bounds: Bounds): Promise<Bounds> {
+    console.debug('[PreviewManager] Validating bounds:', bounds);
+
+    // If any of the bounds values are infinity, use a default bound that covers Switzerland
+    if (!isFinite(bounds.minX) || !isFinite(bounds.minY) || 
+        !isFinite(bounds.maxX) || !isFinite(bounds.maxY)) {
+      
+      const defaultBounds = this.options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95 
+        ? {
+            minX: 2485000,  // Minimum X coordinate in Switzerland
+            minY: 1075000,  // Minimum Y coordinate in Switzerland
+            maxX: 2834000,  // Maximum X coordinate in Switzerland
+            maxY: 1299000   // Maximum Y coordinate in Switzerland
+          }
+        : {
+            minX: 5.9559,   // Westernmost point
+            minY: 45.8179,  // Southernmost point
+            maxX: 10.4922,  // Easternmost point
+            maxY: 47.8084   // Northernmost point
+          };
+
+      console.debug('[PreviewManager] Using default bounds:', {
+        coordinateSystem: this.options.coordinateSystem,
+        bounds: defaultBounds
+      });
+      
+      return defaultBounds;
+    }
+
+    // Transform bounds if needed
+    if (this.options.coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
+      try {
+        // Create two points representing the bounds corners
+        const points: Feature<Point, GeoJsonProperties>[] = [
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [bounds.minX, bounds.minY]
+            },
+            properties: {}
+          },
+          {
+            type: 'Feature',
+            geometry: {
+              type: 'Point',
+              coordinates: [bounds.maxX, bounds.maxY]
+            },
+            properties: {}
+          }
+        ];
+
+        console.debug('[PreviewManager] Transforming bounds points:', points);
+
+        // Transform the points
+        const transformedPoints = await coordinateSystemManager.transform(
+          points,
+          COORDINATE_SYSTEMS.SWISS_LV95,
+          COORDINATE_SYSTEMS.WGS84
+        );
+
+        // Extract transformed coordinates
+        const transformedBounds = {
+          minX: (transformedPoints[0].geometry as Point).coordinates[0],
+          minY: (transformedPoints[0].geometry as Point).coordinates[1],
+          maxX: (transformedPoints[1].geometry as Point).coordinates[0],
+          maxY: (transformedPoints[1].geometry as Point).coordinates[1]
+        };
+
+        console.debug('[PreviewManager] Transformed bounds:', {
+          original: bounds,
+          transformed: transformedBounds
+        });
+
+        return transformedBounds;
+      } catch (error) {
+        console.error('[PreviewManager] Error transforming bounds:', error);
+        // Fall back to default WGS84 bounds for Switzerland
+        return {
+          minX: 5.9559,
+          minY: 45.8179,
+          maxX: 10.4922,
+          maxY: 47.8084
+        };
+      }
+    }
+    
+    return bounds;
+  }
+
+  /**
    * Set features directly for preview
    */
   public async setFeatures(features: Feature[] | FeatureCollection): Promise<void> {
@@ -327,27 +420,29 @@ export class PreviewManager {
       ? { type: 'FeatureCollection', features }
       : features;
 
-    // Calculate bounds before transformation
-    const originalBounds = this.featureProcessor.calculateBounds({
-      points: { 
-        type: 'FeatureCollection', 
-        features: collection.features.filter(f => 
-          f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint'
-        )
-      },
-      lines: { 
-        type: 'FeatureCollection', 
-        features: collection.features.filter(f => 
-          f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString'
-        )
-      },
-      polygons: { 
-        type: 'FeatureCollection', 
-        features: collection.features.filter(f => 
-          f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'
-        )
-      }
-    });
+    // Calculate and validate bounds before transformation
+    const originalBounds = await this.validateAndTransformBounds(
+      this.featureProcessor.calculateBounds({
+        points: { 
+          type: 'FeatureCollection', 
+          features: collection.features.filter(f => 
+            f.geometry?.type === 'Point' || f.geometry?.type === 'MultiPoint'
+          )
+        },
+        lines: { 
+          type: 'FeatureCollection', 
+          features: collection.features.filter(f => 
+            f.geometry?.type === 'LineString' || f.geometry?.type === 'MultiLineString'
+          )
+        },
+        polygons: { 
+          type: 'FeatureCollection', 
+          features: collection.features.filter(f => 
+            f.geometry?.type === 'Polygon' || f.geometry?.type === 'MultiPolygon'
+          )
+        }
+      })
+    );
 
     console.debug('[PreviewManager] Original bounds:', originalBounds);
 

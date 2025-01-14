@@ -25,10 +25,39 @@ function validateLineCoordinates(coordinates: any): Position[] {
     return [];
   }
 
-  const validCoords = coordinates.filter(coord => 
-    Array.isArray(coord) && coord.length >= 2 && 
-    coord.every(n => typeof n === 'number' && isFinite(n))
-  );
+  // Swiss LV95 coordinate ranges
+  const SWISS_RANGES = {
+    x: { min: 2485000, max: 2834000 },
+    y: { min: 1075000, max: 1299000 }
+  };
+
+  const validCoords = coordinates.filter(coord => {
+    if (!Array.isArray(coord) || coord.length < 2) {
+      console.warn('[GeoJSON Converter] Invalid coordinate format:', coord);
+      return false;
+    }
+
+    const [x, y] = coord;
+    if (typeof x !== 'number' || typeof y !== 'number' || !isFinite(x) || !isFinite(y)) {
+      console.warn('[GeoJSON Converter] Non-numeric or non-finite coordinates:', { x, y });
+      return false;
+    }
+
+    // Accept any finite coordinates for now, just log ranges for debugging
+    console.debug('[GeoJSON Converter] Processing coordinates:', { 
+      x, y,
+      isSwissRange: {
+        x: x >= SWISS_RANGES.x.min && x <= SWISS_RANGES.x.max,
+        y: y >= SWISS_RANGES.y.min && y <= SWISS_RANGES.y.max
+      },
+      isWGS84Range: {
+        x: Math.abs(x) <= 180,
+        y: Math.abs(y) <= 90
+      }
+    });
+
+    return true;
+  });
 
   if (validCoords.length < 2) {
     console.warn('[GeoJSON Converter] Line has less than 2 valid points:', {
@@ -41,7 +70,17 @@ function validateLineCoordinates(coordinates: any): Position[] {
   console.debug('[GeoJSON Converter] Line coordinates validated:', {
     original: coordinates,
     valid: validCoords,
-    pointCount: validCoords.length
+    pointCount: validCoords.length,
+    bounds: {
+      x: {
+        min: Math.min(...validCoords.map(c => c[0])),
+        max: Math.max(...validCoords.map(c => c[0]))
+      },
+      y: {
+        min: Math.min(...validCoords.map(c => c[1])),
+        max: Math.max(...validCoords.map(c => c[1]))
+      }
+    }
   });
 
   return validCoords;
@@ -129,9 +168,46 @@ function createGeometry(shapeType: number, coordinates: Position | Position[] | 
     case ShapeType.POLYGON:
     case ShapeType.POLYGONZ:
     case ShapeType.POLYGONM:
+      // Validate polygon coordinates similar to lines
+      if (!Array.isArray(coordinates) || !Array.isArray(coordinates[0])) {
+        console.warn('[GeoJSON Converter] Invalid polygon coordinates structure:', coordinates);
+        return {
+          type: 'Polygon',
+          coordinates: [],
+          bbox
+        };
+      }
+
+      // Validate each ring's coordinates
+      const validRings = (coordinates as Position[][]).map(ring => validateLineCoordinates(ring))
+        .filter(ring => ring.length >= 3); // Polygons need at least 3 points
+
+      console.debug('[GeoJSON Converter] Creating Polygon:', {
+        originalRings: (coordinates as Position[][]).length,
+        validRings: validRings.length,
+        ringsDetails: validRings.map(ring => ({
+          points: ring.length,
+          bounds: {
+            minX: Math.min(...ring.map(p => p[0])),
+            maxX: Math.max(...ring.map(p => p[0])),
+            minY: Math.min(...ring.map(p => p[1])),
+            maxY: Math.max(...ring.map(p => p[1]))
+          }
+        }))
+      });
+
+      if (validRings.length === 0) {
+        console.warn('[GeoJSON Converter] No valid rings in Polygon');
+        return {
+          type: 'Polygon',
+          coordinates: [],
+          bbox
+        };
+      }
+
       return {
         type: 'Polygon',
-        coordinates: coordinates as Position[][],
+        coordinates: validRings,
         bbox
       };
     case ShapeType.MULTIPOINT:
@@ -154,19 +230,29 @@ export function convertToGeoJSON(inputRecords: ShapefileRecord[]): Feature[] {
   console.debug('[GeoJSON Converter] Converting records:', {
     count: inputRecords.length,
     firstRecord: inputRecords[0],
-    recordTypes: inputRecords.map(r => ShapeType[r.shapeType])
+    recordTypes: inputRecords.map(r => ShapeType[r.shapeType]),
+    firstCoordinates: inputRecords[0]?.data.coordinates,
+    firstBBox: inputRecords[0]?.data.bbox
   });
 
   return inputRecords.map((record, index): Feature => {
     const { shapeType, data } = record;
     const bbox = data.bbox ? createBBox(data.bbox) : undefined;
 
-    // Log coordinate data for debugging
-    console.debug('[GeoJSON Converter] Record coordinates:', {
+    // Enhanced coordinate logging
+    console.debug('[GeoJSON Converter] Processing record:', {
       index,
       shapeType: ShapeType[shapeType],
       coordinates: data.coordinates,
-      bbox
+      bbox,
+      coordinateType: Array.isArray(data.coordinates) 
+        ? Array.isArray(data.coordinates[0]) 
+          ? 'nested array' 
+          : 'array' 
+        : 'single',
+      sampleCoordinate: Array.isArray(data.coordinates) 
+        ? data.coordinates[0] 
+        : data.coordinates
     });
 
     const geometry = createGeometry(shapeType, data.coordinates, bbox);
