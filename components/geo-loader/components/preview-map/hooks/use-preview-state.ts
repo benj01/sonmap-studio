@@ -74,6 +74,13 @@ export function usePreviewState({
       return;
     }
 
+    // Verify previewManager methods
+    if (typeof previewManager.updatePreview !== 'function' || 
+        typeof previewManager.getPreviewCollections !== 'function') {
+      console.error('[usePreviewState] Preview manager missing required methods');
+      return;
+    }
+
     // Skip updates if viewport bounds haven't changed significantly
     const boundsKey = viewportBounds ? viewportBounds.join(',') : '';
     if (boundsKey && boundsKey === prevBoundsRef.current) {
@@ -82,137 +89,103 @@ export function usePreviewState({
     }
     prevBoundsRef.current = boundsKey;
 
-    console.debug('[usePreviewState] Updating preview collections:', {
-      viewportBounds,
-      visibleLayers,
-      initialBoundsSet
-    });
-
     const updatePreview = async () => {
       if (!mountedRef.current) return;
 
       try {
-        setState(prev => ({ ...prev, loading: true }));
+        setState(prev => ({ ...prev, loading: true, progress: 0 }));
 
-        // Update preview manager options
-        previewManager.setOptions({
+        // Validate viewport bounds
+        if (viewportBounds) {
+          const [minX, minY, maxX, maxY] = viewportBounds;
+          if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
+            console.warn('[usePreviewState] Invalid viewport bounds:', viewportBounds);
+            setState(prev => ({ ...prev, loading: false }));
+            return;
+          }
+
+          // Check for valid bounds range
+          if (minX >= maxX || minY >= maxY) {
+            console.warn('[usePreviewState] Invalid bounds range:', viewportBounds);
+            setState(prev => ({ ...prev, loading: false }));
+            return;
+          }
+        }
+
+        // Update preview manager with debounced options
+        await previewManager.setOptions({
           viewportBounds,
           visibleLayers,
-          enableCaching: true
+          enableCaching: true,
+          debounceTime: DEBOUNCE_TIME
         });
 
-        // Update preview features
-        const result = await previewManager.updatePreview({
-          bounds: viewportBounds,
-          visibleLayers,
-          enableCaching: true
-        });
-
-        // Get preview collections
-        const collections = await previewManager.getPreviewCollections();
-
-        if (!mountedRef.current) return;
-
-        if (!collections || !collections.points || !collections.lines || !collections.polygons) {
-          console.debug('[usePreviewState] Invalid collections returned:', collections);
-          setState(prev => ({
-            ...initialState,
-            loading: false
-          }));
-          return;
-        }
-
-        // Validate coordinates in collections
-        const validateFeatures = (features: Feature[]): Feature[] => {
-          return features.map(feature => {
-            if (!feature.geometry || !('coordinates' in feature.geometry)) {
-              return feature;
+        // Start progress tracking
+        let progressInterval: NodeJS.Timeout | null = null;
+        if (onPreviewUpdate) {
+          progressInterval = setInterval(() => {
+            if (mountedRef.current) {
+              setState(prev => ({ ...prev, progress: Math.min(prev.progress + 10, 90) }));
             }
-
-            const validateCoord = (coord: number): number => {
-              // For Swiss coordinates (LV95), valid ranges are:
-              // X: 2485000-2834000
-              // Y: 1075000-1299000
-              if (coord >= 1075000 && coord <= 2834000) {
-                // This is likely a valid Swiss coordinate
-                return coord;
-              }
-              // For WGS84 coordinates
-              if (coord >= -180 && coord <= 180) {
-                return coord;
-              }
-              console.warn('[usePreviewState] Invalid coordinate:', coord);
-              return coord; // Return original coord for debugging
-            };
-
-            const processCoordinates = (coords: any[]): any[] => {
-              if (typeof coords[0] === 'number') {
-                return coords.map(validateCoord);
-              }
-              return coords.map(c => processCoordinates(c));
-            };
-
-            return {
-              ...feature,
-              geometry: {
-                ...feature.geometry,
-                coordinates: processCoordinates(feature.geometry.coordinates)
-              }
-            };
-          });
-        };
-
-        // Validate and update collections
-        const validatedCollections = {
-          points: {
-            ...collections.points,
-            features: validateFeatures(collections.points.features)
-          },
-          lines: {
-            ...collections.lines,
-            features: validateFeatures(collections.lines.features)
-          },
-          polygons: {
-            ...collections.polygons,
-            features: validateFeatures(collections.polygons.features)
-          }
-        };
-
-        console.debug('[usePreviewState] Setting preview state:', {
-          points: validatedCollections.points.features?.length || 0,
-          lines: validatedCollections.lines.features?.length || 0,
-          polygons: validatedCollections.polygons.features?.length || 0,
-          bounds: collections.bounds,
-          hasTransformedFeatures: validatedCollections.points.features.some(f => f.properties?._transformedCoordinates) ||
-                                validatedCollections.lines.features.some(f => f.properties?._transformedCoordinates) ||
-                                validatedCollections.polygons.features.some(f => f.properties?._transformedCoordinates)
-        });
-
-        setState({
-          points: validatedCollections.points || emptyCollection,
-          lines: validatedCollections.lines || emptyCollection,
-          polygons: validatedCollections.polygons || emptyCollection,
-          totalCount: collections.totalCount || 0,
-          loading: false,
-          progress: 1
-        });
-
-        // Update bounds if needed
-        if (!initialBoundsSet && collections.bounds) {
-          console.debug('[usePreviewState] Setting initial bounds:', collections.bounds);
-          onUpdateBounds?.(collections.bounds);
+          }, PROGRESS_UPDATE_INTERVAL);
         }
 
-        // Notify of preview update
-        onPreviewUpdate?.();
+        try {
+          // Update preview features with timeout
+          const updatePromise = previewManager.updatePreview({
+            bounds: viewportBounds,
+            visibleLayers,
+            enableCaching: true
+          });
 
+          const result = await Promise.race([
+            updatePromise,
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Preview update timeout')), 30000)
+            )
+          ]);
+
+          if (!result) {
+            throw new Error('Preview update returned no result');
+          }
+
+          // Get and validate collections
+          const collections = await previewManager.getPreviewCollections();
+          if (!mountedRef.current) return;
+
+          if (!collections || !collections.points || !collections.lines || !collections.polygons) {
+            throw new Error('Invalid collections returned');
+          }
+
+          // Update state with new collections
+          setState(prev => ({
+            points: collections.points,
+            lines: collections.lines,
+            polygons: collections.polygons,
+            totalCount: 
+              collections.points.features.length + 
+              collections.lines.features.length + 
+              collections.polygons.features.length,
+            loading: false,
+            progress: 100
+          }));
+
+          // Notify of update completion
+          if (onPreviewUpdate) {
+            onPreviewUpdate();
+          }
+        } finally {
+          // Clean up progress interval
+          if (progressInterval) {
+            clearInterval(progressInterval);
+          }
+        }
       } catch (error) {
-        if (!mountedRef.current) return;
-
         console.error('[usePreviewState] Error updating preview:', error);
         setState(prev => ({
           ...initialState,
-          loading: false
+          loading: false,
+          progress: 0
         }));
       }
     };

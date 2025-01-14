@@ -52,34 +52,58 @@ export function useMapView(
     if (fromSystem === toSystem) return point;
 
     try {
-      // Validate Swiss coordinates before transformation
+      const projection = getProjection(fromSystem);
+      const targetProjection = getProjection(toSystem);
+
+      // Validate Swiss coordinates if converting from Swiss system
       if (isSwissSystem(fromSystem)) {
-        const isValidSwissCoord = (coord: number) => 
-          coord >= 1075000 && coord <= 2834000;
+        const isValidSwissCoord = (coord: number, isX: boolean) => {
+          const [minX, maxX] = [2485000, 2834000];
+          const [minY, maxY] = [1075000, 1299000];
+          return isX 
+            ? coord >= minX && coord <= maxX
+            : coord >= minY && coord <= maxY;
+        };
         
-        if (!isValidSwissCoord(point.x) || !isValidSwissCoord(point.y)) {
+        if (!isValidSwissCoord(point.x, true) || !isValidSwissCoord(point.y, false)) {
           console.warn('[use-map-view] Invalid Swiss coordinates:', point);
           return point;
         }
       }
 
+      // Handle Swiss to WGS84 transformation
       if (isSwissSystem(fromSystem) && isWGS84System(toSystem)) {
-        const projection = getProjection(fromSystem);
         if (!projection) {
           console.error('[use-map-view] No projection found for:', fromSystem);
           return point;
         }
+
         const [lon, lat] = proj4(projection, 'WGS84', [point.x, point.y]);
-        
-        // Validate transformed coordinates
-        if (!isFinite(lon) || !isFinite(lat) || 
-            Math.abs(lon) > 180 || Math.abs(lat) > 90) {
+        if (lon === undefined || lat === undefined || !isFinite(lon) || !isFinite(lat)) {
           console.error('[use-map-view] Invalid transformation result:', { lon, lat });
           return point;
         }
-        
+
         return { x: lon, y: lat };
       }
+
+      // Handle WGS84 to Swiss transformation
+      if (isWGS84System(fromSystem) && isSwissSystem(toSystem)) {
+        if (!targetProjection) {
+          console.error('[use-map-view] No projection found for target:', toSystem);
+          return point;
+        }
+
+        const [x, y] = proj4('WGS84', targetProjection, [point.x, point.y]);
+        if (x === undefined || y === undefined || !isFinite(x) || !isFinite(y)) {
+          console.error('[use-map-view] Invalid transformation result:', { x, y });
+          return point;
+        }
+
+        return { x, y };
+      }
+
+      console.warn('[use-map-view] Unsupported transformation:', { fromSystem, toSystem });
       return point;
     } catch (error) {
       console.error('[use-map-view] Coordinate transformation error:', error);
