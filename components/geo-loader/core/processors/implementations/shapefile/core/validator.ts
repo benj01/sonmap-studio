@@ -172,4 +172,74 @@ export class ShapefileValidator {
       );
     }
   }
+
+  validateRecordBufferSpace(offset: number, recordSize: number, bufferLength: number, recordNumber: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validateRecordBufferSpace(offset, recordSize, bufferLength, recordNumber);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid record buffer space',
+        'BUFFER_SPACE_ERROR',
+        undefined,
+        { offset, recordSize, bufferLength, recordNumber }
+      );
+    }
+  }
+
+  validatePartsAndPoints(numParts: number, numPoints: number, shapeType: string): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validatePartsAndPoints(numParts, numPoints, shapeType);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid parts and points configuration',
+        'PARTS_POINTS_ERROR',
+        undefined,
+        { numParts, numPoints, shapeType }
+      );
+    }
+  }
+
+  validatePartIndex(partIndex: number, numPoints: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validatePartIndex(partIndex, numPoints);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid part index',
+        'PART_INDEX_ERROR',
+        undefined,
+        { partIndex, numPoints }
+      );
+    }
+  }
+
+  validatePartRange(start: number, end: number, partIndex: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validatePartRange(start, end, partIndex);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid part range',
+        'PART_RANGE_ERROR',
+        undefined,
+        { start, end, partIndex }
+      );
+    }
+  }
+
+  validatePointCoordinates(x: number, y: number, partIndex: number, pointIndex: number): void {
+    this.ensureInitialized();
+    try {
+      this.wasmValidator.validatePointCoordinates(x, y, partIndex, pointIndex);
+    } catch (error) {
+      throw new ValidationError(
+        'Invalid point coordinates',
+        'POINT_COORDINATES_ERROR',
+        undefined,
+        { x, y, partIndex, pointIndex }
+      );
+    }
+  }
 }

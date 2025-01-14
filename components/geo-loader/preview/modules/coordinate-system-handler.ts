@@ -9,18 +9,25 @@ export class CoordinateSystemHandler {
 
   constructor(initialSystem: CoordinateSystem = COORDINATE_SYSTEMS.SWISS_LV95) {
     this.coordinateSystem = initialSystem;
+    // Force initialization when handler is created
+    void this.ensureInitialized();
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    const manager = coordinateSystemManager;
+    if (!manager.isInitialized()) {
+      console.debug('[CoordinateSystemHandler] Initializing coordinate system manager');
+      await manager.initialize();
+    }
+    // Clear cache to ensure we use updated proj4 definitions
+    manager.clearCache();
   }
 
   public async validate(): Promise<boolean> {
     const startTime = performance.now();
-    
-    const manager = coordinateSystemManager;
-    if (!manager.isInitialized()) {
-      console.warn('[CoordinateSystemHandler] Manager not initialized');
-      await manager.initialize();
-    }
+    await this.ensureInitialized();
 
-    const isValid = await manager.validate(this.coordinateSystem);
+    const isValid = await coordinateSystemManager.validate(this.coordinateSystem);
     
     console.debug('[CoordinateSystemHandler] Validation:', {
       system: this.coordinateSystem,
@@ -51,6 +58,7 @@ export class CoordinateSystemHandler {
     });
 
     try {
+      await this.ensureInitialized();
       const transformedFeatures = await coordinateSystemManager.transform(
         collection.features,
         this.coordinateSystem,

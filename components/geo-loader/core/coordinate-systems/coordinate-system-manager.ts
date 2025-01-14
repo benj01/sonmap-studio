@@ -9,8 +9,8 @@ import proj4 from 'proj4';
 
 // Define projections for Swiss coordinate systems
 const SWISS_PROJECTIONS: Record<string, string> = {
-  [COORDINATE_SYSTEMS.SWISS_LV95]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs',
-  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
+  [COORDINATE_SYSTEMS.SWISS_LV95]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs',
+  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs'
 };
 
 class CoordinateSystemManager {
@@ -347,8 +347,17 @@ class CoordinateSystemManager {
    */
   async initialize(): Promise<void> {
     if (!this.initialized) {
-      // Load any necessary configurations or setup
-      // For now, just mark as initialized since we don't need special setup
+      // Clear any existing cache
+      this.clearCache();
+      
+      // Initialize proj4 with default WGS84 definition
+      proj4.defs('WGS84', '+proj=longlat +datum=WGS84 +no_defs +type=crs');
+      
+      // Register Swiss projections
+      Object.entries(SWISS_PROJECTIONS).forEach(([name, def]) => {
+        proj4.defs(name, def);
+      });
+      
       this.initialized = true;
     }
   }

@@ -1,8 +1,9 @@
 import { ValidationError } from '../../../../errors/types';
-import { ShapeType, ShapefileRecord } from '../types';
+import { ShapeType, ShapefileRecord, ShapefileData } from '../types';
 import { ShapefileValidator } from './validator';
 import { GeometryConverter } from './geometry-converter';
 import { HeaderParser } from './header-parser';
+import { Position } from 'geojson';
 
 export class RecordParser {
   private validator: ShapefileValidator;
@@ -61,17 +62,18 @@ export class RecordParser {
         try {
           const geometry = await this.parseGeometry(view, offset, shapeType);
           if (geometry) {
-            yield {
+            const record: ShapefileRecord = {
               header: {
                 recordNumber,
                 contentLength
               },
               shapeType,
-              data: geometry as unknown as Record<string, unknown>,
+              data: geometry as ShapefileData,
               attributes: {
                 recordNumber
               }
             };
+            yield record;
           }
         } catch (error) {
           // Log the error but continue processing other records
@@ -96,7 +98,7 @@ export class RecordParser {
     view: DataView,
     offset: number,
     shapeType: ShapeType
-  ): Promise<Record<string, unknown> | null> {
+  ): Promise<ShapefileData & { type: string } | null> {
     switch (shapeType) {
       case ShapeType.NULL:
         return null;
@@ -134,21 +136,35 @@ export class RecordParser {
   /**
    * Parse point geometry
    */
-  private parsePoint(view: DataView, offset: number): Record<string, unknown> {
+  private parsePoint(view: DataView, offset: number): ShapefileData & { type: string } {
     const x = view.getFloat64(offset, true);
     const y = view.getFloat64(offset + 8, true);
+    const coordinates: Position = [x, y];
     
     return {
       type: 'Point',
-      coordinates: [x, y]
+      coordinates,
+      bbox: {
+        xMin: x,
+        yMin: y,
+        xMax: x,
+        yMax: y
+      }
     };
   }
 
   /**
    * Parse multipoint geometry
    */
-  private parseMultiPoint(view: DataView, offset: number): Record<string, unknown> {
-    // Skip bounding box (4 * 8 = 32 bytes)
+  private parseMultiPoint(view: DataView, offset: number): ShapefileData & { type: string } {
+    // Read bounding box
+    const bbox = {
+      xMin: view.getFloat64(offset, true),
+      yMin: view.getFloat64(offset + 8, true),
+      xMax: view.getFloat64(offset + 16, true),
+      yMax: view.getFloat64(offset + 24, true)
+    };
+
     const numPoints = view.getInt32(offset + 32, true);
     
     // Validate reasonable value for numPoints
@@ -159,27 +175,35 @@ export class RecordParser {
       );
     }
 
-    const points: [number, number][] = [];
+    const coordinates: Position[] = [];
     let pointOffset = offset + 36;
     
     for (let i = 0; i < numPoints; i++) {
       const x = view.getFloat64(pointOffset, true);
       const y = view.getFloat64(pointOffset + 8, true);
-      points.push([x, y]);
+      coordinates.push([x, y]);
       pointOffset += 16;
     }
-    
+
     return {
       type: 'MultiPoint',
-      coordinates: points
+      coordinates,
+      bbox
     };
   }
 
   /**
    * Parse polyline geometry
    */
-  private parsePolyline(view: DataView, offset: number): Record<string, unknown> {
-    // Skip bounding box (4 * 8 = 32 bytes)
+  private parsePolyline(view: DataView, offset: number): ShapefileData & { type: string } {
+    // Read bounding box
+    const bbox = {
+      xMin: view.getFloat64(offset, true),
+      yMin: view.getFloat64(offset + 8, true),
+      xMax: view.getFloat64(offset + 16, true),
+      yMax: view.getFloat64(offset + 24, true)
+    };
+
     const numParts = view.getInt32(offset + 32, true);
     const numPoints = view.getInt32(offset + 36, true);
 
@@ -198,11 +222,11 @@ export class RecordParser {
     parts.push(numPoints);
 
     // Read points for each part
-    const coordinates: [number, number][][] = [];
+    const lineStrings: Position[][] = [];
     let pointOffset = partOffset + (numParts * 4);
     
     for (let i = 0; i < numParts; i++) {
-      const partPoints: [number, number][] = [];
+      const points: Position[] = [];
       const start = parts[i];
       const end = parts[i + 1];
       
@@ -212,24 +236,33 @@ export class RecordParser {
         const x = view.getFloat64(pointOffset + (j * 16), true);
         const y = view.getFloat64(pointOffset + (j * 16) + 8, true);
         this.validator.validatePointCoordinates(x, y, i, j);
-        partPoints.push([x, y]);
+        points.push([x, y]);
       }
       
-      if (partPoints.length >= 2) {
-        coordinates.push(partPoints);
+      if (points.length >= 2) {
+        lineStrings.push(points);
       }
     }
 
-    return coordinates.length === 1
-      ? { type: 'LineString', coordinates: coordinates[0] }
-      : { type: 'MultiLineString', coordinates };
+    return {
+      type: lineStrings.length === 1 ? 'LineString' : 'MultiLineString',
+      coordinates: lineStrings.length === 1 ? lineStrings[0] : lineStrings,
+      bbox
+    };
   }
 
   /**
    * Parse polygon geometry
    */
-  private parsePolygon(view: DataView, offset: number): Record<string, unknown> {
-    // Skip bounding box (4 * 8 = 32 bytes)
+  private parsePolygon(view: DataView, offset: number): ShapefileData & { type: string } {
+    // Read bounding box
+    const bbox = {
+      xMin: view.getFloat64(offset, true),
+      yMin: view.getFloat64(offset + 8, true),
+      xMax: view.getFloat64(offset + 16, true),
+      yMax: view.getFloat64(offset + 24, true)
+    };
+
     const numParts = view.getInt32(offset + 32, true);
     const numPoints = view.getInt32(offset + 36, true);
 
@@ -248,11 +281,11 @@ export class RecordParser {
     parts.push(numPoints);
 
     // Read rings
-    const rings: [number, number][][] = [];
+    const rings: Position[][] = [];
     let pointOffset = partOffset + (numParts * 4);
     
     for (let i = 0; i < numParts; i++) {
-      const ring: [number, number][] = [];
+      const ring: Position[] = [];
       const start = parts[i];
       const end = parts[i + 1];
       
@@ -269,11 +302,11 @@ export class RecordParser {
     }
 
     // Organize rings into polygons
-    const polygons: [number, number][][][] = [];
-    let currentPolygon: [number, number][][] = [];
+    const polygons: Position[][][] = [];
+    let currentPolygon: Position[][] = [];
     
     for (const ring of rings) {
-      if (this.geometryConverter.isClockwise(ring)) {
+      if (this.geometryConverter.isClockwise(ring as [number, number][])) {
         if (currentPolygon.length > 0) {
           polygons.push(currentPolygon);
         }
@@ -287,8 +320,10 @@ export class RecordParser {
       polygons.push(currentPolygon);
     }
 
-    return polygons.length === 1
-      ? { type: 'Polygon', coordinates: polygons[0] }
-      : { type: 'MultiPolygon', coordinates: polygons };
+    return {
+      type: polygons.length === 1 ? 'Polygon' : 'MultiPolygon',
+      coordinates: polygons.length === 1 ? polygons[0] : polygons,
+      bbox
+    };
   }
 }
