@@ -193,14 +193,65 @@ export class FeatureProcessor {
       }
     });
 
-    // If no valid coordinates were processed, use Switzerland bounds
+    // If no valid coordinates were processed, use appropriate default bounds
     if (!hasValidCoordinates) {
-      console.warn('[FeatureProcessor] No valid coordinates found, using default bounds');
-      return {
+      console.warn('[FeatureProcessor] No valid coordinates found, determining appropriate bounds');
+      
+      // Check if any features exist to determine coordinate system
+      const hasFeatures = collections.points.features.length > 0 || 
+                         collections.lines.features.length > 0 || 
+                         collections.polygons.features.length > 0;
+      
+      if (!hasFeatures) {
+        console.warn('[FeatureProcessor] No features found, using default Swiss bounds');
+        return {
+          minX: 2485000,  // Min X for Switzerland in LV95
+          minY: 1075000,  // Min Y for Switzerland in LV95
+          maxX: 2834000,  // Max X for Switzerland in LV95
+          maxY: 1299000   // Max Y for Switzerland in LV95
+        };
+      }
+
+      // Try to determine coordinate system from feature properties
+      const sampleFeature = collections.points.features[0] || 
+                           collections.lines.features[0] || 
+                           collections.polygons.features[0];
+      
+      // Helper function to check if coordinates look like WGS84
+      const looksLikeWGS84 = (coords: any): boolean => {
+        if (!Array.isArray(coords)) return false;
+        const x = Array.isArray(coords[0]) ? coords[0][0] : coords[0];
+        const y = Array.isArray(coords[0]) ? coords[0][1] : coords[1];
+        return typeof x === 'number' && typeof y === 'number' &&
+               Math.abs(x) <= 180 && Math.abs(y) <= 90 &&
+               x >= 5.9559 && x <= 10.4922 && 
+               y >= 45.8179 && y <= 47.8084;
+      };
+
+      // Check if coordinates are explicitly marked as Swiss LV95
+      const isExplicitlySwiss = sampleFeature?.properties?.originalSystem === 'EPSG:2056';
+      
+      // Check coordinate values if not explicitly marked
+      const coords = sampleFeature?.geometry && 'coordinates' in sampleFeature.geometry ?
+        sampleFeature.geometry.coordinates : null;
+      
+      const isSwissSystem = isExplicitlySwiss || 
+        (coords && !looksLikeWGS84(coords) && Array.isArray(coords) &&
+         coords.some(coord => {
+           const x = Array.isArray(coord) ? coord[0] : coord;
+           return typeof x === 'number' && x >= 2485000 && x <= 2834000;
+         }));
+
+      return isSwissSystem ? {
         minX: 2485000,  // Min X for Switzerland in LV95
         minY: 1075000,  // Min Y for Switzerland in LV95
         maxX: 2834000,  // Max X for Switzerland in LV95
         maxY: 1299000   // Max Y for Switzerland in LV95
+      } : {
+        minX: 5.9559,   // Westernmost point of Switzerland in WGS84
+        minY: 45.8179,  // Southernmost point of Switzerland in WGS84
+        maxX: 10.4922,  // Easternmost point of Switzerland in WGS84
+        maxY: 47.8084   // Northernmost point of Switzerland in WGS84
       };
     }
 

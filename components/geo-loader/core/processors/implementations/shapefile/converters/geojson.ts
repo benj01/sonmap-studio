@@ -43,20 +43,36 @@ function validateLineCoordinates(coordinates: any): Position[] {
       return false;
     }
 
-    // Accept any finite coordinates for now, just log ranges for debugging
-    console.debug('[GeoJSON Converter] Processing coordinates:', { 
-      x, y,
-      isSwissRange: {
-        x: x >= SWISS_RANGES.x.min && x <= SWISS_RANGES.x.max,
-        y: y >= SWISS_RANGES.y.min && y <= SWISS_RANGES.y.max
-      },
-      isWGS84Range: {
-        x: Math.abs(x) <= 180,
-        y: Math.abs(y) <= 90
-      }
-    });
+    // For Swiss LV95 coordinates, enforce the valid range
+    const isSwissRange = {
+      x: x >= SWISS_RANGES.x.min && x <= SWISS_RANGES.x.max,
+      y: y >= SWISS_RANGES.y.min && y <= SWISS_RANGES.y.max
+    };
 
-    return true;
+    // For WGS84 coordinates
+    const isWGS84Range = {
+      x: Math.abs(x) <= 180,
+      y: Math.abs(y) <= 90
+    };
+
+    // If coordinates are in Swiss LV95 range, accept them
+    if (isSwissRange.x && isSwissRange.y) {
+      console.debug('[GeoJSON Converter] Valid Swiss LV95 coordinates:', { x, y });
+      return true;
+    }
+
+    // If coordinates are in WGS84 range, accept them
+    if (isWGS84Range.x && isWGS84Range.y) {
+      console.debug('[GeoJSON Converter] Valid WGS84 coordinates:', { x, y });
+      return true;
+    }
+
+    console.warn('[GeoJSON Converter] Invalid coordinates:', { 
+      x, y,
+      isSwissRange,
+      isWGS84Range
+    });
+    return false;
   });
 
   if (validCoords.length < 2) {
