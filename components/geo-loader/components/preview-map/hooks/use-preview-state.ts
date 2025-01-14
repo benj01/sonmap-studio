@@ -1,10 +1,11 @@
+// D:\HE\GitHub\sonmap-studio\components\geo-loader\components\preview-map\hooks\use-preview-state.ts
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { Feature, FeatureCollection } from 'geojson';
 import { PreviewManager } from '../../../preview/preview-manager';
-import type { 
-  CachedPreviewResult, 
+import type {
+  CachedPreviewResult,
   CachedFeatureCollection,
-  PreviewCollections 
+  PreviewCollections
 } from '../../../types/cache';
 import { cacheManager } from '../../../core/cache-manager';
 import { COORDINATE_SYSTEMS } from '../../../types/coordinates';
@@ -57,6 +58,7 @@ export function usePreviewState({
 
   const [state, setState] = useState<PreviewState>(initialState);
   const mountedRef = useRef(true);
+  const prevBoundsRef = useRef(''); // Move useRef to the top level
 
   // Cleanup on unmount
   useEffect(() => {
@@ -74,7 +76,6 @@ export function usePreviewState({
 
     // Skip updates if viewport bounds haven't changed significantly
     const boundsKey = viewportBounds ? viewportBounds.join(',') : '';
-    const prevBoundsRef = useRef(boundsKey);
     if (boundsKey && boundsKey === prevBoundsRef.current) {
       console.debug('[usePreviewState] Skipping update - bounds unchanged');
       return;
@@ -97,13 +98,19 @@ export function usePreviewState({
         previewManager.setOptions({
           viewportBounds,
           visibleLayers,
-          enableCaching: true,
-          skipTransform: true // Skip coordinate transformation if already transformed
+          enableCaching: true
+        });
+
+        // Update preview features
+        const result = await previewManager.updatePreview({
+          bounds: viewportBounds,
+          visibleLayers,
+          enableCaching: true
         });
 
         // Get preview collections
         const collections = await previewManager.getPreviewCollections();
-        
+
         if (!mountedRef.current) return;
 
         if (!collections || !collections.points || !collections.lines || !collections.polygons) {
@@ -118,33 +125,40 @@ export function usePreviewState({
         // Validate coordinates in collections
         const validateFeatures = (features: Feature[]): Feature[] => {
           return features.map(feature => {
-            // Skip validation if coordinates are already transformed
-            if (feature.properties?._transformedCoordinates) {
+            if (!feature.geometry || !('coordinates' in feature.geometry)) {
               return feature;
             }
 
-            // Validate coordinates
-            if (feature.geometry && 'coordinates' in feature.geometry) {
-              const validateCoord = (coord: number): number => {
-                return isFinite(coord) ? coord : 0;
-              };
+            const validateCoord = (coord: number): number => {
+              // For Swiss coordinates (LV95), valid ranges are:
+              // X: 2485000-2834000
+              // Y: 1075000-1299000
+              if (coord >= 1075000 && coord <= 2834000) {
+                // This is likely a valid Swiss coordinate
+                return coord;
+              }
+              // For WGS84 coordinates
+              if (coord >= -180 && coord <= 180) {
+                return coord;
+              }
+              console.warn('[usePreviewState] Invalid coordinate:', coord);
+              return coord; // Return original coord for debugging
+            };
 
-              const processCoordinates = (coords: any[]): any[] => {
-                if (typeof coords[0] === 'number') {
-                  return coords.map(validateCoord);
-                }
-                return coords.map(c => processCoordinates(c));
-              };
+            const processCoordinates = (coords: any[]): any[] => {
+              if (typeof coords[0] === 'number') {
+                return coords.map(validateCoord);
+              }
+              return coords.map(c => processCoordinates(c));
+            };
 
-              return {
-                ...feature,
-                geometry: {
-                  ...feature.geometry,
-                  coordinates: processCoordinates(feature.geometry.coordinates)
-                }
-              };
-            }
-            return feature;
+            return {
+              ...feature,
+              geometry: {
+                ...feature.geometry,
+                coordinates: processCoordinates(feature.geometry.coordinates)
+              }
+            };
           });
         };
 
@@ -182,7 +196,7 @@ export function usePreviewState({
           loading: false,
           progress: 1
         });
-        
+
         // Update bounds if needed
         if (!initialBoundsSet && collections.bounds) {
           console.debug('[usePreviewState] Setting initial bounds:', collections.bounds);
@@ -204,7 +218,7 @@ export function usePreviewState({
     };
 
     updatePreview();
-  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet]);
+  }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, onUpdateBounds, onPreviewUpdate]);
 
   return state;
 }

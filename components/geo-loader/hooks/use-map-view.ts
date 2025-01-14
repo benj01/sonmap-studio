@@ -1,13 +1,14 @@
+// D:\HE\GitHub\sonmap-studio\components\geo-loader\hooks\use-map-view.ts
 import { useState, useCallback, useEffect } from 'react';
 import { ViewStateChangeEvent } from 'react-map-gl';
 import { Feature, BBox } from 'geojson';
-import { 
-  COORDINATE_SYSTEMS, 
-  CoordinateSystem, 
-  Bounds, 
+import {
+  COORDINATE_SYSTEMS,
+  CoordinateSystem,
+  Bounds,
   DEFAULT_CENTER,
   isSwissSystem,
-  isWGS84System 
+  isWGS84System
 } from '../types/coordinates';
 import { ViewState, UseMapViewResult } from '../types/map';
 import proj4 from 'proj4';
@@ -51,20 +52,37 @@ export function useMapView(
     if (fromSystem === toSystem) return point;
 
     try {
+      // Validate Swiss coordinates before transformation
+      if (isSwissSystem(fromSystem)) {
+        const isValidSwissCoord = (coord: number) => 
+          coord >= 1075000 && coord <= 2834000;
+        
+        if (!isValidSwissCoord(point.x) || !isValidSwissCoord(point.y)) {
+          console.warn('[use-map-view] Invalid Swiss coordinates:', point);
+          return point;
+        }
+      }
+
       if (isSwissSystem(fromSystem) && isWGS84System(toSystem)) {
         const projection = getProjection(fromSystem);
-        if (!projection) return point;
+        if (!projection) {
+          console.error('[use-map-view] No projection found for:', fromSystem);
+          return point;
+        }
         const [lon, lat] = proj4(projection, 'WGS84', [point.x, point.y]);
+        
+        // Validate transformed coordinates
+        if (!isFinite(lon) || !isFinite(lat) || 
+            Math.abs(lon) > 180 || Math.abs(lat) > 90) {
+          console.error('[use-map-view] Invalid transformation result:', { lon, lat });
+          return point;
+        }
+        
         return { x: lon, y: lat };
-      } else if (isWGS84System(fromSystem) && isSwissSystem(toSystem)) {
-        const projection = getProjection(toSystem);
-        if (!projection) return point;
-        const [x, y] = proj4('WGS84', projection, [point.x, point.y]);
-        return { x, y };
       }
       return point;
     } catch (error) {
-      console.error('Coordinate transformation error:', error);
+      console.error('[use-map-view] Coordinate transformation error:', error);
       return point;
     }
   }, []);
@@ -78,31 +96,31 @@ export function useMapView(
     let maxY = -Infinity;
 
     const updateBounds = async (coords: [number, number]): Promise<void> => {
-      // Use coordinates directly if already transformed, otherwise transform
-      let lon = coords[0];
-      let lat = coords[1];
-
-      // Only transform if needed and not already transformed
-      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        // Check if feature has already been transformed
-        const isTransformed = features.some(f => f.properties?._transformedCoordinates);
-        
-        if (!isTransformed) {
+      try {
+        // Transform coordinates if needed
+        if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
           const transformed = await transformCoordinates(
             { x: coords[0], y: coords[1] },
             coordinateSystem,
             COORDINATE_SYSTEMS.WGS84
           );
-          lon = transformed.x;
-          lat = transformed.y;
+          
+          if (isFinite(transformed.x) && isFinite(transformed.y)) {
+            minX = Math.min(minX, transformed.x);
+            minY = Math.min(minY, transformed.y);
+            maxX = Math.max(maxX, transformed.x);
+            maxY = Math.max(maxY, transformed.y);
+          }
+        } else {
+          if (isFinite(coords[0]) && isFinite(coords[1])) {
+            minX = Math.min(minX, coords[0]);
+            minY = Math.min(minY, coords[1]);
+            maxX = Math.max(maxX, coords[0]);
+            maxY = Math.max(maxY, coords[1]);
+          }
         }
-      }
-
-      if (isFinite(lon) && isFinite(lat)) {
-        minX = Math.min(minX, lon);
-        minY = Math.min(minY, lat);
-        maxX = Math.max(maxX, lon);
-        maxY = Math.max(maxY, lat);
+      } catch (error) {
+        console.error('[use-map-view] Error updating bounds:', error);
       }
     };
 
@@ -161,7 +179,7 @@ export function useMapView(
 
       // Use bounds directly if they're already in WGS84
       let transformedBounds = bounds;
-      
+
       // Only transform if needed and bounds aren't already transformed
       if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84 && !bounds._transformedCoordinates) {
         try {
@@ -177,8 +195,8 @@ export function useMapView(
           );
 
           // Validate transformed coordinates
-          if (isFinite(minPoint.x) && isFinite(minPoint.y) && 
-              isFinite(maxPoint.x) && isFinite(maxPoint.y)) {
+          if (isFinite(minPoint.x) && isFinite(minPoint.y) &&
+            isFinite(maxPoint.x) && isFinite(maxPoint.y)) {
             transformedBounds = {
               minX: minPoint.x,
               minY: minPoint.y,
@@ -210,26 +228,36 @@ export function useMapView(
         height: window.innerHeight
       });
 
-      const { longitude, latitude, zoom } = viewport.fitBounds(
-        [
-          [transformedBounds.minX, transformedBounds.minY],
-          [transformedBounds.maxX, transformedBounds.maxY]
-        ],
-        { padding: 20 }
-      );
+      // Add validation before fitBounds
+      if (transformedBounds &&
+        transformedBounds._transformedCoordinates &&
+        isFinite(transformedBounds.minX) &&
+        isFinite(transformedBounds.minY) &&
+        isFinite(transformedBounds.maxX) &&
+        isFinite(transformedBounds.maxY)) {
+        const { longitude, latitude, zoom } = viewport.fitBounds(
+          [
+            [transformedBounds.minX, transformedBounds.minY],
+            [transformedBounds.maxX, transformedBounds.maxY]
+          ],
+          { padding: 20 }
+        );
 
-      setViewState(prev => ({
-        ...prev,
-        longitude,
-        latitude,
-        zoom: Math.min(zoom, 20), // Cap zoom level
-        transitionDuration: 1000
-      }));
+        setViewState(prev => ({
+          ...prev,
+          longitude,
+          latitude,
+          zoom: Math.min(zoom, 20), // Cap zoom level
+          transitionDuration: 1000
+        }));
+      } else {
+        console.warn('[DEBUG] Invalid bounds for fitBounds:', transformedBounds);
+      }
       setInitialBoundsSet(true);
     } catch (error) {
       console.error('[DEBUG] Error updating view from bounds:', error);
     }
-  }, [coordinateSystem, viewState, initialBoundsSet]);
+  }, [coordinateSystem, viewState, initialBoundsSet, transformCoordinates]);
 
   const focusOnFeatures = useCallback(async (features: Feature[], padding: number = 50): Promise<void> => {
     const bounds = await calculateBoundsFromFeatures(features);
@@ -262,39 +290,39 @@ export function useMapView(
     }
 
     const { longitude, latitude, zoom } = viewState;
-    
+
     // Skip bounds calculation for invalid view state
     if (!isFinite(longitude) || !isFinite(latitude) || !isFinite(zoom)) {
       console.debug('[DEBUG] Invalid viewState values:', { longitude, latitude, zoom });
       return undefined;
     }
-    
+
     // Skip bounds calculation for low zoom levels
     if (zoom < 10) {
       return undefined;
     }
-    
+
     try {
       const latRange = 360 / Math.pow(2, zoom + 1);
       const lonRange = 360 / Math.pow(2, zoom);
-      
+
       const minLon = longitude - lonRange / 2;
       const minLat = latitude - latRange / 2;
       const maxLon = longitude + lonRange / 2;
       const maxLat = latitude + latRange / 2;
-      
+
       // Validate calculated bounds
       if (!isFinite(minLon) || !isFinite(minLat) || !isFinite(maxLon) || !isFinite(maxLat)) {
         console.debug('[DEBUG] Invalid calculated bounds:', { minLon, minLat, maxLon, maxLat });
         return undefined;
       }
-      
+
       return [minLon, minLat, maxLon, maxLat];
     } catch (error) {
       console.error('[DEBUG] Error calculating viewport bounds:', error);
       return undefined;
     }
-  }, [viewState.longitude, viewState.latitude, viewState.zoom, initialBoundsSet, initialBounds]);
+  }, [viewState.longitude, viewState.latitude, viewState.zoom, initialBoundsSet, initialBounds, coordinateSystem]);
 
   // Handle bounds updates after coordinate system verification
   useEffect(() => {
