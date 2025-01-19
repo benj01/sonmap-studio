@@ -5,6 +5,28 @@ import {
   isSwissSystem,
   isWGS84System 
 } from '../../types/coordinates';
+
+export type CoordinateSystemBounds = {
+  x: { min: number; max: number };
+  y: { min: number; max: number };
+};
+
+export type CoordinateSystemId = 'EPSG:2056' | 'EPSG:21781' | 'EPSG:4326';
+
+export const COORDINATE_SYSTEM_BOUNDS: Record<CoordinateSystemId, CoordinateSystemBounds> = {
+  'EPSG:2056': { // Swiss LV95
+    x: { min: 2000000, max: 3000000 },
+    y: { min: 1000000, max: 2000000 }
+  },
+  'EPSG:21781': { // Swiss LV03
+    x: { min: 400000, max: 900000 },
+    y: { min: 50000, max: 400000 }
+  },
+  'EPSG:4326': { // WGS84
+    x: { min: -180, max: 180 },
+    y: { min: -90, max: 90 }
+  }
+};
 import proj4 from 'proj4';
 
 // Define projections for Swiss coordinate systems
@@ -18,6 +40,9 @@ class CoordinateSystemManager {
   private transformCache: Map<string, Function>;
   private featureCache: Map<string, Feature>;
   private initialized: boolean = false;
+  private initializationPromise: Promise<void> | null = null;
+  private lastCacheClear: number = 0;
+  private readonly CACHE_LIFETIME = 5 * 60 * 1000; // 5 minutes
 
   private constructor() {
     this.transformCache = new Map();
@@ -32,6 +57,45 @@ class CoordinateSystemManager {
   }
 
   /**
+   * Validate a coordinate system without initialization check
+   */
+  private validateSystemSync(system: string): boolean {
+    return isSwissSystem(system as CoordinateSystem) || 
+           isWGS84System(system as CoordinateSystem);
+  }
+
+  /**
+   * Validate a coordinate system with initialization
+   */
+  async validate(system: string): Promise<boolean> {
+    try {
+      await this.ensureInitialized();
+      return this.validateSystemSync(system);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[CoordinateSystemManager] Coordinate system validation failed:', errorMessage);
+      return false;
+    }
+  }
+
+  /**
+   * Validate a coordinate system (public API)
+   */
+  async validateSystem(system: CoordinateSystem): Promise<boolean> {
+    try {
+      // For initialization errors, still allow validation of known systems
+      if (!this.initialized) {
+        return this.validateSystemSync(system);
+      }
+      return this.validate(system);
+    } catch (error) {
+      console.error('[CoordinateSystemManager] System validation failed:', error);
+      // Fall back to sync validation if async fails
+      return this.validateSystemSync(system);
+    }
+  }
+
+  /**
    * Transform features from one coordinate system to another
    */
   async transform(
@@ -39,8 +103,14 @@ class CoordinateSystemManager {
     from: CoordinateSystem,
     to: CoordinateSystem
   ): Promise<Feature[]> {
+    await this.ensureInitialized();
+
     if (from === to) {
       return features;
+    }
+
+    if (!await this.validateSystem(from) || !await this.validateSystem(to)) {
+      throw new Error(`Invalid coordinate systems: from=${from}, to=${to}`);
     }
 
     const transformer = await this.getTransformer(from, to);
@@ -48,23 +118,12 @@ class CoordinateSystemManager {
   }
 
   /**
-   * Validate a coordinate system
-   */
-  async validate(system: string): Promise<boolean> {
-    try {
-      return isSwissSystem(system as CoordinateSystem) || 
-             isWGS84System(system as CoordinateSystem);
-    } catch (error) {
-      console.error('Coordinate system validation failed:', error);
-      return false;
-    }
-  }
-
-  /**
    * Attempt to detect the coordinate system of features based on coordinate ranges
    */
   async detect(features: Feature[]): Promise<CoordinateSystem | undefined> {
     try {
+      await this.ensureInitialized();
+      
       if (!features.length) return undefined;
 
       // Extract all coordinates
@@ -112,7 +171,7 @@ class CoordinateSystemManager {
       // Swiss LV95 ranges (adjusted for better coverage of Swiss locations)
       if (
         ranges.minX >= 2000000 && ranges.maxX <= 3000000 &&
-        ranges.minY >= 1000000 && ranges.maxY <= 1400000
+        ranges.minY >= 1000000 && ranges.maxY <= 2000000
       ) {
         console.debug('[CoordinateSystemManager] Detected Swiss LV95 coordinates');
         return COORDINATE_SYSTEMS.SWISS_LV95;
@@ -134,20 +193,13 @@ class CoordinateSystemManager {
         return COORDINATE_SYSTEMS.WGS84;
       }
 
-      // If coordinates are within Switzerland's general bounds, default to LV95
-      if (
-        ranges.minX >= 2500000 && ranges.maxX <= 2800000 &&
-        ranges.minY >= 1100000 && ranges.maxY <= 1300000
-      ) {
-        console.debug('[CoordinateSystemManager] Coordinates within Switzerland, defaulting to LV95');
-        return COORDINATE_SYSTEMS.SWISS_LV95;
-      }
-
-      console.debug('[CoordinateSystemManager] Could not definitively detect coordinate system, defaulting to LV95 for Swiss region');
-      return COORDINATE_SYSTEMS.SWISS_LV95;
-    } catch (error) {
-      console.error('Coordinate system detection failed:', error);
-      return COORDINATE_SYSTEMS.SWISS_LV95;
+      // Default to WGS84 if no specific system is detected
+      console.debug('[CoordinateSystemManager] Could not definitively detect coordinate system, defaulting to WGS84');
+      return COORDINATE_SYSTEMS.WGS84;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[CoordinateSystemManager] Coordinate system detection failed:', errorMessage);
+      return COORDINATE_SYSTEMS.WGS84;
     }
   }
 
@@ -164,57 +216,48 @@ class CoordinateSystemManager {
         const projection = SWISS_PROJECTIONS[from];
         transformer = (coord: number[]) => {
           if (!Array.isArray(coord) || coord.length < 2) {
-            console.warn('[CoordinateSystemManager] Invalid coordinate array:', coord);
-            return coord;
+            throw new Error(`Invalid coordinate array: ${JSON.stringify(coord)}`);
           }
 
           const [x, y] = coord;
           if (!Number.isFinite(x) || !Number.isFinite(y)) {
-            console.warn('[CoordinateSystemManager] Non-finite coordinates:', { x, y });
-            return coord;
+            throw new Error(`Non-finite coordinates: x=${x}, y=${y}`);
           }
 
           try {
             const result = proj4(projection, 'WGS84', coord);
             if (!result.every(isFinite)) {
-              console.warn('[CoordinateSystemManager] Transformation produced non-finite coordinates:', result);
-              return coord;
+              throw new Error(`Transformation produced non-finite coordinates: ${result}`);
             }
             return result;
-          } catch (error) {
-            console.warn('[CoordinateSystemManager] Transformation failed:', error);
-            return coord;
+          } catch (error: unknown) {
+            throw new Error(`Transformation failed: ${error instanceof Error ? error.message : String(error)}`);
           }
         };
       } else if (isWGS84System(from) && isSwissSystem(to)) {
         const projection = SWISS_PROJECTIONS[to];
         transformer = (coord: number[]) => {
           if (!Array.isArray(coord) || coord.length < 2) {
-            console.warn('[CoordinateSystemManager] Invalid coordinate array:', coord);
-            return coord;
+            throw new Error(`Invalid coordinate array: ${JSON.stringify(coord)}`);
           }
 
           const [x, y] = coord;
           if (!Number.isFinite(x) || !Number.isFinite(y)) {
-            console.warn('[CoordinateSystemManager] Non-finite coordinates:', { x, y });
-            return coord;
+            throw new Error(`Non-finite coordinates: x=${x}, y=${y}`);
           }
 
           try {
             const result = proj4('WGS84', projection, coord);
             if (!result.every(isFinite)) {
-              console.warn('[CoordinateSystemManager] Transformation produced non-finite coordinates:', result);
-              return coord;
+              throw new Error(`Transformation produced non-finite coordinates: ${result}`);
             }
             return result;
-          } catch (error) {
-            console.warn('[CoordinateSystemManager] Transformation failed:', error);
-            return coord;
+          } catch (error: unknown) {
+            throw new Error(`Transformation failed: ${error instanceof Error ? error.message : String(error)}`);
           }
         };
       } else {
-        // Identity transform for unsupported conversions
-        transformer = (coord: number[]) => coord;
+        throw new Error(`Unsupported coordinate system conversion: ${from} -> ${to}`);
       }
 
       this.transformCache.set(key, transformer);
@@ -278,6 +321,8 @@ class CoordinateSystemManager {
               )
           );
           break;
+        default:
+          throw new Error(`Unsupported geometry type: ${transformed.geometry.type}`);
       }
 
       // Validate transformed coordinates
@@ -309,11 +354,7 @@ class CoordinateSystemManager {
       };
 
       if (!validateGeometry(transformed.geometry)) {
-        console.warn('[CoordinateSystemManager] Invalid transformed geometry:', {
-          type: transformed.geometry.type,
-          coordinates: transformed.geometry.coordinates
-        });
-        return feature; // Return original feature if transformation produced invalid coordinates
+        throw new Error('Invalid transformed geometry');
       }
 
       // Mark as transformed and cache
@@ -321,18 +362,23 @@ class CoordinateSystemManager {
       this.featureCache.set(cacheKey, transformed);
 
       return transformed;
-    } catch (error) {
-      console.warn('[CoordinateSystemManager] Error transforming feature:', error);
-      return feature; // Return original feature on error
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[CoordinateSystemManager] Feature transformation failed:', errorMessage);
+      throw error;
     }
   }
 
+  private shouldClearCache(): boolean {
+    const now = Date.now();
+    return now - this.lastCacheClear > this.CACHE_LIFETIME;
+  }
+
   /**
-   * Clear the transformer cache
+   * Force clear the cache regardless of timing
    */
-  clearCache(): void {
-    this.transformCache.clear();
-    this.featureCache.clear();
+  forceClearCache(): void {
+    this.clearCache();
   }
 
   /**
@@ -342,14 +388,25 @@ class CoordinateSystemManager {
     return this.initialized;
   }
 
+  private async ensureInitialized(): Promise<void> {
+    if (this.initializationPromise) {
+      await this.initializationPromise;
+      return;
+    }
+
+    this.initializationPromise = this.initialize();
+    await this.initializationPromise;
+  }
+
   /**
    * Initialize the coordinate system manager
    */
   async initialize(): Promise<void> {
-    if (!this.initialized) {
-      // Clear any existing cache
-      this.clearCache();
-      
+    if (this.initialized) {
+      return;
+    }
+
+    try {
       // Initialize proj4 with default WGS84 definition
       proj4.defs('WGS84', '+proj=longlat +datum=WGS84 +no_defs +type=crs');
       
@@ -357,16 +414,29 @@ class CoordinateSystemManager {
       Object.entries(SWISS_PROJECTIONS).forEach(([name, def]) => {
         proj4.defs(name, def);
       });
+
+      // Only clear cache if needed
+      if (this.shouldClearCache()) {
+        this.clearCache();
+      }
       
       this.initialized = true;
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('[CoordinateSystemManager] Initialization failed:', errorMessage);
+      this.initialized = false;
+      this.initializationPromise = null;
+      throw new Error('Failed to initialize coordinate system manager');
     }
   }
 
   /**
-   * Validate a coordinate system
+   * Clear the transformer cache if needed
    */
-  async validateSystem(system: CoordinateSystem): Promise<boolean> {
-    return this.validate(system);
+  private clearCache(): void {
+    this.transformCache.clear();
+    this.featureCache.clear();
+    this.lastCacheClear = Date.now();
   }
 }
 

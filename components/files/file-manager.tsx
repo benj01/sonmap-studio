@@ -47,8 +47,6 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
         throw filesError;
       }
 
-      console.log('Raw database response:', filesWithCompanions);
-
       // Get imported files
       const { data: allFiles, error: importedError } = await supabase
         .from('project_files')
@@ -64,15 +62,6 @@ export function FileManager({ projectId, onGeoImport }: FileManagerProps) {
       
       // First, add all main files with their companions
       ;(filesWithCompanions as FileWithCompanions[]).forEach((file) => {
-        // Log each file's details before processing
-        console.log('Processing file:', {
-          id: file.id,
-          name: file.name,
-          file_type: file.file_type,
-          is_shapefile_component: file.is_shapefile_component,
-          companion_files: file.companion_files?.length || 0
-        });
-        
         const projectFile: ProjectFile = {
           ...file,
           importedFiles: [],

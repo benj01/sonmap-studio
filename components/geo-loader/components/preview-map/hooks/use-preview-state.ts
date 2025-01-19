@@ -95,7 +95,7 @@ export function usePreviewState({
         setState(prev => ({ ...prev, loading: true }));
 
         // Update preview manager options
-        previewManager.setOptionsWithValidation({
+        previewManager.setOptions({
           viewportBounds,
           visibleLayers,
           enableCaching: true

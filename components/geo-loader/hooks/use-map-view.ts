@@ -58,8 +58,8 @@ export function useMapView(
       // Validate Swiss coordinates if converting from Swiss system
       if (isSwissSystem(fromSystem)) {
         const isValidSwissCoord = (coord: number, isX: boolean) => {
-          const [minX, maxX] = [2485000, 2834000];
-          const [minY, maxY] = [1075000, 1299000];
+          const [minX, maxX] = [2000000, 3000000];
+          const [minY, maxY] = [1000000, 2000000];
           return isX 
             ? coord >= minX && coord <= maxX
             : coord >= minY && coord <= maxY;
@@ -174,8 +174,21 @@ export function useMapView(
       }
     }
 
-    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)) {
-      console.warn('Invalid bounds calculated, using default center');
+    // Validate bounds values
+    if (!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY) ||
+        minX === Infinity || minY === Infinity || maxX === -Infinity || maxY === -Infinity) {
+      console.warn('[DEBUG] Invalid bounds calculated:', { minX, minY, maxX, maxY });
+      return {
+        minX: DEFAULT_CENTER.longitude - 0.1,
+        minY: DEFAULT_CENTER.latitude - 0.1,
+        maxX: DEFAULT_CENTER.longitude + 0.1,
+        maxY: DEFAULT_CENTER.latitude + 0.1
+      };
+    }
+
+    // Validate bounds are reasonable
+    if (Math.abs(maxX - minX) > 360 || Math.abs(maxY - minY) > 180) {
+      console.warn('[DEBUG] Unreasonable bounds calculated:', { minX, minY, maxX, maxY });
       return {
         minX: DEFAULT_CENTER.longitude - 0.1,
         minY: DEFAULT_CENTER.latitude - 0.1,

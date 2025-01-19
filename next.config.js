@@ -10,12 +10,28 @@ const nextConfig = {
       };
     }
 
+    // Enable WebAssembly support
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true
+    };
+
     // Ensure proper module loading
     config.module.rules.push({
       test: /\.m?js$/,
       type: 'javascript/auto',
       resolve: {
         fullySpecified: false
+      }
+    });
+
+    // Configure WebAssembly loading for web target
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'asset/resource',
+      generator: {
+        filename: 'static/wasm/[hash][ext]'
       }
     });
 
@@ -32,11 +48,6 @@ const nextConfig = {
     });
 
     return config;
-  },
-  
-  // Enable experimental features for better module support
-  experimental: {
-    //esmExternals: 'loose'
   }
 };
 

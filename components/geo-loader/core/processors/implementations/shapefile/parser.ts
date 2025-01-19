@@ -1,6 +1,7 @@
 import { ShapefileProcessorOptions, ShapefileAnalyzeResult, ShapefileRecord, ShapeType } from './types';
 import { ValidationError } from '../../../errors/types';
 import { Position } from 'geojson';
+import { COORDINATE_SYSTEM_BOUNDS, CoordinateSystemId } from '../../../../core/coordinate-systems/coordinate-system-manager';
 
 interface ParseOptions {
   parseDbf?: boolean;
@@ -13,6 +14,7 @@ interface ParseOptions {
     targetSrid?: number;
     force2D?: boolean;
   };
+  coordinateSystem?: CoordinateSystemId;
 }
 
 interface AnalyzeOptions {
@@ -41,10 +43,30 @@ export class ShapefileParser {
   private static readonly HEADER_LENGTH = 100;
   private static readonly INT32_LENGTH = 4;
   private static readonly DOUBLE_LENGTH = 8;
+  private coordinateSystem: CoordinateSystemId;
 
   constructor(options: ShapefileProcessorOptions = {}) {
     this.options = options;
+    this.coordinateSystem = (options.coordinateSystem as CoordinateSystemId) || 'EPSG:4326'; // Default to WGS84
     console.debug('[ShapefileParser] Initialized with options:', options);
+  }
+
+  private isReasonableCoordinate(x: number, y: number): boolean {
+    const bounds = COORDINATE_SYSTEM_BOUNDS[this.coordinateSystem];
+    if (!bounds) {
+      console.warn(`[ShapefileParser] No bounds defined for coordinate system: ${this.coordinateSystem}`);
+      return true; // Allow coordinates if bounds aren't defined
+    }
+
+    const isValid = x >= bounds.x.min && x <= bounds.x.max &&
+                   y >= bounds.y.min && y <= bounds.y.max;
+    
+    if (!isValid) {
+      console.warn(`[ShapefileParser] Coordinates out of bounds for ${this.coordinateSystem}:`, 
+        { x, y, bounds });
+    }
+    
+    return isValid;
   }
 
   /**
@@ -87,6 +109,16 @@ export class ShapefileParser {
       mMax?: number;
     };
   }> {
+    // Validate buffer size
+    if (!buffer || buffer.byteLength < ShapefileParser.HEADER_LENGTH) {
+      throw new ValidationError(
+        'Invalid shapefile: header buffer too small',
+        'INVALID_HEADER_SIZE',
+        undefined,
+        { bufferLength: buffer?.byteLength, requiredLength: ShapefileParser.HEADER_LENGTH }
+      );
+    }
+
     console.debug('[ShapefileParser] Reading header from buffer:', {
       bufferLength: buffer.byteLength,
       headerLength: ShapefileParser.HEADER_LENGTH
@@ -94,13 +126,48 @@ export class ShapefileParser {
 
     const view = new DataView(buffer);
     
-    // Read header values
+    // Read and validate header values
     const fileCode = view.getInt32(0, false); // big-endian
-    const fileLength = view.getInt32(24, false) * 2; // big-endian, in 16-bit words
-    const version = view.getInt32(28, true); // little-endian
-    const shapeType = view.getInt32(32, true); // little-endian
+    if (fileCode !== 9994) {
+      throw new ValidationError(
+        'Invalid shapefile: incorrect file code',
+        'INVALID_FILE_CODE',
+        undefined,
+        { fileCode }
+      );
+    }
 
-    // Read bounding box
+    const fileLength = view.getInt32(24, false) * 2; // big-endian, in 16-bit words
+    if (fileLength <= 0 || fileLength > buffer.byteLength) {
+      throw new ValidationError(
+        'Invalid shapefile: incorrect file length',
+        'INVALID_FILE_LENGTH',
+        undefined,
+        { fileLength, bufferLength: buffer.byteLength }
+      );
+    }
+
+    const version = view.getInt32(28, true); // little-endian
+    if (version !== 1000) {
+      throw new ValidationError(
+        'Invalid shapefile: unsupported version',
+        'INVALID_VERSION',
+        undefined,
+        { version }
+      );
+    }
+
+    const shapeType = view.getInt32(32, true); // little-endian
+    if (shapeType < 0 || !Object.values(ShapeType).includes(shapeType)) {
+      throw new ValidationError(
+        'Invalid shapefile: unsupported shape type',
+        'INVALID_SHAPE_TYPE',
+        undefined,
+        { shapeType }
+      );
+    }
+
+    // Read and validate bounding box
     const xMin = view.getFloat64(36, true);
     const yMin = view.getFloat64(44, true);
     const xMax = view.getFloat64(52, true);
@@ -109,6 +176,26 @@ export class ShapefileParser {
     const zMax = view.getFloat64(76, true);
     const mMin = view.getFloat64(84, true);
     const mMax = view.getFloat64(92, true);
+
+    // Validate coordinate values
+    if (!isFinite(xMin) || !isFinite(yMin) || !isFinite(xMax) || !isFinite(yMax)) {
+      throw new ValidationError(
+        'Invalid shapefile: non-finite bounding box coordinates',
+        'INVALID_BBOX',
+        undefined,
+        { bbox: { xMin, yMin, xMax, yMax } }
+      );
+    }
+
+    // Validate bounding box logic
+    if (xMin > xMax || yMin > yMax) {
+      throw new ValidationError(
+        'Invalid shapefile: invalid bounding box ranges',
+        'INVALID_BBOX_RANGE',
+        undefined,
+        { bbox: { xMin, yMin, xMax, yMax } }
+      );
+    }
 
     const header = {
       fileCode,
@@ -120,10 +207,10 @@ export class ShapefileParser {
         yMin,
         xMax,
         yMax,
-        zMin,
-        zMax,
-        mMin,
-        mMax
+        zMin: isFinite(zMin) ? zMin : undefined,
+        zMax: isFinite(zMax) ? zMax : undefined,
+        mMin: isFinite(mMin) ? mMin : undefined,
+        mMax: isFinite(mMax) ? mMax : undefined
       }
     };
 
@@ -140,25 +227,62 @@ export class ShapefileParser {
   } {
     console.debug('[ShapefileParser] Reading record at offset:', offset);
 
-    // Read record header
-    const recordNumber = view.getInt32(offset, false); // big-endian
-    const contentLength = view.getInt32(offset + 4, false) * 2; // big-endian, in 16-bit words
-    offset += 8;
+    try {
+      // Validate offset is within buffer
+      if (offset < 0 || offset >= view.byteLength) {
+        throw new ValidationError(
+          'Invalid record offset',
+          'INVALID_RECORD_OFFSET',
+          undefined,
+          { offset, bufferLength: view.byteLength }
+        );
+      }
 
-    // Read shape type
-    const shapeType = view.getInt32(offset, true); // little-endian
-    offset += 4;
+      // Read and validate record header
+      const recordNumber = view.getInt32(offset, false); // big-endian
+      if (recordNumber <= 0) {
+        throw new ValidationError(
+          'Invalid record number',
+          'INVALID_RECORD_NUMBER',
+          undefined,
+          { recordNumber }
+        );
+      }
 
-    console.debug('[ShapefileParser] Record header:', {
-      recordNumber,
-      contentLength,
-      shapeType,
-      shapeTypeName: ShapeType[shapeType]
-    });
+      const contentLength = view.getInt32(offset + 4, false) * 2; // big-endian, in 16-bit words
+      if (contentLength <= 0 || offset + 8 + contentLength > view.byteLength) {
+        throw new ValidationError(
+          'Invalid content length',
+          'INVALID_CONTENT_LENGTH',
+          undefined,
+          { contentLength, remainingBytes: view.byteLength - offset - 8 }
+        );
+      }
 
-    // Read shape data based on type
-    let data: ShapeData;
-    switch (shapeType) {
+      offset += 8;
+
+      // Read and validate shape type
+      const shapeType = view.getInt32(offset, true); // little-endian
+      if (shapeType < 0 || !Object.values(ShapeType).includes(shapeType)) {
+        throw new ValidationError(
+          'Invalid shape type',
+          'INVALID_SHAPE_TYPE',
+          undefined,
+          { shapeType }
+        );
+      }
+      offset += 4;
+
+      console.debug('[ShapefileParser] Record header:', {
+        recordNumber,
+        contentLength,
+        shapeType,
+        shapeTypeName: ShapeType[shapeType]
+      });
+
+      // Read shape data based on type
+      let data: ShapeData;
+      switch (shapeType) {
       case ShapeType.POINT:
       case ShapeType.POINTZ:
       case ShapeType.POINTM:
@@ -187,27 +311,94 @@ export class ShapefileParser {
         throw new Error(`Unsupported shape type: ${shapeType}`);
     }
 
-    console.debug('[ShapefileParser] Record data:', {
-      type: ShapeType[shapeType],
-      coordinates: data.coordinates,
-      bbox: data.bbox,
-      nextOffset: offset
-    });
+      // Validate data was read correctly
+      if (!data || !data.coordinates) {
+        throw new ValidationError(
+          'Invalid shape data',
+          'INVALID_SHAPE_DATA',
+          undefined,
+          { shapeType, offset }
+        );
+      }
 
-    return {
-      record: {
-        header: {
-          recordNumber,
-          contentLength
-        },
-        shapeType,
-        data: {
-          coordinates: data.coordinates,
-          bbox: data.bbox
+      // Validate bounding box if present
+      if (data.bbox) {
+        const { xMin, yMin, xMax, yMax } = data.bbox;
+        if (!isFinite(xMin) || !isFinite(yMin) || !isFinite(xMax) || !isFinite(yMax)) {
+          console.warn('[ShapefileParser] Invalid bounding box in record:', {
+            recordNumber,
+            bbox: data.bbox
+          });
         }
-      },
-      nextOffset: offset
-    };
+      }
+
+      console.debug('[ShapefileParser] Record data:', {
+        type: ShapeType[shapeType],
+        coordinates: data.coordinates,
+        bbox: data.bbox,
+        nextOffset: offset
+      });
+
+      return {
+        record: {
+          header: {
+            recordNumber,
+            contentLength
+          },
+          shapeType,
+          data: {
+            coordinates: data.coordinates,
+            bbox: data.bbox
+          }
+        },
+        nextOffset: offset
+      };
+    } catch (error) {
+      // Log the error but continue with next record
+      console.error('[ShapefileParser] Error reading record:', {
+        offset,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      
+      // Create safe default values
+      let safeOffset = offset;
+      let safeRecordNumber = 0;
+      let safeContentLength = 0;
+      let safeShapeType = 0;
+
+      // Try to read header values even if later parsing failed
+      try {
+        if (offset + 8 <= view.byteLength) {
+          safeRecordNumber = view.getInt32(offset, false);
+          safeContentLength = view.getInt32(offset + 4, false) * 2;
+          if (offset + 12 <= view.byteLength) {
+            safeShapeType = view.getInt32(offset + 8, true);
+          }
+        }
+      } catch (headerError) {
+        console.warn('[ShapefileParser] Failed to read record header:', headerError);
+      }
+
+      // Calculate safe skip offset
+      const skipOffset = offset + Math.max(12, safeContentLength); // At least skip header
+      console.debug('[ShapefileParser] Skipping to next record at offset:', skipOffset);
+      
+      // Return empty record with safe values
+      return {
+        record: {
+          header: {
+            recordNumber: safeRecordNumber,
+            contentLength: safeContentLength
+          },
+          shapeType: safeShapeType,
+          data: {
+            coordinates: [],
+            bbox: { xMin: 0, yMin: 0, xMax: 0, yMax: 0 }
+          }
+        },
+        nextOffset: skipOffset
+      };
+    }
   }
 
   /**
@@ -216,6 +407,27 @@ export class ShapefileParser {
   private readPoint(view: DataView, offset: number): ShapeData {
     const x = view.getFloat64(offset, true);
     const y = view.getFloat64(offset + 8, true);
+
+    // Validate coordinates
+    if (!isFinite(x) || !isFinite(y)) {
+      console.warn('[ShapefileParser] Invalid point coordinates:', { x, y });
+      return {
+        coordinates: [0, 0], // Return origin point for invalid coordinates
+        bbox: { xMin: 0, yMin: 0, xMax: 0, yMax: 0 },
+        length: 16
+      };
+    }
+
+      // Validate coordinate ranges
+      if (!this.isReasonableCoordinate(x, y)) {
+        console.warn(`[ShapefileParser] Coordinates out of bounds for ${this.coordinateSystem}:`, { x, y });
+        return {
+          coordinates: [0, 0],
+          bbox: { xMin: 0, yMin: 0, xMax: 0, yMax: 0 },
+          length: 16
+        };
+      }
+
     const coordinates: Position = [x, y];
     const bbox = this.calculateBoundingBox([coordinates]);
 
@@ -248,50 +460,104 @@ export class ShapefileParser {
     const numPoints = view.getInt32(offset + 36, true);
     let currentOffset = offset + 40;
 
-    console.debug('[ShapefileParser] Reading polyline:', {
+    console.debug('[ShapefileParser] Reading polyline structure:', {
       offset,
       bbox,
       numParts,
       numPoints
     });
 
+    // Validate basic structure
+    if (numParts <= 0 || numPoints <= 0) {
+      console.warn('[ShapefileParser] Invalid polyline structure:', { numParts, numPoints });
+      return {
+        coordinates: [],
+        bbox,
+        length: 40 // Return minimal length to skip invalid record
+      };
+    }
+
     // Read parts array
     const parts: number[] = [];
     for (let i = 0; i < numParts; i++) {
-      parts.push(view.getInt32(currentOffset, true));
+      const partIndex = view.getInt32(currentOffset, true);
+      if (partIndex < 0) {
+        console.warn('[ShapefileParser] Invalid part index:', { partIndex, partNumber: i });
+        continue;
+      }
+      parts.push(partIndex);
       currentOffset += 4;
     }
 
-    // Read all points first
+    // Validate parts array
+    if (parts.length === 0) {
+      console.warn('[ShapefileParser] No valid parts found');
+      return {
+        coordinates: [],
+        bbox,
+        length: currentOffset - offset
+      };
+    }
+
+    // Read all points with validation
     const allPoints: Position[] = [];
     for (let i = 0; i < numPoints; i++) {
       const x = view.getFloat64(currentOffset, true);
       const y = view.getFloat64(currentOffset + 8, true);
+      
+      // Validate coordinates
+      if (!isFinite(x) || !isFinite(y)) {
+        console.warn('[ShapefileParser] Invalid polyline coordinates:', { x, y, pointIndex: i });
+        continue;
+      }
+      
       allPoints.push([x, y]);
       currentOffset += 16;
     }
 
-    // Split points into parts
-    const coordinates: Position[][] = [];
-    for (let i = 0; i < numParts; i++) {
+    // Split points into parts with validation
+    const lines: Position[][] = [];
+    for (let i = 0; i < parts.length; i++) {
       const start = parts[i];
-      const end = i + 1 < numParts ? parts[i + 1] : numPoints;
-      const partPoints = allPoints.slice(start, end);
-      coordinates.push(partPoints);
+      const end = i + 1 < parts.length ? parts[i + 1] : numPoints;
+      
+      // Validate part indices
+      if (start < 0 || end > allPoints.length || start >= end) {
+        console.warn('[ShapefileParser] Invalid line part indices:', { start, end, partIndex: i });
+        continue;
+      }
+
+      const line = allPoints.slice(start, end);
+      
+      // Validate line has at least 2 points
+      if (line.length < 2) {
+        console.warn('[ShapefileParser] Line too short:', { lineLength: line.length, partIndex: i });
+        continue;
+      }
+
+      // Validate line coordinates are reasonable
+      const isReasonable = line.every(([x, y]) => {
+        const reasonable = this.isReasonableCoordinate(x, y);
+        if (!reasonable) {
+          console.warn(`[ShapefileParser] Line coordinates out of bounds for ${this.coordinateSystem}:`, { x, y });
+        }
+        return reasonable;
+      });
+
+      if (isReasonable) {
+        lines.push(line);
+      }
     }
 
     console.debug('[ShapefileParser] Polyline read complete:', {
-      numParts,
-      parts,
-      totalPoints: numPoints,
-      pointsPerPart: coordinates.map(part => part.length),
+      numParts: lines.length,
+      lineSizes: lines.map(l => l.length),
       bbox,
       length: currentOffset - offset
     });
 
-    // Always return array of parts for proper MultiLineString handling
     return {
-      coordinates: coordinates,
+      coordinates: lines,
       bbox,
       length: currentOffset - offset
     };
@@ -302,18 +568,95 @@ export class ShapefileParser {
    */
   private readPolygon(view: DataView, offset: number): ShapeData {
     console.debug('[ShapefileParser] Reading polygon at offset:', offset);
-    const result = this.readPolyline(view, offset);
     
+    // Read bounding box
+    const bbox = {
+      xMin: view.getFloat64(offset, true),
+      yMin: view.getFloat64(offset + 8, true),
+      xMax: view.getFloat64(offset + 16, true),
+      yMax: view.getFloat64(offset + 24, true)
+    };
+
+    const numParts = view.getInt32(offset + 32, true);
+    const numPoints = view.getInt32(offset + 36, true);
+    let currentOffset = offset + 40;
+
+    console.debug('[ShapefileParser] Reading polygon structure:', {
+      offset,
+      bbox,
+      numParts,
+      numPoints
+    });
+
+    // Read parts array (ring start indices)
+    const parts: number[] = [];
+    for (let i = 0; i < numParts; i++) {
+      parts.push(view.getInt32(currentOffset, true));
+      currentOffset += 4;
+    }
+
+    // Read all points
+    const allPoints: Position[] = [];
+    for (let i = 0; i < numPoints; i++) {
+      const x = view.getFloat64(currentOffset, true);
+      const y = view.getFloat64(currentOffset + 8, true);
+      
+      // Validate coordinates
+      if (!isFinite(x) || !isFinite(y)) {
+        console.warn('[ShapefileParser] Invalid polygon coordinates:', { x, y, pointIndex: i });
+        continue;
+      }
+      
+      allPoints.push([x, y]);
+      currentOffset += 16;
+    }
+
+    // Split points into rings and validate each ring
+    const rings: Position[][] = [];
+    for (let i = 0; i < numParts; i++) {
+      const start = parts[i];
+      const end = i + 1 < numParts ? parts[i + 1] : numPoints;
+      
+      if (start < 0 || end > allPoints.length || start >= end) {
+        console.warn('[ShapefileParser] Invalid ring indices:', { start, end, ringIndex: i });
+        continue;
+      }
+
+      const ring = allPoints.slice(start, end);
+      
+      // Validate ring has at least 4 points (3 points + closing point)
+      if (ring.length < 4) {
+        console.warn('[ShapefileParser] Ring too short:', { ringLength: ring.length, ringIndex: i });
+        continue;
+      }
+
+      // Validate ring is closed (first point equals last point)
+      const firstPoint = ring[0];
+      const lastPoint = ring[ring.length - 1];
+      if (firstPoint[0] !== lastPoint[0] || firstPoint[1] !== lastPoint[1]) {
+        console.warn('[ShapefileParser] Ring not closed:', { 
+          firstPoint, 
+          lastPoint, 
+          ringIndex: i 
+        });
+        // Auto-close the ring
+        ring.push([...firstPoint]);
+      }
+
+      rings.push(ring);
+    }
+
     console.debug('[ShapefileParser] Polygon read complete:', {
-      numRings: 1,
-      pointsInRing: (result.coordinates as Position[]).length,
-      bbox: result.bbox
+      numRings: rings.length,
+      ringSizes: rings.map(r => r.length),
+      bbox,
+      length: currentOffset - offset
     });
 
     return {
-      coordinates: [result.coordinates as Position[]],
-      bbox: result.bbox,
-      length: result.length
+      coordinates: rings,
+      bbox,
+      length: currentOffset - offset
     };
   }
 
@@ -332,6 +675,16 @@ export class ShapefileParser {
     const numPoints = view.getInt32(offset + 32, true);
     let currentOffset = offset + 36;
 
+    // Validate number of points
+    if (numPoints <= 0) {
+      console.warn('[ShapefileParser] Invalid multipoint structure:', { numPoints });
+      return {
+        coordinates: [],
+        bbox,
+        length: 36 // Return minimal length to skip invalid record
+      };
+    }
+
     console.debug('[ShapefileParser] Reading multipoint:', {
       offset,
       bbox,
@@ -342,12 +695,38 @@ export class ShapefileParser {
     for (let i = 0; i < numPoints; i++) {
       const x = view.getFloat64(currentOffset, true);
       const y = view.getFloat64(currentOffset + 8, true);
+
+      // Validate coordinates
+      if (!isFinite(x) || !isFinite(y)) {
+        console.warn('[ShapefileParser] Invalid multipoint coordinates:', { x, y, pointIndex: i });
+        currentOffset += 16;
+        continue;
+      }
+
+      // Validate coordinate ranges
+      if (!this.isReasonableCoordinate(x, y)) {
+        console.warn(`[ShapefileParser] Multipoint coordinates out of bounds for ${this.coordinateSystem}:`, { x, y, pointIndex: i });
+        currentOffset += 16;
+        continue;
+      }
+
       coordinates.push([x, y]);
       currentOffset += 16;
     }
 
+    // Validate we have at least one valid point
+    if (coordinates.length === 0) {
+      console.warn('[ShapefileParser] No valid points found in multipoint');
+      return {
+        coordinates: [],
+        bbox,
+        length: currentOffset - offset
+      };
+    }
+
     console.debug('[ShapefileParser] Multipoint read complete:', {
-      numCoordinates: coordinates.length,
+      totalPoints: numPoints,
+      validPoints: coordinates.length,
       bbox,
       length: currentOffset - offset
     });

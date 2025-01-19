@@ -32,20 +32,52 @@ function toUint32Array(arr: number[]): Uint32Array {
 
 let wasmModule: ShapefileProcessor | null = null;
 let isInitialized = false;
+let initializationPromise: Promise<void> | null = null;
 
 /**
- * Initialize WebAssembly module
+ * Initialize WebAssembly module with proper synchronization
  */
 export async function initWasm(): Promise<void> {
-  if (!isInitialized) {
+  if (initializationPromise) {
+    await initializationPromise;
+    return;
+  }
+
+  if (isInitialized) {
+    return;
+  }
+
+  initializationPromise = (async () => {
     try {
-      await init();
+      console.debug('[WASM] Initializing WebAssembly module...');
+      
+      // Initialize with explicit memory settings
+      await init({
+        memory: new WebAssembly.Memory({ initial: 16, maximum: 100 })
+      });
+      
       wasmModule = new ShapefileProcessor();
       isInitialized = true;
+      console.debug('[WASM] WebAssembly module initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize WebAssembly module:', error);
+      console.error('[WASM] Failed to initialize WebAssembly module:', error);
+      isInitialized = false;
+      wasmModule = null;
       throw error;
+    } finally {
+      initializationPromise = null;
     }
+  })();
+
+  await initializationPromise;
+}
+
+/**
+ * Ensure WebAssembly module is initialized
+ */
+async function ensureInitialized(): Promise<void> {
+  if (!isInitialized || !wasmModule) {
+    await initWasm();
   }
 }
 
@@ -54,21 +86,38 @@ export async function initWasm(): Promise<void> {
  */
 export class WasmGeometryConverter {
   /**
-   * Calculate bounds for coordinates
+   * Calculate bounds for coordinates with validation
    */
   calculateBounds(coordinates: number[]): [number, number, number, number] {
     try {
-      if (!isInitialized) {
+      if (!coordinates || coordinates.length < 2) {
+        throw new Error('Invalid coordinates array');
+      }
+
+      if (!coordinates.every(isFinite)) {
+        throw new Error('Coordinates contain non-finite values');
+      }
+
+      if (!isInitialized || !wasmModule) {
         throw new Error('WebAssembly module not initialized. Call initWasm() first.');
       }
-      // calculate_bounds is not exported by the Wasm module, we'll use the processor instead
-      if (!wasmModule) {
-        throw new Error('WebAssembly module not initialized. Call initWasm() first.');
+
+      const coordArray = toFloat64Array(coordinates);
+      const bounds = wasmModule.process_geometry(0, coordArray) as number[];
+
+      // Validate bounds
+      if (!bounds || bounds.length !== 4 || !bounds.every(isFinite)) {
+        throw new Error('Invalid bounds calculated');
       }
-      const bounds = wasmModule.process_geometry(0, toFloat64Array(coordinates)) as number[];
+
+      console.debug('[WASM] Bounds calculated:', {
+        coordinates: coordinates.slice(0, 4) + '...',
+        bounds
+      });
+
       return [bounds[0], bounds[1], bounds[2], bounds[3]];
     } catch (error) {
-      console.error('Failed to calculate bounds:', error);
+      console.error('[WASM] Failed to calculate bounds:', error);
       throw error;
     }
   }

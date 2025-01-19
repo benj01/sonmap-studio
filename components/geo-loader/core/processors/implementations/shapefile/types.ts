@@ -2,6 +2,7 @@ import { ProcessorOptions, PreviewData } from '../../base/types';
 import { PostGISBatchOptions } from '../../../../types/postgis';
 import { ShapefileRecord, ShapefileData, ShapefileAttributes } from './types/records';
 import { Feature } from 'geojson';
+import { CoordinateSystemId } from '../../../../core/coordinate-systems/coordinate-system-manager';
 
 export type { ShapefileRecord, ShapefileData, ShapefileAttributes };
 
@@ -82,6 +83,8 @@ export type ShapefilePreviewData = PreviewData<ShapefileRecord, Feature>;
  * Shapefile processor options
  */
 export interface ShapefileProcessorOptions extends ProcessorOptions {
+  /** Coordinate system of the input data */
+  coordinateSystem?: CoordinateSystemId;
   /** Whether to import DBF attributes */
   importAttributes?: boolean;
   /** Whether to validate geometry */

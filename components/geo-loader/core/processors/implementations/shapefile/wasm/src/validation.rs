@@ -6,6 +6,12 @@ const HEADER_LENGTH: usize = 100;
 const FILE_CODE: i32 = 9994;
 const VERSION: i32 = 1000;
 
+// Swiss LV95 coordinate system bounds
+const SWISS_LV95_X_MIN: f64 = 2000000.0;
+const SWISS_LV95_X_MAX: f64 = 3000000.0;
+const SWISS_LV95_Y_MIN: f64 = 1000000.0;
+const SWISS_LV95_Y_MAX: f64 = 2000000.0;
+
 #[derive(Serialize)]
 pub struct ValidationDetails {
     code: String,
@@ -140,6 +146,17 @@ pub fn validate_point_coordinates(
             x, y, part_index, point_index
         )));
     }
+
+    // Validate Swiss LV95 coordinate ranges
+    if x < SWISS_LV95_X_MIN || x > SWISS_LV95_X_MAX || y < SWISS_LV95_Y_MIN || y > SWISS_LV95_Y_MAX {
+        return Err(JsError::new(&format!(
+            "Invalid shapefile: coordinates ({}, {}) at part {}, point {} outside Swiss LV95 bounds ({}-{}, {}-{})",
+            x, y, part_index, point_index,
+            SWISS_LV95_X_MIN, SWISS_LV95_X_MAX,
+            SWISS_LV95_Y_MIN, SWISS_LV95_Y_MAX
+        )));
+    }
+
     Ok(())
 }
 

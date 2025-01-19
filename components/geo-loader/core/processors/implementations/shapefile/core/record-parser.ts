@@ -241,7 +241,17 @@ export class RecordParser {
       
       if (points.length >= 2) {
         lineStrings.push(points);
+      } else {
+        console.warn(`[RecordParser] Skipping polyline part ${i} with insufficient points (${points.length})`);
       }
+    }
+
+    // Ensure we have at least one valid linestring
+    if (lineStrings.length === 0) {
+      throw new ValidationError(
+        'Invalid polyline: no valid parts found (all parts have less than 2 points)',
+        'SHAPEFILE_PARSE_ERROR'
+      );
     }
 
     return {

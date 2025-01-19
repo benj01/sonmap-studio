@@ -123,6 +123,14 @@ export function useFileAnalysis({
 
       // Initialize preview manager with streaming support and matching visibility state
       console.log('[DEBUG] Creating preview manager...');
+      // Validate coordinate system
+      if (!result.coordinateSystem) {
+        throw new GeoLoaderError(
+          'No coordinate system detected in analysis result',
+          'COORDINATE_SYSTEM_ERROR'
+        );
+      }
+
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
         visibleLayers: initialVisibleLayers,

@@ -1,4 +1,4 @@
-import { StreamProcessor } from '../../stream/stream-processor';
+ import { StreamProcessor } from '../../stream/stream-processor';
 import { StreamProcessorResult, StreamProcessorEvents } from '../../stream/types';
 import { AnalyzeResult, ProcessorResult } from '../../base/types';
 import { Feature, FeatureCollection, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, Geometry, Position } from 'geojson';
@@ -181,111 +181,240 @@ export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature
         if (!coordinateSystem) {
           console.debug('[ShapefileProcessor] Attempting to detect coordinate system from features');
           const previewFeatures = convertToGeoJSON(result.preview);
-          const detectedSystem = await coordinateSystemManager.detect(previewFeatures);
-          
-          if (detectedSystem) {
-            console.debug('[ShapefileProcessor] Detected coordinate system from features:', detectedSystem);
-            coordinateSystem = detectedSystem;
-          } else {
+
+          // Calculate coordinate ranges for better detection
+          const ranges = {
+            minX: Infinity,
+            maxX: -Infinity,
+            minY: Infinity,
+            maxY: -Infinity
+          };
+
+          previewFeatures.forEach(feature => {
+            if (!feature.geometry) return;
+
+            const processCoords = (coords: any) => {
+              if (!Array.isArray(coords)) return;
+              if (typeof coords[0] === 'number') {
+                const [x, y] = coords;
+                if (isFinite(x) && isFinite(y)) {
+                  ranges.minX = Math.min(ranges.minX, x);
+                  ranges.maxX = Math.max(ranges.maxX, x);
+                  ranges.minY = Math.min(ranges.minY, y);
+                  ranges.maxY = Math.max(ranges.maxY, y);
+                }
+              } else {
+                coords.forEach(processCoords);
+              }
+            };
+
+            processCoords(feature.geometry.coordinates);
+          });
+
+          console.debug('[ShapefileProcessor] Coordinate ranges:', ranges);
+
+          // More precise coordinate system detection
+          if (ranges.minX !== Infinity && ranges.maxX !== -Infinity) {
+            // Check for Swiss LV95 (typical ranges for Switzerland)
+            if (ranges.minX >= 2485000 && ranges.maxX <= 2834000 &&
+                ranges.minY >= 1075000 && ranges.maxY <= 1299000) {
+              console.debug('[ShapefileProcessor] Detected Swiss LV95 coordinates');
+              coordinateSystem = COORDINATE_SYSTEMS.SWISS_LV95;
+            }
+            // Check for Swiss LV03
+            else if (ranges.minX >= 485000 && ranges.maxX <= 834000 &&
+                     ranges.minY >= 75000 && ranges.maxY <= 299000) {
+              console.debug('[ShapefileProcessor] Detected Swiss LV03 coordinates');
+              coordinateSystem = COORDINATE_SYSTEMS.SWISS_LV03;
+            }
+            // Check for WGS84
+            else if (ranges.minX >= -180 && ranges.maxX <= 180 &&
+                     ranges.minY >= -90 && ranges.maxY <= 90) {
+              console.debug('[ShapefileProcessor] Detected WGS84 coordinates');
+              coordinateSystem = COORDINATE_SYSTEMS.WGS84;
+            }
+            // If ranges don't match any known system, try to infer from scale
+            else {
+              const xRange = ranges.maxX - ranges.minX;
+              const yRange = ranges.maxY - ranges.minY;
+              
+              if (xRange > 1000000 || yRange > 1000000) {
+                console.debug('[ShapefileProcessor] Large coordinate ranges suggest Swiss LV95');
+                coordinateSystem = COORDINATE_SYSTEMS.SWISS_LV95;
+              } else if (xRange > 100000 || yRange > 100000) {
+                console.debug('[ShapefileProcessor] Medium coordinate ranges suggest Swiss LV03');
+                coordinateSystem = COORDINATE_SYSTEMS.SWISS_LV03;
+              } else {
+                console.debug('[ShapefileProcessor] Small coordinate ranges suggest WGS84');
+                coordinateSystem = COORDINATE_SYSTEMS.WGS84;
+              }
+            }
+          }
+
+          if (!coordinateSystem) {
             console.debug('[ShapefileProcessor] Could not detect coordinate system from features');
           }
         }
 
-        // Default to Swiss LV95 if still no coordinate system detected
+        // Default to WGS84 if still no coordinate system detected
         if (!coordinateSystem) {
-          console.debug('[ShapefileProcessor] No coordinate system detected, defaulting to Swiss LV95');
-          coordinateSystem = COORDINATE_SYSTEMS.SWISS_LV95;
+          console.debug('[ShapefileProcessor] No coordinate system detected, defaulting to WGS84');
+          coordinateSystem = COORDINATE_SYSTEMS.WGS84;
         }
       }
 
-      // Convert preview records to GeoJSON features and ensure coordinate transformation
+      // Convert preview records to GeoJSON features with validation
       let previewFeatures = convertToGeoJSON(result.preview);
 
-      // Always transform coordinates to WGS84 for preview
-      console.debug('[ShapefileProcessor] Transforming coordinates:', {
-        from: coordinateSystem,
-        to: COORDINATE_SYSTEMS.WGS84,
-        featureCount: previewFeatures.length,
-        sampleCoords: previewFeatures[0]?.geometry ? getCoordinates(previewFeatures[0].geometry) : undefined
+      console.debug('[ShapefileProcessor] Initial preview features:', {
+        count: previewFeatures.length,
+        coordinateSystem,
+        firstFeature: previewFeatures[0] ? {
+          type: previewFeatures[0].geometry?.type,
+          coordinates: previewFeatures[0].geometry ? getCoordinates(previewFeatures[0].geometry) : undefined
+        } : null
       });
 
       try {
-        // Validate coordinates before transformation
+        // Step 1: Validate source coordinates
         previewFeatures = previewFeatures.filter(feature => {
+          if (!feature) {
+            console.warn('[ShapefileProcessor] Null feature found');
+            return false;
+          }
           if (!feature.geometry) {
             console.warn('[ShapefileProcessor] Feature missing geometry');
             return false;
           }
 
-          const validateCoord = (coord: number): boolean => 
-            typeof coord === 'number' && isFinite(coord) && !isNaN(coord);
+          const validateCoord = (coord: number): boolean => {
+            const valid = typeof coord === 'number' && isFinite(coord) && !isNaN(coord);
+            if (!valid) {
+              console.warn('[ShapefileProcessor] Invalid coordinate value:', coord);
+            }
+            return valid;
+          };
 
-          const validatePositions = (positions: any): boolean => {
-            if (!Array.isArray(positions)) return false;
+          const validatePositions = (positions: any, depth: number = 0): boolean => {
+            if (!Array.isArray(positions)) {
+              console.warn('[ShapefileProcessor] Expected array of positions, got:', typeof positions);
+              return false;
+            }
             
+            if (positions.length === 0) {
+              console.warn('[ShapefileProcessor] Empty positions array');
+              return false;
+            }
+
             if (typeof positions[0] === 'number') {
               // Single position [x, y]
-              return positions.length >= 2 && positions.every(validateCoord);
+              const valid = positions.length >= 2 && positions.every(validateCoord);
+              if (!valid) {
+                console.warn('[ShapefileProcessor] Invalid position:', positions);
+              }
+              return valid;
             } else if (Array.isArray(positions[0])) {
               // Array of positions [[x, y], ...]
-              return positions.every(pos => validatePositions(pos));
+              if (depth > 3) {
+                console.warn('[ShapefileProcessor] Nesting depth exceeds maximum (3)');
+                return false;
+              }
+              return positions.every(pos => validatePositions(pos, depth + 1));
             }
+            
+            console.warn('[ShapefileProcessor] Invalid position structure:', positions);
             return false;
           };
 
           try {
+            if (!feature.geometry) {
+              console.warn('[ShapefileProcessor] Feature missing geometry');
+              return false;
+            }
+
             const coordinates = getCoordinates(feature.geometry);
             const isValid = validatePositions(coordinates);
             
             if (!isValid) {
               console.warn('[ShapefileProcessor] Invalid coordinates in feature:', {
                 type: feature.geometry.type,
-                coordinates
+                coordinates: coordinates
               });
             }
             return isValid;
           } catch (error) {
-            console.warn('[ShapefileProcessor] Error validating coordinates:', error);
+            console.error('[ShapefileProcessor] Error validating coordinates:', error);
             return false;
           }
         });
 
-        console.debug('[ShapefileProcessor] Validated features before transformation:', {
-          originalCount: previewFeatures.length,
-          validFeatures: previewFeatures.length,
-          firstFeature: previewFeatures[0] ? {
-            type: previewFeatures[0].geometry.type,
-            coordinates: previewFeatures[0].geometry ? getCoordinates(previewFeatures[0].geometry) : undefined
-          } : null
+        console.debug('[ShapefileProcessor] Features after source validation:', {
+          originalCount: result.preview.length,
+          validCount: previewFeatures.length
         });
 
-        // Transform coordinates
+        if (previewFeatures.length === 0) {
+          throw new Error('No valid features found after source validation');
+        }
+
+        // Step 2: Transform coordinates to WGS84
+        console.debug('[ShapefileProcessor] Starting coordinate transformation:', {
+          from: coordinateSystem,
+          to: COORDINATE_SYSTEMS.WGS84,
+          featureCount: previewFeatures.length
+        });
+
         previewFeatures = await coordinateSystemManager.transform(
           previewFeatures,
           coordinateSystem || COORDINATE_SYSTEMS.SWISS_LV95,
           COORDINATE_SYSTEMS.WGS84
         );
 
-        // Validate transformed coordinates
+        // Step 3: Validate transformed coordinates
         previewFeatures = previewFeatures.filter(feature => {
-          if (!feature.geometry) return false;
+          if (!feature.geometry) {
+            console.warn('[ShapefileProcessor] Transformed feature missing geometry');
+            return false;
+          }
 
           try {
             const coordinates = getCoordinates(feature.geometry);
-            const coordStr = JSON.stringify(coordinates);
-            const isValid = coordStr.indexOf('null') === -1 &&
-                          coordStr.indexOf('NaN') === -1 &&
-                          coordStr.indexOf('Infinity') === -1;
             
+            // Validate transformed coordinates are within WGS84 bounds
+            const validateWGS84Coord = (coord: number, isLongitude: boolean): boolean => {
+              const valid = isFinite(coord) && !isNaN(coord) &&
+                          (isLongitude ? coord >= -180 && coord <= 180 : coord >= -90 && coord <= 90);
+              if (!valid) {
+                console.warn('[ShapefileProcessor] Invalid WGS84 coordinate:', {
+                  value: coord,
+                  type: isLongitude ? 'longitude' : 'latitude'
+                });
+              }
+              return valid;
+            };
+
+            const validateWGS84Positions = (positions: any): boolean => {
+              if (!Array.isArray(positions)) return false;
+              if (positions.length === 0) return false;
+
+              if (typeof positions[0] === 'number') {
+                return positions.length >= 2 &&
+                       validateWGS84Coord(positions[0], true) && // longitude
+                       validateWGS84Coord(positions[1], false);  // latitude
+              }
+              return positions.every(pos => validateWGS84Positions(pos));
+            };
+
+            const isValid = validateWGS84Positions(coordinates);
             if (!isValid) {
-              console.warn('[ShapefileProcessor] Invalid transformed coordinates:', {
+              console.warn('[ShapefileProcessor] Invalid WGS84 coordinates:', {
                 type: feature.geometry.type,
-                coordinates
+                coordinates: coordinates
               });
             }
             return isValid;
           } catch (error) {
-            console.warn('[ShapefileProcessor] Error validating transformed coordinates:', error);
+            console.error('[ShapefileProcessor] Error validating transformed coordinates:', error);
             return false;
           }
         });
