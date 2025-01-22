@@ -47,11 +47,32 @@ export class ShapefileParser {
 
   constructor(options: ShapefileProcessorOptions = {}) {
     this.options = options;
-    this.coordinateSystem = (options.coordinateSystem as CoordinateSystemId) || 'EPSG:4326'; // Default to WGS84
-    console.debug('[ShapefileParser] Initialized with options:', options);
+    this.coordinateSystem = options.coordinateSystem as CoordinateSystemId;
+    console.debug('[ShapefileParser] Initialized with options:', {
+      ...options,
+      coordinateSystem: this.coordinateSystem || 'not specified'
+    });
   }
 
   private isReasonableCoordinate(x: number, y: number): boolean {
+    if (!this.coordinateSystem) {
+      // If no coordinate system is specified, use coordinate ranges to detect
+      const isSwissLV95Range = x >= 2485000 && x <= 2834000 && y >= 1075000 && y <= 1299000;
+      const isSwissLV03Range = x >= 485000 && x <= 834000 && y >= 75000 && y <= 299000;
+      const isWGS84Range = Math.abs(x) <= 180 && Math.abs(y) <= 90;
+
+      if (isSwissLV95Range) {
+        this.coordinateSystem = 'EPSG:2056';
+        console.debug('[ShapefileParser] Detected Swiss LV95 coordinates:', { x, y });
+      } else if (isSwissLV03Range) {
+        this.coordinateSystem = 'EPSG:21781';
+        console.debug('[ShapefileParser] Detected Swiss LV03 coordinates:', { x, y });
+      } else if (isWGS84Range) {
+        this.coordinateSystem = 'EPSG:4326';
+        console.debug('[ShapefileParser] Detected WGS84 coordinates:', { x, y });
+      }
+    }
+
     const bounds = COORDINATE_SYSTEM_BOUNDS[this.coordinateSystem];
     if (!bounds) {
       console.warn(`[ShapefileParser] No bounds defined for coordinate system: ${this.coordinateSystem}`);

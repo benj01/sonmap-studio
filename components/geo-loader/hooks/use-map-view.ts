@@ -111,6 +111,45 @@ export function useMapView(
     }
   }, []);
 
+  // Transform bounds between coordinate systems
+  const transformBounds = useCallback(async (
+    bounds: Bounds,
+    fromSystem: CoordinateSystem,
+    toSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84
+  ): Promise<Bounds> => {
+    if (fromSystem === toSystem) return bounds;
+
+    try {
+      console.debug('[use-map-view] Transforming bounds:', {
+        from: fromSystem,
+        to: toSystem,
+        bounds
+      });
+
+      // Transform each corner
+      const corners = [
+        await transformCoordinates({ x: bounds.minX, y: bounds.minY }, fromSystem, toSystem),
+        await transformCoordinates({ x: bounds.minX, y: bounds.maxY }, fromSystem, toSystem),
+        await transformCoordinates({ x: bounds.maxX, y: bounds.minY }, fromSystem, toSystem),
+        await transformCoordinates({ x: bounds.maxX, y: bounds.maxY }, fromSystem, toSystem)
+      ];
+
+      // Calculate new bounds from transformed corners
+      const transformedBounds = {
+        minX: Math.min(...corners.map(c => c.x)),
+        minY: Math.min(...corners.map(c => c.y)),
+        maxX: Math.max(...corners.map(c => c.x)),
+        maxY: Math.max(...corners.map(c => c.y))
+      };
+
+      console.debug('[use-map-view] Transformed bounds:', transformedBounds);
+      return transformedBounds;
+    } catch (error) {
+      console.error('[use-map-view] Error transforming bounds:', error);
+      return bounds;
+    }
+  }, [transformCoordinates]);
+
   const calculateBoundsFromFeatures = useCallback(async (features: Feature[]): Promise<Bounds | null> => {
     if (!features.length) return null;
 
@@ -361,32 +400,61 @@ export function useMapView(
     }
   }, [viewState.longitude, viewState.latitude, viewState.zoom, initialBoundsSet, initialBounds, coordinateSystem]);
 
-  // Handle bounds updates after coordinate system verification
+  // Set initial bounds
   useEffect(() => {
-    const updateBounds = async () => {
-      try {
-        // Verify coordinate system support
-        const supported = isSwissSystem(coordinateSystem) || isWGS84System(coordinateSystem);
-        if (!supported) {
-          console.warn('[DEBUG] Unsupported coordinate system:', coordinateSystem);
-          return;
-        }
+    if (!initialBounds || initialBoundsSet) return;
 
-        if (initialBounds) {
-          console.debug('[DEBUG] Updating view with initial bounds:', {
-            bounds: initialBounds,
-            system: coordinateSystem
-          });
-          await updateViewFromBounds(initialBounds);
-        }
+    const setBounds = async () => {
+      try {
+        console.debug('[use-map-view] Setting initial bounds:', {
+          bounds: initialBounds,
+          system: coordinateSystem
+        });
+
+        // Transform bounds to WGS84 if needed
+        const wgs84Bounds = await transformBounds(initialBounds, coordinateSystem);
+        
+        // Add padding
+        const dx = (wgs84Bounds.maxX - wgs84Bounds.minX) * BOUNDS_PADDING_PERCENT;
+        const dy = (wgs84Bounds.maxY - wgs84Bounds.minY) * BOUNDS_PADDING_PERCENT;
+        const paddedBounds = {
+          minX: wgs84Bounds.minX - dx,
+          minY: wgs84Bounds.minY - dy,
+          maxX: wgs84Bounds.maxX + dx,
+          maxY: wgs84Bounds.maxY + dy
+        };
+
+        // Create viewport and get new view state
+        const viewport = new WebMercatorViewport({
+          width: window.innerWidth,
+          height: window.innerHeight
+        });
+
+        const { longitude, latitude, zoom } = viewport.fitBounds(
+          [[paddedBounds.minX, paddedBounds.minY], [paddedBounds.maxX, paddedBounds.maxY]],
+          { padding: 20 }
+        );
+
+        console.debug('[use-map-view] Setting view state:', {
+          longitude,
+          latitude,
+          zoom
+        });
+
+        setViewState(prev => ({
+          ...prev,
+          longitude,
+          latitude,
+          zoom
+        }));
+        setInitialBoundsSet(true);
       } catch (error) {
-        console.error('[DEBUG] Failed to update view from bounds:', error);
-        setViewState(prev => ({ ...prev, ...DEFAULT_CENTER }));
+        console.error('[use-map-view] Error setting initial bounds:', error);
       }
     };
 
-    updateBounds();
-  }, [initialBounds, coordinateSystem, updateViewFromBounds]);
+    setBounds();
+  }, [initialBounds, coordinateSystem, initialBoundsSet, transformBounds]);
 
   return {
     viewState,

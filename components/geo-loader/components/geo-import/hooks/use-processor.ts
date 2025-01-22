@@ -31,7 +31,7 @@ export function useProcessor({
       // Configure processor options
       const processorOptions: ProcessorOptions = {
         errorReporter,
-        coordinateSystem,
+        ...(coordinateSystem ? { coordinateSystem } : {}),
         ...options
       };
 

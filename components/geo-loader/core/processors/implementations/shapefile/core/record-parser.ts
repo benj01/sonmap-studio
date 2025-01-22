@@ -207,6 +207,13 @@ export class RecordParser {
     const numParts = view.getInt32(offset + 32, true);
     const numPoints = view.getInt32(offset + 36, true);
 
+    // Debug log the initial values
+    console.debug('[RecordParser] Parsing polyline:', {
+      bbox,
+      numParts,
+      numPoints
+    });
+
     // Validate parts and points
     this.validator.validatePartsAndPoints(numParts, numPoints, 'polyline');
 
@@ -232,11 +239,37 @@ export class RecordParser {
       
       this.validator.validatePartRange(start, end, i);
 
+      // Debug log the part info
+      console.debug('[RecordParser] Processing part:', {
+        partIndex: i,
+        start,
+        end,
+        pointOffset
+      });
+
       for (let j = start; j < end; j++) {
-        const x = view.getFloat64(pointOffset + (j * 16), true);
-        const y = view.getFloat64(pointOffset + (j * 16) + 8, true);
-        this.validator.validatePointCoordinates(x, y, i, j);
-        points.push([x, y]);
+        const pointPos = pointOffset + (j * 16);
+        const x = view.getFloat64(pointPos, true);
+        const y = view.getFloat64(pointPos + 8, true);
+        
+        // Validate and handle Swiss coordinates
+        if (this.isSwissCoordinate(x, y)) {
+          // Swiss coordinates are already in the correct order (x=easting, y=northing)
+          points.push([x, y]);
+        } else {
+          // For WGS84, we need to swap to [lon, lat] order
+          points.push([y, x]); // Swap x and y for WGS84
+        }
+
+        // Debug log every 10th point
+        if (j % 10 === 0) {
+          console.debug('[RecordParser] Sample point:', {
+            partIndex: i,
+            pointIndex: j,
+            raw: [x, y],
+            processed: points[points.length - 1]
+          });
+        }
       }
       
       if (points.length >= 2) {
@@ -253,6 +286,14 @@ export class RecordParser {
         'SHAPEFILE_PARSE_ERROR'
       );
     }
+
+    // Debug log the final result
+    console.debug('[RecordParser] Parsed polyline:', {
+      type: lineStrings.length === 1 ? 'LineString' : 'MultiLineString',
+      partsCount: lineStrings.length,
+      totalPoints: lineStrings.reduce((sum, line) => sum + line.length, 0),
+      samplePoints: lineStrings[0].slice(0, 2)
+    });
 
     return {
       type: lineStrings.length === 1 ? 'LineString' : 'MultiLineString',
@@ -275,6 +316,13 @@ export class RecordParser {
 
     const numParts = view.getInt32(offset + 32, true);
     const numPoints = view.getInt32(offset + 36, true);
+
+    // Debug log the initial values
+    console.debug('[RecordParser] Parsing polygon:', {
+      bbox,
+      numParts,
+      numPoints
+    });
 
     // Validate parts and points
     this.validator.validatePartsAndPoints(numParts, numPoints, 'polygon');
@@ -301,11 +349,37 @@ export class RecordParser {
       
       this.validator.validatePartRange(start, end, i);
 
+      // Debug log the ring info
+      console.debug('[RecordParser] Processing ring:', {
+        ringIndex: i,
+        start,
+        end,
+        pointOffset
+      });
+
       for (let j = start; j < end; j++) {
-        const x = view.getFloat64(pointOffset + (j * 16), true);
-        const y = view.getFloat64(pointOffset + (j * 16) + 8, true);
-        this.validator.validatePointCoordinates(x, y, i, j);
-        ring.push([x, y]);
+        const pointPos = pointOffset + (j * 16);
+        const x = view.getFloat64(pointPos, true);
+        const y = view.getFloat64(pointPos + 8, true);
+        
+        // Validate and handle Swiss coordinates
+        if (this.isSwissCoordinate(x, y)) {
+          // Swiss coordinates are already in the correct order (x=easting, y=northing)
+          ring.push([x, y]);
+        } else {
+          // For WGS84, we need to swap to [lon, lat] order
+          ring.push([y, x]); // Swap x and y for WGS84
+        }
+
+        // Debug log every 10th point
+        if (j % 10 === 0) {
+          console.debug('[RecordParser] Sample point:', {
+            ringIndex: i,
+            pointIndex: j,
+            raw: [x, y],
+            processed: ring[ring.length - 1]
+          });
+        }
       }
       
       rings.push(ring);
@@ -330,10 +404,33 @@ export class RecordParser {
       polygons.push(currentPolygon);
     }
 
+    // Debug log the final result
+    console.debug('[RecordParser] Parsed polygon:', {
+      type: polygons.length === 1 ? 'Polygon' : 'MultiPolygon',
+      polygonCount: polygons.length,
+      totalRings: polygons.reduce((sum, poly) => sum + poly.length, 0),
+      totalPoints: polygons.reduce((sum, poly) => 
+        sum + poly.reduce((rsum, ring) => rsum + ring.length, 0), 0),
+      samplePoints: polygons[0][0].slice(0, 2)
+    });
+
     return {
       type: polygons.length === 1 ? 'Polygon' : 'MultiPolygon',
       coordinates: polygons.length === 1 ? polygons[0] : polygons,
       bbox
     };
+  }
+
+  /**
+   * Check if coordinates are in Swiss coordinate system range
+   */
+  private isSwissCoordinate(x: number, y: number): boolean {
+    // Swiss LV95 ranges
+    const isLV95 = x >= 2450000 && x <= 2850000 && y >= 1050000 && y <= 1350000;
+    
+    // Swiss LV03 ranges
+    const isLV03 = x >= 450000 && x <= 850000 && y >= 50000 && y <= 350000;
+    
+    return isLV95 || isLV03;
   }
 }

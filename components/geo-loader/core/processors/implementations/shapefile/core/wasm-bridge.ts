@@ -145,6 +145,14 @@ export class WasmGeometryConverter {
       if (!isInitialized || !wasmModule) {
         throw new Error('WebAssembly module not initialized. Call initWasm() first.');
       }
+
+      // Log input coordinates for debugging
+      console.debug('[WASM] Processing geometry:', {
+        shapeType,
+        coordinateSample: coordinates.slice(0, 4),
+        ringSizes
+      });
+
       const coordArray = toFloat64Array(coordinates);
       
       switch (shapeType) {
@@ -155,22 +163,74 @@ export class WasmGeometryConverter {
           return convert_point(coordinates[0], coordinates[1]) as Geometry;
         
         case 3: // PolyLine
-          return convert_polyline(coordArray) as Geometry;
+          // Handle Swiss coordinates - they should be in pairs
+          if (coordinates.length % 2 !== 0) {
+            throw new Error('Invalid coordinate array length for PolyLine');
+          }
+
+          // Convert flat array to pairs
+          const pairs: number[][] = [];
+          for (let i = 0; i < coordinates.length; i += 2) {
+            pairs.push([coordinates[i], coordinates[i + 1]]);
+          }
+
+          // Create MultiLineString geometry
+          return {
+            type: 'MultiLineString',
+            coordinates: [pairs]
+          };
         
         case 5: // Polygon
           if (!ringSizes) {
             throw new Error('Ring sizes are required for polygon geometry');
           }
-          return convert_polygon(coordArray, toUint32Array(ringSizes)) as Geometry;
+
+          // Handle Swiss coordinates for polygons
+          let offset = 0;
+          const rings: number[][][] = [];
+          
+          for (const size of ringSizes) {
+            if (offset + size * 2 > coordinates.length) {
+              throw new Error('Invalid ring size');
+            }
+
+            const ring: number[][] = [];
+            for (let i = 0; i < size * 2; i += 2) {
+              ring.push([
+                coordinates[offset + i],
+                coordinates[offset + i + 1]
+              ]);
+            }
+            rings.push(ring);
+            offset += size * 2;
+          }
+
+          return {
+            type: 'Polygon',
+            coordinates: rings
+          };
         
         case 8: // MultiPoint
-          return convert_multi_point(coordArray) as Geometry;
+          // Handle Swiss coordinates for MultiPoint
+          if (coordinates.length % 2 !== 0) {
+            throw new Error('Invalid coordinate array length for MultiPoint');
+          }
+
+          const points: number[][] = [];
+          for (let i = 0; i < coordinates.length; i += 2) {
+            points.push([coordinates[i], coordinates[i + 1]]);
+          }
+
+          return {
+            type: 'MultiPoint',
+            coordinates: points
+          };
         
         default:
           throw new Error(`Unsupported shape type: ${shapeType}`);
       }
     } catch (error) {
-      console.error('Failed to process geometry:', error);
+      console.error('[WASM] Failed to process geometry:', error);
       throw error;
     }
   }

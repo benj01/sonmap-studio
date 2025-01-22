@@ -168,4 +168,96 @@ export class CoordinateSystemHandler {
   public requiresTransformation(): boolean {
     return this.coordinateSystem !== COORDINATE_SYSTEMS.WGS84;
   }
+
+  /**
+   * Validate Swiss coordinates
+   */
+  private validateSwissCoordinates(x: number, y: number): boolean {
+    // Swiss LV95 bounds
+    const MIN_X = 2485000;
+    const MAX_X = 2834000;
+    const MIN_Y = 1075000;
+    const MAX_Y = 1299000;
+
+    return isFinite(x) && isFinite(y) &&
+           x >= MIN_X && x <= MAX_X &&
+           y >= MIN_Y && y <= MAX_Y;
+  }
+
+  /**
+   * Transform coordinates to WGS84
+   */
+  public async transformToWGS84(coordinates: [number, number]): Promise<[number, number]> {
+    if (this.coordinateSystem === COORDINATE_SYSTEMS.WGS84) {
+      return coordinates;
+    }
+
+    try {
+      if (this.isSwissSystem()) {
+        // Validate Swiss coordinates before transformation
+        if (!this.validateSwissCoordinates(coordinates[0], coordinates[1])) {
+          console.warn('[CoordinateSystemHandler] Invalid Swiss coordinates:', coordinates);
+          return coordinates;
+        }
+
+        const projection = this.getProjection();
+        if (!projection) {
+          console.error('[CoordinateSystemHandler] No projection found for:', this.coordinateSystem);
+          return coordinates;
+        }
+
+        const [lon, lat] = proj4(projection, 'WGS84', coordinates);
+        if (!isFinite(lon) || !isFinite(lat)) {
+          console.error('[CoordinateSystemHandler] Invalid transformation result:', { lon, lat });
+          return coordinates;
+        }
+
+        return [lon, lat];
+      }
+
+      console.warn('[CoordinateSystemHandler] Unsupported coordinate system:', this.coordinateSystem);
+      return coordinates;
+    } catch (error) {
+      console.error('[CoordinateSystemHandler] Transformation error:', error);
+      return coordinates;
+    }
+  }
+
+  /**
+   * Transform bounds to WGS84
+   */
+  public async transformBoundsToWGS84(bounds: Bounds): Promise<Bounds> {
+    if (this.coordinateSystem === COORDINATE_SYSTEMS.WGS84) {
+      return bounds;
+    }
+
+    try {
+      console.debug('[CoordinateSystemHandler] Transforming bounds:', {
+        from: this.coordinateSystem,
+        bounds
+      });
+
+      // Transform each corner
+      const corners = await Promise.all([
+        this.transformToWGS84([bounds.minX, bounds.minY]),
+        this.transformToWGS84([bounds.minX, bounds.maxY]),
+        this.transformToWGS84([bounds.maxX, bounds.minY]),
+        this.transformToWGS84([bounds.maxX, bounds.maxY])
+      ]);
+
+      // Calculate new bounds from transformed corners
+      const transformedBounds = {
+        minX: Math.min(...corners.map(c => c[0])),
+        minY: Math.min(...corners.map(c => c[1])),
+        maxX: Math.max(...corners.map(c => c[0])),
+        maxY: Math.max(...corners.map(c => c[1]))
+      };
+
+      console.debug('[CoordinateSystemHandler] Transformed bounds:', transformedBounds);
+      return transformedBounds;
+    } catch (error) {
+      console.error('[CoordinateSystemHandler] Error transforming bounds:', error);
+      return bounds;
+    }
+  }
 }

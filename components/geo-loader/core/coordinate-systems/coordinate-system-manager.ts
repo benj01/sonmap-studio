@@ -15,12 +15,12 @@ export type CoordinateSystemId = 'EPSG:2056' | 'EPSG:21781' | 'EPSG:4326';
 
 export const COORDINATE_SYSTEM_BOUNDS: Record<CoordinateSystemId, CoordinateSystemBounds> = {
   'EPSG:2056': { // Swiss LV95
-    x: { min: 2000000, max: 3000000 },
-    y: { min: 1000000, max: 2000000 }
+    x: { min: 2450000, max: 2850000 },
+    y: { min: 1050000, max: 1350000 }
   },
   'EPSG:21781': { // Swiss LV03
-    x: { min: 400000, max: 900000 },
-    y: { min: 50000, max: 400000 }
+    x: { min: 450000, max: 850000 },
+    y: { min: 50000, max: 350000 }
   },
   'EPSG:4326': { // WGS84
     x: { min: -180, max: 180 },
@@ -31,8 +31,8 @@ import proj4 from 'proj4';
 
 // Define projections for Swiss coordinate systems
 const SWISS_PROJECTIONS: Record<string, string> = {
-  [COORDINATE_SYSTEMS.SWISS_LV95]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs',
-  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs'
+  [COORDINATE_SYSTEMS.SWISS_LV95]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs',
+  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
 };
 
 class CoordinateSystemManager {
@@ -105,16 +105,70 @@ class CoordinateSystemManager {
   ): Promise<Feature[]> {
     await this.ensureInitialized();
 
+    console.debug('[CoordinateSystemManager] Starting transformation:', {
+      from,
+      to,
+      featureCount: features.length,
+      sample: features[0] ? {
+        type: features[0].geometry?.type,
+        coordinates: features[0].geometry?.coordinates
+      } : null
+    });
+
     if (from === to) {
+      console.debug('[CoordinateSystemManager] Source and target systems are the same, skipping transform');
       return features;
     }
 
     if (!await this.validateSystem(from) || !await this.validateSystem(to)) {
+      console.error('[CoordinateSystemManager] Invalid coordinate systems:', { from, to });
       throw new Error(`Invalid coordinate systems: from=${from}, to=${to}`);
     }
 
-    const transformer = await this.getTransformer(from, to);
-    return Promise.all(features.map(feature => this.transformFeature(feature, transformer, from, to)));
+    try {
+      const transformedFeatures = await Promise.all(
+        features.map(async feature => {
+          try {
+            const transformed = await this.transformFeatureCoordinates(feature, from, to);
+            console.debug('[CoordinateSystemManager] Transformed feature:', {
+              type: transformed.geometry?.type,
+              sample: transformed.geometry?.coordinates ? 
+                (Array.isArray(transformed.geometry.coordinates[0]) ? 
+                  transformed.geometry.coordinates[0] : 
+                  transformed.geometry.coordinates) : null
+            });
+            return transformed;
+          } catch (error) {
+            console.error('[CoordinateSystemManager] Error transforming feature:', {
+              error: error instanceof Error ? error.message : String(error),
+              feature: {
+                type: feature.geometry?.type,
+                coordinates: feature.geometry?.coordinates
+              }
+            });
+            return feature; // Return original feature on error
+          }
+        })
+      );
+
+      console.debug('[CoordinateSystemManager] Transformation complete:', {
+        inputCount: features.length,
+        outputCount: transformedFeatures.length,
+        sample: transformedFeatures[0] ? {
+          type: transformedFeatures[0].geometry?.type,
+          coordinates: transformedFeatures[0].geometry?.coordinates
+        } : null
+      });
+
+      return transformedFeatures;
+    } catch (error) {
+      console.error('[CoordinateSystemManager] Transformation failed:', {
+        error: error instanceof Error ? error.message : String(error),
+        from,
+        to
+      });
+      throw error;
+    }
   }
 
   /**
@@ -170,16 +224,16 @@ class CoordinateSystemManager {
 
       // Swiss LV95 ranges (adjusted for better coverage of Swiss locations)
       if (
-        ranges.minX >= 2000000 && ranges.maxX <= 3000000 &&
-        ranges.minY >= 1000000 && ranges.maxY <= 2000000
+        ranges.minX >= 2450000 && ranges.maxX <= 2850000 &&
+        ranges.minY >= 1050000 && ranges.maxY <= 1350000
       ) {
         console.debug('[CoordinateSystemManager] Detected Swiss LV95 coordinates');
         return COORDINATE_SYSTEMS.SWISS_LV95;
       } 
       // Swiss LV03 ranges (adjusted for better coverage)
       else if (
-        ranges.minX >= 400000 && ranges.maxX <= 900000 &&
-        ranges.minY >= 50000 && ranges.maxY <= 400000
+        ranges.minX >= 450000 && ranges.maxX <= 850000 &&
+        ranges.minY >= 50000 && ranges.maxY <= 350000
       ) {
         console.debug('[CoordinateSystemManager] Detected Swiss LV03 coordinates');
         return COORDINATE_SYSTEMS.SWISS_LV03;
@@ -225,11 +279,20 @@ class CoordinateSystemManager {
           }
 
           try {
-            const result = proj4(projection, 'WGS84', coord);
-            if (!result.every(isFinite)) {
-              throw new Error(`Transformation produced non-finite coordinates: ${result}`);
+            // Transform from Swiss to WGS84 (output will be [lon, lat])
+            const [lon, lat] = proj4(projection, 'EPSG:4326', [x, y]);
+            
+            // Return [lon, lat] for WGS84
+            if (!isFinite(lon) || !isFinite(lat)) {
+              throw new Error(`Transformation produced non-finite coordinates: lon=${lon}, lat=${lat}`);
             }
-            return result;
+            
+            console.debug('[CoordinateSystemManager] Transformed Swiss->WGS84:', {
+              input: [x, y],
+              output: [lon, lat]
+            });
+            
+            return [lon, lat];
           } catch (error: unknown) {
             throw new Error(`Transformation failed: ${error instanceof Error ? error.message : String(error)}`);
           }
@@ -241,23 +304,31 @@ class CoordinateSystemManager {
             throw new Error(`Invalid coordinate array: ${JSON.stringify(coord)}`);
           }
 
-          const [x, y] = coord;
-          if (!Number.isFinite(x) || !Number.isFinite(y)) {
-            throw new Error(`Non-finite coordinates: x=${x}, y=${y}`);
+          const [lon, lat] = coord;
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+            throw new Error(`Non-finite coordinates: lon=${lon}, lat=${lat}`);
           }
 
           try {
-            const result = proj4('WGS84', projection, coord);
-            if (!result.every(isFinite)) {
-              throw new Error(`Transformation produced non-finite coordinates: ${result}`);
+            // Transform from WGS84 to Swiss (input must be [lon, lat])
+            const [x, y] = proj4('EPSG:4326', projection, [lon, lat]);
+            
+            if (!isFinite(x) || !isFinite(y)) {
+              throw new Error(`Transformation produced non-finite coordinates: x=${x}, y=${y}`);
             }
-            return result;
+            
+            console.debug('[CoordinateSystemManager] Transformed WGS84->Swiss:', {
+              input: [lon, lat],
+              output: [x, y]
+            });
+            
+            return [x, y];
           } catch (error: unknown) {
             throw new Error(`Transformation failed: ${error instanceof Error ? error.message : String(error)}`);
           }
         };
       } else {
-        throw new Error(`Unsupported coordinate system conversion: ${from} -> ${to}`);
+        throw new Error(`Unsupported transformation: ${from} -> ${to}`);
       }
 
       this.transformCache.set(key, transformer);
@@ -268,7 +339,6 @@ class CoordinateSystemManager {
 
   private async transformFeature(
     feature: Feature,
-    transformer: Function,
     from: CoordinateSystem,
     to: CoordinateSystem
   ): Promise<Feature> {
@@ -294,77 +364,164 @@ class CoordinateSystemManager {
         originalSystem: from
       };
 
-      // Transform coordinates based on geometry type
-      switch (transformed.geometry.type) {
-        case 'Point':
-          transformed.geometry.coordinates = transformer(
-            transformed.geometry.coordinates
-          );
-          break;
-        case 'LineString':
-        case 'MultiPoint':
-          transformed.geometry.coordinates = transformed.geometry.coordinates.map(
-            (coord: number[]) => transformer(coord)
-          );
-          break;
-        case 'Polygon':
-        case 'MultiLineString':
-          transformed.geometry.coordinates = transformed.geometry.coordinates.map(
-            (ring: number[][]) => ring.map((coord: number[]) => transformer(coord))
-          );
-          break;
-        case 'MultiPolygon':
-          transformed.geometry.coordinates = transformed.geometry.coordinates.map(
-            (polygon: number[][][]) =>
-              polygon.map((ring: number[][]) =>
-                ring.map((coord: number[]) => transformer(coord))
-              )
-          );
-          break;
-        default:
-          throw new Error(`Unsupported geometry type: ${transformed.geometry.type}`);
-      }
+      // Transform the geometry coordinates
+      const transformedGeometry = await this.transformCoords(transformed.geometry);
 
-      // Validate transformed coordinates
-      const validateCoord = (coord: number[]): boolean =>
-        Array.isArray(coord) && 
-        coord.length >= 2 && 
-        coord.every(n => Number.isFinite(n));
-
-      const validateGeometry = (geom: any): boolean => {
-        if (!geom || !geom.coordinates) return false;
-        
-        switch (geom.type) {
-          case 'Point':
-            return validateCoord(geom.coordinates);
-          case 'LineString':
-          case 'MultiPoint':
-            return geom.coordinates.every(validateCoord);
-          case 'Polygon':
-          case 'MultiLineString':
-            return geom.coordinates.every((ring: number[][]) => 
-              ring.every(validateCoord));
-          case 'MultiPolygon':
-            return geom.coordinates.every((polygon: number[][][]) =>
-              polygon.every((ring: number[][]) => 
-                ring.every(validateCoord)));
-          default:
-            return false;
+      // Create new feature with transformed geometry
+      const transformedFeature: Feature = {
+        ...feature,
+        geometry: transformedGeometry,
+        properties: {
+          ...feature.properties,
+          transformedCoordinates: true
         }
       };
 
-      if (!validateGeometry(transformed.geometry)) {
-        throw new Error('Invalid transformed geometry');
+      // Transform bbox if present
+      if (feature.bbox) {
+        console.debug('[CoordinateSystemManager] Transforming bbox:', {
+          original: feature.bbox
+        });
+
+        const [minX, minY] = await this.transformCoordinates([feature.bbox[0], feature.bbox[1]], from, to);
+        const [maxX, maxY] = await this.transformCoordinates([feature.bbox[2], feature.bbox[3]], from, to);
+
+        transformedFeature.bbox = [minX, minY, maxX, maxY];
+
+        console.debug('[CoordinateSystemManager] Transformed bbox:', {
+          transformed: transformedFeature.bbox
+        });
       }
 
-      // Mark as transformed and cache
-      transformed.properties._transformedCoordinates = true;
-      this.featureCache.set(cacheKey, transformed);
+      console.debug('[CoordinateSystemManager] Feature transformation complete:', {
+        output: {
+          type: transformedFeature.geometry?.type,
+          coordinates: transformedFeature.geometry?.coordinates,
+          bbox: transformedFeature.bbox
+        }
+      });
+
+      return transformedFeature;
+    } catch (error) {
+      console.error('[CoordinateSystemManager] Feature transformation failed:', {
+        error: error instanceof Error ? error.message : String(error),
+        feature: {
+          type: feature.geometry?.type,
+          coordinates: feature.geometry?.coordinates
+        }
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Transform coordinates from one system to another
+   */
+  async transformCoordinates(
+    coordinates: number[],
+    fromSystem: CoordinateSystem,
+    toSystem: CoordinateSystem
+  ): Promise<number[]> {
+    await this.ensureInitialized();
+
+    if (fromSystem === toSystem) {
+      return coordinates;
+    }
+
+    try {
+      const transformer = await this.getTransformer(fromSystem, toSystem);
+      const transformed = transformer(coordinates);
+
+      console.debug('[CoordinateSystemManager] Transformed coordinates:', {
+        from: fromSystem,
+        to: toSystem,
+        original: coordinates,
+        transformed
+      });
 
       return transformed;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[CoordinateSystemManager] Feature transformation failed:', errorMessage);
+    } catch (error) {
+      console.error('[CoordinateSystemManager] Coordinate transformation failed:', {
+        error: error instanceof Error ? error.message : String(error),
+        coordinates,
+        fromSystem,
+        toSystem
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Transform feature coordinates from one system to another
+   */
+  async transformFeatureCoordinates(
+    feature: Feature,
+    fromSystem: CoordinateSystem,
+    toSystem: CoordinateSystem
+  ): Promise<Feature> {
+    try {
+      if (!feature.geometry) {
+        console.warn('[CoordinateSystemManager] Feature has no geometry:', feature);
+        return feature;
+      }
+
+      // Deep clone to avoid mutations
+      const transformedFeature = JSON.parse(JSON.stringify(feature));
+
+      // Store original system
+      transformedFeature.properties = {
+        ...transformedFeature.properties,
+        _originalSystem: fromSystem,
+        _transformedCoordinates: true
+      };
+
+      const transformCoordArray = async (coords: any[]): Promise<any[]> => {
+        if (!Array.isArray(coords)) return coords;
+
+        // Handle nested coordinate arrays
+        if (Array.isArray(coords[0])) {
+          return Promise.all(coords.map(c => transformCoordArray(c)));
+        }
+
+        // Transform coordinate pair
+        if (coords.length >= 2) {
+          return this.transformCoordinates(coords, fromSystem, toSystem);
+        }
+
+        return coords;
+      };
+
+      // Transform geometry coordinates
+      transformedFeature.geometry.coordinates = await transformCoordArray(
+        transformedFeature.geometry.coordinates
+      );
+
+      // Transform bbox if present
+      if (feature.bbox) {
+        const [minX, minY] = await this.transformCoordinates(
+          [feature.bbox[0], feature.bbox[1]], 
+          fromSystem, 
+          toSystem
+        );
+        const [maxX, maxY] = await this.transformCoordinates(
+          [feature.bbox[2], feature.bbox[3]], 
+          fromSystem, 
+          toSystem
+        );
+        transformedFeature.bbox = [minX, minY, maxX, maxY];
+      }
+
+      return transformedFeature;
+    } catch (error) {
+      console.error('[CoordinateSystemManager] Feature transformation failed:', {
+        error: error instanceof Error ? error.message : String(error),
+        feature: {
+          type: feature.geometry?.type,
+          coordinates: feature.geometry?.coordinates
+        },
+        fromSystem,
+        toSystem
+      });
       throw error;
     }
   }
@@ -402,31 +559,24 @@ class CoordinateSystemManager {
    * Initialize the coordinate system manager
    */
   async initialize(): Promise<void> {
-    if (this.initialized) {
-      return;
-    }
+    if (this.initialized) return;
 
     try {
-      // Initialize proj4 with default WGS84 definition
-      proj4.defs('WGS84', '+proj=longlat +datum=WGS84 +no_defs +type=crs');
-      
-      // Register Swiss projections
-      Object.entries(SWISS_PROJECTIONS).forEach(([name, def]) => {
-        proj4.defs(name, def);
+      // Register the Swiss projections
+      proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95, SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV95]);
+      proj4.defs(COORDINATE_SYSTEMS.SWISS_LV03, SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV03]);
+      proj4.defs(COORDINATE_SYSTEMS.WGS84, '+proj=longlat +datum=WGS84 +no_defs');
+
+      console.debug('[CoordinateSystemManager] Initialized with projections:', {
+        [COORDINATE_SYSTEMS.SWISS_LV95]: SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV95],
+        [COORDINATE_SYSTEMS.SWISS_LV03]: SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV03],
+        [COORDINATE_SYSTEMS.WGS84]: '+proj=longlat +datum=WGS84 +no_defs'
       });
 
-      // Only clear cache if needed
-      if (this.shouldClearCache()) {
-        this.clearCache();
-      }
-      
       this.initialized = true;
-    } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error('[CoordinateSystemManager] Initialization failed:', errorMessage);
-      this.initialized = false;
-      this.initializationPromise = null;
-      throw new Error('Failed to initialize coordinate system manager');
+    } catch (error) {
+      console.error('[CoordinateSystemManager] Initialization failed:', error);
+      throw error;
     }
   }
 

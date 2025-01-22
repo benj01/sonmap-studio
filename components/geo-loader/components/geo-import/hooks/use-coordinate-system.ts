@@ -35,11 +35,11 @@ export function useCoordinateSystem({
     loading: false
   });
 
-  // Initialize with default coordinate system
+  // Initialize with undefined coordinate system to allow detection
   useEffect(() => {
     setState(prev => ({
       ...prev,
-      coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+      coordinateSystem: undefined,
       loading: false
     }));
   }, []);

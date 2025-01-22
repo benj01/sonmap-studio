@@ -25,12 +25,6 @@ function validateLineCoordinates(coordinates: any): Position[] {
     return [];
   }
 
-  // Swiss LV95 coordinate ranges
-  const SWISS_RANGES = {
-    x: { min: 2485000, max: 2834000 },
-    y: { min: 1075000, max: 1299000 }
-  };
-
   const validCoords = coordinates.filter(coord => {
     if (!Array.isArray(coord) || coord.length < 2) {
       console.warn('[GeoJSON Converter] Invalid coordinate format:', coord);
@@ -38,41 +32,12 @@ function validateLineCoordinates(coordinates: any): Position[] {
     }
 
     const [x, y] = coord;
-    if (typeof x !== 'number' || typeof y !== 'number' || !isFinite(x) || !isFinite(y)) {
-      console.warn('[GeoJSON Converter] Non-numeric or non-finite coordinates:', { x, y });
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      console.warn('[GeoJSON Converter] Non-finite coordinates:', { x, y });
       return false;
     }
 
-    // For Swiss LV95 coordinates, enforce the valid range
-    const isSwissRange = {
-      x: x >= SWISS_RANGES.x.min && x <= SWISS_RANGES.x.max,
-      y: y >= SWISS_RANGES.y.min && y <= SWISS_RANGES.y.max
-    };
-
-    // For WGS84 coordinates
-    const isWGS84Range = {
-      x: Math.abs(x) <= 180,
-      y: Math.abs(y) <= 90
-    };
-
-    // If coordinates are in Swiss LV95 range, accept them
-    if (isSwissRange.x && isSwissRange.y) {
-      console.debug('[GeoJSON Converter] Valid Swiss LV95 coordinates:', { x, y });
-      return true;
-    }
-
-    // If coordinates are in WGS84 range, accept them
-    if (isWGS84Range.x && isWGS84Range.y) {
-      console.debug('[GeoJSON Converter] Valid WGS84 coordinates:', { x, y });
-      return true;
-    }
-
-    console.warn('[GeoJSON Converter] Invalid coordinates:', { 
-      x, y,
-      isSwissRange,
-      isWGS84Range
-    });
-    return false;
+    return true;
   });
 
   if (validCoords.length < 2) {
@@ -84,9 +49,8 @@ function validateLineCoordinates(coordinates: any): Position[] {
   }
 
   console.debug('[GeoJSON Converter] Line coordinates validated:', {
-    original: coordinates,
-    valid: validCoords,
     pointCount: validCoords.length,
+    sample: validCoords.slice(0, 2),
     bounds: {
       x: {
         min: Math.min(...validCoords.map(c => c[0])),
@@ -105,7 +69,7 @@ function validateLineCoordinates(coordinates: any): Position[] {
 function createGeometry(shapeType: number, coordinates: Position | Position[] | Position[][], bbox?: BBox): ShapeGeometry {
   console.debug('[GeoJSON Converter] Creating geometry:', {
     type: ShapeType[shapeType],
-    coordinates,
+    sample: Array.isArray(coordinates) ? coordinates.slice(0, 1) : coordinates,
     bbox
   });
 
@@ -113,44 +77,37 @@ function createGeometry(shapeType: number, coordinates: Position | Position[] | 
     case ShapeType.POINT:
     case ShapeType.POINTZ:
     case ShapeType.POINTM:
+      if (!Array.isArray(coordinates) || coordinates.length < 2) {
+        throw new Error('Invalid point coordinates');
+      }
       return {
         type: 'Point',
         coordinates: coordinates as Position,
         bbox
       };
+
     case ShapeType.POLYLINE:
     case ShapeType.POLYLINEZ:
-    case ShapeType.POLYLINEM:
-      // Check if we have a multi-part line (array of arrays of positions)
+    case ShapeType.POLYLINEM: {
+      // Check if we have a multi-part line
       const isMultiPart = Array.isArray(coordinates) && 
                          coordinates.length > 0 && 
                          Array.isArray(coordinates[0]) &&
                          Array.isArray(coordinates[0][0]);
       
       if (isMultiPart) {
-        // Validate each part's coordinates
+        // Handle multi-part line
         const validParts = (coordinates as Position[][]).map(part => validateLineCoordinates(part))
           .filter(part => part.length >= 2);
 
-        console.debug('[GeoJSON Converter] Creating MultiLineString:', {
-          originalParts: (coordinates as Position[][]).length,
-          validParts: validParts.length,
-          partsDetails: validParts.map(part => ({
-            points: part.length,
-            bounds: {
-              minX: Math.min(...part.map(p => p[0])),
-              maxX: Math.max(...part.map(p => p[0])),
-              minY: Math.min(...part.map(p => p[1])),
-              maxY: Math.max(...part.map(p => p[1]))
-            }
-          }))
-        });
-
         if (validParts.length === 0) {
-          console.warn('[GeoJSON Converter] No valid parts in MultiLineString');
+          throw new Error('No valid line parts found');
+        }
+
+        if (validParts.length === 1) {
           return {
-            type: 'MultiLineString',
-            coordinates: [],
+            type: 'LineString',
+            coordinates: validParts[0],
             bbox
           };
         }
@@ -161,26 +118,19 @@ function createGeometry(shapeType: number, coordinates: Position | Position[] | 
           bbox
         };
       } else {
-        // Single LineString - validate coordinates
-        const validLineCoords = validateLineCoordinates(coordinates as Position[]);
-        
-        console.debug('[GeoJSON Converter] Creating LineString:', {
-          originalPoints: (coordinates as Position[]).length,
-          validPoints: validLineCoords.length,
-          bounds: validLineCoords.length >= 2 ? {
-            minX: Math.min(...validLineCoords.map(p => p[0])),
-            maxX: Math.max(...validLineCoords.map(p => p[0])),
-            minY: Math.min(...validLineCoords.map(p => p[1])),
-            maxY: Math.max(...validLineCoords.map(p => p[1]))
-          } : null
-        });
+        // Handle single line
+        const validCoords = validateLineCoordinates(coordinates as Position[]);
+        if (validCoords.length < 2) {
+          throw new Error('Invalid line coordinates');
+        }
 
         return {
           type: 'LineString',
-          coordinates: validLineCoords,
+          coordinates: validCoords,
           bbox
         };
       }
+    }
     case ShapeType.POLYGON:
     case ShapeType.POLYGONZ:
     case ShapeType.POLYGONM:
@@ -243,60 +193,144 @@ function createGeometry(shapeType: number, coordinates: Position | Position[] | 
  * Convert shapefile records to GeoJSON features
  */
 export function convertToGeoJSON(inputRecords: ShapefileRecord[]): Feature[] {
-  console.debug('[GeoJSON Converter] Converting records:', {
-    count: inputRecords.length,
-    firstRecord: inputRecords[0],
-    recordTypes: inputRecords.map(r => ShapeType[r.shapeType]),
-    firstCoordinates: inputRecords[0]?.data.coordinates,
-    firstBBox: inputRecords[0]?.data.bbox
+  console.debug('[GeoJSON Converter] Starting conversion:', {
+    recordCount: inputRecords.length,
+    sample: inputRecords[0]
   });
 
-  return inputRecords.map((record, index): Feature => {
-    const { shapeType, data } = record;
-    const bbox = data.bbox ? createBBox(data.bbox) : undefined;
-
-    // Enhanced coordinate logging
-    console.debug('[GeoJSON Converter] Processing record:', {
-      index,
-      shapeType: ShapeType[shapeType],
-      coordinates: data.coordinates,
-      bbox,
-      coordinateType: Array.isArray(data.coordinates) 
-        ? Array.isArray(data.coordinates[0]) 
-          ? 'nested array' 
-          : 'array' 
-        : 'single',
-      sampleCoordinate: Array.isArray(data.coordinates) 
-        ? data.coordinates[0] 
-        : data.coordinates
-    });
-
-    const geometry = createGeometry(shapeType, data.coordinates, bbox);
-
-    const feature: Feature = {
-      type: 'Feature',
-      geometry,
-      properties: {
-        ...record.attributes || {},
+  return inputRecords.map((record, index) => {
+    try {
+      const { shapeType, data } = record;
+      console.debug(`[GeoJSON Converter] Converting record ${index}:`, {
         shapeType: ShapeType[shapeType],
-        recordIndex: index,
-        layer: 'shapes' // Ensure features are assigned to the 'shapes' layer
-      },
-      bbox
-    };
+        data
+      });
 
-    if (index === 0 || index === inputRecords.length - 1) {
-      console.debug(`[GeoJSON Converter] Converted ${index === 0 ? 'first' : 'last'} feature:`, {
-        shapeType: ShapeType[shapeType],
-        bbox,
-        geometryType: geometry.type,
-        coordinates: geometry.coordinates,
+      // Extract bbox if present
+      const bbox = data.bbox ? createBBox(data.bbox) : undefined;
+      console.debug('[GeoJSON Converter] Record bbox:', bbox);
+
+      let geometry: any = null;
+
+      switch (shapeType) {
+        case ShapeType.POINT:
+          if (!data.coordinates || !Array.isArray(data.coordinates)) {
+            console.warn('[GeoJSON Converter] Invalid POINT coordinates:', data.coordinates);
+            return null;
+          }
+          geometry = {
+            type: 'Point',
+            coordinates: data.coordinates,
+            bbox
+          };
+          break;
+
+        case ShapeType.POLYLINE:
+          if (!data.coordinates || !Array.isArray(data.coordinates)) {
+            console.warn('[GeoJSON Converter] Invalid POLYLINE coordinates:', data.coordinates);
+            return null;
+          }
+
+          // Check if we have a multi-part line
+          const isMultiPart = Array.isArray(data.coordinates[0]) && 
+                            Array.isArray(data.coordinates[0][0]);
+
+          if (isMultiPart) {
+            // Multi-part line - each part is an array of coordinate pairs
+            geometry = {
+              type: 'MultiLineString',
+              coordinates: data.coordinates,
+              bbox
+            };
+          } else {
+            // Single line - array of coordinate pairs
+            geometry = {
+              type: 'LineString',
+              coordinates: data.coordinates,
+              bbox
+            };
+          }
+
+          console.debug('[GeoJSON Converter] Created POLYLINE geometry:', {
+            type: geometry.type,
+            partCount: isMultiPart ? data.coordinates.length : 1,
+            pointCount: isMultiPart ? 
+              data.coordinates.reduce((sum: number, part: any[]) => sum + part.length, 0) : 
+              data.coordinates.length,
+            bbox: geometry.bbox
+          });
+          break;
+
+        case ShapeType.POLYGON:
+          if (!data.coordinates || !Array.isArray(data.coordinates)) {
+            console.warn('[GeoJSON Converter] Invalid POLYGON coordinates:', data.coordinates);
+            return null;
+          }
+
+          // Check if we have a multi-part polygon
+          const isMultiPolygon = Array.isArray(data.coordinates[0]) && 
+                                Array.isArray(data.coordinates[0][0]) &&
+                                Array.isArray(data.coordinates[0][0][0]);
+
+          if (isMultiPolygon) {
+            geometry = {
+              type: 'MultiPolygon',
+              coordinates: data.coordinates,
+              bbox
+            };
+          } else {
+            geometry = {
+              type: 'Polygon',
+              coordinates: data.coordinates,
+              bbox
+            };
+          }
+
+          console.debug('[GeoJSON Converter] Created POLYGON geometry:', {
+            type: geometry.type,
+            ringCount: isMultiPolygon ? 
+              data.coordinates.reduce((sum: number, poly: any[]) => sum + poly.length, 0) : 
+              data.coordinates.length,
+            bbox: geometry.bbox
+          });
+          break;
+
+        default:
+          console.warn(`[GeoJSON Converter] Unsupported shape type: ${ShapeType[shapeType]}`);
+          return null;
+      }
+
+      if (!geometry) {
+        console.warn('[GeoJSON Converter] Failed to create geometry:', {
+          shapeType: ShapeType[shapeType],
+          data
+        });
+        return null;
+      }
+
+      const feature = {
+        type: 'Feature',
+        geometry,
+        properties: record.attributes || {},
+        bbox
+      };
+
+      console.debug(`[GeoJSON Converter] Created feature ${index}:`, {
+        type: feature.geometry.type,
+        coordinates: feature.geometry.coordinates,
+        bbox: feature.bbox,
         properties: feature.properties
       });
-    }
 
-    return feature;
-  });
+      return feature;
+    } catch (error) {
+      console.error(`[GeoJSON Converter] Error converting record ${index}:`, {
+        error: error instanceof Error ? error.message : String(error),
+        record
+      });
+      return null;
+    }
+  }).filter(Boolean) as Feature[];
 }
 
 /**

@@ -114,144 +114,81 @@ export class FeatureProcessor {
     return result;
   }
 
-  calculateBounds(collections: PreviewCollections): Required<Bounds> {
-    console.debug('[FeatureProcessor] Starting bounds calculation');
-    
+  /**
+   * Calculate bounds for a collection of features
+   */
+  public calculateBounds(collections: PreviewCollections): Bounds {
+    console.debug('[FeatureProcessor] Calculating bounds for collections');
+
     let minX = Infinity;
     let minY = Infinity;
     let maxX = -Infinity;
     let maxY = -Infinity;
-    let hasValidCoordinates = false;
+    let hasValidBounds = false;
 
-    const updateBounds = (coords: number[]) => {
-      if (!Array.isArray(coords) || coords.length < 2) {
-        console.warn('[FeatureProcessor] Invalid coordinates:', coords);
-        return;
-      }
-
-      const [x, y] = coords;
-      if (!isFinite(x) || !isFinite(y)) {
-        console.warn('[FeatureProcessor] Non-finite coordinates:', { x, y });
-        return;
-      }
-
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
-      hasValidCoordinates = true;
-
-      console.debug('[FeatureProcessor] Updated bounds:', {
-        x, y, minX, minY, maxX, maxY
-      });
-    };
-
-    const processGeometry = (geometry: any) => {
-      if (!geometry || !geometry.type) {
-        console.warn('[FeatureProcessor] Invalid geometry:', geometry);
-        return;
-      }
-
-      try {
-        if ('coordinates' in geometry) {
-          switch (geometry.type.toLowerCase()) {
-            case 'point':
-              updateBounds(geometry.coordinates);
-              break;
-            case 'multipoint':
-            case 'linestring':
-              geometry.coordinates.forEach(updateBounds);
-              break;
-            case 'multilinestring':
-            case 'polygon':
-              geometry.coordinates.flat().forEach(updateBounds);
-              break;
-            case 'multipolygon':
-              geometry.coordinates.flat(2).forEach(updateBounds);
-              break;
-            default:
-              console.warn('[FeatureProcessor] Unknown geometry type:', geometry.type);
-          }
-        } else if (geometry.type === 'GeometryCollection') {
-          geometry.geometries.forEach(processGeometry);
-        } else {
-          console.warn('[FeatureProcessor] Unsupported geometry type:', geometry.type);
-        }
-      } catch (error) {
-        console.error('[FeatureProcessor] Error processing geometry:', {
-          error,
-          geometry
-        });
+    const processCoordinate = (coord: number[]): void => {
+      if (coord.length < 2) return;
+      
+      const x = coord[0];
+      const y = coord[1];
+      
+      if (isFinite(x) && isFinite(y)) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+        hasValidBounds = true;
       }
     };
 
-    [...collections.points.features, 
-     ...collections.lines.features, 
-     ...collections.polygons.features].forEach(feature => {
-      if (feature?.geometry) {
+    const processGeometry = (geometry: any): void => {
+      if (!geometry || !geometry.coordinates) return;
+
+      const coords = geometry.coordinates;
+      if (!Array.isArray(coords)) return;
+
+      // Handle different geometry types
+      switch (geometry.type) {
+        case 'Point':
+          processCoordinate(coords);
+          break;
+        case 'MultiPoint':
+        case 'LineString':
+          coords.forEach(processCoordinate);
+          break;
+        case 'MultiLineString':
+        case 'Polygon':
+          coords.forEach(line => line.forEach(processCoordinate));
+          break;
+        case 'MultiPolygon':
+          coords.forEach(poly => poly.forEach(ring => ring.forEach(processCoordinate)));
+          break;
+      }
+    };
+
+    // Process all collections
+    Object.values(collections).forEach(collection => {
+      if (!collection || !Array.isArray(collection.features)) return;
+      
+      collection.features.forEach(feature => {
+        if (!feature || !feature.geometry) return;
         processGeometry(feature.geometry);
-      }
+      });
     });
 
-    // If no valid coordinates were processed, use appropriate default bounds
-    if (!hasValidCoordinates) {
-      console.warn('[FeatureProcessor] No valid coordinates found, determining appropriate bounds');
-      
-      // Check if any features exist to determine coordinate system
-      const hasFeatures = collections.points.features.length > 0 || 
-                         collections.lines.features.length > 0 || 
-                         collections.polygons.features.length > 0;
-      
-      if (!hasFeatures) {
-        console.warn('[FeatureProcessor] No features found, using default Swiss bounds');
-        return {
-          minX: 2485000,  // Min X for Switzerland in LV95
-          minY: 1075000,  // Min Y for Switzerland in LV95
-          maxX: 2834000,  // Max X for Switzerland in LV95
-          maxY: 1299000   // Max Y for Switzerland in LV95
-        };
-      }
+    console.debug('[FeatureProcessor] Calculated bounds:', {
+      hasValidBounds,
+      bounds: { minX, minY, maxX, maxY }
+    });
 
-      // Try to determine coordinate system from feature properties
-      const sampleFeature = collections.points.features[0] || 
-                           collections.lines.features[0] || 
-                           collections.polygons.features[0];
-      
-      // Helper function to check if coordinates look like WGS84
-      const looksLikeWGS84 = (coords: any): boolean => {
-        if (!Array.isArray(coords)) return false;
-        const x = Array.isArray(coords[0]) ? coords[0][0] : coords[0];
-        const y = Array.isArray(coords[0]) ? coords[0][1] : coords[1];
-        return typeof x === 'number' && typeof y === 'number' &&
-               Math.abs(x) <= 180 && Math.abs(y) <= 90 &&
-               x >= 5.9559 && x <= 10.4922 && 
-               y >= 45.8179 && y <= 47.8084;
-      };
-
-      // Check if coordinates are explicitly marked as Swiss LV95
-      const isExplicitlySwiss = sampleFeature?.properties?.originalSystem === 'EPSG:2056';
-      
-      // Check coordinate values if not explicitly marked
-      const coords = sampleFeature?.geometry && 'coordinates' in sampleFeature.geometry ?
-        sampleFeature.geometry.coordinates : null;
-      
-      const isSwissSystem = isExplicitlySwiss || 
-        (coords && !looksLikeWGS84(coords) && Array.isArray(coords) &&
-         coords.some(coord => {
-           const x = Array.isArray(coord) ? coord[0] : coord;
-           return typeof x === 'number' && x >= 2485000 && x <= 2834000;
-         }));
-
-      return isSwissSystem ? {
+    // If no valid bounds found, use Swiss bounds
+    if (!hasValidBounds) {
+      console.warn('[FeatureProcessor] No valid bounds found, using Swiss bounds');
+      return {
         minX: 2485000,  // Min X for Switzerland in LV95
         minY: 1075000,  // Min Y for Switzerland in LV95
         maxX: 2834000,  // Max X for Switzerland in LV95
         maxY: 1299000   // Max Y for Switzerland in LV95
-      } : {
-        minX: 5.9559,   // Westernmost point of Switzerland in WGS84
-        minY: 45.8179,  // Southernmost point of Switzerland in WGS84
-        maxX: 10.4922,  // Easternmost point of Switzerland in WGS84
-        maxY: 47.8084   // Northernmost point of Switzerland in WGS84
       };
     }
 
@@ -266,7 +203,7 @@ export class FeatureProcessor {
       maxY: maxY + dy
     };
 
-    console.debug('[FeatureProcessor] Final bounds:', bounds);
+    console.debug('[FeatureProcessor] Final bounds with padding:', bounds);
     return bounds;
   }
 
