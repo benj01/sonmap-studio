@@ -12,6 +12,8 @@ export const COORDINATE_SYSTEMS = {
   SWISS_LV95: 'EPSG:2056',
   /** Swiss LV03 (EPSG:21781) - Swiss coordinates, older system */
   SWISS_LV03: 'EPSG:21781',
+  /** Web Mercator (EPSG:3857) - Web mapping projection */
+  WEB_MERCATOR: 'EPSG:3857'
 } as const;
 
 /** Type for coordinate system identifiers */
@@ -74,7 +76,7 @@ export const DEFAULT_CENTER = {
  * @param system The coordinate system to check
  * @returns true if the system is Swiss, false otherwise
  */
-export function isSwissSystem(system: string): system is CoordinateSystem {
+export function isSwissSystem(system: CoordinateSystem): boolean {
   return system === COORDINATE_SYSTEMS.SWISS_LV95 || system === COORDINATE_SYSTEMS.SWISS_LV03;
 }
 
@@ -83,8 +85,17 @@ export function isSwissSystem(system: string): system is CoordinateSystem {
  * @param system The coordinate system to check
  * @returns true if the system is WGS84 or none, false otherwise
  */
-export function isWGS84System(system: string): system is CoordinateSystem {
+export function isWGS84System(system: CoordinateSystem): boolean {
   return system === COORDINATE_SYSTEMS.WGS84 || system === COORDINATE_SYSTEMS.NONE;
+}
+
+/**
+ * Check if a coordinate system is Web Mercator
+ * @param system The coordinate system to check
+ * @returns true if the system is Web Mercator, false otherwise
+ */
+export function isWebMercatorSystem(system: CoordinateSystem): boolean {
+  return system === COORDINATE_SYSTEMS.WEB_MERCATOR;
 }
 
 /**

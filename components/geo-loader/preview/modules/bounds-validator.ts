@@ -18,6 +18,13 @@ export class BoundsValidator {
     maxY: 47.8084
   };
 
+  private static readonly WEB_MERCATOR_BOUNDS: Bounds = {
+    minX: -20037508.342789244,
+    minY: -20037508.342789244,
+    maxX: 20037508.342789244,
+    maxY: 20037508.342789244
+  };
+
   private isInSwissRange(b: Bounds): boolean {
     return b.minX >= BoundsValidator.SWISS_BOUNDS.minX && 
            b.maxX <= BoundsValidator.SWISS_BOUNDS.maxX &&
@@ -28,6 +35,12 @@ export class BoundsValidator {
   private isInWGS84Range(b: Bounds): boolean {
     return b.minX >= -180 && b.maxX <= 180 &&
            b.minY >= -90 && b.maxY <= 90;
+  }
+
+  private isInWebMercatorRange(b: Bounds): boolean {
+    // Web Mercator bounds are more flexible, just ensure they're finite
+    return isFinite(b.minX) && isFinite(b.maxX) && 
+           isFinite(b.minY) && isFinite(b.maxY);
   }
 
   private looksLikeWGS84(b: Bounds): boolean {
@@ -77,11 +90,23 @@ export class BoundsValidator {
         console.warn('[BoundsValidator] Bounds outside Swiss LV95 range');
         return { bounds: BoundsValidator.SWISS_BOUNDS };
       }
+    } else if (coordinateSystem === COORDINATE_SYSTEMS.WGS84) {
+      if (!this.isInWGS84Range(bounds)) {
+        console.warn('[BoundsValidator] Bounds outside WGS84 range');
+        return { bounds: BoundsValidator.SWISS_WGS84_BOUNDS };
+      }
+    } else if (coordinateSystem === COORDINATE_SYSTEMS.WEB_MERCATOR) {
+      // Web Mercator bounds are already transformed, just validate them
+      if (!this.isInWebMercatorRange(bounds)) {
+        console.warn('[BoundsValidator] Bounds outside Web Mercator range');
+        return { bounds: await this.transformSwissBounds(BoundsValidator.SWISS_BOUNDS) };
+      }
+      return { bounds };
+    }
 
+    // Only transform Swiss bounds to Web Mercator
+    if (coordinateSystem === COORDINATE_SYSTEMS.SWISS_LV95) {
       return this.transformSwissBounds(bounds);
-    } else if (coordinateSystem === COORDINATE_SYSTEMS.WGS84 && !this.isInWGS84Range(bounds)) {
-      console.warn('[BoundsValidator] Bounds outside WGS84 range');
-      return { bounds: BoundsValidator.SWISS_WGS84_BOUNDS };
     }
 
     return { bounds };
@@ -96,30 +121,63 @@ export class BoundsValidator {
     }
 
     try {
+      // Transform to Web Mercator
       const transformedPoints = await coordinateSystemManager.transform(
         gridPoints,
         COORDINATE_SYSTEMS.SWISS_LV95,
-        COORDINATE_SYSTEMS.WGS84
+        COORDINATE_SYSTEMS.WEB_MERCATOR
       );
+
+      console.debug('[BoundsValidator] Transformed points:', transformedPoints);
 
       const validPoints = this.filterValidTransformedPoints(transformedPoints);
       
       if (validPoints.length === 0) {
-        console.warn('[BoundsValidator] No valid transformed points');
-        return { bounds: BoundsValidator.SWISS_WGS84_BOUNDS };
+        console.warn('[BoundsValidator] No valid transformed points, points:', transformedPoints);
+        // Create a default Web Mercator bounds for Switzerland
+        const swissWebMercator = await coordinateSystemManager.transform(
+          [{
+            type: 'Feature',
+            geometry: { 
+              type: 'Point', 
+              coordinates: [
+                (BoundsValidator.SWISS_BOUNDS.minX + BoundsValidator.SWISS_BOUNDS.maxX) / 2,
+                (BoundsValidator.SWISS_BOUNDS.minY + BoundsValidator.SWISS_BOUNDS.maxY) / 2
+              ]
+            },
+            properties: {}
+          }],
+          COORDINATE_SYSTEMS.SWISS_LV95,
+          COORDINATE_SYSTEMS.WEB_MERCATOR
+        );
+
+        if (swissWebMercator.length > 0) {
+          const center = (swissWebMercator[0].geometry as Point).coordinates;
+          return {
+            bounds: {
+              minX: center[0] - 100000, // 100km buffer
+              minY: center[1] - 100000,
+              maxX: center[0] + 100000,
+              maxY: center[1] + 100000
+            }
+          };
+        }
+
+        return { bounds: BoundsValidator.WEB_MERCATOR_BOUNDS };
       }
 
       const transformedBounds = this.calculateTransformedBounds(validPoints);
+      console.debug('[BoundsValidator] Calculated bounds:', transformedBounds);
 
-      if (!this.isInWGS84Range(transformedBounds)) {
-        console.warn('[BoundsValidator] Transformed bounds outside WGS84 range');
-        return { bounds: BoundsValidator.SWISS_WGS84_BOUNDS };
+      if (!this.isInWebMercatorRange(transformedBounds)) {
+        console.warn('[BoundsValidator] Transformed bounds outside Web Mercator range');
+        return { bounds: BoundsValidator.WEB_MERCATOR_BOUNDS };
       }
 
       return { bounds: transformedBounds };
     } catch (error) {
       console.error('[BoundsValidator] Error transforming bounds:', error);
-      return { bounds: BoundsValidator.SWISS_WGS84_BOUNDS };
+      return { bounds: BoundsValidator.WEB_MERCATOR_BOUNDS };
     }
   }
 
@@ -154,7 +212,10 @@ export class BoundsValidator {
       if (p.geometry?.type !== 'Point') return false;
       const [x, y] = (p.geometry as Point).coordinates;
       return isFinite(x) && isFinite(y) && 
-             Math.abs(x) <= 180 && Math.abs(y) <= 90;
+             x >= BoundsValidator.WEB_MERCATOR_BOUNDS.minX && 
+             x <= BoundsValidator.WEB_MERCATOR_BOUNDS.maxX &&
+             y >= BoundsValidator.WEB_MERCATOR_BOUNDS.minY && 
+             y <= BoundsValidator.WEB_MERCATOR_BOUNDS.maxY;
     }) as Feature<Point, GeoJsonProperties>[];
   }
 

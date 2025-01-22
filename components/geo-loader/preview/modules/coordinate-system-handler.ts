@@ -71,7 +71,6 @@ export class CoordinateSystemHandler {
     targetSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84,
     projectionInfo?: MapboxProjection
   ): Promise<GeoFeature[]> {
-    // Ensure initialization before transformation
     await this.ensureInitialized();
     const collection: FeatureCollection = Array.isArray(features) 
       ? { type: 'FeatureCollection', features }
@@ -81,37 +80,124 @@ export class CoordinateSystemHandler {
       return this.addMetadata(collection.features, this.coordinateSystem, projectionInfo);
     }
 
-    console.debug('[CoordinateSystemHandler] Transforming coordinates:', {
-      from: this.coordinateSystem,
-      to: targetSystem,
-      featureCount: collection.features.length
-    });
-
     try {
-      await this.ensureInitialized();
-      const transformedFeatures = await coordinateSystemManager.transform(
-        collection.features,
-        this.coordinateSystem,
-        targetSystem
-      );
+      // For MapBox, we need to transform through WGS84 first
+      const finalTargetSystem = projectionInfo ? COORDINATE_SYSTEMS.WEB_MERCATOR : targetSystem;
+      let transformedFeatures: Feature[];
 
-      return this.addMetadata(
-        transformedFeatures,
-        this.coordinateSystem,
-        projectionInfo,
-        collection.features.map(f => f.geometry)
-      );
+      // If target is Web Mercator, transform through WGS84 first
+      if (finalTargetSystem === COORDINATE_SYSTEMS.WEB_MERCATOR && this.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        console.debug('[CoordinateSystemHandler] Transforming through WGS84');
+        
+        // Step 1: Transform to WGS84
+        const wgs84Features = await coordinateSystemManager.transform(
+          collection.features,
+          this.coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84
+        );
+
+        // Step 2: Transform from WGS84 to Web Mercator
+        transformedFeatures = await coordinateSystemManager.transform(
+          wgs84Features,
+          COORDINATE_SYSTEMS.WGS84,
+          COORDINATE_SYSTEMS.WEB_MERCATOR
+        );
+      } else {
+        // Direct transformation for other cases
+        transformedFeatures = await coordinateSystemManager.transform(
+          collection.features,
+          this.coordinateSystem,
+          finalTargetSystem
+        );
+      }
+
+      // Calculate bounds in original system
+      const bounds = await this.calculateBounds(collection.features);
+      
+      // Transform bounds using the same transformation chain
+      let transformedBounds;
+      if (finalTargetSystem === COORDINATE_SYSTEMS.WEB_MERCATOR && this.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        const wgs84Bounds = await coordinateSystemManager.transformBounds(
+          bounds,
+          this.coordinateSystem,
+          COORDINATE_SYSTEMS.WGS84
+        );
+        transformedBounds = await coordinateSystemManager.transformBounds(
+          wgs84Bounds,
+          COORDINATE_SYSTEMS.WGS84,
+          COORDINATE_SYSTEMS.WEB_MERCATOR
+        );
+      } else {
+        transformedBounds = await coordinateSystemManager.transformBounds(
+          bounds,
+          this.coordinateSystem,
+          finalTargetSystem
+        );
+      }
+
+      console.debug('[CoordinateSystemHandler] Transformation complete:', {
+        from: this.coordinateSystem,
+        to: finalTargetSystem,
+        originalBounds: bounds,
+        transformedBounds,
+        featureCount: transformedFeatures.length
+      });
+
+      return this.addMetadata(transformedFeatures, finalTargetSystem, projectionInfo);
     } catch (error) {
       console.error('[CoordinateSystemHandler] Transformation failed:', error);
-      throw error;
+      return this.addMetadata(collection.features, this.coordinateSystem, projectionInfo);
     }
+  }
+
+  private async calculateBounds(features: Feature[]): Promise<Bounds> {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    const processCoordinate = (coord: number[]): void => {
+      if (coord.length < 2) return;
+      const [x, y] = coord;
+      if (isFinite(x) && isFinite(y)) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    };
+
+    features.forEach(feature => {
+      if (!feature.geometry) return;
+      const coords = feature.geometry.coordinates;
+      
+      switch (feature.geometry.type) {
+        case 'Point':
+          processCoordinate(coords);
+          break;
+        case 'MultiPoint':
+        case 'LineString':
+          coords.forEach(processCoordinate);
+          break;
+        case 'MultiLineString':
+        case 'Polygon':
+          coords.forEach(line => line.forEach(processCoordinate));
+          break;
+        case 'MultiPolygon':
+          coords.forEach(poly => poly.forEach(ring => ring.forEach(processCoordinate)));
+          break;
+      }
+    });
+
+    return { minX, minY, maxX, maxY };
   }
 
   private addMetadata(
     features: Feature[],
     originalSystem: CoordinateSystem,
     projectionInfo?: MapboxProjection,
-    originalGeometries?: any[]
+    originalGeometries?: any[],
+    bounds?: Bounds
   ): GeoFeature[] {
     return features.map((feature, index) => ({
       ...feature,
@@ -129,6 +215,9 @@ export class CoordinateSystemHandler {
             center: projectionInfo.center,
             parallels: projectionInfo.parallels
           }
+        } : {}),
+        ...(bounds ? {
+          _bounds: bounds
         } : {})
       }
     })) as GeoFeature[];

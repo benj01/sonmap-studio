@@ -11,7 +11,7 @@ export type CoordinateSystemBounds = {
   y: { min: number; max: number };
 };
 
-export type CoordinateSystemId = 'EPSG:2056' | 'EPSG:21781' | 'EPSG:4326';
+export type CoordinateSystemId = 'EPSG:2056' | 'EPSG:21781' | 'EPSG:4326' | 'EPSG:3857';
 
 export const COORDINATE_SYSTEM_BOUNDS: Record<CoordinateSystemId, CoordinateSystemBounds> = {
   'EPSG:2056': { // Swiss LV95
@@ -25,14 +25,20 @@ export const COORDINATE_SYSTEM_BOUNDS: Record<CoordinateSystemId, CoordinateSyst
   'EPSG:4326': { // WGS84
     x: { min: -180, max: 180 },
     y: { min: -90, max: 90 }
+  },
+  'EPSG:3857': { // Web Mercator
+    x: { min: -20026376.39, max: 20026376.39 },
+    y: { min: -20048966.10, max: 20048966.10 }
   }
 };
 import proj4 from 'proj4';
 
-// Define projections for Swiss coordinate systems
-const SWISS_PROJECTIONS: Record<string, string> = {
+// Define projections for coordinate systems
+const PROJECTIONS: Record<string, string> = {
   [COORDINATE_SYSTEMS.SWISS_LV95]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs',
-  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs'
+  [COORDINATE_SYSTEMS.SWISS_LV03]: '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=600000 +y_0=200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs',
+  [COORDINATE_SYSTEMS.WGS84]: '+proj=longlat +datum=WGS84 +no_defs',
+  [COORDINATE_SYSTEMS.WEB_MERCATOR]: '+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +no_defs +over'
 };
 
 class CoordinateSystemManager {
@@ -61,7 +67,8 @@ class CoordinateSystemManager {
    */
   private validateSystemSync(system: string): boolean {
     return isSwissSystem(system as CoordinateSystem) || 
-           isWGS84System(system as CoordinateSystem);
+           isWGS84System(system as CoordinateSystem) ||
+           system === COORDINATE_SYSTEMS.WEB_MERCATOR;
   }
 
   /**
@@ -70,7 +77,13 @@ class CoordinateSystemManager {
   async validate(system: string): Promise<boolean> {
     try {
       await this.ensureInitialized();
-      return this.validateSystemSync(system);
+      const isValid = this.validateSystemSync(system);
+      console.debug('[CoordinateSystemManager] System validation:', {
+        system,
+        isValid,
+        projectionDefined: system in PROJECTIONS
+      });
+      return isValid;
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('[CoordinateSystemManager] Coordinate system validation failed:', errorMessage);
@@ -246,6 +259,14 @@ class CoordinateSystemManager {
         console.debug('[CoordinateSystemManager] Detected WGS84 coordinates');
         return COORDINATE_SYSTEMS.WGS84;
       }
+      // Web Mercator ranges
+      else if (
+        ranges.minX >= -20026376.39 && ranges.maxX <= 20026376.39 &&
+        ranges.minY >= -20048966.10 && ranges.maxY <= 20048966.10
+      ) {
+        console.debug('[CoordinateSystemManager] Detected Web Mercator coordinates');
+        return COORDINATE_SYSTEMS.WEB_MERCATOR;
+      }
 
       // Default to WGS84 if no specific system is detected
       console.debug('[CoordinateSystemManager] Could not definitively detect coordinate system, defaulting to WGS84');
@@ -261,80 +282,102 @@ class CoordinateSystemManager {
     from: CoordinateSystem,
     to: CoordinateSystem
   ): Promise<Function> {
-    const key = `${from}->${to}`;
-    
-    if (!this.transformCache.has(key)) {
-      let transformer: Function;
+    const cacheKey = `${from}->${to}`;
+    let transformer = this.transformCache.get(cacheKey);
 
-      if (isSwissSystem(from) && isWGS84System(to)) {
-        const projection = SWISS_PROJECTIONS[from];
+    if (transformer) {
+      return transformer;
+    }
+
+    await this.ensureInitialized();
+
+    try {
+      // For transformations involving Web Mercator, always go through WGS84
+      if ((from === COORDINATE_SYSTEMS.SWISS_LV95 || from === COORDINATE_SYSTEMS.SWISS_LV03) && 
+          to === COORDINATE_SYSTEMS.WEB_MERCATOR) {
         transformer = (coord: number[]) => {
           if (!Array.isArray(coord) || coord.length < 2) {
             throw new Error(`Invalid coordinate array: ${JSON.stringify(coord)}`);
           }
 
-          const [x, y] = coord;
-          if (!Number.isFinite(x) || !Number.isFinite(y)) {
-            throw new Error(`Non-finite coordinates: x=${x}, y=${y}`);
-          }
-
           try {
-            // Transform from Swiss to WGS84 (output will be [lon, lat])
-            const [lon, lat] = proj4(projection, 'EPSG:4326', [x, y]);
+            // Step 1: Swiss -> WGS84
+            const wgs84 = proj4(PROJECTIONS[from], PROJECTIONS[COORDINATE_SYSTEMS.WGS84], coord);
             
-            // Return [lon, lat] for WGS84
-            if (!isFinite(lon) || !isFinite(lat)) {
-              throw new Error(`Transformation produced non-finite coordinates: lon=${lon}, lat=${lat}`);
-            }
+            // Ensure longitude is within -180 to 180
+            wgs84[0] = ((wgs84[0] + 180) % 360) - 180;
             
-            console.debug('[CoordinateSystemManager] Transformed Swiss->WGS84:', {
-              input: [x, y],
-              output: [lon, lat]
+            // Step 2: WGS84 -> Web Mercator
+            const webMercator = proj4(PROJECTIONS[COORDINATE_SYSTEMS.WGS84], PROJECTIONS[COORDINATE_SYSTEMS.WEB_MERCATOR], wgs84);
+
+            console.debug('[CoordinateSystemManager] Multi-step transformation:', {
+              from: coord,
+              wgs84,
+              to: webMercator
             });
-            
-            return [lon, lat];
-          } catch (error: unknown) {
-            throw new Error(`Transformation failed: ${error instanceof Error ? error.message : String(error)}`);
+
+            return webMercator;
+          } catch (error) {
+            console.error('[CoordinateSystemManager] Transformation failed:', error);
+            throw error;
           }
         };
-      } else if (isWGS84System(from) && isSwissSystem(to)) {
-        const projection = SWISS_PROJECTIONS[to];
+      } else if (from === COORDINATE_SYSTEMS.WEB_MERCATOR && 
+                (to === COORDINATE_SYSTEMS.SWISS_LV95 || to === COORDINATE_SYSTEMS.SWISS_LV03)) {
         transformer = (coord: number[]) => {
           if (!Array.isArray(coord) || coord.length < 2) {
             throw new Error(`Invalid coordinate array: ${JSON.stringify(coord)}`);
           }
 
-          const [lon, lat] = coord;
-          if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
-            throw new Error(`Non-finite coordinates: lon=${lon}, lat=${lat}`);
-          }
-
           try {
-            // Transform from WGS84 to Swiss (input must be [lon, lat])
-            const [x, y] = proj4('EPSG:4326', projection, [lon, lat]);
+            // Step 1: Web Mercator -> WGS84
+            const wgs84 = proj4(PROJECTIONS[COORDINATE_SYSTEMS.WEB_MERCATOR], PROJECTIONS[COORDINATE_SYSTEMS.WGS84], coord);
             
-            if (!isFinite(x) || !isFinite(y)) {
-              throw new Error(`Transformation produced non-finite coordinates: x=${x}, y=${y}`);
-            }
+            // Ensure longitude is within -180 to 180
+            wgs84[0] = ((wgs84[0] + 180) % 360) - 180;
             
-            console.debug('[CoordinateSystemManager] Transformed WGS84->Swiss:', {
-              input: [lon, lat],
-              output: [x, y]
+            // Step 2: WGS84 -> Swiss
+            const swiss = proj4(PROJECTIONS[COORDINATE_SYSTEMS.WGS84], PROJECTIONS[to], wgs84);
+
+            console.debug('[CoordinateSystemManager] Multi-step transformation:', {
+              from: coord,
+              wgs84,
+              to: swiss
             });
-            
-            return [x, y];
-          } catch (error: unknown) {
-            throw new Error(`Transformation failed: ${error instanceof Error ? error.message : String(error)}`);
+
+            return swiss;
+          } catch (error) {
+            console.error('[CoordinateSystemManager] Transformation failed:', error);
+            throw error;
           }
         };
       } else {
-        throw new Error(`Unsupported transformation: ${from} -> ${to}`);
+        // For direct transformations between other systems
+        transformer = (coord: number[]) => {
+          if (!Array.isArray(coord) || coord.length < 2) {
+            throw new Error(`Invalid coordinate array: ${JSON.stringify(coord)}`);
+          }
+
+          try {
+            const result = proj4(PROJECTIONS[from], PROJECTIONS[to], coord);
+            console.debug('[CoordinateSystemManager] Direct transformation:', {
+              from: coord,
+              to: result
+            });
+            return result;
+          } catch (error) {
+            console.error('[CoordinateSystemManager] Transformation failed:', error);
+            throw error;
+          }
+        };
       }
 
-      this.transformCache.set(key, transformer);
+      this.transformCache.set(cacheKey, transformer);
+      return transformer;
+    } catch (error) {
+      console.error('[CoordinateSystemManager] Failed to create transformer:', error);
+      throw error;
     }
-
-    return this.transformCache.get(key)!;
   }
 
   private async transformFeature(
@@ -526,6 +569,38 @@ class CoordinateSystemManager {
     }
   }
 
+  async transformBounds(
+    bounds: { minX: number; minY: number; maxX: number; maxY: number; },
+    fromSystem: CoordinateSystem,
+    toSystem: CoordinateSystem
+  ): Promise<{ minX: number; minY: number; maxX: number; maxY: number; }> {
+    if (fromSystem === toSystem) return bounds;
+
+    try {
+      // Transform corners using the same transformer as features
+      const transformer = await this.getTransformer(fromSystem, toSystem);
+      
+      // Transform each corner
+      const corners = [
+        transformer([bounds.minX, bounds.minY]),
+        transformer([bounds.minX, bounds.maxY]),
+        transformer([bounds.maxX, bounds.minY]),
+        transformer([bounds.maxX, bounds.maxY])
+      ];
+
+      // Calculate new bounds from transformed corners
+      return {
+        minX: Math.min(...corners.map(c => c[0])),
+        minY: Math.min(...corners.map(c => c[1])),
+        maxX: Math.max(...corners.map(c => c[0])),
+        maxY: Math.max(...corners.map(c => c[1]))
+      };
+    } catch (error) {
+      console.error('[CoordinateSystemManager] Error transforming bounds:', error);
+      return bounds;
+    }
+  }
+
   private shouldClearCache(): boolean {
     const now = Date.now();
     return now - this.lastCacheClear > this.CACHE_LIFETIME;
@@ -562,18 +637,14 @@ class CoordinateSystemManager {
     if (this.initialized) return;
 
     try {
-      // Register the Swiss projections
-      proj4.defs(COORDINATE_SYSTEMS.SWISS_LV95, SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV95]);
-      proj4.defs(COORDINATE_SYSTEMS.SWISS_LV03, SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV03]);
-      proj4.defs(COORDINATE_SYSTEMS.WGS84, '+proj=longlat +datum=WGS84 +no_defs');
-
-      console.debug('[CoordinateSystemManager] Initialized with projections:', {
-        [COORDINATE_SYSTEMS.SWISS_LV95]: SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV95],
-        [COORDINATE_SYSTEMS.SWISS_LV03]: SWISS_PROJECTIONS[COORDINATE_SYSTEMS.SWISS_LV03],
-        [COORDINATE_SYSTEMS.WGS84]: '+proj=longlat +datum=WGS84 +no_defs'
+      // Register all projections with proj4
+      Object.entries(PROJECTIONS).forEach(([code, proj]) => {
+        proj4.defs(code, proj);
+        console.debug('[CoordinateSystemManager] Registered projection:', code);
       });
 
       this.initialized = true;
+      console.debug('[CoordinateSystemManager] Initialized successfully');
     } catch (error) {
       console.error('[CoordinateSystemManager] Initialization failed:', error);
       throw error;
