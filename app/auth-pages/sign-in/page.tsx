@@ -1,22 +1,19 @@
 'use client'
 
-import { RegisterForm } from '@/components/auth/auth-forms/register-form'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { LoginForm } from '@/components/auth/auth-forms/login-form'
 
-export default function SignUpPage() {
+export default function SignInPage() {
   return (
     <div className="container flex min-h-[calc(100vh-4rem)] items-center justify-center">
-      <Card className="mx-auto w-full max-w-md">
-        <CardHeader className="space-y-2 text-center">
-          <CardTitle className="text-2xl font-bold">Create an account</CardTitle>
+      <div className="mx-auto w-full max-w-md space-y-6">
+        <div className="space-y-2 text-center">
+          <h1 className="text-2xl font-bold">Sign in to your account</h1>
           <p className="text-muted-foreground">
-            Enter your email below to create your account
+            Enter your email below to sign in to your account
           </p>
-        </CardHeader>
-        <CardContent>
-          <RegisterForm />
-        </CardContent>
-      </Card>
+        </div>
+        <LoginForm />
+      </div>
     </div>
   )
 }

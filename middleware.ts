@@ -13,8 +13,8 @@ const PROTECTED_ROUTES = [
 
 // Public routes that should redirect to dashboard if authenticated
 const AUTH_ROUTES = [
-  '/sign-in',
-  '/sign-up',
+  '/auth-pages/sign-in',
+  '/auth-pages/sign-up',
 ];
 
 export async function middleware(request: NextRequest) {
@@ -46,8 +46,8 @@ export async function middleware(request: NextRequest) {
 
   // Redirect unauthenticated users trying to access protected routes
   if (!session && PROTECTED_ROUTES.some(route => pathname.startsWith(route))) {
-    const redirectUrl = new URL('/sign-in', request.url);
-    redirectUrl.searchParams.set('redirect', pathname); // Add redirect path for post-login navigation
+    const redirectUrl = new URL('/auth-pages/sign-in', request.url);
+    redirectUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(redirectUrl);
   }
 

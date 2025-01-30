@@ -1,7 +1,7 @@
 'use client'
 
 import { createContext, useContext, useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import type { User } from '@supabase/supabase-js'
 
@@ -16,6 +16,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [user, setUser] = useState<User | null>(null)
   const [initialized, setInitialized] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
@@ -30,23 +31,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false)
 
       if (event === 'SIGNED_IN') {
-        router.push('/')
+        const redirectTo = searchParams.get('redirect') || '/dashboard'
+        router.push(redirectTo)
       } else if (event === 'SIGNED_OUT') {
-        router.push('/')
+        router.push('/auth-pages/sign-in')
       }
     })
 
     return () => {
       subscription.unsubscribe()
     }
-  }, [router])
+  }, [router, searchParams])
 
   const signOut = async () => {
     try {
       setIsLoading(true)
       await supabase.auth.signOut()
       setUser(null)
-      router.push('/')
+      router.push('/auth-pages/sign-in')
     } catch (error) {
       console.error('Error signing out:', error)
     } finally {
