@@ -3,15 +3,38 @@
 import { useState, useEffect, useRef } from 'react';
 import { PreviewSectionProps, PreviewAnalysis } from './types';
 import { PreviewMap } from '../preview-map/index';
-import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
+import { Feature, Geometry, GeoJsonProperties } from 'geojson';
 import { ProcessorResult } from '../../core/processors/base/types';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
-import { coordinateSystemManager } from '../../core/coordinate-systems';
+import { coordinateSystemManager } from '../../core/coordinate-systems/coordinate-system-manager';
+import { PreviewManager } from '../../preview/preview-manager';
+import { CoordinateSystemManager } from '../../core/coordinate-systems/coordinate-system-manager';
 
-type ExtendedProcessorResult = Omit<ProcessorResult, 'preview'> & {
-  previewManager: NonNullable<PreviewSectionProps['previewManager']>;
+interface ExtendedProcessorResult {
   features: Feature<Geometry, GeoJsonProperties>[];
-};
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
+  layers: string[];
+  statistics: {
+    featureCount: number;
+    layerCount: number;
+    featureTypes: Record<string, number>;
+    failedTransformations: number;
+    errors: string[];
+  };
+  coordinateSystem: CoordinateSystem;
+  previewManager: PreviewManager;
+  databaseResult: {
+    importedFeatures: number;
+    collectionId: string;
+    layerIds: string[];
+    failedFeatures: string[];
+    statistics: {
+      importTime: number;
+      validatedCount: number;
+      transformedCount: number;
+    };
+  };
+}
 
 export function PreviewSection({
   previewManager,
@@ -32,7 +55,7 @@ export function PreviewSection({
       errors: []
     },
     coordinateSystem: coordinateSystem || COORDINATE_SYSTEMS.WGS84,
-    previewManager, // Required by PreviewMap
+    previewManager,
     databaseResult: {
       importedFeatures: 0,
       collectionId: '',
@@ -79,7 +102,7 @@ export function PreviewSection({
 
       try {
         // Get coordinate system manager instance
-        const manager = coordinateSystemManager.getInstance();
+        const manager = await CoordinateSystemManager.getInstance();
 
         // Ensure coordinate system manager is initialized
         if (!manager.isInitialized()) {
@@ -147,7 +170,7 @@ export function PreviewSection({
         if (collections) {
           setPreview(prev => ({
             ...prev,
-            features: combinedFeatures,
+            features: combinedFeatures.map(f => ({...f, properties: {...f.properties, layer: 'shapes'}})),
             bounds: bounds || prev.bounds,
             layers: visibleLayers || [],
             statistics: {
@@ -205,11 +228,13 @@ export function PreviewSection({
         ) : (
           <PreviewMap
             preview={{
-              ...preview,
-              features: {
-                type: 'FeatureCollection',
-                features: preview.features
-              }
+              points: { type: 'FeatureCollection', features: preview.features.filter(f => f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint').map(f => ({...f, properties: {...f.properties, layer: 'shapes'}})) },
+              lines: { type: 'FeatureCollection', features: preview.features.filter(f => f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString').map(f => ({...f, properties: {...f.properties, layer: 'shapes'}})) },
+              polygons: { type: 'FeatureCollection', features: preview.features.filter(f => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon').map(f => ({...f, properties: {...f.properties, layer: 'shapes'}})) },
+              bounds: preview.bounds,
+              layers: preview.layers,
+              previewManager: preview.previewManager,
+              coordinateSystem: preview.coordinateSystem
             }}
             bounds={bounds}
             coordinateSystem={preview.coordinateSystem}

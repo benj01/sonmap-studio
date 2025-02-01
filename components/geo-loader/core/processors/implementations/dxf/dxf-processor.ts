@@ -15,7 +15,7 @@ import { StateManager } from './modules/state-manager';
 import { FileProcessor } from './modules/file-processor';
 import { PostGISConverter } from './modules/postgis-converter';
 import { RequiredBounds, CompressedDxfFile } from './types/bounds';
-import { PostGISClient } from '../../../database/client';
+import { PostGISClient } from '@/components/geo-loader/core/database/client';
 import { TypeAdapter } from './utils/type-adapter';
 import { Feature, Geometry, GeoJsonProperties } from 'geojson';
 import { 

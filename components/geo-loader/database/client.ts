@@ -1,3 +1,12 @@
+/**
+ * Primary PostGIS database client focused on transaction management and basic operations.
+ * This client is used by processors that need transaction support and batch operations.
+ * Features:
+ * - Connection pooling
+ * - Transaction management (begin, commit, rollback)
+ * - Batch feature insertion
+ * - Basic PostGIS operations
+ */
 import { Pool, PoolClient } from 'pg';
 import { PostGISFeature, PostGISGeometry, PostGISBatchOptions } from '../types/postgis';
 

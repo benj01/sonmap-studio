@@ -1,4 +1,15 @@
-import { PostGISClient } from '../../../../database/client';
+/**
+ * Database Manager for DXF Processing
+ * Handles complex database operations specific to DXF file imports.
+ * Uses the extended PostGISClient for advanced geometry operations.
+ * 
+ * This manager is specifically designed for DXF processing where:
+ * - Complex geometries need to be handled
+ * - Feature collections and layers need to be managed
+ * - Coordinate transformations are required
+ * - Geometry validation is critical
+ */
+import { PostGISClient } from '@/components/geo-loader/core/database/client';
 import { DxfEntity } from '../types';
 import {
   PostGISFeature,

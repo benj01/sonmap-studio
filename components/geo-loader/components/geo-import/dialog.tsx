@@ -11,6 +11,7 @@ import { useImportProcess } from './hooks/use-import-process';
 import { useProcessor } from './hooks/use-processor';
 import { AnalyzeResult } from '../../core/processors/base/types';
 import { LoaderResult, GeoFeature } from 'types/geo';
+import { LogManager } from '../../core/logging/log-manager';
 
 // Empty feature collection for initialization
 const emptyFeatureCollection: FeatureCollection = {
@@ -365,12 +366,27 @@ export function GeoImportDialog({
     }
   }, [isFormatSupported, isShapefileComponent, onError, supportedFormats, file]);
 
+  const handleDownloadLogs = () => {
+    const logger = LogManager.getInstance();
+    const filename = `sonmap-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
+    logger.downloadLogs(filename);
+  };
+
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && handleClearAndClose()}>
       <DialogPortal>
         <DialogOverlay className="bg-black/80" />
         <DialogContent className="max-w-4xl h-[90vh] overflow-y-auto fixed z-50">
-          <DialogTitle>Import {file.name}</DialogTitle>
+          <div className="flex justify-between items-center">
+            <DialogTitle>Import {file?.name}</DialogTitle>
+            <button
+              onClick={handleDownloadLogs}
+              className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 border border-input bg-background hover:bg-accent hover:text-accent-foreground h-9 px-4 py-2"
+              title="Download debug logs"
+            >
+              📥 Download Logs
+            </button>
+          </div>
           <DialogDescription>
             Configure import settings and preview the data
           </DialogDescription>

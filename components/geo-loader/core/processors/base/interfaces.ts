@@ -1,6 +1,6 @@
 import { File } from '@web-std/file';
 import { ProcessorOptions, ProcessorResult, AnalyzeResult, DatabaseImportResult } from './types';
-import { PostGISClient } from '../../../database/client';
+import { PostGISClient } from '@/components/geo-loader/database/client';
 import { PostGISGeometry } from '../../../types/postgis';
 
 /**

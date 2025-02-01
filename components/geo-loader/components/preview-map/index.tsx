@@ -87,7 +87,7 @@ export function PreviewMap({
   preview,
   bounds,
   coordinateSystem = COORDINATE_SYSTEMS.WGS84,
-  visibleLayers = ['shapes'], // Initialize with 'shapes' layer
+  visibleLayers = ['shapes'],
   selectedElement,
   analysis
 }: PreviewMapProps): React.ReactElement {
@@ -223,6 +223,26 @@ export function PreviewMap({
     }
   }, [preview, currentVisibleLayers]);
 
+  useEffect(() => {
+    console.debug('[DEBUG] PreviewMap mounted with:', {
+      hasPreview: !!preview,
+      coordinateSystem,
+      visibleLayers,
+      bounds
+    });
+  }, []);
+
+  useEffect(() => {
+    console.debug('[DEBUG] PreviewState updated:', {
+      points: previewState?.points?.features?.length || 0,
+      lines: previewState?.lines?.features?.length || 0,
+      polygons: previewState?.polygons?.features?.length || 0,
+      loading: isLoading,
+      error: error,
+      viewState
+    });
+  }, [previewState, isLoading, error, viewState]);
+
   return (
     <div className="h-full w-full relative">
       <ActionButton 
@@ -249,19 +269,20 @@ export function PreviewMap({
           style={{ width: '100%', height: '100%' }}
           mapStyle="mapbox://styles/mapbox/light-v11"
           mapboxAccessToken={process.env.NEXT_PUBLIC_MAPBOX_TOKEN}
-          attributionControl={false}
-          reuseMaps
-          maxZoom={20}
-          minZoom={1}
-          interactiveLayerIds={['shapes']} // Update to use 'shapes' layer
+          initialViewState={{
+            longitude: 8.035665827669139,
+            latitude: 47.39015673011137,
+            zoom: 15,
+            pitch: 0,
+            bearing: 0
+          }}
+          interactiveLayerIds={['lines']}
         >
-          {previewState && (
-            <MapLayers
-              points={ensureGeoFeatureCollection(previewState.points || { type: 'FeatureCollection', features: [] })}
-              lines={ensureGeoFeatureCollection(previewState.lines || { type: 'FeatureCollection', features: [] })}
-              polygons={ensureGeoFeatureCollection(previewState.polygons || { type: 'FeatureCollection', features: [] })}
-            />
-          )}
+          <MapLayers
+            points={ensureGeoFeatureCollection(previewState?.points || { type: 'FeatureCollection', features: [] })}
+            lines={ensureGeoFeatureCollection(previewState?.lines || { type: 'FeatureCollection', features: [] })}
+            polygons={ensureGeoFeatureCollection(previewState?.polygons || { type: 'FeatureCollection', features: [] })}
+          />
 
           <div className="absolute top-4 right-4 z-10 space-y-2">
             <LayerControl

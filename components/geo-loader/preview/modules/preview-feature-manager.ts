@@ -1,4 +1,4 @@
-import { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
+import { Feature, FeatureCollection } from 'geojson';
 import { FeatureManager } from '../../core/feature-manager';
 import { GeoFeature } from '../../../../types/geo';
 import { PreviewCollections, SamplingStrategy } from '../types/preview';
@@ -43,7 +43,19 @@ export class PreviewFeatureManager {
       useStreaming: collection.features.length > PreviewFeatureManager.STREAM_THRESHOLD
     });
 
-    await this.featureManager.setFeatures(collection);
+    // Ensure all features have layer: 'shapes'
+    const shapesFeatures = collection.features.map(feature => ({
+      ...feature,
+      properties: {
+        ...feature.properties,
+        layer: 'shapes'
+      }
+    }));
+
+    await this.featureManager.setFeatures({
+      type: 'FeatureCollection',
+      features: shapesFeatures
+    });
   }
 
   public async getVisibleFeatures(): Promise<GeoFeature[]> {
@@ -55,7 +67,8 @@ export class PreviewFeatureManager {
     for await (const feature of this.featureManager.getFeatures()) {
       if (!feature.geometry || !feature.properties) continue;
       
-      if (feature.geometry.type === type && feature.properties.layer === layer) {
+      const featureLayer = feature.properties.layer || 'shapes';
+      if (feature.geometry.type === type && featureLayer === layer) {
         features.push(feature);
       }
     }

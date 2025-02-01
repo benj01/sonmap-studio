@@ -1,28 +1,28 @@
- import { StreamProcessor } from '../../stream/stream-processor';
+import { StreamProcessor } from '../../stream/stream-processor';
 import { StreamProcessorResult, StreamProcessorEvents } from '../../stream/types';
 import { AnalyzeResult, ProcessorResult } from '../../base/types';
-import { Feature, FeatureCollection, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, Geometry, Position } from 'geojson';
+import { Feature, FeatureCollection, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, Geometry, Position, GeoJsonProperties } from 'geojson';
 import { ShapefileParser } from './parser';
-import { COORDINATE_SYSTEMS } from '../../../../types/coordinates';
-import { coordinateSystemManager } from '../../../coordinate-systems/coordinate-system-manager';
-import { 
-  ShapefileProcessorOptions, 
-  ShapefileRecord, 
-  ShapefilePreviewData,
-  AnalysisIssue,
-  ShapefileAnalyzeResult
-} from './types';
-import { ValidationError, createErrorDetails } from '../../../errors/types';
+import { coordinateSystemManager } from '@/components/geo-loader/core/coordinate-systems';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '@/components/geo-loader/types/coordinates';
+import { prjReader } from './utils/prj-reader';
+import { convertToGeoJSON, convertToPostGIS } from './converters';
+import { ValidationError } from '@/components/geo-loader/core/errors/types';
+import { AnalysisIssue, ShapefileRecord, ShapefileAnalyzeResult, ShapefileStructure, ShapefileProcessorOptions } from './types';
 import { CompressedFile } from '../../../compression/compression-handler';
-import { PostGISClient } from '../../../../database/client';
+import { PostGISClient } from '@/components/geo-loader/database/client';
 import EventEmitter from 'events';
 
 // Import modular components
-import { convertToGeoJSON, convertToPostGIS } from './converters';
 import { calculateBoundsFromRecords, updateBounds, getFeatureBounds } from './utils/bounds';
 import { createDefaultStats, updateStats, addError, resetStats } from './utils/stats';
 import { TransactionManager } from './database';
-import { prjReader } from './utils/prj-reader';
+
+interface PreviewData {
+  type: 'FeatureCollection';
+  features: Feature[];
+  records: ShapefileRecord[];
+}
 
 // Type guards for geometry types
 const isPoint = (geom: Geometry): geom is Point => geom.type === 'Point';
@@ -41,6 +41,16 @@ function getCoordinates(geometry: Geometry): Position | Position[] | Position[][
   if (isMultiLineString(geometry)) return geometry.coordinates;
   if (isMultiPolygon(geometry)) return geometry.coordinates;
   throw new Error(`Unsupported geometry type: ${geometry.type}`);
+}
+
+// Type guard for geometry types
+function hasCoordinates(geometry: Geometry): geometry is Point | LineString | Polygon | MultiPoint | MultiLineString | MultiPolygon {
+  return 'coordinates' in geometry;
+}
+
+// Type guard for feature with coordinates
+function hasValidGeometry(feature: Feature): feature is Feature<Point | LineString | Polygon | MultiPoint | MultiLineString | MultiPolygon> {
+  return feature.geometry !== null && hasCoordinates(feature.geometry);
 }
 
 /**
@@ -94,7 +104,7 @@ export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature
       featureCount: features.length,
       sample: features[0] ? {
         type: features[0].geometry?.type,
-        coordinates: features[0].geometry?.coordinates,
+        coordinates: hasCoordinates(features[0].geometry) ? features[0].geometry.coordinates : undefined,
         bbox: features[0].bbox,
         properties: features[0].properties
       } : null
@@ -108,6 +118,12 @@ export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature
    */
   async analyze(file: File): Promise<AnalyzeResult<ShapefileRecord, Feature>> {
     try {
+      // Ensure coordinate system manager is initialized
+      if (!coordinateSystemManager.isInitialized()) {
+        console.debug('[ShapefileProcessor] Initializing coordinate system manager');
+        await coordinateSystemManager.initialize();
+      }
+
       const result = await this.parser.analyzeStructure(file, {
         previewRecords: (this.options as ShapefileProcessorOptions).previewRecords,
         parseDbf: (this.options as ShapefileProcessorOptions).importAttributes
@@ -127,21 +143,55 @@ export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature
         }
       });
 
-      // Force Swiss LV95 coordinate system
-      const coordinateSystem = COORDINATE_SYSTEMS.SWISS_LV95;
-      console.debug('[ShapefileProcessor] Forcing coordinate system to Swiss LV95');
+      // Try to detect coordinate system from PRJ file first
+      let detectedSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84; // Default to WGS84
+      const prjFile = await this.findAssociatedFile(file, '.prj');
+      if (prjFile) {
+        const prjContent = await prjFile.text();
+        const prjSystem = await prjReader.detectCoordinateSystem(prjContent);
+        if (prjSystem) {
+          console.debug('[ShapefileProcessor] Detected coordinate system from PRJ:', prjSystem);
+          detectedSystem = prjSystem;
+        }
+      }
 
-      // Convert preview features
+      // If no PRJ or detection failed, try to detect from coordinates
+      if (detectedSystem === COORDINATE_SYSTEMS.WGS84) {
+        // Convert preview features
+        const preview = result.preview || [];
+        const previewFeatures = convertToGeoJSON(preview).map((feature: Feature) => {
+          if (!hasValidGeometry(feature)) return null;
+          return {
+            type: 'Feature',
+            geometry: feature.geometry,
+            properties: {
+              ...feature.properties,
+              type: feature.geometry.type || 'unknown'
+            }
+          };
+        }).filter(Boolean) as Feature[];
+
+        // Try to detect coordinate system from feature coordinates
+        if (previewFeatures.length > 0) {
+          const coordSystem = await coordinateSystemManager.detect(previewFeatures);
+          if (coordSystem) {
+            console.debug('[ShapefileProcessor] Detected coordinate system from coordinates:', coordSystem);
+            detectedSystem = coordSystem;
+          }
+        }
+      }
+
+      // Convert preview features with detected coordinate system
       const preview = result.preview || [];
-      const previewFeatures = convertToGeoJSON(preview).map(feature => {
-        if (!feature) return null;
+      const previewFeatures = convertToGeoJSON(preview).map((feature: Feature) => {
+        if (!hasValidGeometry(feature)) return null;
         return {
           type: 'Feature',
           geometry: feature.geometry,
           properties: {
             ...feature.properties,
-            layer: 'shapes',
-            type: feature.geometry?.type || 'unknown'
+            type: feature.geometry.type || 'unknown',
+            originalSystem: detectedSystem
           }
         };
       }).filter(Boolean) as Feature[];
@@ -149,7 +199,8 @@ export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature
       console.debug('[ShapefileProcessor] Converted preview features:', {
         inputCount: preview.length,
         outputCount: previewFeatures.length,
-        sample: previewFeatures[0] || null
+        sample: previewFeatures[0] || null,
+        coordinateSystem: detectedSystem
       });
 
       // Calculate bounds from preview features
@@ -173,38 +224,37 @@ export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature
         maxY: -Infinity
       });
 
-      // Validate bounds are within Swiss range
+      // Validate bounds against coordinate system
       const validBounds = {
-        minX: Math.max(bounds.minX, 2485000),
-        minY: Math.max(bounds.minY, 1075000),
-        maxX: Math.min(bounds.maxX, 2834000),
-        maxY: Math.min(bounds.maxY, 1299000)
+        minX: Math.max(bounds.minX, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 2485000 : -180),
+        minY: Math.max(bounds.minY, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 1075000 : -90),
+        maxX: Math.min(bounds.maxX, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 2834000 : 180),
+        maxY: Math.min(bounds.maxY, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 1299000 : 90)
       };
 
       console.debug('[ShapefileProcessor] Calculated bounds:', {
         original: bounds,
         validated: validBounds,
+        coordinateSystem: detectedSystem,
         isValid: isFinite(bounds.minX) && isFinite(bounds.minY) && 
                 isFinite(bounds.maxX) && isFinite(bounds.maxY)
       });
 
-      // Create feature collection
-      const previewCollection: FeatureCollection = {
+      // Create feature collection with records
+      const previewData: PreviewData = {
         type: 'FeatureCollection',
-        features: previewFeatures
+        features: previewFeatures,
+        records: preview
       };
 
       return {
         ...result,
-        preview: previewCollection,
-        coordinateSystem,
+        preview: previewData,
+        coordinateSystem: detectedSystem,
         bounds: validBounds,
-        structure: {
-          fields: result.structure?.fields || [],
-          recordCount: result.structure?.recordCount || 0,
-          shapeHeader: result.structure?.shapeHeader || null
-        }
+        layers: ['shapes']
       };
+
     } catch (error) {
       console.error('[ShapefileProcessor] Analysis failed:', error);
       throw error;
@@ -400,6 +450,95 @@ export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature
   protected isValidPair(x: number, y: number): boolean {
     return this.validateCoordinates([x, y]);
   }
+
+  protected calculateBounds(): Required<ProcessorResult>['bounds'] {
+    return this.records.reduce((acc, record) => {
+      const bbox = record?.data?.bbox;
+      if (bbox && 
+          typeof bbox.xMin === 'number' && !isNaN(bbox.xMin) &&
+          typeof bbox.yMin === 'number' && !isNaN(bbox.yMin) &&
+          typeof bbox.xMax === 'number' && !isNaN(bbox.xMax) &&
+          typeof bbox.yMax === 'number' && !isNaN(bbox.yMax)) {
+        acc.minX = Math.min(acc.minX, bbox.xMin);
+        acc.minY = Math.min(acc.minY, bbox.yMin);
+        acc.maxX = Math.max(acc.maxX, bbox.xMax);
+        acc.maxY = Math.max(acc.maxY, bbox.yMax);
+      }
+      return acc;
+    }, {
+      minX: Infinity,
+      minY: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity
+    });
+  }
+
+  protected getLayers(): string[] {
+    return ['shapes'];
+  }
+
+  protected getFeatureBounds(feature: Feature): Required<ProcessorResult>['bounds'] {
+    if (!feature.geometry) {
+      return {
+        minX: 0,
+        minY: 0,
+        maxX: 0,
+        maxY: 0
+      };
+    }
+
+    const bounds = {
+      minX: Infinity,
+      minY: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity
+    };
+
+    const processPoint = (coords: number[]): void => {
+      if (coords.length >= 2) {
+        bounds.minX = Math.min(bounds.minX, coords[0]);
+        bounds.minY = Math.min(bounds.minY, coords[1]);
+        bounds.maxX = Math.max(bounds.maxX, coords[0]);
+        bounds.maxY = Math.max(bounds.maxY, coords[1]);
+      }
+    };
+
+    const processPoints = (coords: number[][]): void => {
+      coords.forEach(processPoint);
+    };
+
+    const processPolygon = (coords: number[][][]): void => {
+      coords.forEach(processPoints);
+    };
+
+    switch (feature.geometry.type) {
+      case 'Point':
+        processPoint((feature.geometry as Point).coordinates);
+        break;
+      case 'LineString':
+        processPoints((feature.geometry as LineString).coordinates);
+        break;
+      case 'Polygon':
+        processPolygon((feature.geometry as Polygon).coordinates);
+        break;
+      case 'MultiPoint':
+        processPoints((feature.geometry as MultiPoint).coordinates);
+        break;
+      case 'MultiLineString':
+        processPolygon((feature.geometry as MultiLineString).coordinates);
+        break;
+      case 'MultiPolygon':
+        (feature.geometry as MultiPolygon).coordinates.forEach(processPolygon);
+        break;
+    }
+
+    return isFinite(bounds.minX) ? bounds : {
+      minX: 0,
+      minY: 0,
+      maxX: 0,
+      maxY: 0
+    };
+  }
 }
 
 /**
@@ -447,7 +586,7 @@ function calculateInitialBounds(features: Feature[]): Required<ProcessorResult>[
   };
 
   features.forEach(feature => {
-    if (feature?.geometry?.coordinates) {
+    if (feature?.geometry && hasCoordinates(feature.geometry)) {
       processCoords(feature.geometry.coordinates);
     }
   });

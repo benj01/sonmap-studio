@@ -6,7 +6,9 @@ import { ViewStateChangeEvent } from 'react-map-gl';
 export interface PreviewMapProps {
   /** Preview data from processor */
   preview: PreviewManager | {
-    features: FeatureCollection;
+    points: FeatureCollection;
+    lines: FeatureCollection;
+    polygons: FeatureCollection;
     bounds?: {
       minX: number;
       minY: number;
@@ -15,6 +17,7 @@ export interface PreviewMapProps {
     };
     layers: string[];
     previewManager: PreviewManager;
+    coordinateSystem?: CoordinateSystem;
   };
   /** Bounds for initial view */
   bounds?: {

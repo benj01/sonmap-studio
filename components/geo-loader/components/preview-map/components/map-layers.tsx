@@ -8,6 +8,15 @@ interface GeoFeatureProperties {
   type?: string;
   originalGeometry?: Geometry;
   _transformedCoordinates?: boolean;
+  _fromSystem?: string;
+  _toSystem?: string;
+  originalSystem?: string;
+  _projectionInfo?: {
+    original: string;
+    display: string;
+    center: [number, number];
+    parallels: [number, number];
+  };
   [key: string]: any;
 }
 
@@ -30,9 +39,9 @@ interface LayerProps {
 const ensureGeoFeature = (feature: Feature): GeoFeature => ({
   ...feature,
   properties: {
-    layer: 'shapes',
     type: feature.geometry?.type || 'unknown',
-    ...feature.properties
+    ...feature.properties,
+    layer: feature.properties?.layer || 'shapes'  // Preserve existing layer or default to 'shapes'
   }
 });
 
@@ -110,125 +119,65 @@ export const PointLayer: React.FC<LayerProps> = ({ data }) => {
 };
 
 export const LineLayer: React.FC<LayerProps> = ({ data }) => {
-  console.debug('[DEBUG] Line layer data:', {
-    featureCount: data.features.length,
-    features: data.features.map((f: GeoFeature) => ({
-      type: f.geometry.type,
-      coordinates: 'coordinates' in f.geometry ? f.geometry.coordinates : undefined,
-      properties: f.properties,
-      layer: f.properties?.layer
-    }))
-  });
+  const [lastValidData, setLastValidData] = useState<GeoFeatureCollection | null>(null);
 
-  if (data.features.length === 0) {
-    console.debug('[DEBUG] No line features to render');
+  useEffect(() => {
+    // Log detailed feature information
+    const features = data.features;
+    console.debug('[DEBUG] [LineLayer] Received data:', {
+      currentFeatures: features.length,
+      lastValidFeatures: lastValidData?.features.length || 0,
+      sampleFeature: features[0] ? {
+        type: features[0].geometry.type,
+        coordinates: features[0].geometry.type === 'LineString' || features[0].geometry.type === 'MultiLineString' 
+          ? (features[0].geometry as LineString | MultiLineString).coordinates 
+          : [],
+        layer: features[0].properties?.layer,
+        fromSystem: features[0].properties?._fromSystem,
+        toSystem: features[0].properties?._toSystem,
+        projectionInfo: features[0].properties?._projectionInfo
+      } : null
+    });
+
+    // Update last valid data if we have features
+    if (features.length > 0) {
+      setLastValidData(data);
+    }
+  }, [data]);
+
+  // Use current data if it has features, otherwise use last valid data
+  const effectiveData = data.features.length > 0 ? data : (lastValidData || data);
+
+  // Return null if no data to render
+  if (!effectiveData || effectiveData.features.length === 0) {
+    console.debug('[DEBUG] [LineLayer] No features to render');
     return null;
   }
 
-  // Validate and process coordinates
-  const processCoordinates = (coords: number[]): number[] => {
-    return coords.map(c => {
-      // Ensure coordinate is a finite number
-      if (!isFinite(c)) {
-        console.warn('[DEBUG] Invalid coordinate found:', c);
-        return 0; // Default to 0 for invalid coordinates
-      }
-      return c;
-    });
-  };
-
-  // Create a new FeatureCollection with validated coordinates
-  const validatedData: GeoFeatureCollection = {
-    type: 'FeatureCollection',
-    features: data.features.map((f: GeoFeature) => {
-      // Skip validation if coordinates are already transformed
-      if (f.properties?._transformedCoordinates) {
-        return f;
-      }
-
-      // Use original geometry if it exists in properties (for non-WGS84 display)
-      const geometry = f.properties?.originalGeometry || f.geometry;
-      
-      return {
-        ...f,
-        geometry: (() => {
-          if (geometry.type === 'LineString') {
-            return {
-              ...geometry,
-              coordinates: (geometry as LineString).coordinates.map((coord: Position) => 
-                processCoordinates(coord)
-              )
-            };
-          } else if (geometry.type === 'MultiLineString') {
-            return {
-              ...geometry,
-              coordinates: (geometry as MultiLineString).coordinates.map((line: Position[]) =>
-                line.map((coord: Position) =>
-                  processCoordinates(coord)
-                )
-              )
-            };
-          }
-          return geometry;
-        })(),
-        properties: {
-          ...f.properties,
-          _transformedCoordinates: true
-        }
-      } as GeoFeature;
-    })
-  };
-
-  console.debug('[DEBUG] Validated line data:', {
-    featureCount: validatedData.features.length,
-    firstFeature: validatedData.features[0] ? {
-      type: validatedData.features[0].geometry.type,
-      coordinates: 'coordinates' in validatedData.features[0].geometry ? validatedData.features[0].geometry.coordinates : undefined,
-      properties: validatedData.features[0].properties,
-      layer: validatedData.features[0].properties?.layer,
-      hasOriginalGeometry: !!validatedData.features[0].properties?.originalGeometry
-    } : null
-  });
-
   return (
     <Source 
-      key="lines" 
+      id="line-source"
       type="geojson" 
-      data={validatedData}
-      generateId={true}
+      data={effectiveData}
     >
       <Layer
         id="lines"
         type="line"
-        filter={['==', ['get', 'layer'], 'shapes']} // Only show features from 'shapes' layer
+        source="line-source"
+        filter={['==', ['get', 'layer'], 'shapes']}
         paint={{
           'line-color': '#4a90e2',
           'line-width': 3,
           'line-opacity': 1
         }}
         layout={{
-          'line-join': 'round',
           'line-cap': 'round',
-          'visibility': 'visible'
-        }}
-      />
-      <Layer
-        id="lines-hover"
-        type="line"
-        filter={['all',
-          ['==', ['get', 'layer'], 'shapes'],
-          ['==', ['id'], '']
-        ]}
-        paint={{
-          'line-color': '#4a90e2',
-          'line-width': 5,
-          'line-opacity': 0.5
-        }}
-        layout={{
           'line-join': 'round',
-          'line-cap': 'round',
-          'visibility': 'visible'
+          'visibility': 'visible',
+          'line-sort-key': 1  // Ensure lines render above other layers
         }}
+        minzoom={0}
+        maxzoom={24}
       />
     </Source>
   );
@@ -267,24 +216,17 @@ interface MapLayersProps {
   polygons: GeoFeatureCollection;
 }
 
-export function MapLayers({
-  points,
-  lines,
-  polygons
-}: MapLayersProps): React.ReactElement {
+export const MapLayers: React.FC<MapLayersProps> = ({ points, lines, polygons }) => {
   useEffect(() => {
-    console.debug('[DEBUG] MapLayers received collections:', {
-      points: points.features.length,
-      lines: lines.features.length,
-      polygons: polygons.features.length,
-      lineDetails: lines.features.map((f: GeoFeature) => ({
+    console.debug('[DEBUG] [MapLayers] Component mounted/updated:', {
+      pointCount: points.features.length,
+      lineCount: lines.features.length,
+      polygonCount: polygons.features.length,
+      lineFeatures: lines.features.map(f => ({
         type: f.geometry.type,
-        coordinates: f.geometry.type === 'LineString' ? 
-          (f.geometry as LineString).coordinates.length :
-          f.geometry.type === 'MultiLineString' ?
-            (f.geometry as MultiLineString).coordinates.reduce((sum, line) => sum + line.length, 0) : 0,
-        properties: f.properties,
-        layer: f.properties?.layer
+        layer: f.properties?.layer,
+        fromSystem: f.properties?._fromSystem,
+        toSystem: f.properties?._toSystem
       }))
     });
   }, [points, lines, polygons]);
@@ -296,6 +238,6 @@ export function MapLayers({
       <PolygonLayer data={polygons} />
     </>
   );
-}
+};
 
 export { ensureGeoFeatureCollection };

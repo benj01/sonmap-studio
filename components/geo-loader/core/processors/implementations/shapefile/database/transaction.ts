@@ -1,4 +1,15 @@
-import { PostGISClient } from '../../../../../database/client';
+/**
+ * Transaction Manager for Shapefile Processing
+ * Handles database transactions and batch operations for shapefile imports.
+ * Uses the base PostGISClient for its transaction capabilities.
+ * 
+ * This manager is specifically designed for shapefile processing where:
+ * - Features are imported in batches
+ * - Transactions need to be managed carefully
+ * - Progress needs to be tracked
+ * - Spatial indexes need to be created
+ */
+import { PostGISClient } from '@/components/geo-loader/database/client';
 import { PostGISFeature } from '../../../../../types/postgis';
 import { DatabaseImportResult } from '../../../base/types';
 

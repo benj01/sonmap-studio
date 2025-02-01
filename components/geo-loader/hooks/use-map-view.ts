@@ -250,53 +250,20 @@ export function useMapView(
       console.debug('[DEBUG] Updating view from bounds:', {
         bounds,
         coordinateSystem,
-        currentView: viewState
+        currentZoom: viewState.zoom
       });
 
-      // Use bounds directly if they're already in WGS84
+      // Transform bounds to WGS84 if needed
       let transformedBounds = bounds;
-
-      // Only transform if needed and bounds aren't already transformed
-      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84 && !bounds._transformedCoordinates) {
-        try {
-          const minPoint = await transformCoordinates(
-            { x: bounds.minX, y: bounds.minY },
-            coordinateSystem,
-            COORDINATE_SYSTEMS.WGS84
-          );
-          const maxPoint = await transformCoordinates(
-            { x: bounds.maxX, y: bounds.maxY },
-            coordinateSystem,
-            COORDINATE_SYSTEMS.WGS84
-          );
-
-          // Validate transformed coordinates
-          if (isFinite(minPoint.x) && isFinite(minPoint.y) &&
-            isFinite(maxPoint.x) && isFinite(maxPoint.y)) {
-            transformedBounds = {
-              minX: minPoint.x,
-              minY: minPoint.y,
-              maxX: maxPoint.x,
-              maxY: maxPoint.y,
-              _transformedCoordinates: true
-            };
-          } else {
-            console.warn('[DEBUG] Invalid transformed bounds, using original:', {
-              minPoint,
-              maxPoint
-            });
-          }
-        } catch (error) {
-          console.error('[DEBUG] Error transforming bounds:', error);
-        }
+      if (coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
+        transformedBounds = await transformBounds(bounds, coordinateSystem, COORDINATE_SYSTEMS.WGS84);
       }
 
-      console.debug('[DEBUG] Transformed bounds:', {
-        original: bounds,
-        transformed: transformedBounds,
-        fromSystem: coordinateSystem,
-        toSystem: COORDINATE_SYSTEMS.WGS84
-      });
+      // Skip bounds update if zooming out beyond reasonable limits
+      if (viewState.zoom < 2 && Math.abs(transformedBounds.maxX - transformedBounds.minX) > 360) {
+        console.debug('[DEBUG] Skipping bounds update - zoom level too low:', viewState.zoom);
+        return;
+      }
 
       // Calculate viewport settings from bounds
       const viewport = new WebMercatorViewport({
@@ -306,7 +273,6 @@ export function useMapView(
 
       // Add validation before fitBounds
       if (transformedBounds &&
-        transformedBounds._transformedCoordinates &&
         isFinite(transformedBounds.minX) &&
         isFinite(transformedBounds.minY) &&
         isFinite(transformedBounds.maxX) &&
@@ -329,11 +295,10 @@ export function useMapView(
       } else {
         console.warn('[DEBUG] Invalid bounds for fitBounds:', transformedBounds);
       }
-      setInitialBoundsSet(true);
     } catch (error) {
       console.error('[DEBUG] Error updating view from bounds:', error);
     }
-  }, [coordinateSystem, viewState, initialBoundsSet, transformCoordinates]);
+  }, [coordinateSystem, viewState, initialBoundsSet, transformBounds, transformCoordinates]);
 
   const focusOnFeatures = useCallback(async (features: Feature[], padding: number = 50): Promise<void> => {
     const bounds = await calculateBoundsFromFeatures(features);

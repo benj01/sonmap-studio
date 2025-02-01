@@ -1,3 +1,13 @@
+/**
+ * Extended PostGIS database client with advanced geometry operations.
+ * This client is used by processors that need complex geometry handling and feature management.
+ * Features:
+ * - Feature collection management
+ * - Layer management
+ * - Advanced geometry operations (creation, validation, transformation)
+ * - Coordinate system handling
+ * - Complex PostGIS queries
+ */
 import { Pool, PoolClient } from 'pg';
 import {
   PostGISGeometry,

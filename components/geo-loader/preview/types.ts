@@ -17,7 +17,8 @@ export interface PreviewCollectionResult extends PreviewCollections {
 }
 
 export interface SamplingStrategy {
-  shouldIncludeFeature(feature: GeoFeature, index: number): boolean;
+  shouldIncludeFeature(feature: Feature<any, GeoJsonProperties>): boolean;
+  reset(): void;
 }
 
 export interface PreviewOptions {
