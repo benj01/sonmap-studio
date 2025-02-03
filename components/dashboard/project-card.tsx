@@ -13,7 +13,7 @@ import { useRouter } from "next/navigation"
 import { formatDistanceToNow } from 'date-fns'
 import { Database } from '@/types/supabase'
 
-type ProjectStatus = Database['public']['Enums']['project_status']
+type ProjectStatus = 'active' | 'archived' | 'deleted'
 type ProjectRow = Database['public']['Tables']['projects']['Row']
 
 interface ProjectMember {
@@ -22,6 +22,7 @@ interface ProjectMember {
 
 interface Project extends ProjectRow {
   project_members: ProjectMember[]
+  status: ProjectStatus
 }
 
 interface ProjectCardProps {

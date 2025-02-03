@@ -442,13 +442,22 @@ export function GeoImportDialog({
                 <div className="h-full">
                   <PreviewMap
                     preview={{
-                      features: {
+                      points: {
+                        type: "FeatureCollection" as const,
+                        features: []
+                      },
+                      lines: {
+                        type: "FeatureCollection" as const,
+                        features: []
+                      },
+                      polygons: {
                         type: "FeatureCollection" as const,
                         features: analysis.preview?.features || []
                       },
                       bounds: analysis.bounds,
                       layers: selectedLayers || [],
-                      previewManager: previewManager
+                      previewManager: previewManager,
+                      coordinateSystem: coordinateSystem
                     }}
                     bounds={analysis.bounds}
                     coordinateSystem={coordinateSystem}

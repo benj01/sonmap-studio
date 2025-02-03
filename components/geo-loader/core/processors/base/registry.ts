@@ -1,88 +1,97 @@
-import { IProcessor } from './interfaces';
-import { ProcessorOptions } from './types';
-import { ValidationError } from '../../errors/types';
-import { createErrorReporter } from '../../errors/reporter';
-
-// Helper type for processor registration
-export type ProcessorConstructor = new (options: ProcessorOptions) => IProcessor;
+import { GeoProcessor } from './processor';
+import { GeoFileUpload, ProcessingError, ProcessingErrorType } from './types';
+import { LogManager } from '../../logging/log-manager';
 
 /**
- * Registry for file processors
+ * Registry for managing and accessing different file processors
  */
 export class ProcessorRegistry {
-  private static processors = new Map<string, ProcessorConstructor>();
+  private static instance: ProcessorRegistry;
+  private processors: Map<string, GeoProcessor> = new Map();
+  private readonly logger = LogManager.getInstance();
+  private readonly LOG_SOURCE = 'ProcessorRegistry';
 
-  static register(extension: string, processor: ProcessorConstructor) {
-    this.processors.set(extension.toLowerCase(), processor);
+  private constructor() {}
+
+  /**
+   * Get the singleton instance
+   */
+  public static getInstance(): ProcessorRegistry {
+    if (!ProcessorRegistry.instance) {
+      ProcessorRegistry.instance = new ProcessorRegistry();
+    }
+    return ProcessorRegistry.instance;
   }
 
-  static async getProcessor(file: File, options: ProcessorOptions = {}): Promise<IProcessor | null> {
-    const extension = file.name.split('.').pop()?.toLowerCase() || '';
-    const ProcessorClass = this.processors.get(extension);
-    
-    if (!ProcessorClass) {
-      return null;
-    }
+  /**
+   * Register a processor for a file type
+   */
+  public register(type: string, processor: GeoProcessor): void {
+    this.logger.debug(this.LOG_SOURCE, `Registering processor for type: ${type}`);
+    this.processors.set(type.toLowerCase(), processor);
+  }
 
-    try {
-      // Extract related files if available
-      const processorOptions = { ...options };
-      const relatedFiles = (file as any).relatedFiles;
-      
-      if (relatedFiles) {
-        // Log the raw related files for debugging
-        console.debug('[DEBUG] Raw related files:', relatedFiles);
-        
-        // Normalize file extensions to ensure they match expected format
-        const normalizedFiles: Record<string, File> = {};
-        Object.entries(relatedFiles).forEach(([ext, file]) => {
-          // Ensure extension starts with a dot and is lowercase
-          const normalizedExt = ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`;
-          normalizedFiles[normalizedExt] = file as File;
-        });
+  /**
+   * Get a processor that can handle the given file upload
+   */
+  public getProcessor(upload: GeoFileUpload): GeoProcessor {
+    this.logger.debug(this.LOG_SOURCE, 'Finding processor for upload', {
+      fileName: upload.mainFile.name,
+      type: upload.mainFile.type,
+      hasCompanions: Object.keys(upload.companions).length > 0
+    });
 
-        processorOptions.relatedFiles = {
-          dbf: normalizedFiles['.dbf'],
-          shx: normalizedFiles['.shx'],
-          prj: normalizedFiles['.prj']
-        };
-        
-        console.debug('[DEBUG] Normalized companion files:', processorOptions.relatedFiles);
-      }
-
-      const processor = new ProcessorClass(processorOptions);
-      console.debug('[DEBUG] Created processor with options:', {
-        hasRelatedFiles: !!processorOptions.relatedFiles,
-        relatedFileTypes: processorOptions.relatedFiles ? Object.keys(processorOptions.relatedFiles) : []
+    // Try to find processor by MIME type
+    const processor = this.processors.get(upload.mainFile.type.toLowerCase());
+    if (processor) {
+      this.logger.debug(this.LOG_SOURCE, 'Found processor by MIME type', {
+        type: upload.mainFile.type
       });
-      const canProcess = await processor.canProcess(file);
-      
-      if (!canProcess) {
-        console.debug('[DEBUG] Processor cannot handle file:', file.name);
-        return null;
-      }
-
       return processor;
-    } catch (error) {
-      const errorReporter = options.errorReporter || createErrorReporter();
-      errorReporter.addError(
-        `Failed to create processor for ${file.name}: ${error instanceof Error ? error.message : String(error)}`,
-        'PROCESSOR_CREATION_ERROR',
-        { file: file.name, extension, error: error instanceof Error ? error.message : String(error) }
-      );
-      return null;
     }
+
+    // Try to find processor that can handle the file
+    for (const [type, proc] of this.processors.entries()) {
+      if (proc.canProcess(upload)) {
+        this.logger.debug(this.LOG_SOURCE, 'Found compatible processor', { type });
+        return proc;
+      }
+    }
+
+    this.logger.error(this.LOG_SOURCE, 'No processor found for file', {
+      fileName: upload.mainFile.name,
+      type: upload.mainFile.type
+    });
+
+    throw new ProcessingError(
+      `No processor found for file type: ${upload.mainFile.type}`,
+      ProcessingErrorType.INVALID_FORMAT,
+      {
+        fileName: upload.mainFile.name,
+        type: upload.mainFile.type,
+        availableProcessors: Array.from(this.processors.keys())
+      }
+    );
   }
 
-  static getSupportedExtensions(): string[] {
+  /**
+   * Check if a processor exists for the given type
+   */
+  public hasProcessor(type: string): boolean {
+    return this.processors.has(type.toLowerCase());
+  }
+
+  /**
+   * Get all registered processor types
+   */
+  public getRegisteredTypes(): string[] {
     return Array.from(this.processors.keys());
   }
-}
 
-/**
- * Create a processor for the given file
- * @throws {ValidationError} If no processor is available for the file type
- */
-export function createProcessor(file: File, options: ProcessorOptions = {}): Promise<IProcessor | null> {
-  return ProcessorRegistry.getProcessor(file, options);
+  /**
+   * Clear all registered processors
+   */
+  public clear(): void {
+    this.processors.clear();
+  }
 }

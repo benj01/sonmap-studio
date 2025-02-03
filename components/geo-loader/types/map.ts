@@ -3,6 +3,11 @@ import { CoordinateSystem } from './coordinates';
 import { PreviewManager } from '../preview/preview-manager';
 import { ViewStateChangeEvent } from 'react-map-gl';
 
+export interface Warning {
+  type: string;
+  message: string;
+}
+
 export interface PreviewMapProps {
   /** Preview data from processor */
   preview: PreviewManager | {

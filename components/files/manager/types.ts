@@ -1,9 +1,10 @@
 import { Database } from 'types/supabase';
 import { LoaderResult } from 'types/geo';
+import { ProjectFileBase, UploadedFile } from '../types';
 
 export type ViewMode = 'grid' | 'list';
 
-export type ProjectFile = Database['public']['Tables']['project_files']['Row'] & {
+export type ProjectFile = ProjectFileBase & {
   importedFiles?: ProjectFile[];
 };
 
@@ -12,12 +13,7 @@ export interface FileManagerProps {
   onGeoImport?: (result: LoaderResult, file: ProjectFile) => void;
 }
 
-export interface FileUploadResult {
-  name: string;
-  size: number;
-  type: string;
-  relatedFiles?: { [key: string]: string };
-}
+export type FileUploadResult = UploadedFile;
 
 export interface FileListProps {
   files: ProjectFile[];

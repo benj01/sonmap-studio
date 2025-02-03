@@ -1,5 +1,5 @@
 import React from 'react';
-import { Feature } from 'geojson';
+import { Feature, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon } from 'geojson';
 import { ControlProps } from '../types';
 
 interface FeatureInfoProps extends ControlProps {
@@ -52,18 +52,34 @@ export function FeatureInfo({
   };
 
   const getCoordinatesPreview = (feature: Feature) => {
-    const { type, coordinates } = feature.geometry;
+    const geometry = feature.geometry;
+    const type = geometry.type;
+
     switch (type) {
-      case 'Point':
-        return coordinates.join(', ');
-      case 'LineString':
-      case 'MultiPoint':
-        return `${coordinates.length} points`;
-      case 'Polygon':
-      case 'MultiLineString':
-        return `${coordinates.length} rings/lines`;
-      case 'MultiPolygon':
-        return `${coordinates.length} polygons`;
+      case 'Point': {
+        const point = geometry as Point;
+        return point.coordinates.join(', ');
+      }
+      case 'LineString': {
+        const lineString = geometry as LineString;
+        return `${lineString.coordinates.length} points`;
+      }
+      case 'MultiPoint': {
+        const multiPoint = geometry as MultiPoint;
+        return `${multiPoint.coordinates.length} points`;
+      }
+      case 'Polygon': {
+        const polygon = geometry as Polygon;
+        return `${polygon.coordinates.length} rings/lines`;
+      }
+      case 'MultiLineString': {
+        const multiLineString = geometry as MultiLineString;
+        return `${multiLineString.coordinates.length} rings/lines`;
+      }
+      case 'MultiPolygon': {
+        const multiPolygon = geometry as MultiPolygon;
+        return `${multiPolygon.coordinates.length} polygons`;
+      }
       default:
         return 'Complex geometry';
     }

@@ -6,7 +6,8 @@
     "build:wasm": "node components/geo-loader/core/processors/implementations/shapefile/wasm/build.js",
     "start": "next start",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "generate-docs": "ts-node scripts/generateDocs.ts"
   },
   "jest": {
     "testEnvironment": "node",
@@ -45,6 +46,7 @@
     "@radix-ui/react-tabs": "^1.1.1",
     "@radix-ui/react-toast": "^1.2.2",
     "@radix-ui/react-tooltip": "^1.1.6",
+    "@supabase/auth-helpers-nextjs": "^0.10.0",
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "^2.47.2",
     "@t3-oss/env-nextjs": "^0.7.1",
@@ -89,11 +91,13 @@
     "@babel/core": "^7.26.0",
     "@babel/plugin-transform-runtime": "^7.25.9",
     "@babel/preset-env": "^7.26.0",
+    "@types/fs-extra": "^11.0.4",
     "@types/jest": "^29.5.14",
     "@types/node": "22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "19.0.2",
     "babel-loader": "^9.2.1",
+    "fs-extra": "^11.3.0",
     "jest": "^29.7.0",
     "postcss": "8.4.49",
     "supabase": "^2.0.0",
@@ -101,6 +105,7 @@
     "tailwindcss": "3.4.17",
     "tailwindcss-animate": "^1.0.7",
     "ts-jest": "^29.2.5",
+    "ts-node": "^10.9.2",
     "typescript": "5.7.2",
     "wasm-loader": "^1.3.0"
   }

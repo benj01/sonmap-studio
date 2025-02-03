@@ -1,67 +1,26 @@
-# Shapefile Processor Documentation
+# 📂 shapefile
 
 ## Overview
-This directory contains the shapefile processor implementation, which uses WebAssembly (Rust) for performance-critical operations. The processor handles parsing, validation, and geometry processing of shapefiles.
+This folder contains 5 file(s) related to shapefile.
 
-## Directory Structure
-```
-shapefile/
-├── core/                 - Core TypeScript implementation
-│   ├── constants.ts      - Shared constants
-│   ├── validator.ts      - Validation logic
-│   ├── geometry-converter.ts - Geometry conversion
-│   └── wasm-bridge.ts    - WebAssembly bridge
-├── wasm/                 - Rust/WebAssembly implementation
-│   ├── src/             - Rust source code
-│   │   ├── lib.rs       - Main module
-│   │   ├── geometry.rs  - Geometry calculations
-│   │   ├── validation.rs- Validation functions
-│   │   └── geojson.rs   - GeoJSON types
-│   └── Cargo.toml       - Rust dependencies
-└── docs/                 - Documentation
-    ├── implementation.md - Implementation details
-    └── wasm.md          - WebAssembly specifics
-```
+## 📄 Files in this folder
 
-## Key Components
+| File Name | Description |
+|-----------|-------------|
+| `companion-handler.ts` | [Add description] |
+| `parser.ts` | [Add description] |
+| `processor.ts` | [Add description] |
+| `types.ts` | [Add description] |
+| `worker-processor.ts` | [Add description] |
 
-### TypeScript Core
-- **geometry-converter.ts**: Converts shapefile records to GeoJSON features
-- **validator.ts**: Validates shapefile structure and components
-- **wasm-bridge.ts**: TypeScript interface to WebAssembly functions
+## 🔗 Dependencies
+- [List important dependencies used in this folder]
 
-### Rust/WebAssembly
-- **geometry.rs**: Optimized geometry calculations
-- **validation.rs**: Efficient validation functions
-- **geojson.rs**: GeoJSON type definitions
+## ⚙️ Usage Notes
+- [Add any specific setup or initialization details]
 
-## Usage
+## 🔄 Related Folders/Modules
+- [List related folders or modules]
 
-### Initialization
-```typescript
-import { initWasm } from './core/wasm-bridge';
-await initWasm();
-```
-
-### Processing Shapefiles
-```typescript
-const processor = new ShapefileProcessor();
-const result = await processor.process(file);
-```
-
-## Development
-
-### Building WebAssembly
-```bash
-cd wasm
-npm run build:wasm
-```
-
-### Running Tests
-```bash
-npm test
-```
-
-## Further Reading
-- [Implementation Details](./docs/implementation.md)
-- [WebAssembly Documentation](./docs/wasm.md)
+## 🚧 TODOs / Planned Improvements
+- [List any pending tasks or improvements]

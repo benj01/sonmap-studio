@@ -1,5 +1,8 @@
 import { saveAs } from 'file-saver';
 
+/**
+ * Log levels for the logging system
+ */
 export enum LogLevel {
   DEBUG = 'DEBUG',
   INFO = 'INFO',
@@ -7,14 +10,20 @@ export enum LogLevel {
   ERROR = 'ERROR'
 }
 
-interface LogEntry {
+/**
+ * Log entry structure
+ */
+export interface LogEntry {
   timestamp: string;
   level: LogLevel;
   source: string;
   message: string;
-  data?: any;
+  details?: Record<string, any>;
 }
 
+/**
+ * Singleton logger for the geo-loader system
+ */
 export class LogManager {
   private static instance: LogManager;
   private logs: LogEntry[] = [];
@@ -22,6 +31,9 @@ export class LogManager {
 
   private constructor() {}
 
+  /**
+   * Get the singleton instance
+   */
   public static getInstance(): LogManager {
     if (!LogManager.instance) {
       LogManager.instance = new LogManager();
@@ -30,66 +42,90 @@ export class LogManager {
   }
 
   private formatLogEntry(entry: LogEntry): string {
-    const dataStr = entry.data ? `\n${JSON.stringify(entry.data, null, 2)}` : '';
+    const dataStr = entry.details ? `\n${JSON.stringify(entry.details, null, 2)}` : '';
     return `[${entry.timestamp}] [${entry.level}] [${entry.source}] ${entry.message}${dataStr}\n`;
   }
 
-  private addLog(level: LogLevel, source: string, message: string, data?: any) {
+  /**
+   * Log a debug message
+   */
+  public debug(source: string, message: string, details?: Record<string, any>): void {
+    this.log(LogLevel.DEBUG, source, message, details);
+  }
+
+  /**
+   * Log an info message
+   */
+  public info(source: string, message: string, details?: Record<string, any>): void {
+    this.log(LogLevel.INFO, source, message, details);
+  }
+
+  /**
+   * Log a warning message
+   */
+  public warn(source: string, message: string, details?: Record<string, any>): void {
+    this.log(LogLevel.WARN, source, message, details);
+  }
+
+  /**
+   * Log an error message
+   */
+  public error(source: string, message: string, details?: Record<string, any>): void {
+    this.log(LogLevel.ERROR, source, message, details);
+  }
+
+  /**
+   * Get all logs
+   */
+  public getLogs(): LogEntry[] {
+    return [...this.logs];
+  }
+
+  /**
+   * Clear all logs
+   */
+  public clearLogs(): void {
+    this.logs = [];
+  }
+
+  /**
+   * Internal logging method
+   */
+  private log(level: LogLevel, source: string, message: string, details?: Record<string, any>): void {
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
       source,
       message,
-      data
+      details
     };
 
-    // Add to memory buffer
     this.logs.push(entry);
     if (this.logs.length > this.MAX_LOGS) {
       this.logs.shift(); // Remove oldest log if buffer is full
     }
-
-    // Also log to console
-    const formattedMessage = this.formatLogEntry(entry);
+    
+    // Also log to console for development
+    const consoleMessage = `[${entry.timestamp}] [${level}] [${source}] ${message}`;
     switch (level) {
       case LogLevel.DEBUG:
-        console.debug(formattedMessage);
+        console.debug(consoleMessage, details);
         break;
       case LogLevel.INFO:
-        console.info(formattedMessage);
+        console.info(consoleMessage, details);
         break;
       case LogLevel.WARN:
-        console.warn(formattedMessage);
+        console.warn(consoleMessage, details);
         break;
       case LogLevel.ERROR:
-        console.error(formattedMessage);
+        console.error(consoleMessage, details);
         break;
     }
-  }
-
-  public debug(source: string, message: string, data?: any) {
-    this.addLog(LogLevel.DEBUG, source, message, data);
-  }
-
-  public info(source: string, message: string, data?: any) {
-    this.addLog(LogLevel.INFO, source, message, data);
-  }
-
-  public warn(source: string, message: string, data?: any) {
-    this.addLog(LogLevel.WARN, source, message, data);
-  }
-
-  public error(source: string, message: string, data?: any) {
-    this.addLog(LogLevel.ERROR, source, message, data);
   }
 
   public downloadLogs(filename: string = 'sonmap-logs.txt') {
     const logText = this.logs.map(entry => this.formatLogEntry(entry)).join('\n');
     const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
     saveAs(blob, filename);
-  }
-
-  public clearLogs() {
-    this.logs = [];
   }
 } 

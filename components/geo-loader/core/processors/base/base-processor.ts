@@ -3,6 +3,11 @@ import { CompressionHandler, CompressedFile } from '../../compression/compressio
 import { BufferManager } from '../../memory/buffer-manager';
 import { MemoryMonitor } from '../../memory/memory-monitor';
 import { ValidationError } from '../../errors/types';
+import { LogManager } from '../../logging/log-manager';
+import { CoordinateSystemManager } from '../../coordinate-systems/coordinate-system-manager';
+import { FileProcessor, ProcessingOptions, ProcessingProgress, ProcessorMetadata, ProcessingResult } from './interfaces';
+import { CoordinateSystem } from '../../../types/coordinates';
+import { DetectionResult } from '../../coordinate-systems/detector';
 
 export interface ProcessorOptions {
   // Whether to validate geometry
@@ -41,12 +46,20 @@ export interface ProcessorResult {
 /**
  * Base processor class with common functionality
  */
-export abstract class BaseProcessor {
+export abstract class BaseProcessor implements FileProcessor {
+  protected readonly logger = LogManager.getInstance();
+  protected readonly coordinateManager = CoordinateSystemManager.getInstance();
+  protected progressCallbacks: Array<(progress: ProcessingProgress) => void> = [];
+  protected isCancelled = false;
+  protected currentProgress: ProcessingProgress = {
+    phase: 'analyzing',
+    processed: 0,
+    total: 0
+  };
   protected options: ProcessorOptions;
   protected compressionHandler: CompressionHandler;
   protected bufferManager: BufferManager;
   private memoryMonitorCleanup?: () => void;
-  private progressCallback?: (progress: number) => void;
 
   constructor(options: ProcessorOptions = {}) {
     this.options = options;
@@ -68,82 +81,117 @@ export abstract class BaseProcessor {
   }
 
   /**
-   * Process a file or group of files
+   * Check if this processor can handle the given file
    */
-  async process(files: File | File[]): Promise<ProcessorResult> {
-    try {
-      const fileArray = Array.isArray(files) ? files : [files];
-      const processedFiles: CompressedFile[] = [];
+  abstract canProcess(fileName: string, mimeType?: string): boolean;
 
-      // Process each file (handle compressed files)
-      for (const file of fileArray) {
-        if (CompressionHandler.isCompressedFile(file)) {
-          const extracted = await this.compressionHandler.processCompressedFile(
-            file,
-            (progress) => this.updateProgress(progress * 0.5) // First 50% for extraction
-          );
-          processedFiles.push(...extracted);
-        } else {
-          processedFiles.push({
-            name: file.name,
-            path: file.name,
-            size: file.size,
-            data: file
-          });
-        }
+  /**
+   * Analyze the file and extract metadata without full processing
+   */
+  abstract analyze(filePath: string): Promise<ProcessorMetadata>;
+
+  /**
+   * Sample a subset of features for preview
+   */
+  abstract sample(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult>;
+
+  /**
+   * Process the entire file
+   */
+  abstract process(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult>;
+
+  /**
+   * Get a stream of features for large files
+   */
+  abstract createFeatureStream(filePath: string, options?: ProcessingOptions): AsyncIterableIterator<Feature>;
+
+  /**
+   * Subscribe to processing progress
+   */
+  public onProgress(callback: (progress: ProcessingProgress) => void): void {
+    this.progressCallbacks.push(callback);
+  }
+
+  /**
+   * Cancel ongoing processing
+   */
+  public async cancel(): Promise<void> {
+    this.isCancelled = true;
+    this.updateProgress({ phase: 'complete', processed: 0, total: 0, error: new Error('Processing cancelled') });
+  }
+
+  /**
+   * Clean up resources
+   */
+  public async dispose(): Promise<void> {
+    this.progressCallbacks = [];
+    this.isCancelled = false;
+    this.memoryMonitorCleanup?.();
+  }
+
+  /**
+   * Update progress and notify subscribers
+   */
+  protected updateProgress(progress: Partial<ProcessingProgress>): void {
+    this.currentProgress = { ...this.currentProgress, ...progress };
+    this.notifyProgressSubscribers();
+  }
+
+  /**
+   * Notify all progress subscribers
+   */
+  protected notifyProgressSubscribers(): void {
+    for (const callback of this.progressCallbacks) {
+      try {
+        callback(this.currentProgress);
+      } catch (error) {
+        this.logger.error('Error in progress callback:', error instanceof Error ? error.message : String(error));
       }
-
-      // Group related files
-      const fileGroups = this.compressionHandler.groupRelatedFiles(processedFiles);
-
-      // Process each group
-      const results: Feature[] = [];
-      let processed = 0;
-
-      for (const [groupName, groupFiles] of fileGroups) {
-        const groupFeatures = await this.processFileGroup(groupFiles);
-        results.push(...groupFeatures);
-        
-        processed++;
-        this.updateProgress(0.5 + (processed / fileGroups.size) * 0.5); // Last 50% for processing
-      }
-
-      return {
-        features: results,
-        bounds: this.calculateBounds(results),
-        layers: this.getLayers(results),
-        statistics: this.calculateStatistics(results)
-      };
-    } catch (error) {
-      throw this.handleError(error);
     }
   }
 
   /**
-   * Set progress callback
+   * Detect coordinate system from features
    */
-  setProgressCallback(callback: (progress: number) => void): void {
-    this.progressCallback = callback;
+  protected async detectCoordinateSystem(
+    features: Feature[],
+    metadata?: { prj?: string; crs?: string | object }
+  ): Promise<DetectionResult> {
+    try {
+      return await this.coordinateManager.detect(features, metadata);
+    } catch (error) {
+      this.logger.error('Error detecting coordinate system:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   /**
-   * Update progress
+   * Transform features to target coordinate system
    */
-  protected updateProgress(progress: number): void {
-    this.progressCallback?.(Math.min(1, Math.max(0, progress)));
-  }
-
-  /**
-   * Pause processing (implement in derived class if needed)
-   */
-  protected pauseProcessing(): void {
-    // Default implementation does nothing
+  protected async transformFeatures(
+    features: Feature[],
+    from: CoordinateSystem,
+    to: CoordinateSystem
+  ): Promise<Feature[]> {
+    try {
+      return await this.coordinateManager.transform(features, from, to);
+    } catch (error) {
+      this.logger.error('Error transforming features:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
   }
 
   /**
    * Calculate bounds from features
    */
-  protected calculateBounds(features: Feature[]): ProcessorResult['bounds'] {
+  protected calculateBounds(features: Feature[]): NonNullable<ProcessorMetadata['bounds']> {
+    if (!features.length) return {
+      minX: 0,
+      minY: 0,
+      maxX: 0,
+      maxY: 0
+    };
+
     const bounds = {
       minX: Infinity,
       minY: Infinity,
@@ -152,20 +200,107 @@ export abstract class BaseProcessor {
     };
 
     for (const feature of features) {
-      const featureBounds = this.getFeatureBounds(feature);
-      bounds.minX = Math.min(bounds.minX, featureBounds.minX);
-      bounds.minY = Math.min(bounds.minY, featureBounds.minY);
-      bounds.maxX = Math.max(bounds.maxX, featureBounds.maxX);
-      bounds.maxY = Math.max(bounds.maxY, featureBounds.maxY);
+      if (!feature.geometry) continue;
+
+      // Get the original geometry if it exists
+      const geometry = feature.properties?._originalGeometry || feature.geometry;
+      const coords = this.extractCoordinates(geometry);
+
+      for (const [x, y] of coords) {
+        bounds.minX = Math.min(bounds.minX, x);
+        bounds.minY = Math.min(bounds.minY, y);
+        bounds.maxX = Math.max(bounds.maxX, x);
+        bounds.maxY = Math.max(bounds.maxY, y);
+      }
+    }
+
+    if (bounds.minX === Infinity || bounds.minY === Infinity || 
+        bounds.maxX === -Infinity || bounds.maxY === -Infinity) {
+      return {
+        minX: 0,
+        minY: 0,
+        maxX: 0,
+        maxY: 0
+      };
     }
 
     return bounds;
   }
 
   /**
-   * Get bounds for a single feature
+   * Extract coordinates from a geometry object
    */
-  protected abstract getFeatureBounds(feature: Feature): ProcessorResult['bounds'];
+  protected extractCoordinates(geometry: any): Array<[number, number]> {
+    const coordinates: Array<[number, number]> = [];
+
+    const processCoordinate = (coord: any) => {
+      if (Array.isArray(coord) && typeof coord[0] === 'number' && coord.length >= 2) {
+        coordinates.push([coord[0], coord[1]]);
+      } else if (Array.isArray(coord)) {
+        coord.forEach(processCoordinate);
+      }
+    };
+
+    if (geometry && geometry.coordinates) {
+      processCoordinate(geometry.coordinates);
+    }
+
+    return coordinates;
+  }
+
+  /**
+   * Check if processing should be cancelled
+   */
+  protected checkCancelled(): void {
+    if (this.isCancelled) {
+      throw new Error('Processing cancelled');
+    }
+  }
+
+  /**
+   * Process a file or group of files
+   */
+  async processFiles(files: File | File[]): Promise<ProcessingResult> {
+    try {
+      const fileArray = Array.isArray(files) ? files : [files];
+      const fileGroups = new Map<string, string[]>();
+
+      // Group files by extension
+      for (const file of fileArray) {
+        const ext = file.name.split('.').pop()?.toLowerCase() || '';
+        if (!fileGroups.has(ext)) {
+          fileGroups.set(ext, []);
+        }
+        fileGroups.get(ext)?.push(file.name);
+      }
+
+      // Process each group
+      let processed = 0;
+      for (const [ext, group] of fileGroups) {
+        this.updateProgress({ 
+          phase: 'processing',
+          processed: processed,
+          total: fileGroups.size
+        });
+
+        const result = await this.processFileGroup(group);
+        processed++;
+
+        this.updateProgress({ 
+          phase: 'processing',
+          processed: processed,
+          total: fileGroups.size
+        });
+
+        return result;
+      }
+
+      throw new Error('No files to process');
+    } catch (error) {
+      this.logger.error('Error processing files:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
 
   /**
    * Get layers from features
@@ -214,14 +349,14 @@ export abstract class BaseProcessor {
   }
 
   /**
-   * Process a group of related files (implement in derived class)
+   * Process a group of related files
    */
-  protected abstract processFileGroup(files: CompressedFile[]): Promise<Feature[]>;
+  protected abstract processFileGroup(files: string[]): Promise<ProcessingResult>;
 
   /**
-   * Clean up resources
+   * Pause processing (implement in derived class if needed)
    */
-  dispose(): void {
-    this.memoryMonitorCleanup?.();
+  protected pauseProcessing(): void {
+    // Default implementation does nothing
   }
 }

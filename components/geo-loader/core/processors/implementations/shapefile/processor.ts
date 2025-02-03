@@ -1,610 +1,278 @@
-import { StreamProcessor } from '../../stream/stream-processor';
-import { StreamProcessorResult, StreamProcessorEvents } from '../../stream/types';
-import { AnalyzeResult, ProcessorResult } from '../../base/types';
-import { Feature, FeatureCollection, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, Geometry, Position, GeoJsonProperties } from 'geojson';
-import { ShapefileParser } from './parser';
-import { coordinateSystemManager } from '@/components/geo-loader/core/coordinate-systems';
-import { COORDINATE_SYSTEMS, CoordinateSystem } from '@/components/geo-loader/types/coordinates';
-import { prjReader } from './utils/prj-reader';
-import { convertToGeoJSON, convertToPostGIS } from './converters';
-import { ValidationError } from '@/components/geo-loader/core/errors/types';
-import { AnalysisIssue, ShapefileRecord, ShapefileAnalyzeResult, ShapefileStructure, ShapefileProcessorOptions } from './types';
-import { CompressedFile } from '../../../compression/compression-handler';
-import { PostGISClient } from '@/components/geo-loader/database/client';
-import EventEmitter from 'events';
-
-// Import modular components
-import { calculateBoundsFromRecords, updateBounds, getFeatureBounds } from './utils/bounds';
-import { createDefaultStats, updateStats, addError, resetStats } from './utils/stats';
-import { TransactionManager } from './database';
-
-interface PreviewData {
-  type: 'FeatureCollection';
-  features: Feature[];
-  records: ShapefileRecord[];
-}
-
-// Type guards for geometry types
-const isPoint = (geom: Geometry): geom is Point => geom.type === 'Point';
-const isLineString = (geom: Geometry): geom is LineString => geom.type === 'LineString';
-const isPolygon = (geom: Geometry): geom is Polygon => geom.type === 'Polygon';
-const isMultiPoint = (geom: Geometry): geom is MultiPoint => geom.type === 'MultiPoint';
-const isMultiLineString = (geom: Geometry): geom is MultiLineString => geom.type === 'MultiLineString';
-const isMultiPolygon = (geom: Geometry): geom is MultiPolygon => geom.type === 'MultiPolygon';
-
-// Helper function to get coordinates from any geometry type
-function getCoordinates(geometry: Geometry): Position | Position[] | Position[][] | Position[][][] {
-  if (isPoint(geometry)) return geometry.coordinates;
-  if (isLineString(geometry)) return geometry.coordinates;
-  if (isPolygon(geometry)) return geometry.coordinates;
-  if (isMultiPoint(geometry)) return geometry.coordinates;
-  if (isMultiLineString(geometry)) return geometry.coordinates;
-  if (isMultiPolygon(geometry)) return geometry.coordinates;
-  throw new Error(`Unsupported geometry type: ${geometry.type}`);
-}
-
-// Type guard for geometry types
-function hasCoordinates(geometry: Geometry): geometry is Point | LineString | Polygon | MultiPoint | MultiLineString | MultiPolygon {
-  return 'coordinates' in geometry;
-}
-
-// Type guard for feature with coordinates
-function hasValidGeometry(feature: Feature): feature is Feature<Point | LineString | Polygon | MultiPoint | MultiLineString | MultiPolygon> {
-  return feature.geometry !== null && hasCoordinates(feature.geometry);
-}
+import { BaseGeoProcessor } from '../../base/processor';
+import { GeoFileUpload, ProcessingOptions, ProcessingResult, ProcessingError, ProcessingErrorType } from '../../base/types';
+import { StreamHandler } from '../../../io/stream-handler';
+import { Feature } from 'geojson';
+import * as shp from 'shapefile';
+import { coordinateSystemManager } from '../../../coordinate-systems';
+import { COORDINATE_SYSTEMS } from '../../../../types/coordinates';
+import { DetectionResult } from '../../../coordinate-systems/detector';
 
 /**
- * Processor for Shapefile files with PostGIS support
+ * Processor for Shapefile format
  */
-export class ShapefileProcessor extends StreamProcessor<ShapefileRecord, Feature> {
-  private parser: ShapefileParser;
-  private transactionManager: TransactionManager | null = null;
-  private bounds = createDefaultBounds();
-  private layers: string[] = [];
-  private records: ShapefileRecord[] = [];
-  private eventEmitter: EventEmitter;
-  private warnings: string[] = [];
-
-  constructor(options: ShapefileProcessorOptions = {}, events: StreamProcessorEvents = {}) {
-    super(options, events);
-    this.parser = new ShapefileParser(options);
-    this.eventEmitter = new EventEmitter();
-  }
+export class ShapefileProcessor extends BaseGeoProcessor {
+  private readonly LOG_SOURCE = 'ShapefileProcessor';
 
   /**
-   * Get accumulated warnings
+   * Check if this processor can handle the given file upload
    */
-  getWarnings(): string[] {
-    return this.warnings;
-  }
+  public canProcess(upload: GeoFileUpload): boolean {
+    const isShapefile = upload.mainFile.type === 'application/x-shapefile';
+    const hasRequiredCompanions = ['.dbf', '.shx'].every(ext => ext in upload.companions);
 
-  /**
-   * Add a warning message
-   */
-  protected addWarning(message: string): void {
-    this.warnings.push(message);
-    if (this.events.onWarning) {
-      this.events.onWarning(message);
-    }
-  }
-
-  /**
-   * Check if file can be processed
-   */
-  async canProcess(file: File): Promise<boolean> {
-    return file.name.toLowerCase().endsWith('.shp');
-  }
-
-  /**
-   * Process a chunk of features
-   */
-  protected async processChunk(features: Feature[], chunkIndex: number): Promise<Feature[]> {
-    console.debug('[ShapefileProcessor] Processing chunk:', {
-      chunkIndex,
-      featureCount: features.length,
-      sample: features[0] ? {
-        type: features[0].geometry?.type,
-        coordinates: hasCoordinates(features[0].geometry) ? features[0].geometry.coordinates : undefined,
-        bbox: features[0].bbox,
-        properties: features[0].properties
-      } : null
+    this.logger.debug(this.LOG_SOURCE, 'Checking if processor can handle file', {
+      fileName: upload.mainFile.name,
+      type: upload.mainFile.type,
+      companions: Object.keys(upload.companions),
+      isShapefile,
+      hasRequiredCompanions
     });
 
-    return features;
+    return isShapefile && hasRequiredCompanions;
   }
 
   /**
-   * Analyze Shapefile
+   * Analyze file contents without full processing
    */
-  async analyze(file: File): Promise<AnalyzeResult<ShapefileRecord, Feature>> {
+  public async analyze(upload: GeoFileUpload, options?: ProcessingOptions): Promise<ProcessingResult> {
     try {
-      // Ensure coordinate system manager is initialized
-      if (!coordinateSystemManager.isInitialized()) {
-        console.debug('[ShapefileProcessor] Initializing coordinate system manager');
-        await coordinateSystemManager.initialize();
-      }
-
-      const result = await this.parser.analyzeStructure(file, {
-        previewRecords: (this.options as ShapefileProcessorOptions).previewRecords,
-        parseDbf: (this.options as ShapefileProcessorOptions).importAttributes
+      const context = this.initContext(upload, options);
+      
+      this.logger.debug(this.LOG_SOURCE, 'Analyzing shapefile', {
+        fileName: upload.mainFile.name,
+        size: upload.mainFile.size,
+        companions: Object.keys(upload.companions)
       });
 
-      // Report any issues found during analysis
-      result.issues?.forEach((issue: AnalysisIssue) => {
-        if (issue.type === 'WARNING') {
-          this.addWarning(issue.message);
-        } else {
-          super.handleError(new ValidationError(
-            issue.message,
-            issue.type,
-            undefined,
-            issue.details
-          ));
-        }
-      });
-
-      // Try to detect coordinate system from PRJ file first
-      let detectedSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84; // Default to WGS84
-      const prjFile = await this.findAssociatedFile(file, '.prj');
-      if (prjFile) {
-        const prjContent = await prjFile.text();
-        const prjSystem = await prjReader.detectCoordinateSystem(prjContent);
-        if (prjSystem) {
-          console.debug('[ShapefileProcessor] Detected coordinate system from PRJ:', prjSystem);
-          detectedSystem = prjSystem;
-        }
-      }
-
-      // If no PRJ or detection failed, try to detect from coordinates
-      if (detectedSystem === COORDINATE_SYSTEMS.WGS84) {
-        // Convert preview features
-        const preview = result.preview || [];
-        const previewFeatures = convertToGeoJSON(preview).map((feature: Feature) => {
-          if (!hasValidGeometry(feature)) return null;
-          return {
-            type: 'Feature',
-            geometry: feature.geometry,
-            properties: {
-              ...feature.properties,
-              type: feature.geometry.type || 'unknown'
-            }
-          };
-        }).filter(Boolean) as Feature[];
-
-        // Try to detect coordinate system from feature coordinates
-        if (previewFeatures.length > 0) {
-          const coordSystem = await coordinateSystemManager.detect(previewFeatures);
-          if (coordSystem) {
-            console.debug('[ShapefileProcessor] Detected coordinate system from coordinates:', coordSystem);
-            detectedSystem = coordSystem;
-          }
-        }
-      }
-
-      // Convert preview features with detected coordinate system
-      const preview = result.preview || [];
-      const previewFeatures = convertToGeoJSON(preview).map((feature: Feature) => {
-        if (!hasValidGeometry(feature)) return null;
-        return {
-          type: 'Feature',
-          geometry: feature.geometry,
-          properties: {
-            ...feature.properties,
-            type: feature.geometry.type || 'unknown',
-            originalSystem: detectedSystem
-          }
-        };
-      }).filter(Boolean) as Feature[];
-
-      console.debug('[ShapefileProcessor] Converted preview features:', {
-        inputCount: preview.length,
-        outputCount: previewFeatures.length,
-        sample: previewFeatures[0] || null,
-        coordinateSystem: detectedSystem
-      });
-
-      // Calculate bounds from preview features
-      const bounds = preview.reduce((acc, record) => {
-        const bbox = record?.data?.bbox;
-        if (bbox && 
-            typeof bbox.xMin === 'number' && !isNaN(bbox.xMin) &&
-            typeof bbox.yMin === 'number' && !isNaN(bbox.yMin) &&
-            typeof bbox.xMax === 'number' && !isNaN(bbox.xMax) &&
-            typeof bbox.yMax === 'number' && !isNaN(bbox.yMax)) {
-          acc.minX = Math.min(acc.minX, bbox.xMin);
-          acc.minY = Math.min(acc.minY, bbox.yMin);
-          acc.maxX = Math.max(acc.maxX, bbox.xMax);
-          acc.maxY = Math.max(acc.maxY, bbox.yMax);
-        }
-        return acc;
-      }, {
-        minX: Infinity,
-        minY: Infinity,
-        maxX: -Infinity,
-        maxY: -Infinity
-      });
-
-      // Validate bounds against coordinate system
-      const validBounds = {
-        minX: Math.max(bounds.minX, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 2485000 : -180),
-        minY: Math.max(bounds.minY, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 1075000 : -90),
-        maxX: Math.min(bounds.maxX, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 2834000 : 180),
-        maxY: Math.min(bounds.maxY, detectedSystem === COORDINATE_SYSTEMS.SWISS_LV95 ? 1299000 : 90)
+      // Read shapefile header
+      const source = await shp.open(upload.mainFile.data);
+      const header = await source.header as unknown as {
+        bbox: [number, number, number, number];
+        type: number;
+        records: number;
       };
 
-      console.debug('[ShapefileProcessor] Calculated bounds:', {
-        original: bounds,
-        validated: validBounds,
-        coordinateSystem: detectedSystem,
-        isValid: isFinite(bounds.minX) && isFinite(bounds.minY) && 
-                isFinite(bounds.maxX) && isFinite(bounds.maxY)
-      });
+      // Read DBF fields
+      const dbfFields = await this.readDBFFields(upload.companions['.dbf'].data);
 
-      // Create feature collection with records
-      const previewData: PreviewData = {
-        type: 'FeatureCollection',
-        features: previewFeatures,
-        records: preview
+      // Read projection from PRJ file
+      const projection = upload.companions['.prj'] 
+        ? await this.readProjection(upload.companions['.prj'].data)
+        : undefined;
+
+      // Detect coordinate system
+      const detectionResult = await coordinateSystemManager.detect([], { prj: projection });
+
+      const bounds = {
+        minX: header.bbox[0],
+        minY: header.bbox[1],
+        maxX: header.bbox[2],
+        maxY: header.bbox[3]
       };
 
       return {
-        ...result,
-        preview: previewData,
-        coordinateSystem: detectedSystem,
-        bounds: validBounds,
-        layers: ['shapes']
+        features: [],
+        metadata: {
+          fileName: upload.mainFile.name,
+          fileSize: upload.mainFile.size,
+          format: 'Shapefile',
+          crs: detectionResult.system,
+          layerCount: 1,
+          featureCount: header.records,
+          attributeSchema: this.createAttributeSchema(dbfFields),
+          bounds
+        },
+        layerStructure: [{
+          name: 'features',
+          featureCount: header.records,
+          geometryType: this.getShapeType(header.type),
+          attributes: dbfFields.map(field => ({
+            name: field.name,
+            type: field.type,
+            sample: null
+          })),
+          bounds
+        }],
+        warnings: []
       };
-
     } catch (error) {
-      console.error('[ShapefileProcessor] Analysis failed:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Process Shapefile with PostGIS support
-   */
-  protected async processStream(file: File): Promise<StreamProcessorResult> {
-    try {
-      this.resetState();
-
-      // Get PostGIS options
-      const postgisOptions = (this.options as ShapefileProcessorOptions).postgis;
-      if (!postgisOptions?.tableName) {
-        throw new Error('PostGIS table name is required');
-      }
-
-      // Configure parsing options
-      const parseOptions = {
-        parseDbf: (this.options as ShapefileProcessorOptions).importAttributes,
-        validate: (this.options as ShapefileProcessorOptions).validateGeometry,
-        repair: (this.options as ShapefileProcessorOptions).repairGeometry,
-        simplify: (this.options as ShapefileProcessorOptions).simplifyGeometry,
-        tolerance: (this.options as ShapefileProcessorOptions).simplifyTolerance,
-        convertToPostGIS: true,
-        postgis: {
-          targetSrid: postgisOptions.srid,
-          force2D: true
-        }
-      };
-
-      // Parse records
-      this.records = await this.parser.parseFeatures(file, parseOptions);
-
-      // Process records in batches
-      const batchSize = postgisOptions.batchSize || 1000;
-      const useTransaction = postgisOptions.useTransaction ?? true;
-
-      // Convert to PostGIS features
-      const features = await convertToPostGIS(this.records, postgisOptions.srid);
-
-      if (!this.transactionManager) {
-        throw new Error('PostGIS client not set');
-      }
-
-      // Process using transaction manager
-      const result = await this.transactionManager.insertFeatures(
-        postgisOptions.tableName,
-        features,
-        {
-          batchSize,
-          useTransaction,
-          onProgress: progress => this.updateProgress(progress),
-          onBatchComplete: (batchNumber, totalBatches) => {
-            if (this.events.onBatchComplete) {
-              this.events.onBatchComplete(batchNumber, totalBatches);
-            }
-          }
-        }
+      throw new ProcessingError(
+        'Failed to analyze shapefile',
+        ProcessingErrorType.PARSING_ERROR,
+        { error: error instanceof Error ? error.message : String(error) }
       );
-
-      // Create spatial index if requested
-      if (postgisOptions.createSpatialIndex) {
-        await this.transactionManager.createSpatialIndex(
-          postgisOptions.tableName,
-          postgisOptions.schemaName
-        );
-      }
-
-      // Update bounds and statistics
-      this.bounds = updateBounds(this.bounds, this.records);
-      updateStats(this.state.statistics, this.records);
-
-      return {
-        statistics: this.state.statistics,
-        success: true,
-        databaseResult: result
-      };
-
-    } catch (error) {
-      return {
-        statistics: this.state.statistics,
-        success: false,
-        error: `Failed to process Shapefile: ${error instanceof Error ? error.message : String(error)}`
-      };
     }
   }
 
   /**
-   * Process a group of files
+   * Sample a subset of features for preview
    */
-  protected async processFileGroup(files: CompressedFile[]): Promise<Feature[]> {
-    // Not used for shapefiles as we handle related files internally
-    return [];
-  }
-
-  /**
-   * Set PostGIS client
-   */
-  setPostGISClient(client: PostGISClient): void {
-    this.transactionManager = new TransactionManager(client);
-  }
-
-  /**
-   * Clean up resources
-   */
-  async cleanup(): Promise<void> {
-    if (this.transactionManager?.isTransactionActive()) {
-      await this.transactionManager.rollbackTransaction();
-    }
-    this.transactionManager = null;
-    this.resetState();
-  }
-
-  /**
-   * Reset processor state
-   */
-  private resetState(): void {
-    this.bounds = createDefaultBounds();
-    this.layers = ['shapes'];
-    this.records = [];
-    this.warnings = [];
-    resetStats(this.state.statistics);
-  }
-
-  /**
-   * Find an associated file with the same name but different extension
-   */
-  private async findAssociatedFile(mainFile: File, targetFileName: string): Promise<File | null> {
-    // If the file is from a FileList (e.g., drag-and-drop or file input)
-    if (mainFile.webkitRelativePath) {
-      const directory = mainFile.webkitRelativePath.split('/').slice(0, -1).join('/');
-      // TODO: Implement directory scanning if needed
-      return null;
-    }
-
-    // If we have access to the file system
-    try {
-      const directory = (mainFile as any).path?.split(/[\\/]/).slice(0, -1).join('/');
-      if (directory) {
-        const files = await (mainFile as any).directory?.getFiles();
-        return files?.find((f: File) => f.name.toLowerCase() === targetFileName.toLowerCase()) || null;
-      }
-    } catch (error) {
-      console.debug('[ShapefileProcessor] Error finding associated file:', error);
-    }
-
-    return null;
-  }
-
-  /**
-   * Validate coordinates based on potential coordinate systems
-   */
-  protected validateCoordinates(coords: any[]): boolean {
-    if (!Array.isArray(coords) || coords.length < 2) {
-      console.debug('[ShapefileProcessor] Invalid coordinate array:', coords);
-      return false;
-    }
-
-    const [x, y] = coords;
-    if (!isFinite(x) || !isFinite(y)) {
-      console.debug('[ShapefileProcessor] Non-finite coordinates:', { x, y });
-      return false;
-    }
-
-    // Check Swiss LV95 bounds (adjusted for real-world data)
-    if (x >= 2450000 && x <= 2850000 && y >= 1050000 && y <= 1350000) {
-      console.debug('[ShapefileProcessor] Valid Swiss LV95 coordinates:', { x, y });
-      return true;
-    }
-
-    // Check Swiss LV03 bounds (adjusted for real-world data)
-    if (x >= 450000 && x <= 850000 && y >= 50000 && y <= 350000) {
-      console.debug('[ShapefileProcessor] Valid Swiss LV03 coordinates:', { x, y });
-      return true;
-    }
-
-    // Check WGS84 bounds
-    if (x >= -180 && x <= 180 && y >= -90 && y <= 90) {
-      console.debug('[ShapefileProcessor] Valid WGS84 coordinates:', { x, y });
-      return true;
-    }
-
-    console.debug('[ShapefileProcessor] Coordinates outside known bounds:', { x, y });
-    return false;
-  }
-
-  /**
-   * Helper to validate a single coordinate pair
-   */
-  protected isValidPair(x: number, y: number): boolean {
-    return this.validateCoordinates([x, y]);
-  }
-
-  protected calculateBounds(): Required<ProcessorResult>['bounds'] {
-    return this.records.reduce((acc, record) => {
-      const bbox = record?.data?.bbox;
-      if (bbox && 
-          typeof bbox.xMin === 'number' && !isNaN(bbox.xMin) &&
-          typeof bbox.yMin === 'number' && !isNaN(bbox.yMin) &&
-          typeof bbox.xMax === 'number' && !isNaN(bbox.xMax) &&
-          typeof bbox.yMax === 'number' && !isNaN(bbox.yMax)) {
-        acc.minX = Math.min(acc.minX, bbox.xMin);
-        acc.minY = Math.min(acc.minY, bbox.yMin);
-        acc.maxX = Math.max(acc.maxX, bbox.xMax);
-        acc.maxY = Math.max(acc.maxY, bbox.yMax);
-      }
-      return acc;
-    }, {
-      minX: Infinity,
-      minY: Infinity,
-      maxX: -Infinity,
-      maxY: -Infinity
-    });
-  }
-
-  protected getLayers(): string[] {
-    return ['shapes'];
-  }
-
-  protected getFeatureBounds(feature: Feature): Required<ProcessorResult>['bounds'] {
-    if (!feature.geometry) {
-      return {
-        minX: 0,
-        minY: 0,
-        maxX: 0,
-        maxY: 0
-      };
-    }
-
-    const bounds = {
-      minX: Infinity,
-      minY: Infinity,
-      maxX: -Infinity,
-      maxY: -Infinity
-    };
-
-    const processPoint = (coords: number[]): void => {
-      if (coords.length >= 2) {
-        bounds.minX = Math.min(bounds.minX, coords[0]);
-        bounds.minY = Math.min(bounds.minY, coords[1]);
-        bounds.maxX = Math.max(bounds.maxX, coords[0]);
-        bounds.maxY = Math.max(bounds.maxY, coords[1]);
-      }
-    };
-
-    const processPoints = (coords: number[][]): void => {
-      coords.forEach(processPoint);
-    };
-
-    const processPolygon = (coords: number[][][]): void => {
-      coords.forEach(processPoints);
-    };
-
-    switch (feature.geometry.type) {
-      case 'Point':
-        processPoint((feature.geometry as Point).coordinates);
-        break;
-      case 'LineString':
-        processPoints((feature.geometry as LineString).coordinates);
-        break;
-      case 'Polygon':
-        processPolygon((feature.geometry as Polygon).coordinates);
-        break;
-      case 'MultiPoint':
-        processPoints((feature.geometry as MultiPoint).coordinates);
-        break;
-      case 'MultiLineString':
-        processPolygon((feature.geometry as MultiLineString).coordinates);
-        break;
-      case 'MultiPolygon':
-        (feature.geometry as MultiPolygon).coordinates.forEach(processPolygon);
-        break;
-    }
-
-    return isFinite(bounds.minX) ? bounds : {
-      minX: 0,
-      minY: 0,
-      maxX: 0,
-      maxY: 0
-    };
-  }
-}
-
-/**
- * Create default bounds object
- */
-function createDefaultBounds(): Required<ProcessorResult>['bounds'] {
-  return {
-    minX: Infinity,
-    minY: Infinity,
-    maxX: -Infinity,
-    maxY: -Infinity
-  };
-}
-
-/**
- * Calculate initial bounds from features
- */
-function calculateInitialBounds(features: Feature[]): Required<ProcessorResult>['bounds'] {
-  console.debug('[ShapefileProcessor] Calculating initial bounds');
-  
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  let hasValidCoords = false;
-
-  const processCoords = (coords: any) => {
-    if (!Array.isArray(coords)) return;
+  public async sample(upload: GeoFileUpload, options?: ProcessingOptions): Promise<ProcessingResult> {
+    const context = this.initContext(upload, options);
+    const sampleSize = options?.sampleSize || 1000;
     
-    // Handle flat arrays [x1,y1,x2,y2,...]
-    if (typeof coords[0] === 'number' && coords.length >= 2) {
-      const x = coords[0];
-      const y = coords[1];
-      if (isFinite(x) && isFinite(y)) {
-        minX = Math.min(minX, x);
-        minY = Math.min(minY, y);
-        maxX = Math.max(maxX, x);
-        maxY = Math.max(maxY, y);
-        hasValidCoords = true;
+    this.logger.debug(this.LOG_SOURCE, 'Sampling shapefile', {
+      fileName: upload.mainFile.name,
+      sampleSize
+    });
+
+    const features: Feature[] = [];
+    const source = await shp.open(upload.mainFile.data);
+    const total = (await source.header as any).records;
+    const step = Math.max(1, Math.floor(total / sampleSize));
+
+    let count = 0;
+    let record: { value: Feature | null } | null;
+
+    while ((record = await source.read() as any) !== null && features.length < sampleSize) {
+      if (count % step === 0 && record.value) {
+        features.push(record.value);
+        context.progress({
+          phase: 'sampling',
+          processed: features.length,
+          total: sampleSize,
+          currentFile: upload.mainFile.name
+        });
       }
-    } else {
-      // Handle nested arrays [[x1,y1], [x2,y2], ...]
-      coords.forEach(processCoords);
+      count++;
     }
-  };
 
-  features.forEach(feature => {
-    if (feature?.geometry && hasCoordinates(feature.geometry)) {
-      processCoords(feature.geometry.coordinates);
-    }
-  });
+    const metadata = await this.analyze(upload, options);
+    const detectionResult = await coordinateSystemManager.detect(features, { 
+      prj: upload.companions['.prj'] ? await this.readProjection(upload.companions['.prj'].data) : undefined 
+    });
 
-  console.debug('[ShapefileProcessor] Initial bounds calculated:', {
-    hasValidCoords,
-    bounds: { minX, minY, maxX, maxY }
-  });
-
-  if (!hasValidCoords) {
-    // Default to Swiss bounds if no valid coordinates
     return {
-      minX: 2485000,  // Min X for Switzerland in LV95
-      minY: 1075000,  // Min Y for Switzerland in LV95
-      maxX: 2834000,  // Max X for Switzerland in LV95
-      maxY: 1299000   // Max Y for Switzerland in LV95
+      ...metadata,
+      features,
+      metadata: {
+        ...metadata.metadata,
+        crs: detectionResult.system
+      }
     };
   }
 
-  return { minX, minY, maxX, maxY };
+  /**
+   * Process the entire file
+   */
+  public async process(upload: GeoFileUpload, options?: ProcessingOptions): Promise<ProcessingResult> {
+    const context = this.initContext(upload, options);
+    
+    this.logger.debug(this.LOG_SOURCE, 'Processing shapefile', {
+      fileName: upload.mainFile.name,
+      options
+    });
+
+    try {
+      const features: Feature[] = [];
+      const source = await shp.open(upload.mainFile.data);
+      const total = (await source.header as any).records;
+      let processed = 0;
+
+      let record: { value: Feature | null } | null;
+      while ((record = await source.read() as any) !== null) {
+        if (record.value) {
+          features.push(record.value);
+          processed++;
+          
+          context.progress({
+            phase: 'processing',
+            processed,
+            total,
+            currentFile: upload.mainFile.name
+          });
+        }
+      }
+
+      const metadata = await this.analyze(upload, options);
+      const detectionResult = await coordinateSystemManager.detect(features, { 
+        prj: upload.companions['.prj'] ? await this.readProjection(upload.companions['.prj'].data) : undefined 
+      });
+
+      return {
+        ...metadata,
+        features,
+        metadata: {
+          ...metadata.metadata,
+          crs: detectionResult.system
+        }
+      };
+    } catch (error) {
+      throw new ProcessingError(
+        'Failed to process shapefile',
+        ProcessingErrorType.PARSING_ERROR,
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+  }
+
+  /**
+   * Read fields from DBF file
+   */
+  private async readDBFFields(data: ArrayBuffer): Promise<Array<{
+    name: string;
+    type: string;
+    length: number;
+    decimals?: number;
+  }>> {
+    try {
+      const dbf = await shp.open(data) as any;
+      return dbf.fields;
+    } catch (error) {
+      throw new ProcessingError(
+        'Failed to read DBF fields',
+        ProcessingErrorType.PARSING_ERROR,
+        { error: error instanceof Error ? error.message : String(error) }
+      );
+    }
+  }
+
+  /**
+   * Read projection from PRJ file
+   */
+  private async readProjection(data: ArrayBuffer): Promise<string | undefined> {
+    try {
+      const text = new TextDecoder().decode(data);
+      return text.trim();
+    } catch (error) {
+      this.logger.warn(this.LOG_SOURCE, 'Failed to read PRJ file', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return undefined;
+    }
+  }
+
+  /**
+   * Create attribute schema from DBF fields
+   */
+  private createAttributeSchema(fields: Array<{ name: string; type: string }>): Record<string, string> {
+    const schema: Record<string, string> = {};
+    for (const field of fields) {
+      schema[field.name] = field.type;
+    }
+    return schema;
+  }
+
+  /**
+   * Convert shapefile type number to string
+   */
+  private getShapeType(type: number): string {
+    const types: Record<number, string> = {
+      0: 'Null',
+      1: 'Point',
+      3: 'Polyline',
+      5: 'Polygon',
+      8: 'MultiPoint',
+      11: 'PointZ',
+      13: 'PolylineZ',
+      15: 'PolygonZ',
+      18: 'MultiPointZ',
+      21: 'PointM',
+      23: 'PolylineM',
+      25: 'PolygonM',
+      28: 'MultiPointM',
+      31: 'MultiPatch'
+    };
+    return types[type] || 'Unknown';
+  }
 }

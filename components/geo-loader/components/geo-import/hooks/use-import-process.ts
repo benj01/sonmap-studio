@@ -26,7 +26,11 @@ function convertStatistics(stats: ProcessorStats) {
     layerCount: stats.layerCount,
     featureTypes: stats.featureTypes,
     failedTransformations: stats.failedTransformations,
-    errors: stats.errors
+    errors: stats.errors.map(error => ({
+      type: 'error',
+      message: error,
+      count: 1
+    }))
   };
 }
 
@@ -90,7 +94,8 @@ export function useImportProcess({
         features: result.features,
         coordinateSystem: options.coordinateSystem,
         statistics: convertStatistics(result.statistics),
-        featureManager
+        bounds: result.bounds,
+        layers: result.layers
       };
     } catch (error) {
       console.error('[ERROR] Import failed:', error);

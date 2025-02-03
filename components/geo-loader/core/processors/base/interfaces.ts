@@ -2,6 +2,9 @@ import { File } from '@web-std/file';
 import { ProcessorOptions, ProcessorResult, AnalyzeResult, DatabaseImportResult } from './types';
 import { PostGISClient } from '@/components/geo-loader/database/client';
 import { PostGISGeometry } from '../../../types/postgis';
+import { Feature } from 'geojson';
+import { CoordinateSystem } from '../../../types/coordinates';
+import { DetectionResult } from '../../coordinate-systems/detector';
 
 /**
  * Core processor interface that all format processors must implement
@@ -188,4 +191,107 @@ export interface ITransactionManager {
    * Check if a transaction is active
    */
   isTransactionActive(): boolean;
+}
+
+export interface ProcessorMetadata {
+  fileName: string;
+  fileSize: number;
+  format: string;
+  crs?: string | object;
+  prj?: string;
+  layerCount?: number;
+  featureCount?: number;
+  attributeSchema?: Record<string, string>;
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+}
+
+export interface ProcessingOptions {
+  sampleSize?: number;
+  targetSystem?: CoordinateSystem;
+  preserveOriginal?: boolean;
+  streamingMode?: boolean;
+  chunkSize?: number;
+  maxMemoryMB?: number;
+}
+
+export interface ProcessingProgress {
+  phase: 'analyzing' | 'sampling' | 'processing' | 'complete';
+  processed: number;
+  total: number;
+  currentFile?: string;
+  currentLayer?: string;
+  error?: Error;
+}
+
+export interface ProcessingResult {
+  features: Feature[];
+  metadata: ProcessorMetadata;
+  coordinateSystem: DetectionResult;
+  layerStructure: LayerInfo[];
+  progress: ProcessingProgress;
+  warnings?: string[];
+}
+
+export interface LayerInfo {
+  name: string;
+  featureCount: number;
+  geometryType: string;
+  attributes: Array<{
+    name: string;
+    type: string;
+    sample?: any;
+  }>;
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
+}
+
+export interface FileProcessor {
+  /**
+   * Check if this processor can handle the given file
+   */
+  canProcess(fileName: string, mimeType?: string): boolean;
+
+  /**
+   * Analyze the file and extract metadata without full processing
+   */
+  analyze(filePath: string): Promise<ProcessorMetadata>;
+
+  /**
+   * Sample a subset of features for preview
+   */
+  sample(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult>;
+
+  /**
+   * Process the entire file
+   */
+  process(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult>;
+
+  /**
+   * Get a stream of features for large files
+   */
+  createFeatureStream(filePath: string, options?: ProcessingOptions): AsyncIterableIterator<Feature>;
+
+  /**
+   * Clean up any resources
+   */
+  dispose(): Promise<void>;
+
+  /**
+   * Subscribe to processing progress
+   */
+  onProgress(callback: (progress: ProcessingProgress) => void): void;
+
+  /**
+   * Cancel ongoing processing
+   */
+  cancel(): Promise<void>;
 }

@@ -58,3 +58,14 @@ export function createErrorDetails(originalError: unknown): ErrorDetails {
     originalError: originalError instanceof Error ? originalError.message : String(originalError)
   };
 }
+
+/**
+ * Error reporter interface for collecting and reporting errors
+ */
+export interface ErrorReporter {
+  addError: (message: string, code: string, details?: ErrorDetails) => void;
+  addWarning: (message: string, code: string, details?: ErrorDetails) => void;
+  clear: () => void;
+  getErrors: () => Array<{ message: string; code: string; details?: ErrorDetails }>;
+  getWarnings: () => Array<{ message: string; code: string; details?: ErrorDetails }>;
+}

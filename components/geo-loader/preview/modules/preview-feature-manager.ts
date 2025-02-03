@@ -40,21 +40,43 @@ export class PreviewFeatureManager {
 
     console.debug('[PreviewFeatureManager] Setting features:', {
       count: collection.features.length,
-      useStreaming: collection.features.length > PreviewFeatureManager.STREAM_THRESHOLD
+      useStreaming: collection.features.length > PreviewFeatureManager.STREAM_THRESHOLD,
+      sampleFeature: collection.features[0]
     });
 
-    // Ensure all features have layer: 'shapes'
-    const shapesFeatures = collection.features.map(feature => ({
-      ...feature,
-      properties: {
-        ...feature.properties,
-        layer: 'shapes'
-      }
-    }));
+    // Ensure all features have layer: 'shapes' and handle coordinate systems
+    const processedFeatures = collection.features.map(feature => {
+      // Keep original geometry if it exists
+      const originalGeometry = feature.properties?._originalGeometry || feature.geometry;
+      
+      // Use transformed coordinates if they exist, otherwise use original
+      const geometry = feature.properties?._transformedCoordinates 
+        ? feature.geometry 
+        : originalGeometry;
+
+      return {
+        ...feature,
+        geometry,
+        properties: {
+          ...feature.properties,
+          layer: 'shapes',
+          _originalGeometry: originalGeometry,
+          _transformedCoordinates: feature.properties?._transformedCoordinates || false,
+          _fromSystem: feature.properties?._fromSystem || feature.properties?.originalSystem || 'EPSG:2056',
+          _toSystem: feature.properties?._toSystem || 'EPSG:4326'
+        }
+      };
+    });
 
     await this.featureManager.setFeatures({
       type: 'FeatureCollection',
-      features: shapesFeatures
+      features: processedFeatures
+    });
+
+    console.debug('[PreviewFeatureManager] Features processed:', {
+      originalCount: collection.features.length,
+      processedCount: processedFeatures.length,
+      sampleProcessed: processedFeatures[0]
     });
   }
 

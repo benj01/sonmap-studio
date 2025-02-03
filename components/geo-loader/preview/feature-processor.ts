@@ -66,10 +66,15 @@ export class FeatureProcessor {
     };
   }
 
-  categorizeFeatures(features: GeoFeature[]): PreviewCollections {
+  public categorizeFeatures(features: GeoFeature[]): PreviewCollections {
     this.logger.debug('FeatureProcessor', 'Starting feature categorization', {
       totalFeatures: features.length,
-      firstFeature: features[0] // Log first feature for debugging
+      firstFeature: features[0],
+      coordinateSystems: features.map(f => ({
+        fromSystem: f.properties?._fromSystem,
+        toSystem: f.properties?._toSystem,
+        transformed: f.properties?._transformedCoordinates
+      }))
     });
 
     const points: GeoFeature[] = [];
@@ -82,28 +87,46 @@ export class FeatureProcessor {
         continue;
       }
 
-      // Add better type checking and logging
-      const geometryType = feature.geometry.type.toLowerCase();
-      const coordinates = 'coordinates' in feature.geometry ? feature.geometry.coordinates : null;
+      // Use the appropriate geometry based on transformation status
+      const effectiveGeometry = feature.properties?._transformedCoordinates
+        ? feature.geometry
+        : (feature.properties?._originalGeometry || feature.geometry);
+
+      const geometryType = effectiveGeometry.type.toLowerCase();
       
       this.logger.debug('FeatureProcessor', 'Processing feature', {
         type: geometryType,
-        coordinates,
+        coordinates: 'coordinates' in effectiveGeometry ? effectiveGeometry.coordinates : null,
+        transformationInfo: {
+          fromSystem: feature.properties?._fromSystem,
+          toSystem: feature.properties?._toSystem,
+          transformed: feature.properties?._transformedCoordinates
+        },
         properties: feature.properties
       });
+
+      // Create processed feature with effective geometry
+      const processedFeature: GeoFeature = {
+        ...feature,
+        geometry: effectiveGeometry,
+        properties: {
+          ...feature.properties,
+          layer: feature.properties?.layer || 'shapes'
+        }
+      };
 
       switch (geometryType) {
         case 'point':
         case 'multipoint':
-          points.push(feature);
+          points.push(processedFeature);
           break;
         case 'linestring':
         case 'multilinestring':
-          lines.push(feature);
+          lines.push(processedFeature);
           break;
         case 'polygon':
         case 'multipolygon':
-          polygons.push(feature);
+          polygons.push(processedFeature);
           break;
         default:
           this.logger.warn('FeatureProcessor', 'Unknown geometry type', { geometryType });
