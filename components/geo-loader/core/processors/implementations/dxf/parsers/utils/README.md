@@ -1,22 +1,30 @@
 # 📂 utils
 
 ## Overview
-This folder contains 1 file(s) related to utils.
+This folder contains utility functions for handling geometric points and coordinate transformations. The utilities support both 2D and 3D point operations, angle conversions, and arc/circle point generation.
 
 ## 📄 Files in this folder
 
 | File Name | Description |
 |-----------|-------------|
-| `point-utils.ts` | [Add description] |
+| `point-utils.ts` | A collection of utility functions for point manipulation, including type validation, coordinate conversion, angle transformation, and arc point generation. |
 
 ## 🔗 Dependencies
-- [List important dependencies used in this folder]
+- Vector3 type from '../../types'
+- Standard TypeScript/JavaScript Math utilities
 
 ## ⚙️ Usage Notes
-- [Add any specific setup or initialization details]
+- Point coordinates can be specified in either 2D (x, y) or 3D (x, y, z) format
+- When z-coordinate is omitted in 3D operations, it defaults to 0
+- Angles in arc generation are expected in radians (use toRadians() for conversion)
+- Arc point generation defaults to 32 points for smooth curves
 
 ## 🔄 Related Folders/Modules
-- [List related folders or modules]
+- types (for Vector3 type definition)
+- Geometry-related modules that require point manipulation
 
 ## 🚧 TODOs / Planned Improvements
-- [List any pending tasks or improvements]
+- Add validation for edge cases in arc generation
+- Consider adding point rotation utilities
+- Add documentation examples for each function
+- Consider adding point projection utilities for 3D->2D operations
