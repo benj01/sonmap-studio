@@ -5,12 +5,15 @@ import { CsvProcessor } from './implementations/csv/processor';
 import { DxfProcessor } from './implementations/dxf/dxf-processor';
 import { ShapefileProcessor } from './implementations/shapefile/processor';
 
+// Get registry instance
+const registry = ProcessorRegistry.getInstance();
+
 // Register all processors
-ProcessorRegistry.register('dxf', DxfProcessor);
-ProcessorRegistry.register('csv', CsvProcessor);
-ProcessorRegistry.register('xyz', CsvProcessor); // Support CSV variants
-ProcessorRegistry.register('txt', CsvProcessor);
-ProcessorRegistry.register('shp', ShapefileProcessor);
+registry.register('dxf', new DxfProcessor());
+registry.register('csv', new CsvProcessor());
+registry.register('xyz', new CsvProcessor()); // Support CSV variants
+registry.register('txt', new CsvProcessor());
+registry.register('shp', new ShapefileProcessor());
 
 // Re-export everything for convenience
 export * from './base/interfaces';

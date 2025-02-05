@@ -12,6 +12,7 @@ import { useProcessor } from './hooks/use-processor';
 import { AnalyzeResult } from '../../core/processors/base/types';
 import { LoaderResult, GeoFeature } from 'types/geo';
 import { LogManager } from '../../core/logging/log-manager';
+import { PreviewManager } from '../../preview/preview-manager';
 
 // Empty feature collection for initialization
 const emptyFeatureCollection: FeatureCollection = {
@@ -38,21 +39,68 @@ const PROGRESS_PHASES = {
   }
 } as const;
 
+interface State {
+  coordinateSystem: CoordinateSystem;
+  pendingCoordinateSystem: CoordinateSystem;
+  analysisResult: AnalyzeResult<any, any> | null;
+  currentPhase: string;
+}
+
+interface Props {
+  isOpen: boolean;
+  onClose: () => void;
+  file: File;
+  onImportComplete: (result: any) => void;
+}
+
+interface FileAnalysisResult {
+  loading: boolean;
+  analysis: AnalyzeResult<any, any> | null;
+  dxfData: any;
+  selectedLayers: string[];
+  visibleLayers: string[];
+  selectedTemplates: string[];
+  previewManager: PreviewManager | null;
+  handleLayerToggle: (layer: string, enabled: boolean) => void;
+  handleLayerVisibilityToggle: (layer: string, visible: boolean) => void;
+  handleTemplateSelect: (template: string, enabled: boolean) => void;
+  analyzeFile: (file: File) => Promise<void>;
+}
+
 export function GeoImportDialog({
   isOpen,
   onClose,
   file,
   onImportComplete,
-}: GeoImportDialogProps) {
-  const [currentPhase, setCurrentPhase] = useState<keyof typeof PROGRESS_PHASES | null>(null);
+}: Props) {
+  const { onWarning, onError, onInfo } = useImportLogs();
+  const { getProcessor } = useProcessor({ onWarning, onError, onProgress: () => {} });
+  const {
+    coordinateSystem,
+    pendingCoordinateSystem,
+    loading: loadingCoordinateSystem,
+    handleCoordinateSystemChange,
+    applyCoordinateSystem,
+    initializeCoordinateSystem
+  } = useCoordinateSystem({ onWarning, onError, onProgress: () => {}, getProcessor });
+
+  const [state, setState] = useState<State>({
+    coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+    pendingCoordinateSystem: COORDINATE_SYSTEMS.WGS84,
+    analysisResult: null,
+    currentPhase: 'initial'
+  });
+
+  const [previewManager, setPreviewManager] = useState<PreviewManager | null>(null);
+  const [visibleLayers, setVisibleLayers] = useState<string[]>(['shapes']);
 
   // Initialize hooks with enhanced error handling
   const {
     logs,
     hasErrors,
-    onWarning,
-    onError,
-    onInfo,
+    onWarning: importLogsWarning,
+    onError: importLogsError,
+    onInfo: importLogsInfo,
     clearLogs
   } = useImportLogs();
 
@@ -69,9 +117,9 @@ export function GeoImportDialog({
   useEffect(() => {
     if (file) {
       console.log('[DEBUG] Dialog received new file:', file.name);
-      onInfo(`Processing file: ${file.name}`);
+      importLogsInfo(`Processing file: ${file.name}`);
     }
-  }, [file, onInfo]);
+  }, [file, importLogsInfo]);
 
   const onProgress = useCallback((progress: number) => {
     // Determine current phase based on progress
@@ -85,34 +133,30 @@ export function GeoImportDialog({
     }
 
     // Log phase transition if the phase has changed
-    if (phase !== currentPhase) {
-      setCurrentPhase(phase);
-      onInfo(`[${phase}] Step: ${PROGRESS_PHASES[phase].description} (${Math.floor(progress * 100)}%)`);
+    if (phase !== state.currentPhase) {
+      setState(prev => ({
+        ...prev,
+        currentPhase: phase
+      }));
+      importLogsInfo(`[${phase}] Step: ${PROGRESS_PHASES[phase].description} (${Math.floor(progress * 100)}%)`);
     }
 
     // Only log progress at 10% intervals to reduce noise
     const progressPercent = Math.floor(progress * 100);
     if (progressPercent % 10 === 0) {
-      onInfo(`Progress: ${progressPercent}%`);
+      importLogsInfo(`Progress: ${progressPercent}%`);
     }
-  }, [currentPhase, onInfo]);
-
-  // Initialize shared processor
-  const { getProcessor, resetProcessor } = useProcessor({
-    onWarning,
-    onError,
-    onProgress
-  });
+  }, [state.currentPhase, importLogsInfo]);
 
   // Enhanced file analysis with debug logging
   const {
     loading: analysisLoading,
-    analysis,
+    analysis: analysisResult,
     dxfData,
     selectedLayers,
-    visibleLayers,
+    visibleLayers: analysisVisibleLayers,
     selectedTemplates,
-    previewManager,
+    previewManager: analysisPreviewManager,
     handleLayerToggle,
     handleLayerVisibilityToggle,
     handleTemplateSelect,
@@ -126,18 +170,18 @@ export function GeoImportDialog({
       console.debug('[DEBUG] File analysis progress:', { progress });
     },
     getProcessor
-  });
+  }) as FileAnalysisResult;
 
   // Debug logging for state changes
   useEffect(() => {
     console.debug('[DEBUG] Dialog state updated:', {
       selectedLayers,
-      visibleLayers,
+      analysisVisibleLayers,
       selectedTemplates,
       hasErrors,
-      currentPhase
+      currentPhase: state.currentPhase
     });
-  }, [selectedLayers, visibleLayers, selectedTemplates, hasErrors, currentPhase]);
+  }, [selectedLayers, analysisVisibleLayers, selectedTemplates, hasErrors, state.currentPhase]);
 
   // Enhanced layer toggle handlers
   const handleLayerToggleWrapper = useCallback((layer: string, enabled: boolean) => {
@@ -156,13 +200,12 @@ export function GeoImportDialog({
   }, [handleTemplateSelect]);
 
   const {
-    loading: coordinateSystemLoading,
-    coordinateSystem,
-    pendingCoordinateSystem,
+    coordinateSystem: detectedSystem,
+    pendingCoordinateSystem: pendingSystem,
     hasChanges: coordinateSystemChanged,
-    handleCoordinateSystemChange,
-    applyCoordinateSystem,
-    initializeCoordinateSystem,
+    handleCoordinateSystemChange: handleDetectedSystemChange,
+    applyCoordinateSystem: applyDetectedSystem,
+    initializeCoordinateSystem: initializeDetectedSystem,
     resetCoordinateSystem
   } = useCoordinateSystem({
     onWarning,
@@ -172,20 +215,17 @@ export function GeoImportDialog({
   });
 
   // Enhanced error handling for coordinate system changes
-  const handleCoordinateSystemChangeWrapper = useCallback(async (newSystem: string) => {
-    // Validate that the new system is a valid coordinate system
-    if (!Object.values(COORDINATE_SYSTEMS).includes(newSystem as CoordinateSystem)) {
-      onError(`Invalid coordinate system: ${newSystem}`);
-      return;
-    }
-    try {
-      onInfo(`Attempting to change coordinate system to ${newSystem}`);
-      await handleCoordinateSystemChange(newSystem as CoordinateSystem);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      onError(`Failed to change coordinate system: ${message}`);
-    }
-  }, [handleCoordinateSystemChange, onError, onInfo]);
+  const handleCoordinateSystemChangeWrapper = useCallback((value: CoordinateSystem) => {
+    console.debug('[DEBUG] Coordinate system change:', {
+      from: state.coordinateSystem,
+      to: value
+    });
+    setState(prev => ({
+      ...prev,
+      pendingCoordinateSystem: value
+    }));
+    handleDetectedSystemChange(value);
+  }, [state.coordinateSystem, handleDetectedSystemChange]);
 
   const { importFile } = useImportProcess({
     onWarning,
@@ -197,38 +237,34 @@ export function GeoImportDialog({
   // Initialize coordinate system once when analysis first completes
   const analysisRef = useRef<AnalyzeResult | null>(null);
   const initializeCoordinateSystemOnce = useCallback(() => {
-    if (!analysis?.coordinateSystem || analysis === analysisRef.current) return;
+    if (!analysisResult || analysisResult === analysisRef.current) return;
 
-    console.debug('[DEBUG] Analysis state:', {
-      coordinateSystem: analysis.coordinateSystem,
-      featureCount: analysis.preview?.features?.length || 0,
-      bounds: analysis.bounds,
-      layers: analysis.layers
-    });
-
+    // Get coordinate system from metadata
+    const detectedSystem = analysisResult.metadata?.crs;
+    
     // Validate that it's a known coordinate system
-    const system = Object.values(COORDINATE_SYSTEMS).find(sys => sys === analysis.coordinateSystem);
+    const system = Object.values(COORDINATE_SYSTEMS).find(sys => sys === detectedSystem);
     if (system) {
       console.debug('[DEBUG] Initializing detected coordinate system:', system);
-      initializeCoordinateSystem(system);
+      initializeDetectedSystem(system);
+      setState(prev => ({
+        ...prev,
+        coordinateSystem: system,
+        pendingCoordinateSystem: system
+      }));
     } else {
-      console.warn('[DEBUG] Unknown coordinate system:', analysis.coordinateSystem);
-      onWarning(`Unknown coordinate system detected: ${analysis.coordinateSystem}, using WGS84`);
-      initializeCoordinateSystem(COORDINATE_SYSTEMS.WGS84);
+      console.warn('[DEBUG] Unknown coordinate system:', detectedSystem);
+      importLogsWarning(`Unknown coordinate system detected: ${detectedSystem || 'none'}, using WGS84`);
+      initializeDetectedSystem(COORDINATE_SYSTEMS.WGS84);
+      setState(prev => ({
+        ...prev,
+        coordinateSystem: COORDINATE_SYSTEMS.WGS84,
+        pendingCoordinateSystem: COORDINATE_SYSTEMS.WGS84
+      }));
     }
-
-    // Log preview state
-    if (previewManager) {
-      console.debug('[DEBUG] Preview manager state:', {
-        features: analysis.preview?.features?.length || 0,
-        coordinateSystem: system || COORDINATE_SYSTEMS.WGS84,
-        bounds: analysis.bounds,
-        layers: selectedLayers
-      });
-    }
-
-    analysisRef.current = analysis;
-  }, [analysis, initializeCoordinateSystem, onWarning, previewManager, selectedLayers]);
+    
+    analysisRef.current = analysisResult;
+  }, [analysisResult, initializeDetectedSystem, importLogsWarning]);
 
   useEffect(() => {
     initializeCoordinateSystemOnce();
@@ -238,66 +274,77 @@ export function GeoImportDialog({
   useEffect(() => {
     if (!isOpen) {
       console.debug('[DEBUG] Dialog closed, cleaning up...');
-      resetProcessor();
       resetCoordinateSystem();
       clearLogs();
-      setCurrentPhase(null);
+      setState(prev => ({
+        ...prev,
+        currentPhase: 'initial'
+      }));
       // Reset file analysis state
-      if (previewManager) {
+      if (analysisPreviewManager) {
         console.debug('[DEBUG] Cleaning up preview manager');
-        previewManager.dispose();
+        analysisPreviewManager.dispose();
       }
     }
-  }, [isOpen, resetProcessor, resetCoordinateSystem, clearLogs, previewManager]);
+  }, [isOpen, resetCoordinateSystem, clearLogs, analysisPreviewManager]);
 
   const handleClearAndClose = useCallback(() => {
     console.debug('[DEBUG] Clearing and closing dialog');
     clearLogs();
-    if (previewManager) {
+    if (analysisPreviewManager) {
       console.debug('[DEBUG] Cleaning up preview manager');
-      previewManager.dispose();
+      analysisPreviewManager.dispose();
     }
     onClose();
-  }, [clearLogs, previewManager, onClose]);
+  }, [clearLogs, analysisPreviewManager, onClose]);
 
   const handleApplyCoordinateSystem = async () => {
     if (!file) return;
     
-    onInfo('Applying coordinate system changes...');
+    importLogsInfo('Applying coordinate system changes...');
     console.debug('[DEBUG] Applying coordinate system:', {
       current: coordinateSystem,
-      pending: pendingCoordinateSystem,
+      pending: pendingSystem,
       fileType: file.name.split('.').pop()?.toLowerCase(),
-      hasAnalysis: !!analysis,
-      hasPreviewManager: !!previewManager
+      hasAnalysis: !!analysisResult,
+      hasPreviewManager: !!analysisPreviewManager
     });
 
     try {
-      const result = await applyCoordinateSystem(file, analysis, previewManager);
+      const result = await applyDetectedSystem(file, analysisResult, analysisPreviewManager);
       if (result) {
         console.debug('[DEBUG] Coordinate system applied:', {
-          newSystem: pendingCoordinateSystem,
+          newSystem: pendingSystem,
           featureCount: result.preview?.features?.length || 0,
           bounds: result.bounds
         });
-        onInfo(`Successfully applied coordinate system: ${pendingCoordinateSystem}`);
+        setState(prev => ({
+          ...prev,
+          coordinateSystem: prev.pendingCoordinateSystem
+        }));
+        importLogsInfo(`Successfully applied coordinate system: ${pendingSystem}`);
       }
     } catch (error) {
       console.error('[DEBUG] Coordinate system application failed:', error);
       const message = error instanceof Error ? error.message : String(error);
-      onError(`Failed to apply coordinate system: ${message}`);
+      importLogsError(`Failed to apply coordinate system: ${message}`);
+      // Reset pending state on error
+      setState(prev => ({
+        ...prev,
+        pendingCoordinateSystem: prev.coordinateSystem
+      }));
     }
   };
 
   const handleImport = async () => {
     if (!file) return;
 
-    onInfo(`Starting import of ${file.name}...`);
+    importLogsInfo(`Starting import of ${file.name}...`);
     console.debug('[DEBUG] Starting import:', {
       fileType: file.name.split('.').pop()?.toLowerCase(),
       coordinateSystem,
       selectedLayers,
-      featureCount: analysis?.preview?.features?.length || 0
+      featureCount: analysisResult?.features?.length || 0
     });
 
     try {
@@ -311,12 +358,12 @@ export function GeoImportDialog({
         try {
           await onImportComplete(result);
           if (!hasErrors) {
-            onInfo('Import completed successfully');
+            importLogsInfo('Import completed successfully');
             onClose();
           }
         } catch (error) {
           if (error instanceof Error && error.message.includes('Duplicate')) {
-            onError('A file with this name already exists. Please delete the existing file first.');
+            importLogsError('A file with this name already exists. Please delete the existing file first.');
           } else {
             throw error;
           }
@@ -324,7 +371,7 @@ export function GeoImportDialog({
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      onError(`Import failed: ${message}`);
+      importLogsError(`Import failed: ${message}`);
     }
   };
 
@@ -334,7 +381,7 @@ export function GeoImportDialog({
 
   if (!file) return null;
 
-  const loading = analysisLoading || coordinateSystemLoading;
+  const loading = analysisLoading || loadingCoordinateSystem;
 
   // Check file format support
   const fileExtension = `.${file.name.split('.').pop()?.toLowerCase()}`;
@@ -350,7 +397,7 @@ export function GeoImportDialog({
         const missingFiles = [];
         
         if (!file.name.toLowerCase().endsWith('.shp')) {
-          onError(`Please select the main .shp file to import a shapefile.`);
+          importLogsError(`Please select the main .shp file to import a shapefile.`);
           return;
         }
         
@@ -358,18 +405,22 @@ export function GeoImportDialog({
         if (!relatedFiles['.shx']) missingFiles.push('.shx');
         
         if (missingFiles.length > 0) {
-          onError(`Missing required shapefile components: ${missingFiles.join(', ')}. A complete shapefile requires .shp, .dbf, and .shx files.`);
+          importLogsError(`Missing required shapefile components: ${missingFiles.join(', ')}. A complete shapefile requires .shp, .dbf, and .shx files.`);
         }
       } else {
-        onError(`Unsupported file format. Supported formats: ${supportedFormats.join(', ')}`);
+        importLogsError(`Unsupported file format. Supported formats: ${supportedFormats.join(', ')}`);
       }
     }
-  }, [isFormatSupported, isShapefileComponent, onError, supportedFormats, file]);
+  }, [isFormatSupported, isShapefileComponent, importLogsError, supportedFormats, file]);
 
   const handleDownloadLogs = () => {
     const logger = LogManager.getInstance();
     const filename = `sonmap-logs-${new Date().toISOString().replace(/[:.]/g, '-')}.txt`;
     logger.downloadLogs(filename);
+  };
+
+  const handleFeatureFilter = (f: GeoFeature) => {
+    // ... existing code ...
   };
 
   return (
@@ -407,16 +458,16 @@ export function GeoImportDialog({
             <div className="col-span-1 space-y-2">
               <div className="border rounded-lg p-4 bg-background shadow-sm">
                 <h3 className="text-sm font-medium mb-3">Coordinate System</h3>
-                {analysis?.coordinateSystem && (
+                {analysisResult?.metadata?.crs && (
                   <div className="text-sm text-muted-foreground mb-3">
-                    Detected: {analysis.coordinateSystem}
+                    Detected: {analysisResult.metadata.crs}
                   </div>
                 )}
                 <div className="space-y-2">
                   <select
                     id="coordinate-system"
-                    value={pendingCoordinateSystem || coordinateSystem}
-                    onChange={(e) => handleCoordinateSystemChangeWrapper(e.target.value as string)}
+                    value={pendingSystem || coordinateSystem}
+                    onChange={(e) => handleCoordinateSystemChangeWrapper(e.target.value as CoordinateSystem)}
                     disabled={loading}
                     className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   >
@@ -424,7 +475,7 @@ export function GeoImportDialog({
                     <option value={COORDINATE_SYSTEMS.SWISS_LV95}>Swiss LV95 (EPSG:2056)</option>
                     <option value={COORDINATE_SYSTEMS.SWISS_LV03}>Swiss LV03 (EPSG:21781)</option>
                   </select>
-                  {pendingCoordinateSystem && (
+                  {pendingSystem !== coordinateSystem && (
                     <button
                       onClick={handleApplyCoordinateSystem}
                       className="w-full inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 bg-primary text-primary-foreground shadow hover:bg-primary/90 h-9 px-4 py-2"
@@ -438,39 +489,36 @@ export function GeoImportDialog({
 
             {/* Right Column - Preview Map */}
             <div className="col-span-1 row-span-2 border rounded-lg bg-background shadow-sm overflow-hidden">
-              {previewManager && analysis && (
+              {analysisResult && analysisPreviewManager && (
                 <div className="h-full">
                   <PreviewMap
                     preview={{
                       points: {
                         type: "FeatureCollection" as const,
-                        features: []
+                        features: analysisResult.features?.filter(f => f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint') || []
                       },
                       lines: {
                         type: "FeatureCollection" as const,
-                        features: []
+                        features: analysisResult.features?.filter(f => f.geometry.type === 'LineString' || f.geometry.type === 'MultiLineString') || []
                       },
                       polygons: {
                         type: "FeatureCollection" as const,
-                        features: analysis.preview?.features || []
+                        features: analysisResult.features?.filter(f => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon') || []
                       },
-                      bounds: analysis.bounds,
-                      layers: selectedLayers || [],
-                      previewManager: previewManager,
-                      coordinateSystem: coordinateSystem
+                      bounds: analysisResult.metadata?.bounds,
+                      layers: ['shapes'],
+                      previewManager: analysisPreviewManager,
+                      coordinateSystem: analysisResult.metadata?.crs as CoordinateSystem | undefined
                     }}
-                    bounds={analysis.bounds}
-                    coordinateSystem={coordinateSystem}
+                    bounds={analysisResult.metadata?.bounds}
+                    coordinateSystem={analysisResult.metadata?.crs as CoordinateSystem | undefined}
                     visibleLayers={visibleLayers}
                     selectedElement={{
                       type: "feature",
-                      layer: selectedLayers?.[0] || "default"
+                      layer: "shapes"
                     }}
                     analysis={{
-                      warnings: (analysis.preview?.features || []).length === 0 ? [{
-                        type: 'warning',
-                        message: 'No features available for preview'
-                      }] : []
+                      warnings: []
                     }}
                   />
                 </div>

@@ -27,6 +27,15 @@ export interface StreamProcessorResult {
   error?: string;
   /** Database import results */
   databaseResult?: DatabaseImportResult;
+  /** Processed features */
+  features?: Feature[];
+  /** Bounds of all features */
+  bounds?: {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  };
 }
 
 /**

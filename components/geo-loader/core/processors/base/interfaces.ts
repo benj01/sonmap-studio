@@ -1,76 +1,99 @@
-import { File } from '@web-std/file';
-import { ProcessorOptions, ProcessorResult, AnalyzeResult, DatabaseImportResult } from './types';
+import { Feature } from 'geojson';
 import { PostGISClient } from '@/components/geo-loader/database/client';
 import { PostGISGeometry } from '../../../types/postgis';
-import { Feature } from 'geojson';
 import { CoordinateSystem } from '../../../types/coordinates';
 import { DetectionResult } from '../../coordinate-systems/detector';
+
+export interface ProcessorOptions {
+  coordinateSystem?: string;
+  validation?: {
+    validateGeometry?: boolean;
+    repairInvalid?: boolean;
+    simplifyTolerance?: number;
+  };
+  encoding?: string;
+  sampleSize?: number;
+}
+
+export interface GeoFileUpload {
+  mainFile: {
+    name: string;
+    data: ArrayBuffer;
+    type: string;
+    size: number;
+  };
+  companions: Record<string, {
+    name: string;
+    data: ArrayBuffer;
+    type: string;
+    size: number;
+  }>;
+}
+
+export interface ProcessingResult {
+  features: Feature[];
+  metadata: {
+    fileName: string;
+    fileSize: number;
+    format: string;
+    crs?: string;
+    layerCount: number;
+    featureCount: number;
+    attributeSchema?: Record<string, string>;
+    bounds?: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    };
+  };
+  layerStructure: Array<{
+    name: string;
+    featureCount: number;
+    geometryType: string;
+    attributes: Array<{
+      name: string;
+      type: string;
+      sample?: any;
+    }>;
+    bounds?: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    };
+  }>;
+  warnings?: string[];
+}
 
 /**
  * Core processor interface that all format processors must implement
  */
-export interface IProcessor {
+export interface FileProcessor {
   /**
    * Check if this processor can handle the given file
    */
-  canProcess(file: File): Promise<boolean>;
+  canProcess(fileName: string, mimeType?: string): boolean;
 
   /**
    * Analyze file contents without full processing
-   * Used for previews and metadata extraction
    */
-  analyze(file: File): Promise<AnalyzeResult>;
+  analyze(upload: GeoFileUpload, options?: ProcessorOptions): Promise<ProcessingResult>;
 
   /**
-   * Process file and import to database with transaction support
-   * @param file File to process
-   * @param dbClient PostGIS client instance
-   * @param options Processing options including batch size
+   * Sample a subset of features for preview
    */
-  process(
-    file: File, 
-    dbClient: PostGISClient, 
-    options?: ProcessorOptions & { 
-      batchSize?: number;
-      useTransaction?: boolean;
-    }
-  ): Promise<ProcessorResult>;
+  sample(upload: GeoFileUpload, options?: ProcessorOptions): Promise<ProcessingResult>;
 
   /**
-   * Import format-specific entities to database with batch processing
-   * @param entities Array of entities to import
-   * @param dbClient PostGIS client instance
-   * @param options Import options including batch size
+   * Process the entire file
    */
-  importToDatabase(
-    entities: any[], 
-    dbClient: PostGISClient,
-    options?: {
-      batchSize?: number;
-      useTransaction?: boolean;
-    }
-  ): Promise<DatabaseImportResult>;
+  process(upload: GeoFileUpload, options?: ProcessorOptions): Promise<ProcessingResult>;
 
   /**
-   * Validate data before import
-   * @param entities Array of entities to validate
+   * Clean up resources
    */
-  validateData(entities: any[]): Promise<boolean>;
-
-  /**
-   * Get all errors from this processor
-   */
-  getErrors(): string[];
-
-  /**
-   * Get all warnings from this processor
-   */
-  getWarnings(): string[];
-
-  /**
-   * Clear all errors and warnings
-   */
-  clear(): void;
+  dispose?(): Promise<void>;
 }
 
 /**
@@ -228,15 +251,6 @@ export interface ProcessingProgress {
   error?: Error;
 }
 
-export interface ProcessingResult {
-  features: Feature[];
-  metadata: ProcessorMetadata;
-  coordinateSystem: DetectionResult;
-  layerStructure: LayerInfo[];
-  progress: ProcessingProgress;
-  warnings?: string[];
-}
-
 export interface LayerInfo {
   name: string;
   featureCount: number;
@@ -252,46 +266,4 @@ export interface LayerInfo {
     maxX: number;
     maxY: number;
   };
-}
-
-export interface FileProcessor {
-  /**
-   * Check if this processor can handle the given file
-   */
-  canProcess(fileName: string, mimeType?: string): boolean;
-
-  /**
-   * Analyze the file and extract metadata without full processing
-   */
-  analyze(filePath: string): Promise<ProcessorMetadata>;
-
-  /**
-   * Sample a subset of features for preview
-   */
-  sample(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult>;
-
-  /**
-   * Process the entire file
-   */
-  process(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult>;
-
-  /**
-   * Get a stream of features for large files
-   */
-  createFeatureStream(filePath: string, options?: ProcessingOptions): AsyncIterableIterator<Feature>;
-
-  /**
-   * Clean up any resources
-   */
-  dispose(): Promise<void>;
-
-  /**
-   * Subscribe to processing progress
-   */
-  onProgress(callback: (progress: ProcessingProgress) => void): void;
-
-  /**
-   * Cancel ongoing processing
-   */
-  cancel(): Promise<void>;
 }

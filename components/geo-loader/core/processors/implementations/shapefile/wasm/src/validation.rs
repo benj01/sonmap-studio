@@ -69,9 +69,10 @@ pub fn validate_file_code(file_code: i32) -> Result<(), JsError> {
 #[wasm_bindgen]
 pub fn validate_file_length(file_length: usize, buffer_length: usize) -> Result<(), JsError> {
     if file_length < HEADER_LENGTH || file_length > buffer_length {
+        // Only validate that the file is at least as big as the header and doesn't exceed buffer
         return Err(JsError::new(&format!(
-            "Invalid shapefile: incorrect file length (got {}, buffer size {})",
-            file_length, buffer_length
+            "Invalid shapefile: file length {} must be at least {} bytes and not exceed buffer size {}",
+            file_length, HEADER_LENGTH, buffer_length
         )));
     }
     Ok(())
@@ -104,9 +105,9 @@ pub fn validate_bounding_box(x_min: f64, y_min: f64, x_max: f64, y_max: f64) -> 
 // Validate record content length
 #[wasm_bindgen]
 pub fn validate_record_content_length(content_length: i32, record_number: i32) -> Result<(), JsError> {
-    if content_length < 0 || content_length > 1_000_000 {
+    if content_length < 0 {
         return Err(JsError::new(&format!(
-            "Invalid shapefile: unreasonable record content length {} for record {}",
+            "Invalid shapefile: negative record content length {} for record {}",
             content_length, record_number
         )));
     }

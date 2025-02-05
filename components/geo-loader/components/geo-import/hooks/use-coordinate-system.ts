@@ -171,7 +171,10 @@ export function useCoordinateSystem({
       console.debug('[DEBUG] Coordinate system initialized:', {
         system,
         supported,
-        manager: 'initialized'
+        state: {
+          coordinateSystem: system,
+          pendingCoordinateSystem: system
+        }
       });
     } else {
       console.warn('[DEBUG] Invalid coordinate system provided:', system);

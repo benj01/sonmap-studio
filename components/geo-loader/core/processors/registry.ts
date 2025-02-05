@@ -3,14 +3,16 @@ import { ShapefileProcessor } from './implementations/shapefile/processor';
 import { GeoJSONProcessor } from './implementations/geojson/processor';
 import { LogManager } from '../logging/log-manager';
 
+/**
+ * Registry for file processors
+ */
 export class ProcessorRegistry {
   private static instance: ProcessorRegistry;
-  private readonly processors: Map<string, FileProcessor>;
+  private readonly processors: FileProcessor[] = [];
   private readonly logger = LogManager.getInstance();
   private readonly LOG_SOURCE = 'ProcessorRegistry';
 
   private constructor() {
-    this.processors = new Map();
     this.registerDefaultProcessors();
   }
 
@@ -25,42 +27,51 @@ export class ProcessorRegistry {
    * Register a new processor
    */
   public register(processor: FileProcessor): void {
-    const id = processor.constructor.name;
-    this.processors.set(id, processor);
-    this.logger.debug(this.LOG_SOURCE, 'Registered new processor', { id });
+    this.processors.push(processor);
+    this.logger.debug(this.LOG_SOURCE, 'Registered processor', { processor });
   }
 
   /**
-   * Get a processor that can handle the given file
+   * Find a processor that can handle the given file
    */
-  public getProcessorForFile(fileName: string, mimeType?: string): FileProcessor | null {
-    for (const processor of this.processors.values()) {
+  public findProcessor(fileName: string, mimeType?: string): FileProcessor | undefined {
+    this.logger.debug(this.LOG_SOURCE, 'Finding processor for file', { fileName, mimeType });
+
+    for (const processor of this.processors) {
       try {
         if (processor.canProcess(fileName, mimeType)) {
+          this.logger.debug(this.LOG_SOURCE, 'Found compatible processor', { processor });
           return processor;
         }
       } catch (error) {
-        this.logger.error(this.LOG_SOURCE, 'Error checking processor compatibility', {
-          processor: processor.constructor.name,
-          error: error instanceof Error ? error.message : String(error)
-        });
+        this.logger.error(this.LOG_SOURCE, 'Error checking processor compatibility', { error });
       }
     }
 
-    this.logger.warn(this.LOG_SOURCE, 'No processor available for file', {
-      fileName,
-      mimeType,
-      availableProcessors: Array.from(this.processors.keys())
-    });
+    this.logger.warn(this.LOG_SOURCE, 'No processor available for file', { fileName, mimeType });
+    return undefined;
+  }
 
-    return null;
+  /**
+   * Register default processors
+   */
+  private registerDefaultProcessors(): void {
+    this.logger.debug(this.LOG_SOURCE, 'Registering default processors');
+    
+    // Register shapefile processor
+    this.register(new ShapefileProcessor());
+    
+    // Register GeoJSON processor
+    this.register(new GeoJSONProcessor());
+    
+    this.logger.debug(this.LOG_SOURCE, 'Default processors registered');
   }
 
   /**
    * Get all registered processors
    */
   public getAllProcessors(): FileProcessor[] {
-    return Array.from(this.processors.values());
+    return this.processors;
   }
 
   /**
@@ -69,7 +80,7 @@ export class ProcessorRegistry {
   public getSupportedExtensions(): string[] {
     const extensions = new Set<string>();
     
-    for (const processor of this.processors.values()) {
+    for (const processor of this.processors) {
       try {
         // Test some common extensions against each processor
         const testExtensions = ['.shp', '.geojson', '.json', '.kml', '.kmz'];
@@ -90,29 +101,10 @@ export class ProcessorRegistry {
   }
 
   /**
-   * Register default processors
-   */
-  private registerDefaultProcessors(): void {
-    try {
-      // Register Shapefile processor
-      this.register(new ShapefileProcessor());
-
-      // Register GeoJSON processor
-      this.register(new GeoJSONProcessor());
-
-      this.logger.info(this.LOG_SOURCE, 'Default processors registered successfully');
-    } catch (error) {
-      this.logger.error(this.LOG_SOURCE, 'Failed to register default processors', { 
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  /**
    * Clear all registered processors
    */
   public clear(): void {
-    this.processors.clear();
+    this.processors.length = 0;
     this.logger.debug(this.LOG_SOURCE, 'Cleared processor registry');
   }
 
@@ -120,7 +112,7 @@ export class ProcessorRegistry {
    * Check if a file type is supported
    */
   public isSupported(fileName: string, mimeType?: string): boolean {
-    return this.getProcessorForFile(fileName, mimeType) !== null;
+    return this.findProcessor(fileName, mimeType) !== undefined;
   }
 
   /**
@@ -135,8 +127,8 @@ export class ProcessorRegistry {
   } {
     const info = {
       extensions: this.getSupportedExtensions(),
-      processors: Array.from(this.processors.entries()).map(([name, processor]) => ({
-        name,
+      processors: this.processors.map((processor) => ({
+        name: processor.constructor.name,
         supportedFormats: this.getProcessorFormats(processor)
       }))
     };

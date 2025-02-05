@@ -33,11 +33,40 @@ export interface PreviewData<R = any, F = any> {
 /**
  * Analysis result
  */
-export interface AnalyzeResult<R = any, F = any> {
-  layers: string[];
-  coordinateSystem: CoordinateSystem;
-  bounds: Required<ProcessorResult>['bounds'];
-  preview: PreviewData<R, F>;
+export interface AnalyzeResult<T = any, P = any> {
+  metadata: {
+    fileName: string;
+    fileSize: number;
+    format: string;
+    crs?: string;
+    layerCount: number;
+    featureCount: number;
+    attributeSchema?: Record<string, string>;
+    bounds?: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    };
+  };
+  features: Array<T>;
+  layerStructure: Array<{
+    name: string;
+    featureCount: number;
+    geometryType: string;
+    attributes: Array<{
+      name: string;
+      type: string;
+      sample: any;
+    }>;
+    bounds?: {
+      minX: number;
+      minY: number;
+      maxX: number;
+      maxY: number;
+    };
+  }>;
+  warnings?: string[];
 }
 
 /**
@@ -108,27 +137,7 @@ import { CoordinateSystem } from '../../../types/coordinates';
 import { ErrorReporter } from '../../errors/types';
 
 /**
- * Represents a geo file upload with its companion files
- */
-export interface GeoFileUpload {
-  mainFile: {
-    name: string;
-    data: ArrayBuffer;
-    type: string;
-    size: number;
-  };
-  companions: {
-    [extension: string]: {
-      name: string;
-      data: ArrayBuffer;
-      type: string;
-      size: number;
-    };
-  };
-}
-
-/**
- * Processing options for geo data import
+ * Common options for all processors
  */
 export interface ProcessingOptions {
   coordinateSystem?: string;
@@ -144,19 +153,7 @@ export interface ProcessingOptions {
 }
 
 /**
- * Status of the processing operation
- */
-export interface ProcessingStatus {
-  phase: 'analyzing' | 'sampling' | 'processing' | 'complete';
-  processed: number;
-  total: number;
-  currentFile?: string;
-  currentLayer?: string;
-  error?: Error;
-}
-
-/**
- * Result of the processing operation
+ * Result of processing operation
  */
 export interface ProcessingResult {
   features: Feature[];
@@ -164,7 +161,7 @@ export interface ProcessingResult {
     fileName: string;
     fileSize: number;
     format: string;
-    crs?: string;
+    crs?: string;  // Standardized to string only
     layerCount: number;
     featureCount: number;
     attributeSchema?: Record<string, string>;
@@ -192,16 +189,38 @@ export interface ProcessingResult {
     };
   }>;
   warnings?: string[];
-  statistics?: {
-    importTime?: number;
-    validatedCount?: number;
-    transformedCount?: number;
-    batchesProcessed?: number;
-    failedFeatures?: Array<{
-      entity: any;
-      error: string;
-    }>;
+}
+
+/**
+ * Represents a geo file upload with its companion files
+ */
+export interface GeoFileUpload {
+  mainFile: {
+    name: string;
+    data: ArrayBuffer;
+    type: string;
+    size: number;
   };
+  companions: {
+    [extension: string]: {
+      name: string;
+      data: ArrayBuffer;
+      type: string;
+      size: number;
+    };
+  };
+}
+
+/**
+ * Status of the processing operation
+ */
+export interface ProcessingStatus {
+  phase: 'analyzing' | 'sampling' | 'processing' | 'complete';
+  processed: number;
+  total: number;
+  currentFile?: string;
+  currentLayer?: string;
+  error?: Error;
 }
 
 /**

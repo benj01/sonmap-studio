@@ -19,7 +19,10 @@ import { initWasm } from './core/processors/implementations/shapefile/core/wasm-
 // Import and initialize processors synchronously
 import './core/processors';
 import { ProcessorRegistry } from './core/processors/base/registry';
-console.debug('[DEBUG] Processors registered:', ProcessorRegistry.getSupportedExtensions());
+
+// Get registry instance and log supported extensions
+const registry = ProcessorRegistry.getInstance();
+console.debug('[DEBUG] Processors registered:', registry.getSupportedExtensions());
 
 // Initialize coordinate systems and WebAssembly
 const initPromises = Promise.all([
@@ -34,7 +37,7 @@ const initPromises = Promise.all([
 export const initialize = () => initPromises;
 export const isInitialized = () => {
   return coordinateSystemManager.isInitialized() && 
-         ProcessorRegistry.getSupportedExtensions().includes('shp');
+         registry.getSupportedExtensions().includes('shp');
 };
 
 // Export the coordinate system manager instance

@@ -41,8 +41,24 @@ export class LogManager {
     return LogManager.instance;
   }
 
+  /**
+   * Safely stringify an object, handling circular references
+   */
+  private safeStringify(obj: any, indent: number = 2): string {
+    const seen = new WeakSet();
+    return JSON.stringify(obj, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) {
+          return '[Circular Reference]';
+        }
+        seen.add(value);
+      }
+      return value;
+    }, indent);
+  }
+
   private formatLogEntry(entry: LogEntry): string {
-    const dataStr = entry.details ? `\n${JSON.stringify(entry.details, null, 2)}` : '';
+    const dataStr = entry.details ? `\n${this.safeStringify(entry.details)}` : '';
     return `[${entry.timestamp}] [${entry.level}] [${entry.source}] ${entry.message}${dataStr}\n`;
   }
 

@@ -7,6 +7,28 @@ import { CoordinateSystemId } from '../../../../core/coordinate-systems/coordina
 export type { ShapefileRecord, ShapefileData, ShapefileAttributes };
 
 /**
+ * DBF field type
+ */
+export interface ShapefileField {
+  name: string;
+  type: 'C' | 'N' | 'F' | 'L' | 'D';
+  length: number;
+  decimals?: number;
+}
+
+/**
+ * DBF header structure
+ */
+export interface DbfHeader {
+  version: number;
+  lastUpdate: Date;
+  recordCount: number;
+  headerLength: number;
+  recordLength: number;
+  fields: ShapefileField[];
+}
+
+/**
  * Shapefile geometry types
  */
 export enum ShapeType {

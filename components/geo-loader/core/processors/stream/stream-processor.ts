@@ -1,13 +1,14 @@
-import { ProcessorResult, ProcessorStats, AnalyzeResult } from '../base/types';
+import { ProcessorResult, ProcessorStats, AnalyzeResult, ProcessingOptions, GeoFileUpload, ProcessingResult } from '../base/types';
 import { StreamProcessorEvents, StreamProcessorResult } from './types';
 import { ValidationError } from '../../errors/types';
 import { Feature } from 'geojson';
 import { CompressedFile } from '../../compression/compression-handler';
+import { GeoProcessor } from '../base/processor';
 
 /**
  * Base class for stream processors
  */
-export abstract class StreamProcessor<R = any, F = Feature> {
+export abstract class StreamProcessor<R = any, F = Feature> implements GeoProcessor {
   protected state: {
     statistics: ProcessorStats;
   };
@@ -32,12 +33,51 @@ export abstract class StreamProcessor<R = any, F = Feature> {
   /**
    * Check if file can be processed
    */
-  abstract canProcess(file: File): Promise<boolean>;
+  abstract canProcess(upload: GeoFileUpload): boolean;
 
   /**
    * Analyze file structure
    */
-  abstract analyze(file: File): Promise<AnalyzeResult<R, F>>;
+  abstract analyze(upload: GeoFileUpload, options?: ProcessingOptions): Promise<ProcessingResult>;
+
+  async sample(upload: GeoFileUpload, options?: ProcessingOptions): Promise<ProcessingResult> {
+    // Default implementation - can be overridden by subclasses
+    return this.analyze(upload, { ...options, sampleSize: 100 });
+  }
+
+  async process(upload: GeoFileUpload, options?: ProcessingOptions): Promise<ProcessingResult> {
+    const streamResult = await this.processStream(upload as unknown as File);
+    return {
+      features: streamResult.features || [],
+      metadata: {
+        fileName: upload.mainFile.name,
+        fileSize: upload.mainFile.size,
+        format: this.getFormat(),
+        layerCount: streamResult.statistics.layerCount,
+        featureCount: streamResult.statistics.featureCount,
+        bounds: streamResult.bounds
+      },
+      layerStructure: this.getLayers().map(layer => ({
+        name: layer,
+        featureCount: 0, // This should be updated by specific implementations
+        geometryType: 'unknown', // This should be updated by specific implementations
+        attributes: []
+      })),
+      statistics: {
+        importTime: 0, // This should be updated by specific implementations
+        validatedCount: streamResult.statistics.featureCount,
+        transformedCount: streamResult.statistics.featureCount - streamResult.statistics.failedTransformations,
+        failedFeatures: streamResult.statistics.errors.map(error => ({
+          entity: null,
+          error
+        }))
+      }
+    };
+  }
+
+  async dispose(): Promise<void> {
+    await this.cleanup();
+  }
 
   /**
    * Process a chunk of features
@@ -91,4 +131,6 @@ export abstract class StreamProcessor<R = any, F = Feature> {
       this.events.onError(error);
     }
   }
+
+  protected abstract getFormat(): string;
 }

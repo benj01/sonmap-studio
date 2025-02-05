@@ -94,4 +94,11 @@ export class ProcessorRegistry {
   public clear(): void {
     this.processors.clear();
   }
+
+  /**
+   * Get all supported file extensions
+   */
+  public getSupportedExtensions(): string[] {
+    return Array.from(this.processors.keys());
+  }
 }

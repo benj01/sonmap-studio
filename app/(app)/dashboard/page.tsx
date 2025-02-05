@@ -49,33 +49,48 @@ export default function DashboardPage() {
       const supabase = createClient()
 
       try {
+        // Check session first
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+        
+        if (sessionError || !session) {
+          console.error('Session error:', sessionError)
+          return
+        }
+
         // Fetch projects
-        const { data: projects } = await supabase
+        const { data: projects, error: projectsError } = await supabase
           .from('projects')
           .select('*')
           .order('created_at', { ascending: false })
 
-        // Fetch member counts
-        const { data: membersData } = await supabase
-          .from('project_member_counts')
-          .select('project_id, count')
+        if (projectsError) {
+          console.error('Error fetching projects:', projectsError)
+          return
+        }
 
-        // Combine data
-        const projectsWithMembers = (projects?.map((project: ProjectRow) => ({
-          ...project,
-          status: 'active' as const,
-          project_members: [{
-            count: membersData?.find((m: ProjectMemberCount) => m.project_id === project.id)?.count || 0
-          }]
-        })) as Project[]) || []
+        // For each project, fetch its member count
+        const projectsWithMembers = await Promise.all(
+          (projects || []).map(async (project: ProjectRow) => {
+            const { count } = await supabase
+              .from('project_members')
+              .select('*', { count: 'exact', head: true })
+              .eq('project_id', project.id)
 
-        setProjects(projectsWithMembers)
+            return {
+              ...project,
+              status: 'active' as const,
+              project_members: [{ count: count || 0 }]
+            }
+          })
+        )
+
+        setProjects(projectsWithMembers as Project[])
 
         // Calculate stats
         const activeProjects = projectsWithMembers.filter((p) => p.status === 'active').length
         const totalStorage = projectsWithMembers.reduce((acc, p) => acc + (p.storage_used || 0), 0)
-        const collaborators = (membersData || []).reduce((acc: number, m) => 
-          acc + (m.count || 0), 0)
+        const collaborators = projectsWithMembers.reduce((acc, p) => 
+          acc + (p.project_members[0].count), 0)
 
         setStats({
           totalProjects: projectsWithMembers.length,

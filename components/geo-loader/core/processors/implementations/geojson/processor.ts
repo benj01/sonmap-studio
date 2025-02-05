@@ -1,293 +1,261 @@
 import { Feature, FeatureCollection } from 'geojson';
-import { BaseProcessor } from '../../base/base-processor';
-import { ProcessingOptions, ProcessingResult, ProcessorMetadata } from '../../base/interfaces';
-import { readFileSync } from 'fs';
+import { FileProcessor, GeoFileUpload, ProcessorOptions, ProcessingResult } from '../../base/interfaces';
 import { LogManager } from '../../../logging/log-manager';
 
-interface ExtendedFeatureCollection extends FeatureCollection {
-  crs?: {
-    type: string;
-    properties: Record<string, any>;
-  };
-}
-
-export class GeoJSONProcessor extends BaseProcessor {
-  private static readonly SUPPORTED_EXTENSIONS = ['.geojson', '.json'];
-  private static readonly DEFAULT_SAMPLE_SIZE = 1000;
-  protected readonly logger = LogManager.getInstance();
+/**
+ * Processor for GeoJSON format
+ */
+export class GeoJSONProcessor implements FileProcessor {
+  private readonly logger = LogManager.getInstance();
+  private readonly LOG_SOURCE = 'GeoJSONProcessor';
 
   /**
    * Check if this processor can handle the given file
    */
   public canProcess(fileName: string, mimeType?: string): boolean {
-    return GeoJSONProcessor.SUPPORTED_EXTENSIONS.some(ext => 
-      fileName.toLowerCase().endsWith(ext)
-    ) || mimeType === 'application/geo+json';
+    const isGeoJSON = mimeType === 'application/geo+json' ||
+                     fileName.toLowerCase().endsWith('.geojson') ||
+                     fileName.toLowerCase().endsWith('.json');
+
+    this.logger.debug(this.LOG_SOURCE, 'Checking if processor can handle file', {
+      fileName,
+      mimeType,
+      isGeoJSON
+    });
+
+    return isGeoJSON;
   }
 
   /**
-   * Analyze the file and extract metadata without full processing
+   * Analyze file contents without full processing
    */
-  public async analyze(filePath: string): Promise<ProcessorMetadata> {
+  public async analyze(upload: GeoFileUpload, options?: ProcessorOptions): Promise<ProcessingResult> {
     try {
-      this.updateProgress({ phase: 'analyzing', processed: 0, total: 1 });
+      // Parse GeoJSON
+      const text = new TextDecoder().decode(upload.mainFile.data);
+      const geojson = JSON.parse(text) as FeatureCollection;
+
+      if (!geojson.features) {
+        throw new Error('Invalid GeoJSON: missing features array');
+      }
+
+      // Calculate bounds
+      const bounds = this.calculateBounds(geojson.features);
       
-      const content = readFileSync(filePath, 'utf-8');
-      const geojson = JSON.parse(content) as ExtendedFeatureCollection;
-      const stats = await this.analyzeFeatures(geojson.features);
-      
-      this.updateProgress({ phase: 'analyzing', processed: 1, total: 1 });
-      
+      // Extract attribute schema from first 100 features
+      const sampleFeatures = geojson.features.slice(0, 100);
+      const attributeSchema = this.extractAttributeSchema(sampleFeatures);
+
       return {
-        fileName: filePath.split('/').pop() || '',
-        fileSize: content.length,
-        format: 'GeoJSON',
-        crs: geojson.crs ? JSON.stringify(geojson.crs) : undefined,
-        layerCount: 1,
-        featureCount: geojson.features.length,
-        attributeSchema: stats.schema,
-        bounds: stats.bounds
+        features: sampleFeatures,
+        metadata: {
+          fileName: upload.mainFile.name,
+          fileSize: upload.mainFile.size,
+          format: 'GeoJSON',
+          crs: 'EPSG:4326', // GeoJSON is always WGS84
+          layerCount: 1,
+          featureCount: geojson.features.length,
+          attributeSchema,
+          bounds
+        },
+        layerStructure: [{
+          name: 'features',
+          featureCount: geojson.features.length,
+          geometryType: this.getGeometryType(sampleFeatures),
+          attributes: Object.entries(attributeSchema).map(([name, type]) => ({
+            name,
+            type,
+            sample: this.getSampleValue(sampleFeatures, name)
+          })),
+          bounds
+        }],
+        warnings: []
       };
     } catch (error) {
-      this.logger.error('Error analyzing GeoJSON:', error instanceof Error ? error.message : String(error));
-      throw error;
+      throw new Error(`Failed to analyze GeoJSON: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /**
    * Sample a subset of features for preview
    */
-  public async sample(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult> {
+  public async sample(upload: GeoFileUpload, options?: ProcessorOptions): Promise<ProcessingResult> {
     try {
-      this.updateProgress({ phase: 'sampling', processed: 0, total: 3 });
+      // First analyze the file
+      const analysis = await this.analyze(upload, options);
+      
+      // Parse GeoJSON
+      const text = new TextDecoder().decode(upload.mainFile.data);
+      const geojson = JSON.parse(text) as FeatureCollection;
 
-      // Step 1: Analyze file
-      const metadata = await this.analyze(filePath);
-      this.updateProgress({ phase: 'sampling', processed: 1, total: 3 });
-
-      // Step 2: Read and sample features
-      const content = readFileSync(filePath, 'utf-8');
-      const geojson = JSON.parse(content) as ExtendedFeatureCollection;
-      const sampleSize = options?.sampleSize || GeoJSONProcessor.DEFAULT_SAMPLE_SIZE;
-      const features = this.sampleFeatures(geojson.features, sampleSize);
-      this.updateProgress({ phase: 'sampling', processed: 2, total: 3 });
-
-      // Step 3: Detect and transform coordinate system
-      const detectionResult = await this.detectCoordinateSystem(features, {
-        crs: geojson.crs
-      });
-
-      let transformedFeatures = features;
-      if (options?.targetSystem && detectionResult.system !== options.targetSystem) {
-        transformedFeatures = await this.transformFeatures(
-          features,
-          detectionResult.system,
-          options.targetSystem
-        );
-      }
-
-      this.updateProgress({ phase: 'sampling', processed: 3, total: 3 });
+      // Select sample features
+      const sampleSize = options?.sampleSize || 1000;
+      const sampleFeatures = this.selectSampleFeatures(geojson.features, sampleSize);
 
       return {
-        features: transformedFeatures,
-        metadata,
-        coordinateSystem: detectionResult,
-        layerStructure: [{
-          name: 'features',
-          featureCount: metadata.featureCount || 0,
-          geometryType: 'Mixed',
-          attributes: Object.entries(metadata.attributeSchema || {}).map(([name, type]) => ({
-            name,
-            type
-          })),
-          bounds: metadata.bounds
-        }],
-        progress: { phase: 'complete', processed: 3, total: 3 }
+        ...analysis,
+        features: sampleFeatures
       };
     } catch (error) {
-      this.logger.error('Error sampling GeoJSON:', error instanceof Error ? error.message : String(error));
-      throw error;
+      throw new Error(`Failed to generate preview: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /**
    * Process the entire file
    */
-  public async process(filePath: string, options?: ProcessingOptions): Promise<ProcessingResult> {
+  public async process(upload: GeoFileUpload, options?: ProcessorOptions): Promise<ProcessingResult> {
     try {
-      // For small files, we can process everything at once
-      const metadata = await this.analyze(filePath);
-      if (!metadata.featureCount || metadata.featureCount <= GeoJSONProcessor.DEFAULT_SAMPLE_SIZE) {
-        return this.sample(filePath, options);
-      }
-
-      // For large files, use streaming
-      const features: Feature[] = [];
-      const stream = this.createFeatureStream(filePath, options);
+      // First analyze the file
+      const analysis = await this.analyze(upload, options);
       
-      this.updateProgress({ 
-        phase: 'processing',
-        processed: 0,
-        total: metadata.featureCount
-      });
+      // Parse GeoJSON
+      const text = new TextDecoder().decode(upload.mainFile.data);
+      const geojson = JSON.parse(text) as FeatureCollection;
 
-      let count = 0;
-      for await (const feature of stream) {
-        features.push(feature);
-        count++;
-        
-        if (count % 1000 === 0) {
-          this.updateProgress({
-            phase: 'processing',
-            processed: count,
-            total: metadata.featureCount
-          });
-        }
+      // Process features in chunks
+      const features: Feature[] = [];
+      let processedCount = 0;
 
-        this.checkCancelled();
-      }
-
-      const detectionResult = await this.detectCoordinateSystem(features, {
-        crs: metadata.crs
-      });
-
-      let transformedFeatures = features;
-      if (options?.targetSystem && detectionResult.system !== options.targetSystem) {
-        transformedFeatures = await this.transformFeatures(
-          features,
-          detectionResult.system,
-          options.targetSystem
-        );
+      for (let i = 0; i < geojson.features.length; i += 1000) {
+        const chunk = geojson.features.slice(i, i + 1000);
+        await this.processFeatureChunk(chunk);
+        features.push(...chunk);
+        processedCount += chunk.length;
       }
 
       return {
-        features: transformedFeatures,
-        metadata,
-        coordinateSystem: detectionResult,
-        layerStructure: [{
-          name: 'features',
-          featureCount: metadata.featureCount,
-          geometryType: 'Mixed',
-          attributes: Object.entries(metadata.attributeSchema || {}).map(([name, type]) => ({
-            name,
-            type
-          })),
-          bounds: metadata.bounds
-        }],
-        progress: { 
-          phase: 'complete',
-          processed: metadata.featureCount,
-          total: metadata.featureCount
+        ...analysis,
+        features,
+        metadata: {
+          ...analysis.metadata,
+          featureCount: processedCount
         }
       };
     } catch (error) {
-      this.logger.error('Error processing GeoJSON:', error instanceof Error ? error.message : String(error));
-      throw error;
+      throw new Error(`Failed to process GeoJSON: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  /**
-   * Get a stream of features for large files
-   */
-  public async *createFeatureStream(
-    filePath: string,
-    options?: ProcessingOptions
-  ): AsyncIterableIterator<Feature> {
-    try {
-      const content = readFileSync(filePath, 'utf-8');
-      const geojson = JSON.parse(content) as ExtendedFeatureCollection;
-      
-      // If no coordinate system transformation is needed, return raw features
-      if (!options?.targetSystem) {
-        yield* geojson.features;
-        return;
-      }
-
-      // Otherwise, detect coordinate system and transform features
-      const detectionResult = await this.detectCoordinateSystem(
-        geojson.features.slice(0, 100),
-        { crs: geojson.crs }
-      );
-
-      // If source and target systems are the same, return raw features
-      if (detectionResult.system === options.targetSystem) {
-        yield* geojson.features;
-        return;
-      }
-
-      // Transform features one by one
-      for (const feature of geojson.features) {
-        const transformed = await this.transformFeatures(
-          [feature],
-          detectionResult.system,
-          options.targetSystem
-        );
-        yield transformed[0];
-      }
-    } catch (error) {
-      this.logger.error('Error creating feature stream:', error instanceof Error ? error.message : String(error));
-      throw error;
-    }
+  public async dispose(): Promise<void> {
+    // Clean up any resources
   }
 
-  /**
-   * Analyze features to extract schema and bounds
-   */
-  private async analyzeFeatures(features: Feature[]): Promise<{
-    schema: Record<string, string>;
-    bounds: ProcessorMetadata['bounds'];
-  }> {
+  // Helper methods
+
+  private calculateBounds(features: Feature[]): { minX: number; minY: number; maxX: number; maxY: number } {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    features.forEach(feature => {
+      if (!feature.geometry) return;
+
+      // Extract coordinates based on geometry type
+      let coordinates: number[][] = [];
+      switch (feature.geometry.type) {
+        case 'Point':
+          coordinates = [feature.geometry.coordinates as number[]];
+          break;
+        case 'LineString':
+          coordinates = feature.geometry.coordinates as number[][];
+          break;
+        case 'Polygon':
+          coordinates = (feature.geometry.coordinates as number[][][])[0];
+          break;
+        // Add more geometry types as needed
+      }
+
+      // Update bounds
+      coordinates.forEach(coord => {
+        minX = Math.min(minX, coord[0]);
+        minY = Math.min(minY, coord[1]);
+        maxX = Math.max(maxX, coord[0]);
+        maxY = Math.max(maxY, coord[1]);
+      });
+    });
+
+    return { minX, minY, maxX, maxY };
+  }
+
+  private extractAttributeSchema(features: Feature[]): Record<string, string> {
     const schema: Record<string, string> = {};
-    const bounds = this.calculateBounds(features);
 
-    // Sample up to 100 features to detect schema
-    const sampleFeatures = this.sampleFeatures(features, 100);
-    for (const feature of sampleFeatures) {
-      if (!feature.properties) continue;
+    features.forEach(feature => {
+      if (!feature.properties) return;
 
-      for (const [key, value] of Object.entries(feature.properties)) {
+      Object.entries(feature.properties).forEach(([key, value]) => {
         if (!(key in schema)) {
-          schema[key] = this.detectPropertyType(value);
+          schema[key] = this.getPropertyType(value);
         }
-      }
-    }
+      });
+    });
 
-    return { schema, bounds };
+    return schema;
   }
 
-  /**
-   * Sample features from array
-   */
-  private sampleFeatures(features: Feature[], sampleSize: number): Feature[] {
-    if (features.length <= sampleSize) {
-      return features;
-    }
-
-    const step = Math.max(1, Math.floor(features.length / sampleSize));
-    return features.filter((_, index) => index % step === 0).slice(0, sampleSize);
-  }
-
-  /**
-   * Detect property type from value
-   */
-  private detectPropertyType(value: any): string {
+  private getPropertyType(value: any): string {
     if (value === null || value === undefined) return 'string';
     if (typeof value === 'number') return 'number';
     if (typeof value === 'boolean') return 'boolean';
     if (value instanceof Date) return 'date';
-    if (Array.isArray(value)) return 'array';
-    if (typeof value === 'object') return 'object';
     return 'string';
   }
 
-  /**
-   * Process a group of related files
-   */
-  protected async processFileGroup(files: string[]): Promise<ProcessingResult> {
-    // GeoJSON files are self-contained, so we just process the first file
-    if (files.length === 0) {
-      throw new Error('No files provided');
+  private getSampleValue(features: Feature[], propertyName: string): any {
+    for (const feature of features) {
+      if (feature.properties && propertyName in feature.properties) {
+        return feature.properties[propertyName];
+      }
     }
-    return this.process(files[0]);
+    return null;
+  }
+
+  private getGeometryType(features: Feature[]): string {
+    // Get the most common geometry type
+    const types = new Map<string, number>();
+    
+    features.forEach(feature => {
+      if (!feature.geometry) return;
+      const type = feature.geometry.type;
+      types.set(type, (types.get(type) || 0) + 1);
+    });
+
+    let maxCount = 0;
+    let maxType = 'Unknown';
+    
+    types.forEach((count, type) => {
+      if (count > maxCount) {
+        maxCount = count;
+        maxType = type;
+      }
+    });
+
+    return maxType;
+  }
+
+  private selectSampleFeatures(features: Feature[], sampleSize: number): Feature[] {
+    if (features.length <= sampleSize) {
+      return features;
+    }
+
+    // Simple random sampling
+    const sampledFeatures: Feature[] = [];
+    const step = Math.max(1, Math.floor(features.length / sampleSize));
+    
+    for (let i = 0; i < features.length && sampledFeatures.length < sampleSize; i += step) {
+      sampledFeatures.push(features[i]);
+    }
+
+    return sampledFeatures;
+  }
+
+  private async processFeatureChunk(features: Feature[]): Promise<void> {
+    // TODO: Implement chunk processing
+    // - Validate geometries
+    // - Transform coordinates if needed
+    // - Apply any filters
+    // - Prepare for database import
   }
 } 
