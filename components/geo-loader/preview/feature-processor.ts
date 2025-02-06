@@ -67,7 +67,7 @@ export class FeatureProcessor {
   }
 
   public categorizeFeatures(features: GeoFeature[]): PreviewCollections {
-    this.logger.debug('FeatureProcessor', 'Starting feature categorization', {
+    console.debug('[FeatureProcessor] Starting feature categorization', {
       totalFeatures: features.length,
       firstFeature: features[0],
       coordinateSystems: features.map(f => ({
@@ -83,7 +83,7 @@ export class FeatureProcessor {
 
     for (const feature of features) {
       if (!feature.geometry) {
-        this.logger.warn('FeatureProcessor', 'Feature missing geometry', { feature });
+        console.warn('[FeatureProcessor] Feature missing geometry', { feature });
         continue;
       }
 
@@ -94,7 +94,7 @@ export class FeatureProcessor {
 
       const geometryType = effectiveGeometry.type.toLowerCase();
       
-      this.logger.debug('FeatureProcessor', 'Processing feature', {
+      console.debug('[FeatureProcessor] Processing feature', {
         type: geometryType,
         coordinates: 'coordinates' in effectiveGeometry ? effectiveGeometry.coordinates : null,
         transformationInfo: {
@@ -102,7 +102,8 @@ export class FeatureProcessor {
           toSystem: feature.properties?._toSystem,
           transformed: feature.properties?._transformedCoordinates
         },
-        properties: feature.properties
+        properties: feature.properties,
+        layer: feature.properties?.layer || 'shapes'
       });
 
       // Create processed feature with effective geometry
@@ -122,6 +123,11 @@ export class FeatureProcessor {
           break;
         case 'linestring':
         case 'multilinestring':
+          console.debug('[FeatureProcessor] Adding line feature', {
+            coordinates: 'coordinates' in processedFeature.geometry ? processedFeature.geometry.coordinates : null,
+            layer: processedFeature.properties?.layer,
+            type: processedFeature.geometry.type
+          });
           lines.push(processedFeature);
           break;
         case 'polygon':
@@ -129,7 +135,7 @@ export class FeatureProcessor {
           polygons.push(processedFeature);
           break;
         default:
-          this.logger.warn('FeatureProcessor', 'Unknown geometry type', { geometryType });
+          console.warn('[FeatureProcessor] Unknown geometry type', { geometryType });
       }
     }
 
@@ -139,7 +145,7 @@ export class FeatureProcessor {
       polygons: { type: 'FeatureCollection' as const, features: polygons }
     };
 
-    this.logger.debug('FeatureProcessor', 'Categorization complete', {
+    console.debug('[FeatureProcessor] Categorization complete', {
       points: points.length,
       lines: lines.length,
       polygons: polygons.length,

@@ -169,7 +169,8 @@ export function GeoImportDialog({
       onProgress(progress);
       console.debug('[DEBUG] File analysis progress:', { progress });
     },
-    getProcessor
+    getProcessor,
+    initializeCoordinateSystem
   }) as FileAnalysisResult;
 
   // Debug logging for state changes
@@ -239,32 +240,115 @@ export function GeoImportDialog({
   const initializeCoordinateSystemOnce = useCallback(() => {
     if (!analysisResult || analysisResult === analysisRef.current) return;
 
-    // Get coordinate system from metadata
-    const detectedSystem = analysisResult.metadata?.crs;
+    console.debug('[DEBUG] Initializing coordinate system from analysis result:', {
+      analysisResult,
+      metadata: analysisResult.metadata,
+      rawCrs: analysisResult.metadata?.crs || (analysisResult as any).crs,
+      state: {
+        current: state.coordinateSystem,
+        pending: state.pendingCoordinateSystem
+      }
+    });
+
+    // Get coordinate system from metadata or root level
+    const detectedSystem = analysisResult.metadata?.crs || (analysisResult as any).crs;
     
-    // Validate that it's a known coordinate system
-    const system = Object.values(COORDINATE_SYSTEMS).find(sys => sys === detectedSystem);
-    if (system) {
-      console.debug('[DEBUG] Initializing detected coordinate system:', system);
-      initializeDetectedSystem(system);
-      setState(prev => ({
-        ...prev,
-        coordinateSystem: system,
-        pendingCoordinateSystem: system
-      }));
-    } else {
-      console.warn('[DEBUG] Unknown coordinate system:', detectedSystem);
-      importLogsWarning(`Unknown coordinate system detected: ${detectedSystem || 'none'}, using WGS84`);
-      initializeDetectedSystem(COORDINATE_SYSTEMS.WGS84);
-      setState(prev => ({
-        ...prev,
-        coordinateSystem: COORDINATE_SYSTEMS.WGS84,
-        pendingCoordinateSystem: COORDINATE_SYSTEMS.WGS84
-      }));
+    if (!detectedSystem) {
+      console.warn('[DEBUG] No coordinate system detected:', {
+        analysisResult,
+        metadata: analysisResult.metadata,
+        rawResult: analysisResult
+      });
+      importLogsWarning('No coordinate system detected in analysis result');
+      return;
     }
+
+    // Try to match by EPSG code first
+    const epsgMatch = detectedSystem.match(/EPSG:(\d+)/i);
+    if (epsgMatch) {
+      const epsgCode = epsgMatch[0].toUpperCase();
+      // Find matching system by EPSG code
+      const matchingEpsg = Object.entries(COORDINATE_SYSTEMS).find(
+        ([_, value]) => value.toUpperCase() === epsgCode
+      );
+
+      if (matchingEpsg) {
+        const [systemKey, systemValue] = matchingEpsg;
+        console.debug('[DEBUG] Found matching EPSG code:', {
+          key: systemKey,
+          value: systemValue,
+          detected: detectedSystem,
+          epsgCode,
+          source: analysisResult.metadata?.crs ? 'metadata' : 'root'
+        });
+        
+        initializeDetectedSystem(systemValue);
+        setState(prev => ({
+          ...prev,
+          coordinateSystem: systemValue,
+          pendingCoordinateSystem: systemValue
+        }));
+        return;
+      }
+
+      // If no exact match, try to find a system that includes this EPSG code
+      const systemWithEpsg = Object.entries(COORDINATE_SYSTEMS).find(
+        ([_, value]) => value.toUpperCase().includes(epsgCode)
+      );
+
+      if (systemWithEpsg) {
+        const [systemKey, systemValue] = systemWithEpsg;
+        console.debug('[DEBUG] Found system containing EPSG code:', {
+          key: systemKey,
+          value: systemValue,
+          detected: detectedSystem,
+          epsgCode,
+          source: analysisResult.metadata?.crs ? 'metadata' : 'root'
+        });
+        
+        initializeDetectedSystem(systemValue);
+        setState(prev => ({
+          ...prev,
+          coordinateSystem: systemValue,
+          pendingCoordinateSystem: systemValue
+        }));
+        return;
+      }
+    }
+
+    // Try exact match with COORDINATE_SYSTEMS values
+    const matchingSystem = Object.entries(COORDINATE_SYSTEMS).find(
+      ([_, value]) => value === detectedSystem
+    );
+
+    if (matchingSystem) {
+      const [systemKey, systemValue] = matchingSystem;
+      console.debug('[DEBUG] Found exact matching coordinate system:', {
+        key: systemKey,
+        value: systemValue,
+        detected: detectedSystem,
+        source: analysisResult.metadata?.crs ? 'metadata' : 'root'
+      });
+      
+      initializeDetectedSystem(systemValue);
+      setState(prev => ({
+        ...prev,
+        coordinateSystem: systemValue,
+        pendingCoordinateSystem: systemValue
+      }));
+      return;
+    }
+
+    // If we get here, we couldn't match the system
+    console.warn('[DEBUG] Could not match coordinate system:', {
+      detectedSystem,
+      availableSystems: COORDINATE_SYSTEMS,
+      source: analysisResult.metadata?.crs ? 'metadata' : 'root'
+    });
+    importLogsWarning(`Unrecognized coordinate system: ${detectedSystem}`);
     
     analysisRef.current = analysisResult;
-  }, [analysisResult, initializeDetectedSystem, importLogsWarning]);
+  }, [analysisResult, initializeDetectedSystem, importLogsWarning, state.coordinateSystem]);
 
   useEffect(() => {
     initializeCoordinateSystemOnce();

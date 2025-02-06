@@ -2,6 +2,7 @@ import { Feature, FeatureCollection } from 'geojson';
 import { geoErrorManager } from './error-manager';
 import { ErrorSeverity } from '../../../types/errors';
 import { GeoFeature } from '../../../types/geo';
+import { LogManager } from './logging/log-manager';
 
 export interface FeatureManagerOptions {
   /** Maximum number of features per chunk */
@@ -35,7 +36,7 @@ interface FeatureChunk {
  */
 export class FeatureManager {
   private features: GeoFeature[] = [];
-  private chunks: FeatureChunk[] = [];
+  private chunks: Array<{ features: GeoFeature[]; index: number; timestamp: number }> = [];
   private visibleFeatures: GeoFeature[] = [];
   private visibleLayers: string[] = [];
   private readonly options: Required<FeatureManagerOptions>;
@@ -45,85 +46,87 @@ export class FeatureManager {
   private readonly CHUNK_TTL = 5 * 60 * 1000; // 5 minutes
   private lastMemoryCheck = 0;
   private totalFeatures = 0;
-  private streamingMode = false;
+  private streamingMode: boolean;
   private featureIndex: Map<string, Set<number>> = new Map(); // layer -> chunk indices
+  private readonly logger = LogManager.getInstance();
 
   constructor(options: FeatureManagerOptions = {}) {
-    console.debug('[FeatureManager] Initializing with options:', {
+    this.logger.debug('FeatureManager', 'Initializing with options', {
       providedOptions: options,
       defaultChunkSize: this.DEFAULT_CHUNK_SIZE,
       defaultMaxMemory: this.DEFAULT_MAX_MEMORY
     });
 
+    this.streamingMode = options.streamingMode ?? false;
+
     this.options = {
-      chunkSize: options.chunkSize || this.DEFAULT_CHUNK_SIZE,
-      maxMemoryMB: options.maxMemoryMB || this.DEFAULT_MAX_MEMORY,
+      chunkSize: options.chunkSize ?? this.DEFAULT_CHUNK_SIZE,
+      maxMemoryMB: options.maxMemoryMB ?? this.DEFAULT_MAX_MEMORY,
       monitorMemory: options.monitorMemory ?? true,
-      streamingMode: options.streamingMode ?? false
+      streamingMode: this.streamingMode
     };
 
-    console.debug('[FeatureManager] Initialized with configuration:', {
+    this.logger.debug('FeatureManager', 'Initialized with configuration', {
       finalOptions: this.options,
       streamingMode: this.streamingMode,
       memoryMonitoring: this.options.monitorMemory
     });
-
-    this.streamingMode = this.options.streamingMode;
   }
 
-  async setFeatures(collection: FeatureCollection) {
-    console.debug('[FeatureManager] Setting features:', { 
-      count: collection.features.length,
-      geometryTypes: collection.features.reduce((acc, f) => {
-        const type = f.geometry?.type || 'unknown';
-        acc[type] = (acc[type] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>),
-      streamingMode: this.streamingMode
+  public async setFeatures(features: FeatureCollection): Promise<void> {
+    this.logger.debug('FeatureManager', 'Setting features', {
+      count: features.features.length,
+      types: features.features.map(f => f.geometry?.type).filter(Boolean),
+      layers: features.features.map(f => f.properties?.layer || 'shapes').filter(Boolean)
     });
 
-    await this.clear();
-    await this.addFeatures(collection.features);
+    // Clear existing features
+    this.features = [];
+    this.chunks = [];
+
+    // Process features in batches
+    const batchSize = this.streamingMode ? this.DEFAULT_CHUNK_SIZE : features.features.length;
+    for (let i = 0; i < features.features.length; i += batchSize) {
+      const batch = features.features.map(f => ({
+        ...f,
+        properties: {
+          ...f.properties,
+          layer: f.properties?.layer || 'shapes'
+        }
+      })) as GeoFeature[];
+      await this.processBatch(batch.slice(i, i + batchSize));
+    }
+
+    this.logger.debug('FeatureManager', 'Features set', {
+      totalFeatures: this.features.length,
+      chunks: this.chunks.length,
+      streamingMode: this.streamingMode
+    });
   }
 
   /**
    * Set visible layers and update visible features
    */
   public setVisibleLayers(layers: string[]) {
-    console.debug('[FeatureManager] Setting visible layers:', {
-      current: this.visibleLayers,
-      new: layers,
-      allLayers: Array.from(this.featureIndex.keys())
+    this.logger.debug('FeatureManager', 'Setting visible layers', {
+      old: this.visibleLayers,
+      new: layers
     });
-
-    // If no layers specified, show all layers
-    if (!layers || layers.length === 0) {
-      this.visibleLayers = Array.from(this.featureIndex.keys());
-    } else {
-      this.visibleLayers = layers;
-    }
-
-    // Update visible features
-    this.updateVisibleFeatures();
-
-    console.debug('[FeatureManager] Updated visible layers:', {
-      visibleLayers: this.visibleLayers,
-      visibleFeatureCount: this.visibleFeatures.length
-    });
+    this.visibleLayers = layers;
   }
 
   /**
    * Update visible features based on current visible layers
    */
   private async updateVisibleFeatures() {
-    console.debug('[FeatureManager] Updating visible features');
+    this.logger.debug('FeatureManager', 'Updating visible features');
     
     this.visibleFeatures = [];
     const visibleChunks = new Set<number>();
 
     // If no layers are specified as visible, show all features
     if (this.visibleLayers.length === 0) {
-      console.debug('[FeatureManager] No visible layers specified, showing all features');
+      this.logger.debug('FeatureManager', 'No visible layers specified, showing all features');
       this.visibleFeatures = [...this.features];
       return;
     }
@@ -148,7 +151,7 @@ export class FeatureManager {
       }
     }
 
-    console.debug('[FeatureManager] Visible features updated:', {
+    this.logger.debug('FeatureManager', 'Visible features updated', {
       totalFeatures: this.features.length,
       visibleFeatures: this.visibleFeatures.length,
       visibleLayers: this.visibleLayers,
@@ -160,19 +163,102 @@ export class FeatureManager {
    * Get visible features
    */
   public async getVisibleFeatures(): Promise<GeoFeature[]> {
-    console.debug('[FeatureManager] Getting visible features:', {
+    this.logger.debug('FeatureManager', 'Getting visible features', {
+      visibleLayers: this.visibleLayers,
       totalFeatures: this.features.length,
-      visibleFeatures: this.visibleFeatures.length,
+      chunks: this.chunks.length
+    });
+
+    const features = this.streamingMode
+      ? await this.getVisibleFeaturesStreaming()
+      : this.getVisibleFeaturesMemory();
+
+    this.logger.debug('FeatureManager', 'Retrieved visible features', {
+      count: features.length,
+      types: features.map(f => f.geometry?.type).filter(Boolean),
+      layers: features.map(f => f.properties?.layer || 'shapes').filter(Boolean)
+    });
+
+    return features;
+  }
+
+  private getVisibleFeaturesMemory(): GeoFeature[] {
+    this.logger.debug('FeatureManager', 'Getting visible features from memory', {
+      totalFeatures: this.features.length,
       visibleLayers: this.visibleLayers
     });
 
-    // If no layers are specified as visible, return all features
+    // If no layers are specified as visible, show all features
     if (this.visibleLayers.length === 0) {
-      console.debug('[FeatureManager] No visible layers specified, returning all features');
+      this.logger.debug('FeatureManager', 'No visible layers specified, showing all features');
       return this.features;
     }
 
-    return this.visibleFeatures;
+    const visibleFeatures = this.features.filter(feature => {
+      const layer = feature.properties?.layer || 'shapes';
+      return this.visibleLayers.includes(layer);
+    });
+
+    this.logger.debug('FeatureManager', 'Filtered visible features', {
+      totalFeatures: this.features.length,
+      visibleFeatures: visibleFeatures.length,
+      visibleLayers: this.visibleLayers,
+      firstFeature: visibleFeatures[0] ? {
+        type: visibleFeatures[0].geometry?.type,
+        layer: visibleFeatures[0].properties?.layer || 'shapes',
+        hasCoordinates: visibleFeatures[0].geometry && 'coordinates' in visibleFeatures[0].geometry,
+        coordinates: visibleFeatures[0].geometry?.type === 'LineString' ? visibleFeatures[0].geometry.coordinates : null,
+        properties: visibleFeatures[0].properties
+      } : null
+    });
+
+    return visibleFeatures;
+  }
+
+  private async getVisibleFeaturesStreaming(): Promise<GeoFeature[]> {
+    this.logger.debug('FeatureManager', 'Getting visible features via streaming', {
+      totalChunks: this.chunks.length,
+      visibleLayers: this.visibleLayers
+    });
+
+    const features: GeoFeature[] = [];
+
+    for (const chunk of this.chunks) {
+      const visibleInChunk = chunk.features.filter(feature => {
+        const layer = feature.properties?.layer || 'shapes';
+        return this.visibleLayers.length === 0 || this.visibleLayers.includes(layer);
+      });
+
+      if (visibleInChunk.length > 0) {
+        this.logger.debug('FeatureManager', 'Found visible features in chunk', {
+          chunkIndex: chunk.index,
+          visibleCount: visibleInChunk.length,
+          firstFeature: visibleInChunk[0] ? {
+            type: visibleInChunk[0].geometry?.type,
+            layer: visibleInChunk[0].properties?.layer || 'shapes',
+            hasCoordinates: visibleInChunk[0].geometry && 'coordinates' in visibleInChunk[0].geometry,
+            coordinates: visibleInChunk[0].geometry?.type === 'LineString' ? visibleInChunk[0].geometry.coordinates : null,
+            properties: visibleInChunk[0].properties
+          } : null
+        });
+      }
+
+      features.push(...visibleInChunk);
+    }
+
+    this.logger.debug('FeatureManager', 'Retrieved visible features via streaming', {
+      totalFeatures: features.length,
+      visibleLayers: this.visibleLayers,
+      firstFeature: features[0] ? {
+        type: features[0].geometry?.type,
+        layer: features[0].properties?.layer || 'shapes',
+        hasCoordinates: features[0].geometry && 'coordinates' in features[0].geometry,
+        coordinates: features[0].geometry?.type === 'LineString' ? features[0].geometry.coordinates : null,
+        properties: features[0].properties
+      } : null
+    });
+
+    return features;
   }
 
   async addFeatures(features: Feature[] | GeoFeature[]): Promise<void> {
@@ -209,7 +295,7 @@ export class FeatureManager {
   }
 
   private async processBatch(batch: GeoFeature[]): Promise<void> {
-    console.debug('[FeatureManager] Processing feature batch:', {
+    this.logger.debug('FeatureManager', 'Processing feature batch', {
       batchSize: batch.length,
       mode: this.streamingMode ? 'streaming' : 'memory',
       currentChunks: this.chunks.length,
@@ -217,19 +303,12 @@ export class FeatureManager {
     });
 
     if (this.streamingMode) {
-      const chunk: FeatureChunk = {
+      const chunk = {
         features: batch,
         index: this.chunks.length,
         timestamp: Date.now()
       };
       this.chunks.push(chunk);
-      this.updateFeatureIndex(chunk);
-
-      console.debug('[FeatureManager] Created new chunk:', {
-        chunkIndex: chunk.index,
-        featureCount: chunk.features.length,
-        timestamp: new Date(chunk.timestamp).toISOString()
-      });
     } else {
       this.features.push(...batch);
     }
@@ -246,7 +325,7 @@ export class FeatureManager {
     );
 
     if (oldChunks.length > 0) {
-      console.debug('[FeatureManager] Cleaning up old chunks:', {
+      this.logger.debug('FeatureManager', 'Cleaning up old chunks', {
         totalChunks: this.chunks.length,
         expiredChunks: oldChunks.length,
         oldestChunkAge: Math.round((now - Math.min(...oldChunks.map(c => c.timestamp))) / 1000),
@@ -273,7 +352,7 @@ export class FeatureManager {
         };
       }
 
-      console.debug('[FeatureManager] Chunk cleanup completed:', {
+      this.logger.debug('FeatureManager', 'Chunk cleanup completed', {
         remainingChunks: this.chunks.filter(c => c.features.length > 0).length,
         memoryAfter: await this.getMemoryUsageMB(),
         layerIndices: Array.from(this.featureIndex.entries()).map(([layer, indices]) => ({
@@ -287,7 +366,7 @@ export class FeatureManager {
         const memoryBefore = await this.getMemoryUsageMB();
         global.gc();
         const memoryAfter = await this.getMemoryUsageMB();
-        console.debug('[FeatureManager] Garbage collection completed:', {
+        this.logger.debug('FeatureManager', 'Garbage collection completed', {
           memoryBefore,
           memoryAfter,
           reduction: Math.round((memoryBefore - memoryAfter) * 100) / 100
@@ -337,7 +416,7 @@ export class FeatureManager {
       streamingActive: this.streamingMode
     };
 
-    console.debug('[FeatureManager] Current stats:', {
+    this.logger.debug('FeatureManager', 'Current stats', {
       ...stats,
       visibleFeatures: this.visibleFeatures.length,
       activeChunks: this.chunks.filter(c => c.features.length > 0).length,
@@ -428,14 +507,14 @@ export class FeatureManager {
   }
 
   clear() {
-    console.debug('[DEBUG] Clearing feature manager');
+    this.logger.debug('FeatureManager', 'Clearing feature manager');
     this.features = [];
     this.visibleFeatures = [];
     this.visibleLayers = [];
   }
 
   dispose() {
-    console.debug('[DEBUG] Disposing feature manager');
+    this.logger.debug('FeatureManager', 'Disposing feature manager');
     this.clear();
   }
 

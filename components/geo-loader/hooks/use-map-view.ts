@@ -55,22 +55,6 @@ export function useMapView(
       const projection = getProjection(fromSystem);
       const targetProjection = getProjection(toSystem);
 
-      // Validate Swiss coordinates if converting from Swiss system
-      if (isSwissSystem(fromSystem)) {
-        const isValidSwissCoord = (coord: number, isX: boolean) => {
-          const [minX, maxX] = [2000000, 3000000];
-          const [minY, maxY] = [1000000, 2000000];
-          return isX 
-            ? coord >= minX && coord <= maxX
-            : coord >= minY && coord <= maxY;
-        };
-        
-        if (!isValidSwissCoord(point.x, true) || !isValidSwissCoord(point.y, false)) {
-          console.warn('[use-map-view] Invalid Swiss coordinates:', point);
-          return point;
-        }
-      }
-
       // Handle Swiss to WGS84 transformation
       if (isSwissSystem(fromSystem) && isWGS84System(toSystem)) {
         if (!projection) {
@@ -78,11 +62,37 @@ export function useMapView(
           return point;
         }
 
+        // Validate Swiss coordinates with reasonable bounds
+        const isValidSwissCoord = (coord: number, isX: boolean) => {
+          const [minX, maxX] = [2000000, 3000000];  // Swiss X range
+          const [minY, maxY] = [1000000, 2000000];  // Swiss Y range
+          const value = isX ? coord : coord;
+          const [min, max] = isX ? [minX, maxX] : [minY, maxY];
+          return isFinite(value) && value >= min && value <= max;
+        };
+
+        if (!isValidSwissCoord(point.x, true) || !isValidSwissCoord(point.y, false)) {
+          console.warn('[use-map-view] Invalid Swiss coordinates:', {
+            point,
+            fromSystem,
+            toSystem
+          });
+          return point;
+        }
+
         const [lon, lat] = proj4(projection, 'WGS84', [point.x, point.y]);
-        if (lon === undefined || lat === undefined || !isFinite(lon) || !isFinite(lat)) {
+        
+        // Validate transformed coordinates
+        if (!isFinite(lon) || !isFinite(lat) || 
+            Math.abs(lat) > 90 || Math.abs(lon) > 180) {
           console.error('[use-map-view] Invalid transformation result:', { lon, lat });
           return point;
         }
+
+        console.debug('[use-map-view] Transformed Swiss to WGS84:', {
+          from: [point.x, point.y],
+          to: [lon, lat]
+        });
 
         return { x: lon, y: lat };
       }
@@ -94,11 +104,33 @@ export function useMapView(
           return point;
         }
 
-        const [x, y] = proj4('WGS84', targetProjection, [point.x, point.y]);
-        if (x === undefined || y === undefined || !isFinite(x) || !isFinite(y)) {
-          console.error('[use-map-view] Invalid transformation result:', { x, y });
+        // Validate WGS84 coordinates
+        if (!isFinite(point.x) || !isFinite(point.y) ||
+            Math.abs(point.y) > 90 || Math.abs(point.x) > 180) {
+          console.warn('[use-map-view] Invalid WGS84 coordinates:', point);
           return point;
         }
+
+        const [x, y] = proj4('WGS84', targetProjection, [point.x, point.y]);
+        
+        // Validate transformed coordinates
+        const isValidSwissResult = (coord: number, isX: boolean) => {
+          const [minX, maxX] = [2000000, 3000000];
+          const [minY, maxY] = [1000000, 2000000];
+          const value = isX ? coord : coord;
+          const [min, max] = isX ? [minX, maxX] : [minY, maxY];
+          return isFinite(value) && value >= min && value <= max;
+        };
+
+        if (!isValidSwissResult(x, true) || !isValidSwissResult(y, false)) {
+          console.error('[use-map-view] Invalid Swiss transformation result:', { x, y });
+          return point;
+        }
+
+        console.debug('[use-map-view] Transformed WGS84 to Swiss:', {
+          from: [point.x, point.y],
+          to: [x, y]
+        });
 
         return { x, y };
       }
@@ -126,23 +158,75 @@ export function useMapView(
         bounds
       });
 
-      // Transform each corner
-      const corners = [
-        await transformCoordinates({ x: bounds.minX, y: bounds.minY }, fromSystem, toSystem),
-        await transformCoordinates({ x: bounds.minX, y: bounds.maxY }, fromSystem, toSystem),
-        await transformCoordinates({ x: bounds.maxX, y: bounds.minY }, fromSystem, toSystem),
-        await transformCoordinates({ x: bounds.maxX, y: bounds.maxY }, fromSystem, toSystem)
+      // For Swiss coordinates, validate bounds are within reasonable range
+      if (isSwissSystem(fromSystem)) {
+        const isValidSwissBounds = (
+          bounds.minX >= 2000000 && bounds.maxX <= 3000000 &&
+          bounds.minY >= 1000000 && bounds.maxY <= 2000000
+        );
+
+        if (!isValidSwissBounds) {
+          console.warn('[use-map-view] Swiss bounds outside valid range:', bounds);
+          return bounds;
+        }
+      }
+
+      // Transform each corner and midpoints for better accuracy
+      const points = [
+        // Corners
+        { x: bounds.minX, y: bounds.minY },
+        { x: bounds.minX, y: bounds.maxY },
+        { x: bounds.maxX, y: bounds.minY },
+        { x: bounds.maxX, y: bounds.maxY },
+        // Midpoints
+        { x: (bounds.minX + bounds.maxX) / 2, y: bounds.minY },
+        { x: (bounds.minX + bounds.maxX) / 2, y: bounds.maxY },
+        { x: bounds.minX, y: (bounds.minY + bounds.maxY) / 2 },
+        { x: bounds.maxX, y: (bounds.minY + bounds.maxY) / 2 }
       ];
 
-      // Calculate new bounds from transformed corners
+      const transformedPoints = await Promise.all(
+        points.map(point => transformCoordinates(point, fromSystem, toSystem))
+      );
+
+      // Filter out invalid transformations and get valid bounds
+      const validPoints = transformedPoints.filter(point => 
+        isFinite(point.x) && isFinite(point.y) &&
+        (isWGS84System(toSystem) ? 
+          Math.abs(point.y) <= 90 && Math.abs(point.x) <= 180 :
+          point.x >= 2000000 && point.x <= 3000000 && 
+          point.y >= 1000000 && point.y <= 2000000)
+      );
+
+      if (validPoints.length === 0) {
+        console.error('[use-map-view] No valid points after transformation');
+        return bounds;
+      }
+
+      // Calculate new bounds from transformed points
       const transformedBounds = {
-        minX: Math.min(...corners.map(c => c.x)),
-        minY: Math.min(...corners.map(c => c.y)),
-        maxX: Math.max(...corners.map(c => c.x)),
-        maxY: Math.max(...corners.map(c => c.y))
+        minX: Math.min(...validPoints.map(p => p.x)),
+        minY: Math.min(...validPoints.map(p => p.y)),
+        maxX: Math.max(...validPoints.map(p => p.x)),
+        maxY: Math.max(...validPoints.map(p => p.y))
       };
 
-      console.debug('[use-map-view] Transformed bounds:', transformedBounds);
+      // Add padding for better visibility
+      if (isWGS84System(toSystem)) {
+        const dx = (transformedBounds.maxX - transformedBounds.minX) * BOUNDS_PADDING_PERCENT;
+        const dy = (transformedBounds.maxY - transformedBounds.minY) * BOUNDS_PADDING_PERCENT;
+        transformedBounds.minX -= dx;
+        transformedBounds.minY -= dy;
+        transformedBounds.maxX += dx;
+        transformedBounds.maxY += dy;
+      }
+
+      console.debug('[use-map-view] Transformed bounds:', {
+        original: bounds,
+        transformed: transformedBounds,
+        validPoints: validPoints.length
+      });
+
       return transformedBounds;
     } catch (error) {
       console.error('[use-map-view] Error transforming bounds:', error);

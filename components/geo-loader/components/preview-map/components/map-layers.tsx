@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Source, Layer } from 'react-map-gl';
 import { FeatureCollection, Position, LineString, MultiLineString, Feature, Geometry, GeoJsonProperties } from 'geojson';
+import { LogManager } from '../../../core/logging/log-manager';
 
 // Define local interfaces since we can't access the global types
 interface GeoFeatureProperties {
@@ -119,40 +120,27 @@ export const PointLayer: React.FC<LayerProps> = ({ data }) => {
 };
 
 export const LineLayer: React.FC<LayerProps> = ({ data }) => {
-  const [lastValidData, setLastValidData] = useState<GeoFeatureCollection | null>(null);
+  const [effectiveData, setEffectiveData] = useState<GeoFeatureCollection>(data);
+  const logger = LogManager.getInstance();
 
   useEffect(() => {
-    // Log detailed feature information
-    const features = data.features;
-    console.debug('[DEBUG] [LineLayer] Received data:', {
-      currentFeatures: features.length,
-      lastValidFeatures: lastValidData?.features.length || 0,
-      sampleFeature: features[0] ? {
-        type: features[0].geometry.type,
-        coordinates: features[0].geometry.type === 'LineString' || features[0].geometry.type === 'MultiLineString' 
-          ? (features[0].geometry as LineString | MultiLineString).coordinates 
-          : [],
-        layer: features[0].properties?.layer,
-        fromSystem: features[0].properties?._fromSystem,
-        toSystem: features[0].properties?._toSystem,
-        projectionInfo: features[0].properties?._projectionInfo
-      } : null
+    logger.debug('MapLayers', 'LineLayer received data', {
+      features: data.features.length,
+      types: data.features.map(f => f.geometry?.type),
+      layers: data.features.map(f => f.properties?.layer),
+      featureDetails: data.features.map(f => ({
+        type: f.geometry?.type,
+        layer: f.properties?.layer,
+        fromSystem: f.properties?._fromSystem,
+        toSystem: f.properties?._toSystem,
+        hasCoordinates: f.geometry !== undefined,
+        coordinates: f.geometry?.type === 'LineString' ? f.geometry.coordinates : null
+      }))
     });
-
-    // Update last valid data if we have features
-    if (features.length > 0) {
-      setLastValidData(data);
-    }
+    setEffectiveData(data);
   }, [data]);
 
-  // Use current data if it has features, otherwise use last valid data
-  const effectiveData = data.features.length > 0 ? data : (lastValidData || data);
-
-  // Return null if no data to render
-  if (!effectiveData || effectiveData.features.length === 0) {
-    console.debug('[DEBUG] [LineLayer] No features to render');
-    return null;
-  }
+  if (effectiveData.features.length === 0) return null;
 
   return (
     <Source 
@@ -164,7 +152,11 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
         id="lines"
         type="line"
         source="line-source"
-        filter={['==', ['get', 'layer'], 'shapes']}
+        filter={['any',
+          ['==', ['get', 'layer'], 'shapes'],
+          ['==', ['get', 'layer'], undefined],
+          ['==', ['get', 'layer'], null]
+        ]}
         paint={{
           'line-color': '#4a90e2',
           'line-width': 3,
@@ -176,7 +168,6 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
           'visibility': 'visible',
           'line-sort-key': 1  // Ensure lines render above other layers
         }}
-        minzoom={0}
         maxzoom={24}
       />
     </Source>
@@ -217,8 +208,10 @@ interface MapLayersProps {
 }
 
 export const MapLayers: React.FC<MapLayersProps> = ({ points, lines, polygons }) => {
+  const logger = LogManager.getInstance();
+
   useEffect(() => {
-    console.debug('[DEBUG] [MapLayers] Component mounted/updated:', {
+    logger.debug('MapLayers', 'Component mounted/updated', {
       pointCount: points.features.length,
       lineCount: lines.features.length,
       polygonCount: polygons.features.length,

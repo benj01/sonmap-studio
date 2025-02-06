@@ -134,7 +134,11 @@ export class PreviewManager {
     if (cached) {
       const hasTransformedFeatures = this.hasTransformedFeatures(cached);
       if (hasTransformedFeatures) {
-        console.debug('[PreviewManager] Using cached transformed collections');
+        console.debug('[PreviewManager] Using cached transformed collections:', {
+          points: cached.points.features.length,
+          lines: cached.lines.features.length,
+          polygons: cached.polygons.features.length
+        });
         return cached;
       }
     }
@@ -143,14 +147,27 @@ export class PreviewManager {
       const visibleFeatures = await this.featureManager.getVisibleFeatures();
       console.debug('[PreviewManager] Got visible features:', {
         count: visibleFeatures.length,
+        types: visibleFeatures.map(f => f.geometry?.type),
+        layers: visibleFeatures.map(f => f.properties?.layer),
         visibleLayers: this.optionsManager.getVisibleLayers()
       });
 
       // Transform coordinates if needed
       const processedFeatures = await this.processFeatures(visibleFeatures);
+      console.debug('[PreviewManager] Processed visible features:', {
+        count: processedFeatures.length,
+        types: processedFeatures.map(f => f.geometry?.type),
+        layers: processedFeatures.map(f => f.properties?.layer)
+      });
 
       // Categorize and calculate bounds
       const collections = await this.featureManager.categorizeFeatures(processedFeatures);
+      console.debug('[PreviewManager] Categorized features:', {
+        points: collections.points.features.length,
+        lines: collections.lines.features.length,
+        polygons: collections.polygons.features.length
+      });
+
       const bounds = this.featureManager.calculateBounds(collections);
       
       const result: PreviewCollectionResult = {
@@ -197,7 +214,11 @@ export class PreviewManager {
    * Set features directly for preview
    */
   public async setFeatures(features: Feature[] | FeatureCollection): Promise<void> {
-    console.debug('[PreviewManager] Setting features');
+    console.debug('[PreviewManager] Setting features:', {
+      type: Array.isArray(features) ? 'array' : 'collection',
+      count: Array.isArray(features) ? features.length : features.features.length,
+      sample: Array.isArray(features) ? features[0] : features.features[0]
+    });
     
     this.invalidateCache('new features');
 
@@ -217,11 +238,17 @@ export class PreviewManager {
 
     // Update coordinate system if a different one was detected
     if (detectedSystem) {
+      console.debug('[PreviewManager] Detected coordinate system:', detectedSystem);
       this.setOptions({ coordinateSystem: detectedSystem as CoordinateSystem });
     }
 
     // Transform coordinates if needed
     const processedFeatures = await this.processFeatures(collection.features);
+    console.debug('[PreviewManager] Processed features:', {
+      count: processedFeatures.length,
+      types: processedFeatures.map(f => f.geometry?.type),
+      layers: processedFeatures.map(f => f.properties?.layer)
+    });
 
     // Set processed features
     await this.featureManager.setFeatures(processedFeatures);

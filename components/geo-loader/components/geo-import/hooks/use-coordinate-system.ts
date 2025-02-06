@@ -35,29 +35,20 @@ export function useCoordinateSystem({
     loading: false
   });
 
-  // Initialize with undefined coordinate system to allow detection
-  useEffect(() => {
-    setState(prev => ({
-      ...prev,
-      coordinateSystem: undefined,
-      loading: false
-    }));
-  }, []);
-
   const handleCoordinateSystemChange = useCallback((value: string) => {
     try {
       // Only update pending state if it's a valid coordinate system
       if (Object.values(COORDINATE_SYSTEMS).includes(value as CoordinateSystem)) {
-        console.log('Setting pending coordinate system to:', value);
+        console.debug('[DEBUG] Setting pending coordinate system to:', value);
         setState(prev => ({
           ...prev,
           pendingCoordinateSystem: value as CoordinateSystem
         }));
       } else {
-        console.warn('Invalid coordinate system:', value);
+        console.warn('[DEBUG] Invalid coordinate system:', value);
       }
     } catch (error: unknown) {
-      console.warn('Coordinate system validation error:', error instanceof Error ? error.message : String(error));
+      console.warn('[DEBUG] Coordinate system validation error:', error instanceof Error ? error.message : String(error));
     }
   }, []);
 
@@ -102,21 +93,12 @@ export function useCoordinateSystem({
         previewManager.setOptions({
           coordinateSystem: state.pendingCoordinateSystem,
           analysis: {
-            warnings: processor.getWarnings().map((message: string) => ({
+            warnings: processor.getWarnings ? processor.getWarnings().map((message: string) => ({
               type: 'warning' as const,
               message
-            }))
+            })) : []
           }
         });
-
-        // Update preview with new features
-        if (result.preview) {
-          await previewManager.setFeatures(result.preview);
-          console.debug('[DEBUG] Updated preview features with new coordinate system:', {
-            system: state.pendingCoordinateSystem,
-            featureCount: result.preview.features?.length ?? 0
-          });
-        }
       }
 
       // Only update coordinateSystem after successful application
@@ -191,7 +173,7 @@ export function useCoordinateSystem({
   // Only log in development
   if (process.env.NODE_ENV === 'development') {
     useEffect(() => {
-      console.debug('Coordinate system state:', state);
+      console.debug('[DEBUG] Coordinate system state:', state);
     }, [state]);
   }
 

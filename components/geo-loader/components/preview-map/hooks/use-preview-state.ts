@@ -95,6 +95,12 @@ export function usePreviewState({
         setState(prev => ({ ...prev, loading: true }));
 
         // Update preview manager options
+        console.debug('[DEBUG] Updating preview manager options in usePreviewState:', {
+          viewportBounds,
+          visibleLayers,
+          enableCaching: true
+        });
+
         previewManager.setOptions({
           viewportBounds,
           visibleLayers,
@@ -102,12 +108,21 @@ export function usePreviewState({
         });
 
         // Get preview collections
+        console.debug('[DEBUG] Getting preview collections...');
         const collections = await previewManager.getPreviewCollections();
+        console.debug('[DEBUG] Preview collections received:', {
+          hasCollections: !!collections,
+          points: collections?.points?.features?.length || 0,
+          lines: collections?.lines?.features?.length || 0,
+          polygons: collections?.polygons?.features?.length || 0,
+          bounds: collections?.bounds,
+          totalCount: collections?.totalCount || 0
+        });
 
         if (!mountedRef.current) return;
 
         if (!collections) {
-          console.debug('[usePreviewState] No collections returned');
+          console.debug('[DEBUG] No collections returned');
           setState(prev => ({
             ...initialState,
             loading: false
@@ -125,11 +140,19 @@ export function usePreviewState({
           progress: 1
         };
 
+        console.debug('[DEBUG] Setting new preview state:', {
+          pointFeatures: result.points.features?.length || 0,
+          lineFeatures: result.lines.features?.length || 0,
+          polygonFeatures: result.polygons.features?.length || 0,
+          totalCount: result.totalCount,
+          visibleLayers
+        });
+
         setState(result);
 
         // Update bounds if needed
         if (!initialBoundsSet && collections.bounds) {
-          console.debug('[usePreviewState] Setting initial bounds:', collections.bounds);
+          console.debug('[DEBUG] Setting initial bounds:', collections.bounds);
           onUpdateBounds?.(collections.bounds);
         }
 
@@ -137,7 +160,7 @@ export function usePreviewState({
         onPreviewUpdate?.();
 
       } catch (error) {
-        console.error('[usePreviewState] Error updating preview:', error);
+        console.error('[DEBUG] Error updating preview:', error);
         setState(prev => ({
           ...initialState,
           loading: false

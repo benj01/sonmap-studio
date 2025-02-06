@@ -17,6 +17,7 @@ interface FileAnalysisProps {
   onError: (message: string) => void;
   onProgress: (progress: number) => void;
   getProcessor: (file: File, options?: Partial<ProcessorOptions>) => Promise<any>;
+  initializeCoordinateSystem?: (system: CoordinateSystem) => void;
 }
 
 interface FileAnalysisState {
@@ -47,7 +48,8 @@ export function useFileAnalysis({
   onWarning,
   onError,
   onProgress,
-  getProcessor
+  getProcessor,
+  initializeCoordinateSystem
 }: FileAnalysisProps) {
   const [state, setState] = useState<FileAnalysisState>(initialState);
   const currentFileRef = useRef<File | null>(null);
@@ -70,7 +72,7 @@ export function useFileAnalysis({
     setState(prev => ({ ...prev, loading: true }));
 
     try {
-      console.log('[DEBUG] Starting file analysis:', file.name);
+      console.debug('[DEBUG] Starting file analysis:', file.name);
 
       // Ensure geo-loader is fully initialized (coordinate systems and WebAssembly)
       if (!coordinateSystemManager.isInitialized()) {
@@ -124,7 +126,7 @@ export function useFileAnalysis({
       // Initialize preview manager with streaming support and matching visibility state
       console.log('[DEBUG] Creating preview manager...');
       // Validate coordinate system
-      if (!result.coordinateSystem) {
+      if (!result.metadata?.crs) {
         throw new GeoLoaderError(
           'No coordinate system detected in analysis result',
           'COORDINATE_SYSTEM_ERROR'
@@ -133,24 +135,50 @@ export function useFileAnalysis({
 
       const previewManager = createPreviewManager({
         maxFeatures: 5000,
-        visibleLayers: initialVisibleLayers,
+        visibleLayers: ['shapes'],
         analysis: {
-          warnings: processor.getWarnings()
+          warnings: processor.getWarnings ? processor.getWarnings().map((message: string) => ({
+            type: 'warning' as const,
+            message
+          })) : []
         },
-        coordinateSystem: result.coordinateSystem,
+        coordinateSystem: result.metadata.crs,
         enableCaching: true,
         smartSampling: true
       });
 
-      console.log('[DEBUG] Preview manager created with all layers visible');
+      console.log('[DEBUG] Preview manager created with layers:', {
+        visibleLayers: ['shapes'],
+        coordinateSystem: result.metadata.crs
+      });
+
+      // Initialize coordinate system if detected
+      if (result.metadata?.crs && initializeCoordinateSystem) {
+        console.debug('[DEBUG] Detected coordinate system:', result.metadata.crs);
+        initializeCoordinateSystem(result.metadata.crs);
+      }
 
       // Set preview features in preview manager
       if (result.preview && result.preview.features.length > 0) {
-        console.log('[DEBUG] Setting preview features in preview manager...');
+        console.log('[DEBUG] Setting preview features in preview manager:', {
+          featureCount: result.preview.features.length,
+          geometryType: result.metadata.geometryType,
+          firstFeature: result.preview.features[0],
+          coordinateSystem: result.metadata.crs
+        });
         await previewManager.setFeatures(result.preview);
+      } else {
+        console.log('[DEBUG] No preview features to set');
       }
 
-      console.log('[DEBUG] Analysis complete, updating state...');
+      console.log('[DEBUG] Analysis complete, updating state:', {
+        loading: false,
+        hasAnalysis: !!result,
+        hasDxfData: !!result.dxfData,
+        layerCount: layers.length,
+        visibleLayerCount: initialVisibleLayers.length,
+        previewManager: previewManager ? 'initialized' : 'null'
+      });
       
       // Update state with all layers initially visible
       const newState = {
@@ -189,7 +217,7 @@ export function useFileAnalysis({
     } finally {
       loadingRef.current = false;
     }
-  }, [getProcessor, onError]);
+  }, [getProcessor, onError, initializeCoordinateSystem]);
 
   // Reset state and cleanup resources
   const resetState = useCallback(() => {
