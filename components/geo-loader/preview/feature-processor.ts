@@ -69,7 +69,14 @@ export class FeatureProcessor {
   public categorizeFeatures(features: GeoFeature[]): PreviewCollections {
     console.debug('[FeatureProcessor] Starting feature categorization', {
       totalFeatures: features.length,
-      firstFeature: features[0],
+      firstFeature: features[0] ? {
+        type: features[0].geometry?.type,
+        layer: features[0].properties?.layer,
+        hasCoordinates: features[0].geometry !== undefined,
+        coordinates: features[0].geometry?.type === 'LineString' ?
+          (features[0].geometry as any).coordinates.slice(0, 2) : null,
+        properties: features[0].properties
+      } : null,
       coordinateSystems: features.map(f => ({
         fromSystem: f.properties?._fromSystem,
         toSystem: f.properties?._toSystem,
@@ -96,7 +103,8 @@ export class FeatureProcessor {
       
       console.debug('[FeatureProcessor] Processing feature', {
         type: geometryType,
-        coordinates: 'coordinates' in effectiveGeometry ? effectiveGeometry.coordinates : null,
+        coordinates: 'coordinates' in effectiveGeometry ? 
+          (effectiveGeometry as any).coordinates.slice(0, 2) : null,
         transformationInfo: {
           fromSystem: feature.properties?._fromSystem,
           toSystem: feature.properties?._toSystem,
@@ -124,9 +132,11 @@ export class FeatureProcessor {
         case 'linestring':
         case 'multilinestring':
           console.debug('[FeatureProcessor] Adding line feature', {
-            coordinates: 'coordinates' in processedFeature.geometry ? processedFeature.geometry.coordinates : null,
+            coordinates: 'coordinates' in processedFeature.geometry ? 
+              (processedFeature.geometry as any).coordinates.slice(0, 2) : null,
             layer: processedFeature.properties?.layer,
-            type: processedFeature.geometry.type
+            type: processedFeature.geometry.type,
+            properties: processedFeature.properties
           });
           lines.push(processedFeature);
           break;
@@ -150,9 +160,22 @@ export class FeatureProcessor {
       lines: lines.length,
       polygons: polygons.length,
       sampleFeatures: {
-        point: points[0],
-        line: lines[0],
-        polygon: polygons[0]
+        point: points[0] ? {
+          type: points[0].geometry?.type,
+          layer: points[0].properties?.layer,
+          coordinates: points[0].geometry?.type === 'Point' ?
+            (points[0].geometry as any).coordinates : null
+        } : null,
+        line: lines[0] ? {
+          type: lines[0].geometry?.type,
+          layer: lines[0].properties?.layer,
+          coordinates: lines[0].geometry?.type === 'LineString' ?
+            (lines[0].geometry as any).coordinates.slice(0, 2) : null
+        } : null,
+        polygon: polygons[0] ? {
+          type: polygons[0].geometry?.type,
+          layer: polygons[0].properties?.layer
+        } : null
       }
     });
 

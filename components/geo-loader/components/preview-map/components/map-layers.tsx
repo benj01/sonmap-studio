@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Source, Layer } from 'react-map-gl';
 import { FeatureCollection, Position, LineString, MultiLineString, Feature, Geometry, GeoJsonProperties } from 'geojson';
 import { LogManager } from '../../../core/logging/log-manager';
+import { LogLevel } from '../../../core/logging/log-manager';
 
 // Define local interfaces since we can't access the global types
 interface GeoFeatureProperties {
@@ -119,28 +120,14 @@ export const PointLayer: React.FC<LayerProps> = ({ data }) => {
   );
 };
 
-export const LineLayer: React.FC<LayerProps> = ({ data }) => {
-  const [effectiveData, setEffectiveData] = useState<GeoFeatureCollection>(data);
-  const logger = LogManager.getInstance();
+export const LineLayer: React.FC<LayerProps> = React.memo(({ data }) => {
+  // Only return null if no features, without logging
+  if (!data?.features?.length) return null;
 
-  useEffect(() => {
-    logger.debug('MapLayers', 'LineLayer received data', {
-      features: data.features.length,
-      types: data.features.map(f => f.geometry?.type),
-      layers: data.features.map(f => f.properties?.layer),
-      featureDetails: data.features.map(f => ({
-        type: f.geometry?.type,
-        layer: f.properties?.layer,
-        fromSystem: f.properties?._fromSystem,
-        toSystem: f.properties?._toSystem,
-        hasCoordinates: f.geometry !== undefined,
-        coordinates: f.geometry?.type === 'LineString' ? f.geometry.coordinates : null
-      }))
-    });
-    setEffectiveData(data);
-  }, [data]);
-
-  if (effectiveData.features.length === 0) return null;
+  const effectiveData = {
+    type: 'FeatureCollection' as const,
+    features: data.features.map(ensureGeoFeature)
+  };
 
   return (
     <Source 
@@ -152,11 +139,7 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
         id="lines"
         type="line"
         source="line-source"
-        filter={['any',
-          ['==', ['get', 'layer'], 'shapes'],
-          ['==', ['get', 'layer'], undefined],
-          ['==', ['get', 'layer'], null]
-        ]}
+        filter={['==', ['get', 'layer'], 'shapes']}
         paint={{
           'line-color': '#4a90e2',
           'line-width': 3,
@@ -166,13 +149,18 @@ export const LineLayer: React.FC<LayerProps> = ({ data }) => {
           'line-cap': 'round',
           'line-join': 'round',
           'visibility': 'visible',
-          'line-sort-key': 1  // Ensure lines render above other layers
+          'line-sort-key': 1
         }}
         maxzoom={24}
       />
     </Source>
   );
-};
+}, (prevProps, nextProps) => {
+  // Custom comparison function for better memoization
+  if (!prevProps.data?.features?.length && !nextProps.data?.features?.length) return true;
+  if (prevProps.data?.features?.length !== nextProps.data?.features?.length) return false;
+  return true;
+});
 
 export const PolygonLayer: React.FC<LayerProps> = ({ data }) => {
   if (data.features.length === 0) return null;
@@ -207,22 +195,19 @@ interface MapLayersProps {
   polygons: GeoFeatureCollection;
 }
 
-export const MapLayers: React.FC<MapLayersProps> = ({ points, lines, polygons }) => {
-  const logger = LogManager.getInstance();
-
+export const MapLayers: React.FC<MapLayersProps> = React.memo(({ points, lines, polygons }) => {
+  // Only log on mount in development mode
   useEffect(() => {
-    logger.debug('MapLayers', 'Component mounted/updated', {
-      pointCount: points.features.length,
-      lineCount: lines.features.length,
-      polygonCount: polygons.features.length,
-      lineFeatures: lines.features.map(f => ({
-        type: f.geometry.type,
-        layer: f.properties?.layer,
-        fromSystem: f.properties?._fromSystem,
-        toSystem: f.properties?._toSystem
-      }))
-    });
-  }, [points, lines, polygons]);
+    if (process.env.NODE_ENV === 'development') {
+      const logger = LogManager.getInstance();
+      logger.setLogLevel(LogLevel.INFO); // Set to INFO level to reduce debug noise
+      logger.info('MapLayers', 'Initial mount', {
+        pointCount: points.features.length,
+        lineCount: lines.features.length,
+        polygonCount: polygons.features.length
+      });
+    }
+  }, []); // Empty dependency array = only run on mount
 
   return (
     <>
@@ -231,6 +216,33 @@ export const MapLayers: React.FC<MapLayersProps> = ({ points, lines, polygons })
       <PolygonLayer data={polygons} />
     </>
   );
+}, (prevProps, nextProps) => {
+  // Efficient comparison without JSON.stringify
+  return (
+    areFeatureCollectionsEqual(prevProps.points, nextProps.points) &&
+    areFeatureCollectionsEqual(prevProps.lines, nextProps.lines) &&
+    areFeatureCollectionsEqual(prevProps.polygons, nextProps.polygons)
+  );
+});
+
+// Helper for shallow feature comparison
+const areFeatureCollectionsEqual = (prev: GeoFeatureCollection, next: GeoFeatureCollection): boolean => {
+  if (prev.features.length !== next.features.length) return false;
+  if (prev.features.length === 0 && next.features.length === 0) return true;
+  
+  // Compare feature counts by type
+  const getTypeCounts = (features: GeoFeature[]) => {
+    return features.reduce((acc, f) => {
+      const type = f.geometry.type;
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+  };
+  
+  const prevCounts = getTypeCounts(prev.features);
+  const nextCounts = getTypeCounts(next.features);
+  
+  return Object.keys(prevCounts).every(type => prevCounts[type] === nextCounts[type]);
 };
 
 export { ensureGeoFeatureCollection };

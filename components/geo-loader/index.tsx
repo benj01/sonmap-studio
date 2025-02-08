@@ -1,4 +1,5 @@
 import { coordinateSystemManager } from './core/coordinate-systems/coordinate-system-manager';
+import { initializeLogger } from './core/logging/init';
 import { 
   COORDINATE_SYSTEMS,
   CoordinateSystem,
@@ -19,6 +20,9 @@ import { initWasm } from './core/processors/implementations/shapefile/core/wasm-
 // Import and initialize processors synchronously
 import './core/processors';
 import { ProcessorRegistry } from './core/processors/base/registry';
+
+// Initialize logger first
+initializeLogger();
 
 // Get registry instance and log supported extensions
 const registry = ProcessorRegistry.getInstance();

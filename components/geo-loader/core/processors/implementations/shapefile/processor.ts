@@ -84,9 +84,15 @@ export class ShapefileProcessor implements FileProcessor {
       let header;
       try {
         header = await this.headerParser.parseHeader(shpBuffer);
-        this.logger.debug(this.LOG_SOURCE, 'Header parsed successfully', { header });
+        this.logger.debug(this.LOG_SOURCE, 'Header parsed successfully', {
+          shapeType: header.shapeType,
+          bbox: header.bbox,
+          length: header.length
+        });
       } catch (error) {
-        this.logger.error(this.LOG_SOURCE, 'Failed to parse header', { error });
+        this.logger.error(this.LOG_SOURCE, 'Failed to parse header', {
+          error: error instanceof Error ? error.message : String(error)
+        });
         throw error;
       }
 
@@ -122,10 +128,10 @@ export class ShapefileProcessor implements FileProcessor {
       let dbfRecords: Record<number, Record<string, unknown>> = {};
       
       try {
-        // Log DBF buffer details
+        // Log DBF buffer details more safely
         this.logger.debug(this.LOG_SOURCE, 'DBF Buffer details', {
           size: dbfBuffer.byteLength,
-          firstBytes: Array.from(new Uint8Array(dbfBuffer.slice(0, 10))).map(b => b.toString(16))
+          headerBytes: Array.from(new Uint8Array(dbfBuffer.slice(0, 4))).map(b => b.toString(16))
         });
 
         // Read DBF header with timeout
@@ -145,7 +151,12 @@ export class ShapefileProcessor implements FileProcessor {
             recordCount: dbfHeader.recordCount,
             headerLength: dbfHeader.headerLength,
             recordLength: dbfHeader.recordLength,
-            fieldCount: dbfHeader.fields.length
+            fieldCount: dbfHeader.fields.length,
+            fields: dbfHeader.fields.map(f => ({ 
+              name: f.name,
+              type: f.type,
+              length: f.length
+            }))
           });
 
           if (dbfHeader.recordCount === 0) {
@@ -193,13 +204,17 @@ export class ShapefileProcessor implements FileProcessor {
             const contentLength = dataView.getInt32(offset + 4, false); // big-endian
             const recordType = dataView.getInt32(offset + 8, true); // little-endian
 
-            this.logger.debug(this.LOG_SOURCE, 'Reading record', { 
-              recordNumber, 
-              contentLength, 
-              recordType, 
-              offset,
-              attempt: attempts 
-            });
+            // Only log every 100th record or if there's an issue
+            if (attempts % 100 === 0 || recordType !== header.shapeType) {
+              this.logger.debug(this.LOG_SOURCE, 'Reading record', { 
+                recordNumber, 
+                contentLength,
+                recordType,
+                offset,
+                attempt: attempts,
+                expectedType: header.shapeType
+              });
+            }
 
             if (contentLength <= 0 || recordType !== header.shapeType) {
               this.logger.warn(this.LOG_SOURCE, 'Invalid record detected', { 
@@ -229,11 +244,14 @@ export class ShapefileProcessor implements FileProcessor {
               const numParts = dataView.getInt32(recordStart + 36, true);
               const numPoints = dataView.getInt32(recordStart + 40, true);
               
-              this.logger.debug(this.LOG_SOURCE, 'Reading LineString', { 
-                numParts, 
-                numPoints,
-                recordNumber 
-              });
+              // Only log if there's an issue or every 100th record
+              if (attempts % 100 === 0 || numParts <= 0 || numPoints <= 0) {
+                this.logger.debug(this.LOG_SOURCE, 'Reading LineString', { 
+                  numParts, 
+                  numPoints,
+                  recordNumber 
+                });
+              }
               
               if (numParts > 0 && numPoints > 0) {
                 const coordinates = [];
@@ -346,22 +364,23 @@ export class ShapefileProcessor implements FileProcessor {
         warnings: warnings
       };
 
-      // Log the final result for debugging
+      // Log the final result with sanitized data
       this.logger.debug(this.LOG_SOURCE, 'Analysis result', {
         fileName: result.metadata.fileName,
         featureCount: result.metadata.featureCount,
         geometryType: result.layerStructure[0].geometryType,
-        crs: result.metadata.crs
+        crs: result.metadata.crs,
+        bounds: result.metadata.bounds
       });
 
       return result;
     } catch (error) {
       this.logger.error(this.LOG_SOURCE, 'Analysis failed', {
         error: error instanceof Error ? {
+          name: error.name,
           message: error.message,
-          stack: error.stack,
-          name: error.name
-        } : error
+          stack: error.stack?.split('\n')[0] // Only log first line of stack trace
+        } : String(error)
       });
       throw new Error(`Failed to analyze shapefile: ${error instanceof Error ? error.message : String(error)}`);
     }

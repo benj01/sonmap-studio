@@ -9,6 +9,7 @@ import { CoordinateSystemHandler } from './modules/coordinate-system-handler';
 import { MapboxProjectionManager } from './modules/mapbox-projection-manager';
 import { PreviewFeatureManager } from './modules/preview-feature-manager';
 import { PreviewOptionsManager } from './modules/preview-options-manager';
+import { LogManager } from '../core/logging/log-manager';
 
 // Re-export types that might be used by consumers
 export type { PreviewOptions, PreviewCollectionResult, MapboxProjection };
@@ -25,6 +26,7 @@ export class PreviewManager {
   private readonly projectionManager: MapboxProjectionManager;
   private readonly boundsValidator: BoundsValidator;
   private readonly cacheManager: PreviewCacheManager;
+  private readonly logger = LogManager.getInstance();
 
   constructor(options: PreviewOptions = {}) {
     // Initialize all managers
@@ -43,10 +45,13 @@ export class PreviewManager {
     // Validate coordinate system
     void this.validateCoordinateSystem();
 
-    console.debug('[PreviewManager] Initialized with configuration:', {
-      options: this.optionsManager.getOptions(),
-      projection: this.projectionManager.getProjection()
-    });
+    // Only log initialization in development
+    if (process.env.NODE_ENV === 'development') {
+      this.logger.info('PreviewManager', 'Initialized with configuration', {
+        options: this.optionsManager.getOptions(),
+        projection: this.projectionManager.getProjection()
+      });
+    }
   }
 
   /**
@@ -57,7 +62,7 @@ export class PreviewManager {
       ...feature,
       properties: {
         ...feature.properties,
-        layer: feature.properties?.layer || 'default',
+        layer: feature.properties?.layer || 'shapes',
         type: feature.properties?.type || feature.geometry?.type || 'unknown'
       }
     } as GeoFeature;
@@ -126,47 +131,69 @@ export class PreviewManager {
    * Get preview collections for the current viewport
    */
   public async getPreviewCollections(): Promise<PreviewCollectionResult> {
-    console.debug('[PreviewManager] Getting preview collections');
-    
+    // Only log collection retrieval if we have features
     const cacheKey = this.getCacheKey();
     const cached = this.cacheManager.get(cacheKey);
     
     if (cached) {
       const hasTransformedFeatures = this.hasTransformedFeatures(cached);
       if (hasTransformedFeatures) {
-        console.debug('[PreviewManager] Using cached transformed collections:', {
-          points: cached.points.features.length,
-          lines: cached.lines.features.length,
-          polygons: cached.polygons.features.length
-        });
+        const totalFeatures = cached.points.features.length + 
+                            cached.lines.features.length + 
+                            cached.polygons.features.length;
+        if (totalFeatures > 0 && process.env.NODE_ENV === 'development') {
+          this.logger.info('PreviewManager', 'Using cached transformed collections', {
+            totalFeatures,
+            points: cached.points.features.length,
+            lines: cached.lines.features.length,
+            polygons: cached.polygons.features.length
+          });
+        }
         return cached;
       }
     }
 
     try {
       const visibleFeatures = await this.featureManager.getVisibleFeatures();
-      console.debug('[PreviewManager] Got visible features:', {
-        count: visibleFeatures.length,
-        types: visibleFeatures.map(f => f.geometry?.type),
-        layers: visibleFeatures.map(f => f.properties?.layer),
-        visibleLayers: this.optionsManager.getVisibleLayers()
-      });
+      
+      // Only log if we have features
+      if (visibleFeatures.length > 0 && process.env.NODE_ENV === 'development') {
+        this.logger.info('PreviewManager', 'Got visible features', {
+          count: visibleFeatures.length,
+          types: this.countFeatureTypes(visibleFeatures),
+          layers: this.countFeatureLayers(visibleFeatures),
+          visibleLayers: this.optionsManager.getVisibleLayers()
+        });
+      }
 
       // Transform coordinates if needed
       const processedFeatures = await this.processFeatures(visibleFeatures);
-      console.debug('[PreviewManager] Processed visible features:', {
-        count: processedFeatures.length,
-        types: processedFeatures.map(f => f.geometry?.type),
-        layers: processedFeatures.map(f => f.properties?.layer)
-      });
+      
+      // Only log processed features if count changed
+      if (processedFeatures.length !== visibleFeatures.length && process.env.NODE_ENV === 'development') {
+        this.logger.info('PreviewManager', 'Processed visible features', {
+          originalCount: visibleFeatures.length,
+          processedCount: processedFeatures.length,
+          types: this.countFeatureTypes(processedFeatures),
+          layers: this.countFeatureLayers(processedFeatures)
+        });
+      }
 
       // Categorize and calculate bounds
       const collections = await this.featureManager.categorizeFeatures(processedFeatures);
-      console.debug('[PreviewManager] Categorized features:', {
-        points: collections.points.features.length,
-        lines: collections.lines.features.length,
-        polygons: collections.polygons.features.length
-      });
+      
+      // Only log categorized features if we have any
+      const totalFeatures = collections.points.features.length + 
+                          collections.lines.features.length + 
+                          collections.polygons.features.length;
+      if (totalFeatures > 0 && process.env.NODE_ENV === 'development') {
+        this.logger.info('PreviewManager', 'Categorized features', {
+          totalFeatures,
+          points: collections.points.features.length,
+          lines: collections.lines.features.length,
+          polygons: collections.polygons.features.length
+        });
+      }
 
       const bounds = this.featureManager.calculateBounds(collections);
       
@@ -185,9 +212,27 @@ export class PreviewManager {
       
       return result;
     } catch (error) {
-      console.error('[PreviewManager] Error generating collections:', error);
+      this.logger.error('PreviewManager', 'Error generating collections', {
+        error: error instanceof Error ? error.message : String(error)
+      });
       throw error;
     }
+  }
+
+  private countFeatureTypes(features: Feature[]): Record<string, number> {
+    return features.reduce((acc, f) => {
+      const type = f.geometry?.type || 'unknown';
+      acc[type] = (acc[type] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+  }
+
+  private countFeatureLayers(features: Feature[]): Record<string, number> {
+    return features.reduce((acc, f) => {
+      const layer = f.properties?.layer || 'unknown';
+      acc[layer] = (acc[layer] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
   }
 
   private hasTransformedFeatures(collections: PreviewCollectionResult): boolean {

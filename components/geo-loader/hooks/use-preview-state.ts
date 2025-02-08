@@ -1,46 +1,3 @@
-// D:\HE\GitHub\sonmap-studio\components\geo-loader\components\preview-map\hooks\use-preview-state.ts
-import { useState, useCallback, useEffect, useRef } from 'react';
-import { Feature, FeatureCollection } from 'geojson';
-import { PreviewManager } from '../../../preview/preview-manager';
-import type {
-  CachedPreviewResult,
-  CachedFeatureCollection,
-  PreviewCollections
-} from '../../../types/cache';
-import { cacheManager } from '../../../core/cache-manager';
-import { COORDINATE_SYSTEMS } from '../../../types/coordinates';
-import { Bounds } from '../../../core/feature-manager/bounds';
-import { LogManager } from '../../../core/logging/log-manager';
-
-const CACHE_KEY_PREFIX = 'preview-map';
-const DEBOUNCE_TIME = 250; // ms
-const MIN_UPDATE_INTERVAL = 1000; // ms
-const PROGRESS_UPDATE_INTERVAL = 250; // ms
-
-interface PreviewState {
-  points: FeatureCollection;
-  lines: FeatureCollection;
-  polygons: FeatureCollection;
-  totalCount: number;
-  loading: boolean;
-  progress: number;
-}
-
-interface PreviewCacheStats {
-  hitRate: number;
-  missRate: number;
-  size: number;
-}
-
-interface UsePreviewStateProps {
-  previewManager: PreviewManager | null;
-  viewportBounds?: [number, number, number, number];
-  visibleLayers: string[];
-  initialBoundsSet: boolean;
-  onUpdateBounds?: (bounds: Bounds) => void;
-  onPreviewUpdate?: () => void;
-}
-
 export function usePreviewState({
   previewManager,
   viewportBounds,
@@ -49,47 +6,8 @@ export function usePreviewState({
   onUpdateBounds,
   onPreviewUpdate
 }: UsePreviewStateProps): PreviewState {
-  const emptyCollection = { type: 'FeatureCollection', features: [] } as FeatureCollection;
-  const initialState: PreviewState = {
-    points: emptyCollection,
-    lines: emptyCollection,
-    polygons: emptyCollection,
-    totalCount: 0,
-    loading: false,
-    progress: 0
-  };
+  // ... existing state and refs ...
 
-  const [state, setState] = useState<PreviewState>(initialState);
-  const mountedRef = useRef<boolean>(true);
-  const prevBoundsRef = useRef<[number, number, number, number] | undefined>(undefined);
-  const updateTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
-  const lastUpdateRef = useRef<number>(0);
-  const lastUpdateTimeRef = useRef<number>(0);
-
-  // Helper to check if bounds have changed significantly
-  const haveBoundsChangedSignificantly = (
-    oldBounds?: [number, number, number, number],
-    newBounds?: [number, number, number, number],
-    threshold = 0.0001 // Increased threshold to reduce sensitivity
-  ): boolean => {
-    if (!oldBounds && !newBounds) return false;
-    if (!oldBounds || !newBounds) return true;
-    return oldBounds.some((value, index) => 
-      Math.abs(value - newBounds[index]) > threshold
-    );
-  };
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      if (updateTimeoutRef.current) {
-        clearTimeout(updateTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  // Update preview collections when viewport or layers change
   useEffect(() => {
     if (!previewManager) return;
 
@@ -205,6 +123,7 @@ export function usePreviewState({
       }
     }, DEBOUNCE_TIME);
 
+    // Cleanup function
     return () => {
       if (updateTimeoutRef.current) {
         clearTimeout(updateTimeoutRef.current);
@@ -213,4 +132,4 @@ export function usePreviewState({
   }, [previewManager, viewportBounds, visibleLayers, initialBoundsSet, onUpdateBounds, onPreviewUpdate]);
 
   return state;
-}
+} 

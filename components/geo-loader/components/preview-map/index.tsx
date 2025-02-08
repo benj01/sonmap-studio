@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { Map, MapRef, ViewStateChangeEvent, MapMouseEvent, ViewState } from 'react-map-gl';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
 import { PreviewMapProps, MapFeature } from '../../types/map';
@@ -14,6 +14,7 @@ import { ProgressBar } from '../shared/controls/progress-bar';
 import { StatusMessage } from '../shared/controls/status-message';
 import { LogManager } from '../../core/logging/log-manager';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import { Bounds } from '../../core/feature-manager/bounds';
 
 interface PreviewState {
   points: GeoJSON.FeatureCollection;
@@ -24,41 +25,25 @@ interface PreviewState {
   progress: number;
 }
 
-// Helper function to transform coordinates with caching
+// Optimize coordinate transformation cache
 const transformCoordinates = (() => {
-  // Cache for transformed coordinates
   const cache: Record<string, string> = {};
   const logger = LogManager.getInstance();
   
-  return async (
-    lng: number,
-    lat: number,
-    from: CoordinateSystem,
-    to: CoordinateSystem
-  ): Promise<string> => {
-    // Skip transformation if coordinates are not finite
-    if (!isFinite(lng) || !isFinite(lat)) {
-      logger.warn('PreviewMap', 'Invalid coordinates', { lng, lat });
-      return 'Invalid coordinates';
-    }
+  return async (lng: number, lat: number, from: CoordinateSystem, to: CoordinateSystem): Promise<string> => {
+    if (!isFinite(lng) || !isFinite(lat)) return 'Invalid coordinates';
 
-    // Round coordinates to reduce cache size (6 decimal places ≈ 10cm precision)
     const roundedLng = Math.round(lng * 1e6) / 1e6;
     const roundedLat = Math.round(lat * 1e6) / 1e6;
-    
     const cacheKey = `${roundedLng},${roundedLat},${from},${to}`;
-    if (cacheKey in cache) {
-      return cache[cacheKey];
-    }
+    
+    if (cacheKey in cache) return cache[cacheKey];
 
     try {
       const features = await coordinateSystemManager.transform(
         [{
           type: 'Feature',
-          geometry: {
-            type: 'Point',
-            coordinates: [roundedLng, roundedLat]
-          } as GeoJSON.Point,
+          geometry: { type: 'Point', coordinates: [roundedLng, roundedLat] },
           properties: {}
         }],
         from,
@@ -68,7 +53,6 @@ const transformCoordinates = (() => {
       const point = features[0].geometry as GeoJSON.Point;
       const [x, y] = point.coordinates;
       
-      // Only cache valid results
       if (isFinite(x) && isFinite(y)) {
         const result = `${x.toFixed(2)}, ${y.toFixed(2)}`;
         cache[cacheKey] = result;
@@ -77,16 +61,38 @@ const transformCoordinates = (() => {
       
       return 'Invalid transformed coordinates';
     } catch (error) {
-      logger.error('PreviewMap', 'Coordinate transformation failed', { 
-        error: error instanceof Error ? error.message : String(error),
-        details: { lng, lat, from, to }
-      });
+      if (process.env.NODE_ENV === 'development') {
+        logger.error('PreviewMap', 'Coordinate transformation failed', { error: error instanceof Error ? error.message : String(error) });
+      }
       return 'Error transforming coordinates';
     }
   };
 })();
 
 const MIN_ZOOM_FOR_UNCLUSTERED = 14;
+
+// Add this helper at the top of the file
+const sanitizeFeatureForLogging = (feature: any) => {
+  if (!feature) return null;
+  return {
+    type: feature.geometry?.type,
+    layer: feature.properties?.layer,
+    hasCoordinates: feature.geometry !== undefined,
+    coordinates: feature.geometry?.type === 'LineString' ? 
+      (feature.geometry as any).coordinates.slice(0, 2) : null,
+    properties: Object.keys(feature.properties || {})
+  };
+};
+
+const sanitizePreviewStateForLogging = (state: any) => {
+  if (!state) return null;
+  return {
+    pointCount: state.points?.features?.length || 0,
+    lineCount: state.lines?.features?.length || 0,
+    polygonCount: state.polygons?.features?.length || 0,
+    firstLine: sanitizeFeatureForLogging(state.lines?.features?.[0])
+  };
+};
 
 export function PreviewMap({
   preview,
@@ -108,61 +114,6 @@ export function PreviewMap({
   const [isLoading, setIsLoading] = useState(false);
   const [initialBoundsSet, setInitialBoundsSet] = useState(false);
   const [hoveredFeature, setHoveredFeature] = useState<MapFeature | null>(null);
-  const [mapPreviewState, setMapPreviewState] = useState<PreviewState>({
-    points: { type: 'FeatureCollection', features: [] },
-    lines: { type: 'FeatureCollection', features: [] },
-    polygons: { type: 'FeatureCollection', features: [] },
-    loading: false,
-    progress: 0,
-    totalCount: 0
-  });
-
-  useEffect(() => {
-    if (!preview) return;
-
-    logger.debug('PreviewMap', 'Received preview data', {
-      hasPreview: !!preview,
-      previewType: preview instanceof PreviewManager ? 'PreviewManager' : 'Collection',
-      features: {
-        points: preview instanceof PreviewManager ? 0 : preview.points?.features?.length || 0,
-        lines: preview instanceof PreviewManager ? 0 : preview.lines?.features?.length || 0,
-        polygons: preview instanceof PreviewManager ? 0 : preview.polygons?.features?.length || 0
-      },
-      bounds,
-      coordinateSystem,
-      visibleLayers,
-      firstLine: preview instanceof PreviewManager ? undefined : preview.lines?.features?.[0] ? {
-        type: preview.lines.features[0].geometry?.type,
-        coordinates: 'coordinates' in (preview.lines.features[0].geometry || {}) ? 
-          (preview.lines.features[0].geometry as any).coordinates : undefined,
-        properties: preview.lines.features[0].properties
-      } : undefined
-    });
-
-    setMapPreviewState(prev => ({
-      ...prev,
-      points: preview instanceof PreviewManager ? { type: 'FeatureCollection', features: [] } : preview.points || { type: 'FeatureCollection', features: [] },
-      lines: preview instanceof PreviewManager ? { type: 'FeatureCollection', features: [] } : preview.lines || { type: 'FeatureCollection', features: [] },
-      polygons: preview instanceof PreviewManager ? { type: 'FeatureCollection', features: [] } : preview.polygons || { type: 'FeatureCollection', features: [] },
-      loading: false,
-      progress: 1,
-      totalCount: 0
-    }));
-
-    logger.debug('PreviewMap', 'State update', {
-      hasPreview: !!preview,
-      hasBounds: !!bounds,
-      previewManager: preview instanceof PreviewManager ? 'PreviewManager' : 'Collection',
-      boundsData: bounds,
-      visibleLayers: currentVisibleLayers,
-      coordinateSystem,
-      previewState: {
-        points: mapPreviewState.points.features.length,
-        lines: mapPreviewState.lines.features.length,
-        polygons: mapPreviewState.polygons.features.length
-      }
-    });
-  }, [preview, bounds, coordinateSystem, visibleLayers]);
 
   const {
     onMove,
@@ -170,80 +121,70 @@ export function PreviewMap({
     getViewportBounds
   } = useMapView(bounds, coordinateSystem);
 
+  // Optimize viewport bounds calculation
+  const currentViewportBounds = useMemo(() => {
+    // Skip recalculation if essential values haven't changed significantly
+    const longitude = Math.round((viewState.longitude || 0) * 1e6);
+    const latitude = Math.round((viewState.latitude || 0) * 1e6);
+    const zoom = Math.round((viewState.zoom || 0) * 1e6);
+
+    // Only get viewport bounds if we have valid coordinates
+    if (!isFinite(longitude) || !isFinite(latitude) || !isFinite(zoom)) {
+      return undefined;
+    }
+
+    const bounds = getViewportBounds();
+    if (!bounds) return undefined;
+    
+    // Round to 6 decimal places to prevent tiny changes from triggering updates
+    return bounds.map(coord => Math.round(coord * 1e6) / 1e6) as [number, number, number, number];
+  }, [
+    Math.round((viewState.longitude || 0) * 1e6),
+    Math.round((viewState.latitude || 0) * 1e6),
+    Math.round((viewState.zoom || 0) * 1e6),
+    getViewportBounds // Include the function in dependencies to ensure it updates if the function changes
+  ]);
+
+  // Optimize preview update handler
+  const handlePreviewUpdate = useCallback(() => {
+    setIsLoading(false);
+  }, []);
+
+  const handleUpdateBounds = useCallback((newBounds: Bounds) => {
+    updateViewFromBounds(newBounds);
+    setInitialBoundsSet(true);
+    setError(undefined);
+  }, [updateViewFromBounds]);
+
   const previewState = usePreviewState({
-    onPreviewUpdate: () => {
-      setIsLoading(false);
-      logger.debug('PreviewMap', 'Preview updated', {
-        coordinateSystem,
-        viewState,
-        bounds
-      });
-    },
-    previewManager: previewManagerRef.current,
-    viewportBounds: getViewportBounds(),
+    onPreviewUpdate: handlePreviewUpdate,
+    previewManager: preview instanceof PreviewManager ? preview : preview?.previewManager,
+    viewportBounds: currentViewportBounds,
     visibleLayers: currentVisibleLayers,
     initialBoundsSet,
-    onUpdateBounds: (newBounds) => {
-      updateViewFromBounds(newBounds);
-      setInitialBoundsSet(true);
-      setError(undefined);
-    }
+    onUpdateBounds: handleUpdateBounds
   });
 
   useEffect(() => {
-    logger.debug('PreviewMap', 'State update', {
-      hasPreview: !!preview,
-      hasBounds: !!bounds,
-      previewManager: preview instanceof PreviewManager ? 'PreviewManager' : 
-                     preview?.previewManager ? 'PreviewInPreview' : 'null',
-      boundsData: bounds,
-      visibleLayers: currentVisibleLayers,
-      coordinateSystem,
-      previewState: {
-        points: previewState?.points?.features?.length || 0,
-        lines: previewState?.lines?.features?.length || 0,
-        polygons: previewState?.polygons?.features?.length || 0
-      }
-    });
-  }, [preview, bounds, currentVisibleLayers, coordinateSystem, previewState]);
-
-  useEffect(() => {
-    logger.debug('PreviewMap', 'Received preview data', {
-      hasPreview: !!preview,
-      previewType: preview instanceof PreviewManager ? 'PreviewManager' : 
-                   preview?.previewManager ? 'PreviewInPreview' : 'null',
-      features: preview instanceof PreviewManager ? 'PreviewManager' :
-               preview ? {
-                 points: preview.points?.features?.length || 0,
-                 lines: preview.lines?.features?.length || 0,
-                 polygons: preview.polygons?.features?.length || 0
-               } : 'null',
-      bounds,
-      coordinateSystem,
-      visibleLayers: currentVisibleLayers
-    });
+    if (!preview) return;
 
     const manager = preview instanceof PreviewManager ? preview : preview?.previewManager;
     if (!manager) {
-      logger.debug('PreviewMap', 'No preview manager available');
       setIsLoading(true);
       return;
     }
 
     previewManagerRef.current = manager;
-    
-    // Ensure shapes layer is visible
     const updatedVisibleLayers = currentVisibleLayers.length === 0 ? ['shapes'] : currentVisibleLayers;
     
-    logger.debug('PreviewMap', 'Updating preview manager options', {
-      coordinateSystem,
-      visibleLayers: updatedVisibleLayers,
-      previewData: preview instanceof PreviewManager ? 'PreviewManager' : {
-        points: (preview as any)?.points?.features?.length || 0,
-        lines: (preview as any)?.lines?.features?.length || 0,
-        polygons: (preview as any)?.polygons?.features?.length || 0
-      }
-    });
+    // Only log significant state changes
+    if (process.env.NODE_ENV === 'development') {
+      logger.info('PreviewMap', 'Updating preview manager', {
+        visibleLayersCount: updatedVisibleLayers.length,
+        coordinateSystem,
+        hasPreviewManager: true
+      });
+    }
 
     manager.setOptions({
       coordinateSystem,
@@ -251,22 +192,7 @@ export function PreviewMap({
       enableCaching: true,
       smartSampling: true
     });
-
   }, [preview, bounds, currentVisibleLayers, coordinateSystem]);
-
-  useEffect(() => {
-    if (previewState) {
-      logger.debug('PreviewMap', 'PreviewState updated', {
-        points: previewState.points?.features?.length || 0,
-        lines: previewState.lines?.features?.length || 0,
-        polygons: previewState.polygons?.features?.length || 0,
-        totalCount: previewState.totalCount,
-        loading: isLoading,
-        visibleLayers: currentVisibleLayers,
-        coordinateSystem
-      });
-    }
-  }, [previewState, isLoading, currentVisibleLayers, coordinateSystem]);
 
   const handleMapMove = useCallback((evt: ViewStateChangeEvent) => {
     onMove(evt);
@@ -274,10 +200,9 @@ export function PreviewMap({
 
   const handleMouseMove = useCallback(async (event: MapMouseEvent & { features?: Array<any> }) => {
     try {
-      if (event.features && event.features.length > 0) {
-        const feature = event.features[0];
-        
-        // Use original geometry for hover if available
+      const features = event.features || [];
+      if (features.length > 0) {
+        const feature = features[0];
         const geometry = feature.properties?.originalGeometry || feature.geometry;
         
         setHoveredFeature({
@@ -309,15 +234,9 @@ export function PreviewMap({
         }
       }
     } catch (error) {
-      logger.error('PreviewMap', 'Error handling mouse move', {
-        error: error instanceof Error ? error.message : String(error),
-        details: { 
-          eventType: event.type,
-          hasFeatures: !!event.features,
-          featureCount: event.features?.length || 0,
-          coordinates: event.lngLat ? [event.lngLat.lng, event.lngLat.lat] : null
-        }
-      });
+      if (process.env.NODE_ENV === 'development') {
+        logger.error('PreviewMap', 'Error handling mouse move', { error: error instanceof Error ? error.message : String(error) });
+      }
     }
   }, [coordinateSystem]);
 
@@ -328,34 +247,39 @@ export function PreviewMap({
   }, []);
 
   const handleLayerVisibilityChange = useCallback((layerId: string, visible: boolean) => {
-    logger.debug('PreviewMap', 'Layer visibility changed', {
-      layerId,
-      visible,
-      currentVisibleLayers
-    });
-
-    // Update visible layers
     const newVisibleLayers = visible
       ? [...currentVisibleLayers, layerId]
       : currentVisibleLayers.filter(l => l !== layerId);
 
-    logger.debug('PreviewMap', 'New visible layers', newVisibleLayers);
     setCurrentVisibleLayers(newVisibleLayers);
 
-    // Update preview manager if available
     if (preview instanceof PreviewManager) {
       preview.setOptions({ visibleLayers: newVisibleLayers });
     }
   }, [preview, currentVisibleLayers]);
 
-  useEffect(() => {
-    logger.debug('PreviewMap', 'Component mounted', {
-      hasPreview: !!preview,
-      coordinateSystem,
-      visibleLayers,
-      bounds
-    });
-  }, []);
+  // Memoize MapLayers component props
+  const mapLayersProps = useMemo(() => ({
+    points: ensureGeoFeatureCollection(previewState?.points || { type: 'FeatureCollection', features: [] }),
+    lines: ensureGeoFeatureCollection(previewState?.lines || { type: 'FeatureCollection', features: [] }),
+    polygons: ensureGeoFeatureCollection(previewState?.polygons || { type: 'FeatureCollection', features: [] })
+  }), [previewState?.points, previewState?.lines, previewState?.polygons]);
+
+  // Memoize layer control props
+  const layerControlProps = useMemo(() => ({
+    layers: [{
+      id: 'shapes',
+      name: 'Shapes',
+      visible: currentVisibleLayers.includes('shapes'),
+      count: (
+        (previewState?.points?.features?.length || 0) +
+        (previewState?.lines?.features?.length || 0) +
+        (previewState?.polygons?.features?.length || 0)
+      )
+    }],
+    onVisibilityChange: handleLayerVisibilityChange,
+    showCounts: true
+  }), [currentVisibleLayers, previewState, handleLayerVisibilityChange]);
 
   return (
     <div className="h-full w-full relative">
@@ -392,44 +316,10 @@ export function PreviewMap({
           }}
           interactiveLayerIds={['lines']}
         >
-          <MapLayers
-            points={ensureGeoFeatureCollection(previewState?.points || { type: 'FeatureCollection', features: [] })}
-            lines={ensureGeoFeatureCollection(previewState?.lines || { type: 'FeatureCollection', features: [] })}
-            polygons={ensureGeoFeatureCollection(previewState?.polygons || { type: 'FeatureCollection', features: [] })}
-          />
-
-          {/* Add debug output */}
-          {process.env.NODE_ENV === 'development' && (
-            <div className="absolute bottom-4 right-4 z-10 bg-white bg-opacity-90 p-2 rounded text-xs">
-              <div>Debug Info:</div>
-              <div>Points: {previewState?.points?.features?.length || 0}</div>
-              <div>Lines: {previewState?.lines?.features?.length || 0}</div>
-              <div>Polygons: {previewState?.polygons?.features?.length || 0}</div>
-              <div>Visible Layers: {currentVisibleLayers.join(', ')}</div>
-              <div>First Line Feature:</div>
-              <pre className="max-h-32 overflow-auto">
-                {JSON.stringify(previewState?.lines?.features?.[0], null, 2)}
-              </pre>
-            </div>
-          )}
+          <MapLayers {...mapLayersProps} />
 
           <div className="absolute top-4 right-4 z-10 space-y-2">
-            <LayerControl
-              layers={[
-                {
-                  id: 'shapes',
-                  name: 'Shapes',
-                  visible: currentVisibleLayers.includes('shapes'),
-                  count: (
-                    (previewState?.points?.features?.length || 0) +
-                    (previewState?.lines?.features?.length || 0) +
-                    (previewState?.polygons?.features?.length || 0)
-                  )
-                }
-              ]}
-              onVisibilityChange={handleLayerVisibilityChange}
-              showCounts={true}
-            />
+            <LayerControl {...layerControlProps} />
 
             <div className="bg-white bg-opacity-90 rounded p-2 text-sm">
               <div>Cache: {Math.round((previewState?.progress || 0) * 100)}%</div>
@@ -470,3 +360,28 @@ export function PreviewMap({
     </div>
   );
 }
+
+// Add this component at the bottom of the file
+interface DebugPanelProps {
+  previewState: any;
+  visibleLayers: string[];
+}
+
+const DebugPanel: React.FC<DebugPanelProps> = React.memo(({ previewState, visibleLayers }) => {
+  const sanitizedFeature = previewState?.lines?.features?.[0] ? 
+    sanitizeFeatureForLogging(previewState.lines.features[0]) : null;
+
+  return (
+    <div className="absolute bottom-4 right-4 z-10 bg-white bg-opacity-90 p-2 rounded text-xs">
+      <div>Debug Info:</div>
+      <div>Points: {previewState?.points?.features?.length || 0}</div>
+      <div>Lines: {previewState?.lines?.features?.length || 0}</div>
+      <div>Polygons: {previewState?.polygons?.features?.length || 0}</div>
+      <div>Visible Layers: {visibleLayers.join(', ')}</div>
+      <div>First Line Feature:</div>
+      <pre className="max-h-32 overflow-auto">
+        {JSON.stringify(sanitizedFeature, null, 2)}
+      </pre>
+    </div>
+  );
+});
