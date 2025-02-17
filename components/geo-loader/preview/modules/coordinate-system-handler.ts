@@ -1,8 +1,11 @@
-import { Feature, FeatureCollection } from 'geojson';
+import { Feature, FeatureCollection, Geometry, LineString, Polygon } from 'geojson';
 import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
 import { coordinateSystemManager } from '../../core/coordinate-systems/coordinate-system-manager';
 import { GeoFeature } from '../../../../types/geo';
 import { MapboxProjection } from '../types/mapbox';
+import { LogManager } from '../../core/logging/log-manager';
+import { Bounds } from '../../../../types/bounds';
+import proj4 from 'proj4';
 
 export class CoordinateSystemHandler {
   private coordinateSystem: CoordinateSystem;
@@ -71,12 +74,24 @@ export class CoordinateSystemHandler {
     targetSystem: CoordinateSystem = COORDINATE_SYSTEMS.WGS84,
     projectionInfo?: MapboxProjection
   ): Promise<GeoFeature[]> {
+    const logger = LogManager.getInstance();
+    
+    logger.debug('CoordinateSystemHandler', 'Starting feature transformation', {
+      featureCount: Array.isArray(features) ? features.length : features.features.length,
+      fromSystem: this.coordinateSystem,
+      toSystem: targetSystem,
+      hasProjection: !!projectionInfo
+    });
+
     await this.ensureInitialized();
     const collection: FeatureCollection = Array.isArray(features) 
       ? { type: 'FeatureCollection', features }
       : features;
 
     if (this.coordinateSystem === targetSystem) {
+      logger.debug('CoordinateSystemHandler', 'No transformation needed - systems match', {
+        system: this.coordinateSystem
+      });
       return this.addMetadata(collection.features, this.coordinateSystem, projectionInfo);
     }
 
@@ -87,7 +102,11 @@ export class CoordinateSystemHandler {
 
       // If target is Web Mercator, transform through WGS84 first
       if (finalTargetSystem === COORDINATE_SYSTEMS.WEB_MERCATOR && this.coordinateSystem !== COORDINATE_SYSTEMS.WGS84) {
-        console.debug('[CoordinateSystemHandler] Transforming through WGS84');
+        logger.debug('CoordinateSystemHandler', 'Starting two-step transformation', {
+          fromSystem: this.coordinateSystem,
+          viaSystem: COORDINATE_SYSTEMS.WGS84,
+          toSystem: finalTargetSystem
+        });
         
         // Step 1: Transform to WGS84
         const wgs84Features = await coordinateSystemManager.transform(
@@ -96,19 +115,39 @@ export class CoordinateSystemHandler {
           COORDINATE_SYSTEMS.WGS84
         );
 
+        logger.debug('CoordinateSystemHandler', 'WGS84 transformation complete', {
+          originalCount: collection.features.length,
+          transformedCount: wgs84Features.length
+        });
+
         // Step 2: Transform from WGS84 to Web Mercator
         transformedFeatures = await coordinateSystemManager.transform(
           wgs84Features,
           COORDINATE_SYSTEMS.WGS84,
           COORDINATE_SYSTEMS.WEB_MERCATOR
         );
+
+        logger.debug('CoordinateSystemHandler', 'Web Mercator transformation complete', {
+          wgs84Count: wgs84Features.length,
+          finalCount: transformedFeatures.length
+        });
       } else {
         // Direct transformation for other cases
+        logger.debug('CoordinateSystemHandler', 'Starting direct transformation', {
+          fromSystem: this.coordinateSystem,
+          toSystem: finalTargetSystem
+        });
+
         transformedFeatures = await coordinateSystemManager.transform(
           collection.features,
           this.coordinateSystem,
           finalTargetSystem
         );
+
+        logger.debug('CoordinateSystemHandler', 'Direct transformation complete', {
+          originalCount: collection.features.length,
+          transformedCount: transformedFeatures.length
+        });
       }
 
       // Calculate bounds in original system
@@ -145,7 +184,11 @@ export class CoordinateSystemHandler {
 
       return this.addMetadata(transformedFeatures, finalTargetSystem, projectionInfo);
     } catch (error) {
-      console.error('[CoordinateSystemHandler] Transformation failed:', error);
+      logger.error('CoordinateSystemHandler', 'Transformation failed', {
+        error: error instanceof Error ? error.message : String(error),
+        fromSystem: this.coordinateSystem,
+        toSystem: targetSystem
+      });
       return this.addMetadata(collection.features, this.coordinateSystem, projectionInfo);
     }
   }
@@ -255,7 +298,17 @@ export class CoordinateSystemHandler {
   }
 
   public requiresTransformation(): boolean {
-    return this.coordinateSystem !== COORDINATE_SYSTEMS.WGS84;
+    const logger = LogManager.getInstance();
+    const targetSystem = COORDINATE_SYSTEMS.WGS84;
+    const currentSystem = this.coordinateSystem;
+    
+    logger.debug('CoordinateSystemHandler', 'Checking transformation requirement', {
+      currentSystem,
+      targetSystem,
+      requiresTransform: currentSystem !== targetSystem
+    });
+    
+    return currentSystem !== targetSystem;
   }
 
   /**
@@ -348,5 +401,13 @@ export class CoordinateSystemHandler {
       console.error('[CoordinateSystemHandler] Error transforming bounds:', error);
       return bounds;
     }
+  }
+
+  private transformLineString(line: Feature<LineString>): Feature<LineString> {
+    return line; // Return original feature if transformation not implemented
+  }
+
+  private transformPolygon(poly: Feature<Polygon>, ring: number[][]): Feature<Polygon> {
+    return poly; // Return original feature if transformation not implemented
   }
 }

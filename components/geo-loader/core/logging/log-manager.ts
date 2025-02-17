@@ -72,6 +72,18 @@ export class LogManager {
     return this.logLevel;
   }
 
+  public setComponentLogLevel(component: string, level: LogLevel): void {
+    this.sourceFilters.set(component, level);
+  }
+
+  public getComponentLogLevel(component: string): LogLevel {
+    return this.sourceFilters.get(component) || this.logLevel;
+  }
+
+  public getComponentFilters(): [string, LogLevel][] {
+    return Array.from(this.sourceFilters.entries());
+  }
+
   private shouldLog(level: LogLevel, source: string): boolean {
     // Check source-specific filter first
     const sourceLevel = this.sourceFilters.get(source);
@@ -292,54 +304,88 @@ export class LogManager {
    * Internal logging method
    */
   private log(level: LogLevel, source: string, message: string, details?: Record<string, any>): void {
+    const componentLevel = this.getComponentLogLevel(source);
+    if (level < componentLevel) return;
+
+    const timestamp = new Date().toISOString();
+    const levelStr = level;
+    
     // Skip logging if details contain only internal properties
     if (details && Object.keys(details).every(key => key.startsWith('_'))) {
       return;
     }
 
     // Sanitize details before logging
-    const sanitizedDetails = details ? Object.fromEntries(
-      Object.entries(details)
-        .filter(([key]) => !key.startsWith('_'))
-        .map(([key, value]) => [key, value])
-    ) : undefined;
+    let sanitizedDetails;
+    try {
+      sanitizedDetails = details ? this.safeStringify(details) : undefined;
+    } catch (error) {
+      sanitizedDetails = '[Error: Could not stringify details]';
+      console.error('Error stringifying log details:', error);
+    }
 
     const entry: LogEntry = {
-      timestamp: new Date().toISOString(),
+      timestamp,
       level,
       source,
       message,
-      details: sanitizedDetails
+      details: sanitizedDetails ? JSON.parse(sanitizedDetails) : undefined
     };
 
+    // Always add to logs array regardless of environment
     this.logs.push(entry);
+    
+    // Implement circular buffer if we exceed max logs
     if (this.logs.length > this.MAX_LOGS) {
-      this.logs.shift(); // Remove oldest log if buffer is full
+      this.logs = this.logs.slice(-this.MAX_LOGS);
     }
     
-    // Only log to console in development mode and if level is appropriate
-    if (process.env.NODE_ENV === 'development' && this.shouldLog(level, source)) {
-      const consoleMessage = `[${entry.timestamp}] [${level}] [${source}] ${message}`;
+    // Always log to console in development mode
+    if (process.env.NODE_ENV === 'development') {
+      const consoleMessage = `[${timestamp}] [${levelStr}] [${source}] ${message}`;
+      
       switch (level) {
         case LogLevel.DEBUG:
-          console.debug(consoleMessage, sanitizedDetails);
+          console.debug(consoleMessage);
+          if (sanitizedDetails) console.debug('Details:', sanitizedDetails);
           break;
         case LogLevel.INFO:
-          console.info(consoleMessage, sanitizedDetails);
+          console.info(consoleMessage);
+          if (sanitizedDetails) console.info('Details:', sanitizedDetails);
           break;
         case LogLevel.WARN:
-          console.warn(consoleMessage, sanitizedDetails);
+          console.warn(consoleMessage);
+          if (sanitizedDetails) console.warn('Details:', sanitizedDetails);
           break;
         case LogLevel.ERROR:
-          console.error(consoleMessage, sanitizedDetails);
+          console.error(consoleMessage);
+          if (sanitizedDetails) console.error('Details:', sanitizedDetails);
           break;
       }
     }
   }
 
-  public downloadLogs(filename: string = 'sonmap-logs.txt') {
-    const logText = this.logs.map(entry => this.formatLogEntry(entry)).join('\n');
-    const blob = new Blob([logText], { type: 'text/plain;charset=utf-8' });
+  public downloadLogs(filename: string = 'sonmap-logs.txt'): void {
+    // Format logs with proper timestamps and structure
+    const formattedLogs = this.logs.map(entry => {
+      const detailsStr = entry.details ? `\nDetails: ${this.safeStringify(entry.details, 2)}` : '';
+      return `[${entry.timestamp}] [${entry.level}] [${entry.source}] ${entry.message}${detailsStr}\n`;
+    }).join('\n');
+
+    // Add header with system information
+    const header = [
+      '=== Sonmap Studio Logs ===',
+      `Generated: ${new Date().toISOString()}`,
+      `Environment: ${process.env.NODE_ENV}`,
+      `Log Level: ${this.logLevel}`,
+      `Total Logs: ${this.logs.length}`,
+      '========================\n\n'
+    ].join('\n');
+
+    const fullLog = header + formattedLogs;
+    
+    // Create and save the file
+    const blob = new Blob([fullLog], { type: 'text/plain;charset=utf-8' });
     saveAs(blob, filename);
   }
 } 

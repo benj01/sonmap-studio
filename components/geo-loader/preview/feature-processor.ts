@@ -1,4 +1,4 @@
-import { Feature, GeoJsonProperties, Point } from 'geojson';
+import { Feature, GeoJsonProperties, Point, LineString, MultiLineString } from 'geojson';
 import { CoordinateSystem } from '../types/coordinates';
 import { coordinateSystemManager } from '../core/coordinate-systems/coordinate-system-manager';
 import { LogManager } from '../core/logging/log-manager';
@@ -131,12 +131,19 @@ export class FeatureProcessor {
           break;
         case 'linestring':
         case 'multilinestring':
-          console.debug('[FeatureProcessor] Adding line feature', {
-            coordinates: 'coordinates' in processedFeature.geometry ? 
-              (processedFeature.geometry as any).coordinates.slice(0, 2) : null,
-            layer: processedFeature.properties?.layer,
+          console.debug('[FeatureProcessor] Processing line feature', {
+            id: processedFeature.id,
             type: processedFeature.geometry.type,
-            properties: processedFeature.properties
+            coordinates: processedFeature.geometry.type === 'LineString' || processedFeature.geometry.type === 'MultiLineString' ?
+              (processedFeature.geometry as LineString | MultiLineString).coordinates.slice(0, 2) : null,
+            totalPoints: processedFeature.geometry.type === 'LineString' || processedFeature.geometry.type === 'MultiLineString' ?
+              (processedFeature.geometry as LineString | MultiLineString).coordinates.length : 0,
+            layer: processedFeature.properties?.layer,
+            transformationInfo: {
+              fromSystem: processedFeature.properties?._fromSystem,
+              toSystem: processedFeature.properties?._toSystem,
+              transformed: processedFeature.properties?._transformedCoordinates
+            }
           });
           lines.push(processedFeature);
           break;
@@ -159,24 +166,14 @@ export class FeatureProcessor {
       points: points.length,
       lines: lines.length,
       polygons: polygons.length,
-      sampleFeatures: {
-        point: points[0] ? {
-          type: points[0].geometry?.type,
-          layer: points[0].properties?.layer,
-          coordinates: points[0].geometry?.type === 'Point' ?
-            (points[0].geometry as any).coordinates : null
-        } : null,
-        line: lines[0] ? {
-          type: lines[0].geometry?.type,
-          layer: lines[0].properties?.layer,
-          coordinates: lines[0].geometry?.type === 'LineString' ?
-            (lines[0].geometry as any).coordinates.slice(0, 2) : null
-        } : null,
-        polygon: polygons[0] ? {
-          type: polygons[0].geometry?.type,
-          layer: polygons[0].properties?.layer
-        } : null
-      }
+      lineFeatures: lines.map(line => ({
+        id: line.id,
+        type: line.geometry.type,
+        points: line.geometry.type === 'LineString' || line.geometry.type === 'MultiLineString' ?
+          (line.geometry as LineString | MultiLineString).coordinates.length : 0,
+        layer: line.properties?.layer,
+        transformed: line.properties?._transformedCoordinates
+      }))
     });
 
     return result;

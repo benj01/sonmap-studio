@@ -204,16 +204,72 @@ export class ShapefileProcessor implements FileProcessor {
             const contentLength = dataView.getInt32(offset + 4, false); // big-endian
             const recordType = dataView.getInt32(offset + 8, true); // little-endian
 
-            // Only log every 100th record or if there's an issue
-            if (attempts % 100 === 0 || recordType !== header.shapeType) {
-              this.logger.debug(this.LOG_SOURCE, 'Reading record', { 
-                recordNumber, 
+            // Add detailed debug logging for record header
+            this.logger.debug(this.LOG_SOURCE, 'Record header details', { 
+                offset,
+                recordHeaderBytes: Array.from(new Uint8Array(shpBuffer.slice(offset, offset + 12)))
+                    .map(b => b.toString(16).padStart(2, '0')),
+                recordNumber,
                 contentLength,
                 recordType,
-                offset,
-                attempt: attempts,
-                expectedType: header.shapeType
-              });
+                bufferLength: shpBuffer.byteLength,
+                remainingBytes: shpBuffer.byteLength - offset
+            });
+
+            // Validate record header values
+            if (recordNumber <= 0 || recordNumber > 1000000) { // Sanity check for record number
+                this.logger.warn(this.LOG_SOURCE, 'Invalid record number', { 
+                    recordNumber,
+                    offset,
+                    bufferLength: shpBuffer.byteLength
+                });
+                break;
+            }
+
+            // Content length is in 16-bit words, convert to bytes and validate
+            const recordContentBytes = contentLength * 2;
+            if (recordContentBytes <= 0 || recordContentBytes > 10000000) { // 10MB max for safety
+                this.logger.warn(this.LOG_SOURCE, 'Invalid content length', { 
+                    contentLength,
+                    recordContentBytes,
+                    offset,
+                    bufferLength: shpBuffer.byteLength
+                });
+                break;
+            }
+
+            // Validate record type matches header
+            if (recordType !== header.shapeType) {
+                this.logger.warn(this.LOG_SOURCE, 'Record type mismatch', { 
+                    recordType,
+                    expectedType: header.shapeType,
+                    offset,
+                    recordNumber
+                });
+                break;
+            }
+
+            // Validate we have enough buffer left
+            if (offset + 8 + recordContentBytes > shpBuffer.byteLength) {
+                this.logger.warn(this.LOG_SOURCE, 'Record extends beyond buffer', { 
+                    offset,
+                    recordContentBytes,
+                    bufferLength: shpBuffer.byteLength,
+                    recordNumber
+                });
+                break;
+            }
+
+            // Only log every 100th record or if there's an issue
+            if (attempts % 100 === 0 || recordType !== header.shapeType) {
+                this.logger.debug(this.LOG_SOURCE, 'Reading record', { 
+                    recordNumber, 
+                    contentLength,
+                    recordType,
+                    offset,
+                    attempt: attempts,
+                    expectedType: header.shapeType
+                });
             }
 
             if (contentLength <= 0 || recordType !== header.shapeType) {
@@ -228,57 +284,249 @@ export class ShapefileProcessor implements FileProcessor {
 
             // Calculate record boundaries
             const recordStart = offset + 8; // After record header (4 bytes record number + 4 bytes content length)
-            const recordEnd = recordStart + contentLength; // contentLength is already in bytes
+            const totalRecordSize = 8 + recordContentBytes; // Header (8 bytes) + content
+            const recordEnd = offset + totalRecordSize;
+
+            // Check if this is the last record
+            const isLastRecord = recordEnd >= shpBuffer.byteLength;
+            
+            this.logger.debug(this.LOG_SOURCE, 'Record boundaries', {
+                offset,
+                recordStart,
+                recordEnd,
+                recordContentBytes,
+                totalRecordSize,
+                bufferLength: shpBuffer.byteLength,
+                isLastRecord
+            });
 
             if (recordEnd > shpBuffer.byteLength) {
-              this.logger.warn(this.LOG_SOURCE, 'Record extends beyond buffer', { 
-                recordEnd, 
-                bufferLength: shpBuffer.byteLength 
-              });
-              break;
+                this.logger.warn(this.LOG_SOURCE, 'Record extends beyond buffer', { 
+                    recordEnd, 
+                    bufferLength: shpBuffer.byteLength 
+                });
+                break;
             }
 
             // Read coordinates based on shape type
             let geometry;
-            if (header.shapeType === 3) { // LineString
-              const numParts = dataView.getInt32(recordStart + 36, true);
-              const numPoints = dataView.getInt32(recordStart + 40, true);
-              
-              // Only log if there's an issue or every 100th record
-              if (attempts % 100 === 0 || numParts <= 0 || numPoints <= 0) {
-                this.logger.debug(this.LOG_SOURCE, 'Reading LineString', { 
-                  numParts, 
-                  numPoints,
-                  recordNumber 
-                });
-              }
-              
-              if (numParts > 0 && numPoints > 0) {
-                const coordinates = [];
-                const pointStart = recordStart + 44 + (numParts * 4);
-                
-                for (let i = 0; i < numPoints; i++) {
-                  const x = dataView.getFloat64(pointStart + (i * 16), true);
-                  const y = dataView.getFloat64(pointStart + (i * 16) + 8, true);
-                  coordinates.push([x, y]);
+            const shapeType = header.shapeType;
+            
+            // Calculate shape-specific header sizes and point sizes
+            const getShapeHeaderSize = (type: number): number => {
+                switch (type) {
+                    case 0: return 0;  // Null shape
+                    case 1: return 0;  // Point
+                    case 3: return 44; // LineString (bbox + numParts + numPoints)
+                    case 5: return 44; // Polygon (bbox + numParts + numPoints)
+                    case 8: return 40; // MultiPoint (bbox + numPoints)
+                    case 11: return 0; // PointZ
+                    case 13: return 44; // LineStringZ
+                    case 15: return 44; // PolygonZ
+                    case 18: return 40; // MultiPointZ
+                    case 21: return 0; // PointM
+                    case 23: return 44; // LineStringM
+                    case 25: return 44; // PolygonM
+                    case 28: return 40; // MultiPointM
+                    default: return 0;
                 }
+            };
 
-                geometry = {
-                  type: "LineString" as const,
-                  coordinates
-                };
-              }
+            const getPointSize = (type: number): number => {
+                switch (type) {
+                    case 1: return 16;   // Point (X,Y)
+                    case 11: return 24;  // PointZ (X,Y,Z)
+                    case 21: return 24;  // PointM (X,Y,M)
+                    default: return 16;  // Default to X,Y for other types
+                }
+            };
+
+            const shapeHeaderSize = getShapeHeaderSize(shapeType);
+            const pointSize = getPointSize(shapeType);
+
+            // Read shape-specific data
+            switch (shapeType) {
+                case 1: // Point
+                case 11: // PointZ
+                case 21: { // PointM
+                    const x = dataView.getFloat64(recordStart, true);
+                    const y = dataView.getFloat64(recordStart + 8, true);
+                    const coordinates: number[] = [x, y];
+                    
+                    // Add Z coordinate if present
+                    if (shapeType === 11) {
+                        const z = dataView.getFloat64(recordStart + 16, true);
+                        coordinates.push(z);
+                    }
+                    
+                    geometry = {
+                        type: "Point" as const,
+                        coordinates
+                    };
+                    break;
+                }
+                
+                case 3: // LineString
+                case 13: // LineStringZ
+                case 23: { // LineStringM
+                    const numParts = dataView.getInt32(recordStart + 36, true);
+                    const numPoints = dataView.getInt32(recordStart + 40, true);
+                    
+                    // Validate points will fit in record
+                    const totalPointsSize = numPoints * pointSize;
+                    const totalPartsSize = numParts * 4; // 4 bytes per part index
+                    if (totalPointsSize + totalPartsSize > recordContentBytes - shapeHeaderSize) {
+                        this.logger.warn(this.LOG_SOURCE, 'Points would extend beyond record', {
+                            numPoints,
+                            pointSize,
+                            totalPointsSize,
+                            totalPartsSize,
+                            availableBytes: recordContentBytes - shapeHeaderSize
+                        });
+                        break;
+                    }
+                    
+                    if (numParts > 0 && numPoints > 0) {
+                        const coordinates = [];
+                        const pointStart = recordStart + shapeHeaderSize + totalPartsSize;
+                        
+                        for (let i = 0; i < numPoints; i++) {
+                            const x = dataView.getFloat64(pointStart + (i * pointSize), true);
+                            const y = dataView.getFloat64(pointStart + (i * pointSize) + 8, true);
+                            const point = [x, y];
+                            
+                            // Add Z coordinate if present
+                            if (shapeType === 13) {
+                                const z = dataView.getFloat64(pointStart + (numPoints * 16) + (i * 8), true);
+                                point.push(z);
+                            }
+                            
+                            coordinates.push(point);
+                        }
+
+                        geometry = {
+                            type: "LineString" as const,
+                            coordinates
+                        };
+                    }
+                    break;
+                }
+                
+                case 5: // Polygon
+                case 15: // PolygonZ
+                case 25: { // PolygonM
+                    // Similar to LineString but with ring validation
+                    const numParts = dataView.getInt32(recordStart + 36, true);
+                    const numPoints = dataView.getInt32(recordStart + 40, true);
+                    
+                    // Validate points will fit in record
+                    const totalPointsSize = numPoints * pointSize;
+                    const totalPartsSize = numParts * 4;
+                    if (totalPointsSize + totalPartsSize > recordContentBytes - shapeHeaderSize) {
+                        this.logger.warn(this.LOG_SOURCE, 'Points would extend beyond record', {
+                            numPoints,
+                            pointSize,
+                            totalPointsSize,
+                            totalPartsSize,
+                            availableBytes: recordContentBytes - shapeHeaderSize
+                        });
+                        break;
+                    }
+                    
+                    if (numParts > 0 && numPoints > 0) {
+                        const rings = [];
+                        const partIndices = [];
+                        const pointStart = recordStart + shapeHeaderSize + totalPartsSize;
+                        
+                        // Read part indices
+                        for (let i = 0; i < numParts; i++) {
+                            partIndices.push(dataView.getInt32(recordStart + shapeHeaderSize + (i * 4), true));
+                        }
+                        partIndices.push(numPoints); // Add end index
+                        
+                        // Read rings
+                        for (let part = 0; part < numParts; part++) {
+                            const ring = [];
+                            const start = partIndices[part];
+                            const end = partIndices[part + 1];
+                            
+                            for (let i = start; i < end; i++) {
+                                const x = dataView.getFloat64(pointStart + (i * pointSize), true);
+                                const y = dataView.getFloat64(pointStart + (i * pointSize) + 8, true);
+                                const point = [x, y];
+                                
+                                // Add Z coordinate if present
+                                if (shapeType === 15) {
+                                    const z = dataView.getFloat64(pointStart + (numPoints * 16) + (i * 8), true);
+                                    point.push(z);
+                                }
+                                
+                                ring.push(point);
+                            }
+                            rings.push(ring);
+                        }
+
+                        geometry = {
+                            type: "Polygon" as const,
+                            coordinates: rings
+                        };
+                    }
+                    break;
+                }
+                
+                case 8: // MultiPoint
+                case 18: // MultiPointZ
+                case 28: { // MultiPointM
+                    const numPoints = dataView.getInt32(recordStart + 36, true);
+                    
+                    // Validate points will fit in record
+                    const totalPointsSize = numPoints * pointSize;
+                    if (totalPointsSize > recordContentBytes - shapeHeaderSize) {
+                        this.logger.warn(this.LOG_SOURCE, 'Points would extend beyond record', {
+                            numPoints,
+                            pointSize,
+                            totalPointsSize,
+                            availableBytes: recordContentBytes - shapeHeaderSize
+                        });
+                        break;
+                    }
+                    
+                    if (numPoints > 0) {
+                        const coordinates = [];
+                        const pointStart = recordStart + shapeHeaderSize;
+                        
+                        for (let i = 0; i < numPoints; i++) {
+                            const x = dataView.getFloat64(pointStart + (i * pointSize), true);
+                            const y = dataView.getFloat64(pointStart + (i * pointSize) + 8, true);
+                            const point = [x, y];
+                            
+                            // Add Z coordinate if present
+                            if (shapeType === 18) {
+                                const z = dataView.getFloat64(pointStart + (numPoints * 16) + (i * 8), true);
+                                point.push(z);
+                            }
+                            
+                            coordinates.push(point);
+                        }
+
+                        geometry = {
+                            type: "MultiPoint" as const,
+                            coordinates
+                        };
+                    }
+                    break;
+                }
             }
 
             if (geometry) {
-              const feature: Feature = {
-                type: "Feature",
-                geometry,
-                properties: dbfRecords[recordNumber] || { id: recordNumber }
-              };
-              sampleFeatures.push(feature);
+                const feature: Feature = {
+                    type: "Feature",
+                    geometry,
+                    properties: dbfRecords[recordNumber] || { id: recordNumber }
+                };
+                sampleFeatures.push(feature);
 
-              if (sampleFeatures.length >= 100) break;
+                if (sampleFeatures.length >= 100) break;
             }
 
             offset = recordEnd;
@@ -390,20 +638,49 @@ export class ShapefileProcessor implements FileProcessor {
    * Sample a subset of features for preview
    */
   public async sample(upload: GeoFileUpload, options?: ProcessorOptions): Promise<ProcessingResult> {
+    this.logger.info(this.LOG_SOURCE, 'Starting shapefile sampling', {
+      fileName: upload.mainFile.name,
+      fileSize: upload.mainFile.size,
+      options: {
+        sampleSize: options?.sampleSize,
+        coordinateSystem: options?.coordinateSystem,
+        enableCaching: options?.enableCaching
+      }
+    });
+
     try {
       // First analyze the file
       const analysis = await this.analyze(upload, options);
       
+      this.logger.info(this.LOG_SOURCE, 'File analysis complete', {
+        shapeType: analysis.metadata.shapeType,
+        recordCount: analysis.metadata.recordCount,
+        bounds: analysis.metadata.bounds,
+        warnings: analysis.warnings
+      });
+
       // Read features for preview
       const source = await shp.open(upload.mainFile.data);
-      const features: Feature[] = [];
+      let features: Feature[] = [];
+      let recordCount = 0;
       let record;
 
       while ((record = await source.read()) !== null) {
+        recordCount++;
         if (record.value) {
           features.push(record.value);
         }
       }
+
+      this.logger.info(this.LOG_SOURCE, 'Features read from shapefile', {
+        totalRecords: recordCount,
+        validFeatures: features.length,
+        firstFeature: features.length > 0 ? {
+          type: features[0].geometry.type,
+          coordinates: features[0].geometry.coordinates,
+          properties: features[0].properties
+        } : null
+      });
 
       // Generate smart preview
       const preview = await this.previewGenerator.generatePreview(
@@ -418,6 +695,15 @@ export class ShapefileProcessor implements FileProcessor {
         }
       );
 
+      this.logger.info(this.LOG_SOURCE, 'Preview generation complete', {
+        inputFeatures: features.length,
+        previewFeatures: preview.features.length,
+        viewport: {
+          bounds: preview.viewport.bounds,
+          zoom: preview.viewport.zoom
+        }
+      });
+
       return {
         ...analysis,
         features: preview.features,
@@ -427,6 +713,11 @@ export class ShapefileProcessor implements FileProcessor {
         }
       };
     } catch (error) {
+      this.logger.error(this.LOG_SOURCE, 'Failed to generate preview', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        fileName: upload.mainFile.name
+      });
       throw new Error(`Failed to generate preview: ${error instanceof Error ? error.message : String(error)}`);
     }
   }

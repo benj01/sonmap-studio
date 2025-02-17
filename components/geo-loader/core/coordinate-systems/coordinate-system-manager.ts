@@ -288,6 +288,7 @@ function validateBounds(bounds: [number, number, number, number], system: Coordi
 export class CoordinateSystemManager {
   private static instance: CoordinateSystemManager;
   private readonly logger = LogManager.getInstance();
+  private readonly LOG_SOURCE = 'CoordinateSystemManager';
   private readonly detector: CoordinateSystemDetector;
   private readonly transformer: CoordinateTransformer;
   private readonly cache: TransformationCache;
@@ -326,14 +327,71 @@ export class CoordinateSystemManager {
    */
   public async transform(
     features: Feature[],
-    from: CoordinateSystem,
-    to: CoordinateSystem
+    fromSystem: CoordinateSystem,
+    toSystem: CoordinateSystem
   ): Promise<Feature[]> {
+    this.logger.debug(this.LOG_SOURCE, 'Starting feature transformation', {
+      featureCount: features.length,
+      fromSystem,
+      toSystem,
+      firstFeature: features[0] ? {
+        type: features[0].geometry?.type,
+        coordinates: this.getGeometryCoordinates(features[0].geometry),
+        properties: features[0].properties
+      } : null
+    });
+
     try {
-      return await this.transformer.transformFeatures(features, from, to);
+      // Transform each feature
+      const transformedFeatures = await Promise.all(
+        features.map(async (feature) => {
+          try {
+            const transformed = await this.transformFeature(feature, fromSystem, toSystem);
+            if (transformed) {
+              this.logger.debug(this.LOG_SOURCE, 'Feature transformed', {
+                originalCoords: this.getGeometryCoordinates(feature.geometry),
+                transformedCoords: this.getGeometryCoordinates(transformed.geometry),
+                fromSystem,
+                toSystem
+              });
+            } else {
+              this.logger.warn(this.LOG_SOURCE, 'Feature transformation failed', {
+                type: feature.geometry?.type,
+                coordinates: this.getGeometryCoordinates(feature.geometry),
+                fromSystem,
+                toSystem
+              });
+            }
+            return transformed || feature;
+          } catch (error) {
+            this.logger.error(this.LOG_SOURCE, 'Error transforming feature', {
+              error: error instanceof Error ? error.message : String(error),
+              feature: {
+                type: feature.geometry?.type,
+                coordinates: this.getGeometryCoordinates(feature.geometry)
+              }
+            });
+            return feature;
+          }
+        })
+      );
+
+      this.logger.debug(this.LOG_SOURCE, 'Transformation complete', {
+        originalCount: features.length,
+        transformedCount: transformedFeatures.length,
+        fromSystem,
+        toSystem
+      });
+
+      return transformedFeatures;
     } catch (error) {
-      this.logger.error('Error transforming features:', error instanceof Error ? error.message : String(error));
-      throw error;
+      this.logger.error(this.LOG_SOURCE, 'Batch transformation failed', {
+        error: error instanceof Error ? error.message : String(error),
+        featureCount: features.length,
+        fromSystem,
+        toSystem
+      });
+      return features;
     }
   }
 
@@ -421,6 +479,27 @@ export class CoordinateSystemManager {
       this.logger.warn('CoordinateSystemManager', 'Invalid coordinate system', { system });
     }
     return isValid;
+  }
+
+  private getGeometryCoordinates(geometry: Geometry | undefined): number[][] | null {
+    if (!geometry) return null;
+    
+    switch (geometry.type) {
+      case 'Point':
+        return [geometry.coordinates];
+      case 'LineString':
+        return geometry.coordinates;
+      case 'Polygon':
+        return geometry.coordinates[0];
+      case 'MultiPoint':
+        return geometry.coordinates;
+      case 'MultiLineString':
+        return geometry.coordinates[0];
+      case 'MultiPolygon':
+        return geometry.coordinates[0][0];
+      default:
+        return null;
+    }
   }
 }
 

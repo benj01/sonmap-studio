@@ -124,6 +124,19 @@ export const LineLayer: React.FC<LayerProps> = React.memo(({ data }) => {
   // Only return null if no features, without logging
   if (!data?.features?.length) return null;
 
+  console.debug('[MapLayers] Rendering LineLayer:', {
+    featureCount: data.features.length,
+    firstFeature: data.features[0] ? {
+      type: data.features[0].geometry.type,
+      coordinates: data.features[0].geometry.type === 'LineString' || data.features[0].geometry.type === 'MultiLineString' ?
+        (data.features[0].geometry as LineString | MultiLineString).coordinates.slice(0, 2) : null,
+      totalPoints: data.features[0].geometry.type === 'LineString' || data.features[0].geometry.type === 'MultiLineString' ?
+        (data.features[0].geometry as LineString | MultiLineString).coordinates.length : 0,
+      layer: data.features[0].properties?.layer,
+      transformed: data.features[0].properties?._transformedCoordinates
+    } : null
+  });
+
   const effectiveData = {
     type: 'FeatureCollection' as const,
     features: data.features.map(ensureGeoFeature)
@@ -152,6 +165,7 @@ export const LineLayer: React.FC<LayerProps> = React.memo(({ data }) => {
           'line-sort-key': 1
         }}
         maxzoom={24}
+        minzoom={0}
       />
     </Source>
   );

@@ -1,7 +1,6 @@
-import { Feature, FeatureCollection } from 'geojson';
-import { PreviewOptions, PreviewCollectionResult } from './types/preview';
-import { MapboxProjection } from './types/mapbox';
-import { COORDINATE_SYSTEMS, CoordinateSystem } from '../types/coordinates';
+import { Feature, FeatureCollection, Position } from 'geojson';
+import { PreviewOptions, PreviewCollections, ViewportBounds } from './types';
+import { CoordinateSystem } from '../types/coordinates';
 import { GeoFeature } from '../../../types/geo';
 import { PreviewCacheManager } from './cache-manager';
 import { BoundsValidator } from './modules/bounds-validator';
@@ -10,9 +9,20 @@ import { MapboxProjectionManager } from './modules/mapbox-projection-manager';
 import { PreviewFeatureManager } from './modules/preview-feature-manager';
 import { PreviewOptionsManager } from './modules/preview-options-manager';
 import { LogManager } from '../core/logging/log-manager';
+import { Bounds } from '../core/feature-manager/bounds';
+import { isPointInBounds } from '../utils/geometry';
+
+const DEFAULT_BATCH_SIZE = 1000;
+const MIN_VIEWPORT_CHANGE = 0.1; // 10% change threshold
+
+interface ViewportCache {
+  bounds: ViewportBounds;
+  collections: PreviewCollections;
+  timestamp: number;
+}
 
 // Re-export types that might be used by consumers
-export type { PreviewOptions, PreviewCollectionResult, MapboxProjection };
+export type { PreviewOptions, PreviewCollections, ViewportBounds };
 
 /**
  * Manages preview generation with streaming and caching support
@@ -27,20 +37,19 @@ export class PreviewManager {
   private readonly boundsValidator: BoundsValidator;
   private readonly cacheManager: PreviewCacheManager;
   private readonly logger = LogManager.getInstance();
+  private readonly viewportCache = new Map<string, ViewportCache>();
+  private options: PreviewOptions;
+  private processingQueue: Promise<void> | null = null;
+  private lastViewportUpdate = 0;
 
-  constructor(options: PreviewOptions = {}) {
-    // Initialize all managers
+  constructor(options: PreviewOptions) {
+    this.options = options;
     this.optionsManager = new PreviewOptionsManager(options);
-    this.coordinateHandler = new CoordinateSystemHandler(
-      this.optionsManager.getCoordinateSystem() as CoordinateSystem
-    );
+    this.coordinateHandler = new CoordinateSystemHandler(options.coordinateSystem);
     this.projectionManager = new MapboxProjectionManager();
     this.boundsValidator = new BoundsValidator();
     this.cacheManager = new PreviewCacheManager(PreviewManager.CACHE_TTL);
-    this.featureManager = new PreviewFeatureManager(
-      this.optionsManager.getMaxFeatures(),
-      this.optionsManager.getVisibleLayers()
-    );
+    this.featureManager = new PreviewFeatureManager();
 
     // Validate coordinate system
     void this.validateCoordinateSystem();
@@ -108,151 +117,202 @@ export class PreviewManager {
   }
 
   /**
-   * Set preview options and update state accordingly
+   * Set preview options
    */
-  public setOptions(newOptions: PreviewOptions): void {
-    const changes = this.optionsManager.updateOptions(newOptions);
-
-    if (changes.layersChanged) {
-      this.featureManager.setVisibleLayers(this.optionsManager.getVisibleLayers());
-      this.invalidateCache('layers changed');
-    }
-
-    if (changes.coordinateSystemChanged) {
-      this.coordinateHandler.setCoordinateSystem(
-        this.optionsManager.getCoordinateSystem() as CoordinateSystem
-      );
-      void this.validateCoordinateSystem();
-      this.invalidateCache('coordinate system changed');
-    }
+  public setOptions(options: Partial<PreviewOptions>): void {
+    this.options = { ...this.options, ...options };
+    this.optionsManager.updateOptions(this.options);
+    this.coordinateHandler.setCoordinateSystem(this.options.coordinateSystem);
+    this.invalidateCache('options changed');
   }
 
   /**
    * Get preview collections for the current viewport
    */
-  public async getPreviewCollections(): Promise<PreviewCollectionResult> {
-    // Only log collection retrieval if we have features
-    const cacheKey = this.getCacheKey();
-    const cached = this.cacheManager.get(cacheKey);
-    
-    if (cached) {
-      const hasTransformedFeatures = this.hasTransformedFeatures(cached);
-      if (hasTransformedFeatures) {
-        const totalFeatures = cached.points.features.length + 
-                            cached.lines.features.length + 
-                            cached.polygons.features.length;
-        if (totalFeatures > 0 && process.env.NODE_ENV === 'development') {
-          this.logger.info('PreviewManager', 'Using cached transformed collections', {
-            totalFeatures,
-            points: cached.points.features.length,
-            lines: cached.lines.features.length,
-            polygons: cached.polygons.features.length
-          });
-        }
-        return cached;
-      }
-    }
-
+  public async getPreviewCollections(): Promise<PreviewCollections | null> {
     try {
-      const visibleFeatures = await this.featureManager.getVisibleFeatures();
-      
-      // Only log if we have features
-      if (visibleFeatures.length > 0 && process.env.NODE_ENV === 'development') {
-        this.logger.info('PreviewManager', 'Got visible features', {
-          count: visibleFeatures.length,
-          types: this.countFeatureTypes(visibleFeatures),
-          layers: this.countFeatureLayers(visibleFeatures),
-          visibleLayers: this.optionsManager.getVisibleLayers()
-        });
+      if (!this.options.viewportBounds) {
+        this.logger.warn('PreviewManager', 'No viewport bounds provided');
+        return null;
       }
 
-      // Transform coordinates if needed
-      const processedFeatures = await this.processFeatures(visibleFeatures);
-      
-      // Only log processed features if count changed
-      if (processedFeatures.length !== visibleFeatures.length && process.env.NODE_ENV === 'development') {
-        this.logger.info('PreviewManager', 'Processed visible features', {
-          originalCount: visibleFeatures.length,
-          processedCount: processedFeatures.length,
-          types: this.countFeatureTypes(processedFeatures),
-          layers: this.countFeatureLayers(processedFeatures)
-        });
+      // Check if viewport has changed significantly
+      if (!this.hasViewportChangedSignificantly(this.options.viewportBounds)) {
+        const cached = this.getCachedCollections(this.options.viewportBounds);
+        if (cached) {
+          this.logger.debug('PreviewManager', 'Using cached collections');
+          return cached;
+        }
       }
 
-      // Categorize and calculate bounds
-      const collections = await this.featureManager.categorizeFeatures(processedFeatures);
-      
-      // Only log categorized features if we have any
-      const totalFeatures = collections.points.features.length + 
-                          collections.lines.features.length + 
-                          collections.polygons.features.length;
-      if (totalFeatures > 0 && process.env.NODE_ENV === 'development') {
-        this.logger.info('PreviewManager', 'Categorized features', {
-          totalFeatures,
-          points: collections.points.features.length,
-          lines: collections.lines.features.length,
-          polygons: collections.polygons.features.length
-        });
-      }
-
-      const bounds = this.featureManager.calculateBounds(collections);
-      
-      const result: PreviewCollectionResult = {
-        ...collections,
-        bounds,
-        totalCount: processedFeatures.length,
-        coordinateSystem: this.optionsManager.getCoordinateSystem() as CoordinateSystem,
-        timestamp: Date.now()
-      };
-
-      // Cache the result if enabled
-      if (this.optionsManager.isCachingEnabled()) {
-        this.cacheManager.set(cacheKey, result);
-      }
-      
-      return result;
+      // Process features in viewport
+      return await this.processViewportFeatures();
     } catch (error) {
-      this.logger.error('PreviewManager', 'Error generating collections', {
+      this.logger.error('PreviewManager', 'Error getting preview collections', {
         error: error instanceof Error ? error.message : String(error)
       });
-      throw error;
+      return null;
     }
   }
 
-  private countFeatureTypes(features: Feature[]): Record<string, number> {
-    return features.reduce((acc, f) => {
-      const type = f.geometry?.type || 'unknown';
-      acc[type] = (acc[type] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+  /**
+   * Process features within the current viewport
+   */
+  private async processViewportFeatures(): Promise<PreviewCollections | null> {
+    if (!this.options.viewportBounds) return null;
+
+    try {
+      // Wait for any ongoing processing
+      if (this.processingQueue) {
+        await this.processingQueue;
+      }
+
+      // Get features in viewport
+      const viewportFeatures = await this.getViewportFeatures(this.options.viewportBounds);
+      if (!viewportFeatures || viewportFeatures.length === 0) {
+        this.logger.debug('PreviewManager', 'No features in viewport');
+        return null;
+      }
+
+      // Transform features in batches
+      const transformedFeatures = await this.transformFeatureBatches(viewportFeatures);
+      if (!transformedFeatures || transformedFeatures.length === 0) {
+        this.logger.warn('PreviewManager', 'No features after transformation');
+        return null;
+      }
+
+      // Process transformed features
+      const collections = await this.featureManager.processFeatures(transformedFeatures, {
+        enableCaching: this.options.enableCaching,
+        smartSampling: this.options.smartSampling
+      });
+
+      // Cache the results
+      this.cacheViewportCollections(this.options.viewportBounds, collections);
+
+      return collections;
+    } catch (error) {
+      this.logger.error('PreviewManager', 'Error processing viewport features', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return null;
+    }
   }
 
-  private countFeatureLayers(features: Feature[]): Record<string, number> {
-    return features.reduce((acc, f) => {
-      const layer = f.properties?.layer || 'unknown';
-      acc[layer] = (acc[layer] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-  }
+  /**
+   * Transform features in batches
+   */
+  private async transformFeatureBatches(
+    features: Feature[]
+  ): Promise<Feature[]> {
+    const batchSize = DEFAULT_BATCH_SIZE;
+    const batches: Feature[][] = [];
 
-  private hasTransformedFeatures(collections: PreviewCollectionResult): boolean {
-    return collections.points.features.some(f => f.properties?._transformedCoordinates) ||
-           collections.lines.features.some(f => f.properties?._transformedCoordinates) ||
-           collections.polygons.features.some(f => f.properties?._transformedCoordinates);
-  }
-
-  private async processFeatures(features: Feature[]): Promise<GeoFeature[]> {
-    if (!this.coordinateHandler.requiresTransformation()) {
-      return this.toGeoFeatures(features);
+    // Split features into batches
+    for (let i = 0; i < features.length; i += batchSize) {
+      batches.push(features.slice(i, i + batchSize));
     }
 
-    const transformedFeatures = await this.coordinateHandler.transformFeatures(
-      features,
-      COORDINATE_SYSTEMS.WGS84,
-      this.projectionManager.getProjection()
+    // Transform batches
+    const transformedBatches = await Promise.all(
+      batches.map(batch => 
+        this.coordinateHandler.transformFeatures(
+          batch,
+          this.options.coordinateSystem,
+          'EPSG:3857'
+        )
+      )
     );
 
-    return transformedFeatures;
+    // Combine transformed batches
+    return transformedBatches.flat();
+  }
+
+  /**
+   * Get features within viewport bounds
+   */
+  private async getViewportFeatures(bounds: ViewportBounds): Promise<Feature[]> {
+    // Transform viewport bounds to source coordinate system
+    const sourceBounds = await this.coordinateHandler.transformBounds(
+      bounds,
+      'EPSG:3857',
+      this.options.coordinateSystem
+    );
+
+    // Get features within bounds
+    return this.featureManager.getFeaturesInBounds(sourceBounds);
+  }
+
+  /**
+   * Check if viewport has changed significantly
+   */
+  private hasViewportChangedSignificantly(bounds: ViewportBounds): boolean {
+    const cached = this.getCachedCollections(bounds);
+    if (!cached) return true;
+
+    const now = Date.now();
+    if (now - this.lastViewportUpdate < 100) return false;
+
+    const cachedBounds = cached.bounds;
+    const dx = Math.abs(bounds[2] - bounds[0] - (cachedBounds[2] - cachedBounds[0])) / (cachedBounds[2] - cachedBounds[0]);
+    const dy = Math.abs(bounds[3] - bounds[1] - (cachedBounds[3] - cachedBounds[1])) / (cachedBounds[3] - cachedBounds[1]);
+
+    return dx > MIN_VIEWPORT_CHANGE || dy > MIN_VIEWPORT_CHANGE;
+  }
+
+  /**
+   * Get cached collections for viewport
+   */
+  private getCachedCollections(bounds: ViewportBounds): PreviewCollections | null {
+    const key = this.getViewportCacheKey(bounds);
+    const cached = this.viewportCache.get(key);
+    
+    if (cached && Date.now() - cached.timestamp < 30000) {
+      return cached.collections;
+    }
+
+    return null;
+  }
+
+  /**
+   * Cache collections for viewport
+   */
+  private cacheViewportCollections(
+    bounds: ViewportBounds,
+    collections: PreviewCollections
+  ): void {
+    const key = this.getViewportCacheKey(bounds);
+    this.viewportCache.set(key, {
+      bounds,
+      collections,
+      timestamp: Date.now()
+    });
+    this.lastViewportUpdate = Date.now();
+
+    // Clean old cache entries
+    this.cleanViewportCache();
+  }
+
+  /**
+   * Clean old viewport cache entries
+   */
+  private cleanViewportCache(): void {
+    const now = Date.now();
+    for (const [key, cache] of this.viewportCache.entries()) {
+      if (now - cache.timestamp > 30000) {
+        this.viewportCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Get cache key for viewport
+   */
+  private getViewportCacheKey(bounds: ViewportBounds): string {
+    const precision = 2; // Round to 2 decimal places for cache key
+    return bounds
+      .map(coord => Math.round(coord * Math.pow(10, precision)) / Math.pow(10, precision))
+      .join(':');
   }
 
   /**
@@ -339,11 +399,64 @@ export class PreviewManager {
     this.featureManager.dispose();
     this.optionsManager.reset();
   }
+
+  private async processFeatures(features: Feature[]): Promise<GeoFeature[]> {
+    const logger = LogManager.getInstance();
+    
+    logger.debug('PreviewManager', 'Starting feature processing', {
+      featureCount: features.length,
+      firstFeature: features[0] ? {
+        type: features[0].geometry?.type,
+        coordinates: features[0].geometry?.coordinates,
+        properties: features[0].properties
+      } : null,
+      coordinateSystem: this.optionsManager.getCoordinateSystem()
+    });
+
+    if (!this.coordinateHandler.requiresTransformation()) {
+      logger.debug('PreviewManager', 'No transformation required', {
+        coordinateSystem: this.optionsManager.getCoordinateSystem()
+      });
+      return this.toGeoFeatures(features);
+    }
+
+    try {
+      logger.debug('PreviewManager', 'Starting coordinate transformation', {
+        fromSystem: this.optionsManager.getCoordinateSystem(),
+        toSystem: COORDINATE_SYSTEMS.WGS84,
+        projection: this.projectionManager.getProjection()
+      });
+
+      const transformedFeatures = await this.coordinateHandler.transformFeatures(
+        features,
+        COORDINATE_SYSTEMS.WGS84,
+        this.projectionManager.getProjection()
+      );
+
+      logger.debug('PreviewManager', 'Transformation complete', {
+        originalCount: features.length,
+        transformedCount: transformedFeatures.length,
+        firstTransformed: transformedFeatures[0] ? {
+          type: transformedFeatures[0].geometry?.type,
+          coordinates: transformedFeatures[0].geometry?.coordinates,
+          properties: transformedFeatures[0].properties
+        } : null
+      });
+
+      return transformedFeatures;
+    } catch (error) {
+      logger.error('PreviewManager', 'Feature transformation failed', {
+        error: error instanceof Error ? error.message : String(error),
+        featureCount: features.length
+      });
+      throw error;
+    }
+  }
 }
 
 /**
  * Create a new preview manager instance
  */
-export const createPreviewManager = (options: PreviewOptions = {}): PreviewManager => {
+export const createPreviewManager = (options: PreviewOptions): PreviewManager => {
   return new PreviewManager(options);
 };

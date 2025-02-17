@@ -9,25 +9,42 @@ export function initializeLogger(): void {
   // Clear any existing logs first
   logger.clearLogs();
   
-  // Set strict log levels based on environment
+  // Set debug level for development to capture all logs
   if (process.env.NODE_ENV === 'development') {
-    // In development, use LOG_LEVEL from env or default to WARN to reduce noise
-    const logLevel = process.env.LOG_LEVEL || 'WARN';
-    logger.setLogLevel(LogLevel[logLevel as keyof typeof LogLevel] || LogLevel.WARN);
+    // Override to DEBUG level for troubleshooting
+    logger.setLogLevel(LogLevel.DEBUG);
     
-    // Disable debug logging for specific components known to be noisy
-    logger.addFilter('LineLayer', LogLevel.WARN);
-    logger.addFilter('PreviewMap', LogLevel.WARN);
-    logger.addFilter('MapLayers', LogLevel.WARN);
-    logger.addFilter('ShapefileProcessor', LogLevel.ERROR); // Only log errors for shapefile processing
+    // Remove filters to capture all component logs
+    logger.clearFilters();
+    
+    // Add specific filters only for very noisy components
+    logger.addFilter('LineLayer', LogLevel.INFO);
+    logger.addFilter('PreviewMap', LogLevel.INFO);
+    
+    // Ensure shapefile-related components log everything
+    logger.addFilter('ShapefileProcessor', LogLevel.DEBUG);
+    logger.addFilter('PreviewManager', LogLevel.DEBUG);
+    logger.addFilter('FeatureManager', LogLevel.DEBUG);
   } else {
     // In production, only show ERROR level
     logger.setLogLevel(LogLevel.ERROR);
   }
   
-  // Log initialization with minimal details
+  // Set specific component log levels
+  logger.setComponentLogLevel('LineLayer', LogLevel.DEBUG);
+  logger.setComponentLogLevel('PreviewMap', LogLevel.DEBUG);
+  logger.setComponentLogLevel('ShapefileProcessor', LogLevel.DEBUG);
+  logger.setComponentLogLevel('PreviewManager', LogLevel.DEBUG);
+  logger.setComponentLogLevel('FeatureManager', LogLevel.DEBUG);
+  logger.setComponentLogLevel('CoordinateSystemManager', LogLevel.DEBUG);
+  logger.setComponentLogLevel('CoordinateSystemHandler', LogLevel.DEBUG);
+  logger.setComponentLogLevel('PreviewFeatureManager', LogLevel.DEBUG);
+  logger.setComponentLogLevel('FeatureProcessor', LogLevel.DEBUG);
+  
+  // Log initialization with details
   logger.info('LogManager', 'Logger initialized', {
     environment: process.env.NODE_ENV,
-    logLevel: logger.getLogLevel()
+    logLevel: LogLevel[logger.getLogLevel()],
+    filters: logger.getComponentFilters()
   });
 } 

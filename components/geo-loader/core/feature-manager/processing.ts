@@ -3,12 +3,15 @@ import { coordinateSystemManager } from '../coordinate-system-manager';
 import { GeoLoaderError } from '../errors/types';
 import { ErrorReporterImpl as ErrorReporter } from '../errors/reporter';
 import { CoordinateSystem } from '../../types/coordinates';
+import { LogManager } from '../logging/log-manager';
 
 const ZOOM_LEVEL_THRESHOLDS = {
   HIGH_DETAIL: 14,
   MEDIUM_DETAIL: 10,
   LOW_DETAIL: 6
 };
+
+const logger = LogManager.getInstance();
 
 /**
  * Validate a coordinate pair
@@ -123,13 +126,57 @@ export const transformGeometry = async (
         return coords ? { type: 'Point', coordinates: coords } : null;
       }
       case 'LineString': {
+        logger.debug('LineString', 'Processing LineString transformation', {
+          fromSystem,
+          toSystem,
+          originalCoordinates: geometry.coordinates.slice(0, 2),
+          totalPoints: geometry.coordinates.length
+        });
+
         const coords = await Promise.all(
-          geometry.coordinates.map(coord => 
-            transformCoordinates(coord, fromSystem, toSystem, errorReporter)
-          )
+          geometry.coordinates.map(async (coord, index) => {
+            const transformed = await transformCoordinates(coord, fromSystem, toSystem, errorReporter);
+            if (!transformed) {
+              logger.warn('LineString', 'Failed to transform coordinate', {
+                index,
+                originalCoord: coord,
+                fromSystem,
+                toSystem
+              });
+            } else {
+              logger.debug('LineString', 'Coordinate transformed', {
+                index,
+                original: coord,
+                transformed,
+                fromSystem,
+                toSystem
+              });
+            }
+            return transformed;
+          })
         );
         const validCoords = coords.filter((coord): coord is Position => coord !== null);
-        return validCoords.length >= 2 ? { type: 'LineString', coordinates: validCoords } : null;
+
+        logger.debug('LineString', 'Transformation complete', {
+          originalPoints: geometry.coordinates.length,
+          validPoints: validCoords.length,
+          firstPoint: validCoords[0],
+          lastPoint: validCoords[validCoords.length - 1],
+          fromSystem,
+          toSystem
+        });
+
+        if (validCoords.length < 2) {
+          logger.warn('LineString', 'Insufficient valid coordinates', {
+            required: 2,
+            found: validCoords.length,
+            fromSystem,
+            toSystem
+          });
+          return null;
+        }
+
+        return { type: 'LineString', coordinates: validCoords };
       }
       case 'Polygon': {
         const rings = await Promise.all(

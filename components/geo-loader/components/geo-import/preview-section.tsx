@@ -9,6 +9,7 @@ import { COORDINATE_SYSTEMS, CoordinateSystem } from '../../types/coordinates';
 import { coordinateSystemManager } from '../../core/coordinate-systems/coordinate-system-manager';
 import { PreviewManager } from '../../preview/preview-manager';
 import { CoordinateSystemManager } from '../../core/coordinate-systems/coordinate-system-manager';
+import { LogManager } from '../../core/logging/log-manager';
 
 interface ExtendedProcessorResult {
   features: Feature<Geometry, GeoJsonProperties>[];
@@ -69,6 +70,7 @@ export function PreviewSection({
     }
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const previewManagerRef = useRef(previewManager);
 
@@ -90,14 +92,20 @@ export function PreviewSection({
   useEffect(() => {
     async function loadPreview() {
       // Skip if we don't have a manager
-      if (!previewManagerRef.current) return;
+      if (!previewManagerRef.current) {
+        console.warn('[PreviewSection] No preview manager available');
+        return;
+      }
 
       setIsLoading(true);
-      console.debug('[DEBUG] Loading preview:', {
+      const logger = LogManager.getInstance();
+      logger.info('PreviewSection', 'Starting preview load', {
         visibleLayers,
         coordinateSystem,
         hasBounds: !!bounds,
-        hasAnalysis: !!analysis
+        hasAnalysis: !!analysis,
+        bounds,
+        analysisFeatures: analysis?.preview?.features?.length
       });
 
       try {
@@ -106,6 +114,7 @@ export function PreviewSection({
 
         // Ensure coordinate system manager is initialized
         if (!manager.isInitialized()) {
+          logger.info('PreviewSection', 'Initializing coordinate system manager');
           await manager.initialize();
         }
 
@@ -115,17 +124,23 @@ export function PreviewSection({
         // Verify system is valid
         const isValid = await manager.validateSystem(effectiveSystem);
         if (!isValid) {
-          console.warn('[DEBUG] Invalid coordinate system, falling back to WGS84');
+          logger.warn('PreviewSection', 'Invalid coordinate system, falling back to WGS84', {
+            requestedSystem: effectiveSystem
+          });
           effectiveSystem = COORDINATE_SYSTEMS.WGS84;
         }
 
         // Set features from analysis result if available
         if (analysis?.preview?.features) {
-          await previewManagerRef.current.setFeatures(analysis.preview.features);
-          console.debug('[DEBUG] Set features from analysis:', {
+          logger.info('PreviewSection', 'Setting features from analysis', {
             featureCount: analysis.preview.features.length,
-            coordinateSystem: effectiveSystem
+            coordinateSystem: effectiveSystem,
+            firstFeature: analysis.preview.features[0] ? {
+              type: analysis.preview.features[0].geometry.type,
+              properties: analysis.preview.features[0].properties
+            } : null
           });
+          await previewManagerRef.current.setFeatures(analysis.preview.features);
         }
 
         // Always update options with current visibleLayers
@@ -195,7 +210,11 @@ export function PreviewSection({
           }
         }
       } catch (error) {
-        console.error('[DEBUG] Failed to load preview:', error);
+        logger.error('PreviewSection', 'Failed to load preview', {
+          error: error instanceof Error ? error.message : String(error),
+          stack: error instanceof Error ? error.stack : undefined
+        });
+        setError(error instanceof Error ? error.message : String(error));
       } finally {
         setIsLoading(false);
       }
@@ -204,7 +223,7 @@ export function PreviewSection({
     if (previewManagerRef.current) {
       loadPreview();
     }
-  }, [coordinateSystem, bounds, analysis, visibleLayers]); // Remove previewManager from dependencies
+  }, [previewManager, bounds, coordinateSystem, visibleLayers, analysis]);
 
   const currentAnalysis: PreviewAnalysis = analysis
     ? {

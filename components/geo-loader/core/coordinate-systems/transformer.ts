@@ -3,13 +3,21 @@ import { CoordinateSystem } from '../../types/coordinates';
 import { LogManager } from '../logging/log-manager';
 import proj4 from 'proj4';
 
+interface Proj4Result {
+  x: number;
+  y: number;
+  z?: number;
+}
+
 export interface TransformationKey {
   from: CoordinateSystem;
   to: CoordinateSystem;
 }
 
 export interface TransformationCache {
-  transformer: (coord: Position) => Position;
+  transformer: {
+    forward: (coords: Position) => Position | Proj4Result;
+  };
   lastUsed: number;
 }
 
@@ -17,7 +25,7 @@ export class CoordinateTransformer {
   private static instance: CoordinateTransformer;
   private readonly logger = LogManager.getInstance();
   private readonly cache = new Map<string, TransformationCache>();
-  private readonly CACHE_LIFETIME = 5 * 60 * 1000; // 5 minutes
+  private readonly CACHE_LIFETIME = 30 * 60 * 1000; // 30 minutes
   private lastCacheClear = Date.now();
 
   // Define projections for coordinate systems
@@ -43,7 +51,64 @@ export class CoordinateTransformer {
   }
 
   /**
-   * Transform a single position from one coordinate system to another
+   * Validate coordinate system and detect if coordinates are already in target system
+   */
+  private validateCoordinateSystem(
+    coordinates: Position | Position[],
+    from: CoordinateSystem,
+    to: CoordinateSystem
+  ): { requiresTransform: boolean; actualFrom: CoordinateSystem } {
+    // If systems are the same, no transform needed
+    if (from === to) {
+      return { requiresTransform: false, actualFrom: from };
+    }
+
+    // For Swiss coordinates (EPSG:2056), check if coordinates are already in that system
+    if (to === 'EPSG:2056') {
+      const coords = Array.isArray(coordinates) ? coordinates[0] : coordinates;
+      // Ensure coords is a Position array
+      if (Array.isArray(coords) && coords.length >= 2) {
+        const [x, y] = coords;
+        // Swiss coordinates are typically between 2000000-3000000 for x and 1000000-2000000 for y
+        if (typeof x === 'number' && typeof y === 'number' &&
+            x >= 2000000 && x <= 3000000 && y >= 1000000 && y <= 2000000) {
+          this.logger.debug('CoordinateTransformer', 'Detected coordinates already in Swiss LV95', {
+            coordinates: coords,
+            assumedSystem: 'EPSG:2056'
+          });
+          return { requiresTransform: false, actualFrom: 'EPSG:2056' };
+        }
+      }
+    }
+
+    return { requiresTransform: true, actualFrom: from };
+  }
+
+  /**
+   * Transform multiple positions in batch
+   */
+  public async transformPositions(
+    positions: Position[],
+    from: CoordinateSystem,
+    to: CoordinateSystem
+  ): Promise<Position[]> {
+    try {
+      const { requiresTransform, actualFrom } = this.validateCoordinateSystem(positions[0], from, to);
+      if (!requiresTransform) return positions;
+      
+      const transformer = await this.getTransformer(actualFrom, to);
+      return positions.map(pos => {
+        const result = transformer.forward(pos);
+        return Array.isArray(result) ? result : [result.x, result.y];
+      });
+    } catch (error) {
+      this.logger.error('Error in batch position transformation:', error instanceof Error ? error.message : String(error));
+      throw error;
+    }
+  }
+
+  /**
+   * Transform a single position
    */
   public async transformPosition(
     position: Position,
@@ -51,10 +116,12 @@ export class CoordinateTransformer {
     to: CoordinateSystem
   ): Promise<Position> {
     try {
-      if (from === to) return position;
+      const { requiresTransform, actualFrom } = this.validateCoordinateSystem(position, from, to);
+      if (!requiresTransform) return position;
       
-      const transformer = await this.getTransformer(from, to);
-      return transformer(position);
+      const transformer = await this.getTransformer(actualFrom, to);
+      const result = transformer.forward(position);
+      return Array.isArray(result) ? result : [result.x, result.y];
     } catch (error) {
       this.logger.error('Error transforming position:', error instanceof Error ? error.message : String(error));
       throw error;
@@ -62,64 +129,63 @@ export class CoordinateTransformer {
   }
 
   /**
-   * Transform a feature from one coordinate system to another
-   */
-  public async transformFeature(
-    feature: Feature,
-    from: CoordinateSystem,
-    to: CoordinateSystem
-  ): Promise<Feature> {
-    if (!feature.geometry) return feature;
-
-    try {
-      const transformer = await this.getTransformer(from, to);
-      const transformedGeometry = await this.transformGeometry(feature.geometry, transformer);
-
-      return {
-        ...feature,
-        geometry: transformedGeometry,
-        properties: {
-          ...feature.properties,
-          _originalGeometry: feature.geometry,
-          _transformedCoordinates: true,
-          _fromSystem: from,
-          _toSystem: to
-        }
-      };
-    } catch (error) {
-      this.logger.error('Error transforming feature:', error instanceof Error ? error.message : String(error));
-      throw error;
-    }
-  }
-
-  /**
-   * Transform multiple features from one coordinate system to another
+   * Transform multiple features in batch
    */
   public async transformFeatures(
     features: Feature[],
     from: CoordinateSystem,
     to: CoordinateSystem
   ): Promise<Feature[]> {
-    if (from === to) return features;
+    if (features.length === 0) return features;
 
     try {
-      const transformer = await this.getTransformer(from, to);
-      return await Promise.all(
-        features.map(feature => this.transformFeature(feature, from, to))
+      // Get first feature with coordinates for validation
+      const firstFeatureWithCoords = features.find(f => 
+        f.geometry && 'coordinates' in f.geometry && f.geometry.coordinates
       );
+
+      if (!firstFeatureWithCoords) return features;
+
+      const { requiresTransform, actualFrom } = this.validateCoordinateSystem(
+        this.getFirstCoordinate(firstFeatureWithCoords),
+        from,
+        to
+      );
+
+      if (!requiresTransform) {
+        this.logger.debug('CoordinateTransformer', 'No transformation needed', {
+          from: actualFrom,
+          to,
+          sample: this.getFirstCoordinate(firstFeatureWithCoords)
+        });
+        return features;
+      }
+
+      const transformer = await this.getTransformer(actualFrom, to);
+      return features.map(feature => this.transformFeatureSync(feature, transformer));
     } catch (error) {
       this.logger.error('Error transforming features:', error instanceof Error ? error.message : String(error));
       throw error;
     }
   }
 
+  private getFirstCoordinate(feature: Feature): Position {
+    const geometry = feature.geometry as any;
+    if (!geometry || !geometry.coordinates) return [0, 0];
+
+    if (Array.isArray(geometry.coordinates[0])) {
+      return geometry.coordinates[0];
+    }
+    return geometry.coordinates;
+  }
+
   /**
-   * Get a transformer function for the given coordinate systems
+   * Get a cached transformer for the given coordinate systems
    */
   private async getTransformer(
     from: CoordinateSystem,
     to: CoordinateSystem
-  ): Promise<(coord: Position) => Position> {
+  ): Promise<TransformationCache['transformer']> {
     const key = this.getCacheKey(from, to);
     
     // Check cache
@@ -135,9 +201,11 @@ export class CoordinateTransformer {
 
     // Create new transformer
     try {
-      const transformer = (coord: Position): Position => {
-        const result = proj4(from, to, coord) as Position | { x: number; y: number };
-        return Array.isArray(result) ? result : [result.x, result.y];
+      // Create direct transformation pipeline
+      const transformer = {
+        forward: (coords: Position): Position | Proj4Result => {
+          return proj4(from, to, coords);
+        }
       };
 
       // Cache the transformer
@@ -154,18 +222,39 @@ export class CoordinateTransformer {
   }
 
   /**
-   * Transform a geometry object using the provided transformer
+   * Transform a feature synchronously using a cached transformer
    */
-  private async transformGeometry(
+  public transformFeatureSync(
+    feature: Feature,
+    transformer: TransformationCache['transformer']
+  ): Feature {
+    if (!feature.geometry) return feature;
+
+    return {
+      ...feature,
+      geometry: this.transformGeometrySync(feature.geometry, transformer),
+      properties: {
+        ...feature.properties,
+        _originalGeometry: feature.geometry,
+        _transformedCoordinates: true
+      }
+    };
+  }
+
+  /**
+   * Transform geometry synchronously using a cached transformer
+   */
+  private transformGeometrySync(
     geometry: any,
-    transformer: (coord: Position) => Position
-  ): Promise<any> {
+    transformer: TransformationCache['transformer']
+  ): any {
     if (!geometry || !geometry.type) return geometry;
 
     const transformCoordinates = (coords: any): any => {
       if (Array.isArray(coords)) {
         if (typeof coords[0] === 'number') {
-          return transformer(coords as Position);
+          const result = transformer.forward(coords);
+          return Array.isArray(result) ? result : [result.x, result.y];
         }
         return coords.map(transformCoordinates);
       }
