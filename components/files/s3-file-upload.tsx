@@ -8,7 +8,13 @@ import { Progress } from '../ui/progress';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../ui/dialog';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Upload, AlertCircle, CheckCircle2, FileIcon } from 'lucide-react';
-import { FileTypeConfig } from '../geo-loader/core/file-type-config';
+import { 
+  FileTypeConfig,
+  FILE_TYPE_CONFIGS, 
+  getFileTypeConfig, 
+  validateCompanionFiles, 
+  getMimeType 
+} from '@/components/shared/types/file-types';
 import { UploadedFile, RelatedFile } from './types';
 
 // Define custom attributes for directory-aware file input
@@ -23,11 +29,12 @@ type DirectoryInputProps = React.InputHTMLAttributes<HTMLInputElement> & Partial
 interface S3FileUploadProps {
   projectId: string;
   onUploadComplete?: (file: UploadedFile) => void;
+  acceptedFileTypes?: string[];
+  disabled?: boolean;
+  maxFileSize?: number;  // in bytes
 }
 
-import { FILE_TYPE_CONFIGS, getFileTypeConfig, validateCompanionFiles, getMimeType } from '../geo-loader/core/file-type-config';
-
-export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps) {
+export function S3FileUpload({ projectId, onUploadComplete, acceptedFileTypes, disabled, maxFileSize }: S3FileUploadProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
@@ -318,6 +325,7 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
   
             // Notify completion with all related files
             onUploadComplete?.({
+              id: mainFileUrl.split('/').pop() || '',
               name: group.mainFile.name,
               size: totalSize,
               type: mimeType,
@@ -335,13 +343,14 @@ export function S3FileUpload({ projectId, onUploadComplete }: S3FileUploadProps)
         ));
   
         for (const file of regularFiles) {
-          await uploadFile(file);
+          const uploadedUrl = await uploadFile(file);
           const mimeType = getMimeType(file.name);
           console.log('Determined MIME type for standalone file:', {
             fileName: file.name,
             mimeType: mimeType
           });
           onUploadComplete?.({
+            id: uploadedUrl.split('/').pop() || '',
             name: file.name,
             size: file.size,
             type: mimeType

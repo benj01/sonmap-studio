@@ -47,6 +47,7 @@ export type RelatedFile = {
 }
 
 export type UploadedFile = {
+  id: string
   name: string
   size: number
   type: string
