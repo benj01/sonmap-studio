@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
-import { S3FileUpload } from '@/components/files/s3-file-upload';
+import { S3FileUpload } from '@/components/files/components/upload';
 import { useGeoImport } from '../hooks/use-geo-import';
 import type { UploadedFile } from '@/components/files/types';
 import type { ImportSession } from '@/types/geo-import';
@@ -19,14 +19,19 @@ interface GeoFileUploadProps {
   maxFileSize?: number;
 }
 
+interface RelatedFile {
+  name: string;
+  size: number;
+}
+
 /**
  * Component for handling geodata file uploads
- * Integrates with the existing S3FileUpload component and initializes the import session
+ * Integrates with S3FileUpload component and initializes the import session
  */
 export function GeoFileUpload({ 
   projectId, 
   onImportSessionCreated,
-  maxFileSize = 2 * 1024 * 1024 * 1024 // 2GB default
+  maxFileSize
 }: GeoFileUploadProps) {
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
@@ -43,7 +48,7 @@ export function GeoFileUpload({
         type: fileType,
         size: file.size,
         companionFiles: file.relatedFiles ? 
-          Object.entries(file.relatedFiles).map(([ext, f]) => ({
+          Object.entries(file.relatedFiles).map(([ext, f]: [string, RelatedFile]) => ({
             type: ext.substring(1),
             size: f.size,
             required: FILE_TYPE_CONFIGS[fileType]?.companionFiles
@@ -59,7 +64,7 @@ export function GeoFileUpload({
       // Additional validation for companion files if needed
       if (file.relatedFiles) {
         const mainFile = new File([], file.name, { type: file.type });
-        const companions = Object.values(file.relatedFiles).map(f => 
+        const companions = Object.entries(file.relatedFiles).map(([_, f]: [string, RelatedFile]) => 
           new File([], f.name, { type: 'application/octet-stream' })
         );
 
@@ -134,7 +139,7 @@ export function GeoFileUpload({
 
       {isProcessing && (
         <div className="text-sm text-muted-foreground">
-          Processing file...
+          Creating import session...
         </div>
       )}
     </div>
