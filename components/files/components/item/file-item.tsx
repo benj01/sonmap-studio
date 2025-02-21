@@ -29,7 +29,7 @@ export function FileItem({
       className={`
         flex items-center rounded-lg group transition-colors duration-200
         ${isMain ? 'bg-blue-50 border border-blue-100' : isCompanion ? 'bg-transparent' : 'bg-white border'}
-        ${isCompanion ? 'p-2' : 'p-4'}
+        ${isCompanion ? 'p-1' : 'p-4'}
         ${disabled ? 'opacity-60 cursor-not-allowed' : isCompanion ? '' : 'hover:border-blue-200'}
       `}
     >
@@ -37,7 +37,7 @@ export function FileItem({
       
       <div className="flex-1 min-w-0 ml-3">
         <div className="flex items-center space-x-2">
-          <h3 className={`font-medium truncate ${isCompanion ? 'text-xs text-gray-600' : 'text-sm text-gray-900'}`}>
+          <h3 className={`font-medium truncate ${isCompanion ? 'text-xs text-gray-400' : 'text-sm text-gray-900'}`}>
             {file.file.name}
           </h3>
           {isMain && (

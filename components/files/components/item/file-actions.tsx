@@ -19,11 +19,14 @@ export function FileActions({
   isValid,
   isCompanion
 }: FileActionsProps) {
+  // Don't render any actions for companion files
+  if (isCompanion) {
+    return null;
+  }
+
   const buttonClass = `
     p-2 rounded-lg transition-colors duration-200
-    ${isCompanion 
-      ? 'text-gray-400 hover:text-gray-600 hover:bg-gray-100' 
-      : 'text-gray-500 hover:text-gray-700 hover:bg-gray-100'}
+    text-gray-500 hover:text-gray-700 hover:bg-gray-100
     ${disabled ? 'opacity-50 cursor-not-allowed' : ''}
   `;
 
@@ -37,7 +40,7 @@ export function FileActions({
           onClick={onPreview}
           disabled={disabled}
         >
-          <Eye className={`${isCompanion ? 'h-3 w-3' : 'h-4 w-4'}`} />
+          <Eye className="h-4 w-4" />
         </Button>
       )}
       {onDownload && (
@@ -48,7 +51,7 @@ export function FileActions({
           onClick={onDownload}
           disabled={disabled}
         >
-          <Download className={`${isCompanion ? 'h-3 w-3' : 'h-4 w-4'}`} />
+          <Download className="h-4 w-4" />
         </Button>
       )}
       {onDelete && (
@@ -59,7 +62,7 @@ export function FileActions({
           onClick={onDelete}
           disabled={disabled}
         >
-          <Trash2 className={`${isCompanion ? 'h-3 w-3' : 'h-4 w-4'}`} />
+          <Trash2 className="h-4 w-4" />
         </Button>
       )}
     </div>

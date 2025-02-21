@@ -18,10 +18,14 @@ function formatFileSize(bytes: number): string {
 export function FileMetadata({ file, isCompanion }: FileMetadataProps) {
   return (
     <div className={`flex items-center mt-1 ${isCompanion ? 'text-xs text-gray-400' : 'text-sm text-gray-500'}`}>
-      <span className="truncate">
-        {FileTypeUtil.getMimeType(file.file.name)}
-      </span>
-      <span className="mx-2">•</span>
+      {!isCompanion && (
+        <>
+          <span className="truncate">
+            {FileTypeUtil.getMimeType(file.file.name)}
+          </span>
+          <span className="mx-2">•</span>
+        </>
+      )}
       <span>{formatFileSize(file.size)}</span>
       {file.error && (
         <>
