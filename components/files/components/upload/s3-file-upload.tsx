@@ -5,6 +5,7 @@ import { useFileOperations } from '../../hooks/useFileOperations';
 import { useFileActions } from '../../hooks/useFileActions';
 import type { FileGroup } from '../../types';
 import { getSignedUploadUrl } from '@/utils/supabase/s3';
+import { createClient } from '@/utils/supabase/client';
 
 // Default to Supabase free plan limit
 const DEFAULT_MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -32,6 +33,29 @@ export function S3FileUpload({
   });
   const [uploadProgress, setUploadProgress] = React.useState(0);
   const [currentError, setCurrentError] = React.useState<string | null>(null);
+  const supabase = createClient();
+
+  const checkFileExists = async (fileName: string): Promise<boolean> => {
+    try {
+      const { data, error } = await supabase
+        .from('project_files')
+        .select('id')
+        .eq('project_id', projectId)
+        .eq('name', fileName)
+        .eq('is_shapefile_component', false)  // Only check main files
+        .maybeSingle();  // Use maybeSingle instead of single to avoid errors
+      
+      if (error) {
+        console.error('Error checking file existence:', error);
+        return false;
+      }
+      
+      return !!data;
+    } catch (error) {
+      console.error('Error checking file existence:', error);
+      return false;
+    }
+  };
 
   const validateFileSize = (file: File): boolean => {
     if (file.size > maxFileSize) {
@@ -43,6 +67,13 @@ export function S3FileUpload({
 
   const uploadToS3 = async (fileGroup: FileGroup) => {
     try {
+      // Check for existing files first
+      const mainFileExists = await checkFileExists(fileGroup.mainFile.name);
+      if (mainFileExists) {
+        setCurrentError(`File ${fileGroup.mainFile.name} already exists in this project. Please delete the existing file first or choose a different name.`);
+        return;
+      }
+
       // Validate sizes before upload
       if (!validateFileSize(fileGroup.mainFile)) return;
       for (const file of fileGroup.companions.values()) {
@@ -66,6 +97,7 @@ export function S3FileUpload({
 
       // Create file record in database
       const result = await handleUploadComplete({
+        id: '', // Will be assigned by the database
         name: fileGroup.mainFile.name,
         size: fileGroup.mainFile.size,
         type: fileGroup.mainFile.type,
@@ -86,6 +118,8 @@ export function S3FileUpload({
           errorMessage = 'Upload not authorized. Please check if you are logged in.';
         } else if (error.message.includes('413')) {
           errorMessage = 'File too large for the current plan.';
+        } else if (error.message.includes('already exists')) {
+          errorMessage = 'File already exists in this project. Please delete the existing file first or choose a different name.';
         } else {
           errorMessage = error.message;
         }

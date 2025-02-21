@@ -8,6 +8,7 @@ import { ProcessedFile } from '../../types';
 interface FileItemProps {
   file: ProcessedFile;
   isMain?: boolean;
+  isCompanion?: boolean;
   onDelete?: () => void;
   onDownload?: () => void;
   onPreview?: () => void;
@@ -17,6 +18,7 @@ interface FileItemProps {
 export function FileItem({
   file,
   isMain,
+  isCompanion,
   onDelete,
   onDownload,
   onPreview,
@@ -25,17 +27,17 @@ export function FileItem({
   return (
     <div
       className={`
-        flex items-center p-4 rounded-lg mb-2 group
-        ${isMain ? 'bg-blue-50 border border-blue-100' : 'bg-white border'}
-        ${disabled ? 'opacity-60 cursor-not-allowed' : 'hover:border-blue-200'}
-        transition-colors duration-200
+        flex items-center rounded-lg group transition-colors duration-200
+        ${isMain ? 'bg-blue-50 border border-blue-100' : isCompanion ? 'bg-transparent' : 'bg-white border'}
+        ${isCompanion ? 'p-2' : 'p-4'}
+        ${disabled ? 'opacity-60 cursor-not-allowed' : isCompanion ? '' : 'hover:border-blue-200'}
       `}
     >
       <FileIcon fileName={file.file.name} isMain={isMain} />
       
       <div className="flex-1 min-w-0 ml-3">
         <div className="flex items-center space-x-2">
-          <h3 className="text-sm font-medium text-gray-900 truncate">
+          <h3 className={`font-medium truncate ${isCompanion ? 'text-xs text-gray-600' : 'text-sm text-gray-900'}`}>
             {file.file.name}
           </h3>
           {isMain && (
@@ -50,7 +52,7 @@ export function FileItem({
           )}
         </div>
         
-        <FileMetadata file={file} />
+        <FileMetadata file={file} isCompanion={isCompanion} />
       </div>
 
       <FileActions
@@ -59,6 +61,7 @@ export function FileItem({
         onPreview={onPreview}
         disabled={disabled}
         isValid={file.isValid}
+        isCompanion={isCompanion}
       />
     </div>
   );

@@ -4,6 +4,7 @@ import { ProcessedFile } from '../../types';
 
 interface FileMetadataProps {
   file: ProcessedFile;
+  isCompanion?: boolean;
 }
 
 function formatFileSize(bytes: number): string {
@@ -14,9 +15,9 @@ function formatFileSize(bytes: number): string {
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
 }
 
-export function FileMetadata({ file }: FileMetadataProps) {
+export function FileMetadata({ file, isCompanion }: FileMetadataProps) {
   return (
-    <div className="flex items-center mt-1 text-sm text-gray-500">
+    <div className={`flex items-center mt-1 ${isCompanion ? 'text-xs text-gray-400' : 'text-sm text-gray-500'}`}>
       <span className="truncate">
         {FileTypeUtil.getMimeType(file.file.name)}
       </span>

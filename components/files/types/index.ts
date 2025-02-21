@@ -68,4 +68,43 @@ export interface UploadedFile {
     name: string;
     size: number;
   }>;
+}
+
+/**
+ * Project file information from database
+ */
+export interface ProjectFile {
+  id: string;
+  project_id: string;
+  name: string;
+  size: number;
+  file_type: string;
+  storage_path: string;
+  is_imported: boolean;
+  source_file_id?: string;
+  is_shapefile_component?: boolean;
+  main_file_id?: string;
+  component_type?: 'shp' | 'shx' | 'dbf' | 'prj';
+  metadata?: {
+    relatedFiles?: Record<string, {
+      name: string;
+      size: number;
+    }>;
+  };
+  uploaded_at: string;
+  importedFiles?: ProjectFile[];
+}
+
+/**
+ * Result of a file upload operation
+ */
+export interface FileUploadResult {
+  id: string;
+  name: string;
+  size: number;
+  type: string;
+  relatedFiles?: Record<string, {
+    name: string;
+    size: number;
+  }>;
 } 

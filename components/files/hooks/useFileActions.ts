@@ -1,13 +1,16 @@
 import { useState, useCallback } from 'react';
 import { createClient } from 'utils/supabase/client';
 import { ProjectFile, FileUploadResult } from '../types';
-import { LoaderResult, ImportMetadata } from 'types/geo';
-import { COORDINATE_SYSTEMS } from '../../geo-loader/types/coordinates';
 
 interface UseFileActionsProps {
   projectId: string;
   onSuccess?: (message: string) => void;
   onError?: (message: string) => void;
+}
+
+interface CompanionFile {
+  name: string;
+  size: number;
 }
 
 export function useFileActions({ projectId, onSuccess, onError }: UseFileActionsProps) {
@@ -64,34 +67,74 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
 
   const handleUploadComplete = useCallback(async (uploadedFile: FileUploadResult) => {
     setIsLoading(true);
+    const supabase = createClient();
+    
     try {
-      const storagePath = `${projectId}/${uploadedFile.name}`;
-      
-      const { data: newFile, error } = await supabase
-        .from('project_files')
-        .insert({
-          project_id: projectId,
-          name: uploadedFile.name,
-          size: uploadedFile.size,
-          file_type: uploadedFile.type,
-          storage_path: storagePath,
-          is_imported: false,
-          metadata: uploadedFile.relatedFiles ? {
-            relatedFiles: uploadedFile.relatedFiles
-          } : null
-        })
-        .select()
-        .single();
+      // Start a transaction
+      const { error: txError } = await supabase.rpc('begin_transaction');
+      if (txError) throw txError;
 
-      if (error) throw error;
+      try {
+        const storagePath = `${projectId}/${uploadedFile.name}`;
+        const isShapefile = uploadedFile.name.toLowerCase().endsWith('.shp');
+        
+        // Insert main file record
+        const { data: mainFile, error: mainError } = await supabase
+          .from('project_files')
+          .insert({
+            project_id: projectId,
+            name: uploadedFile.name,
+            size: uploadedFile.size,
+            file_type: uploadedFile.type,
+            storage_path: storagePath,
+            is_imported: false,
+            is_shapefile_component: false,
+            metadata: uploadedFile.relatedFiles ? {
+              relatedFiles: uploadedFile.relatedFiles
+            } : null
+          })
+          .select()
+          .single();
 
-      await refreshProjectStorage();
+        if (mainError) throw mainError;
 
-      onSuccess?.(uploadedFile.relatedFiles
-        ? 'Shapefile and related components uploaded successfully'
-        : 'File uploaded successfully');
+        // If this is a shapefile, insert companion file records
+        if (isShapefile && uploadedFile.relatedFiles) {
+          const companionInserts = Object.entries(uploadedFile.relatedFiles).map(([ext, file]) => ({
+            project_id: projectId,
+            name: file.name,
+            size: file.size,
+            file_type: 'application/octet-stream',
+            storage_path: `${projectId}/${file.name}`,
+            is_imported: false,
+            is_shapefile_component: true,
+            main_file_id: mainFile.id,
+            component_type: ext.substring(1) // Remove the dot
+          }));
 
-      return newFile;
+          const { error: companionError } = await supabase
+            .from('project_files')
+            .insert(companionInserts);
+
+          if (companionError) throw companionError;
+        }
+
+        // Commit transaction
+        const { error: commitError } = await supabase.rpc('commit_transaction');
+        if (commitError) throw commitError;
+
+        await refreshProjectStorage();
+
+        onSuccess?.(uploadedFile.relatedFiles
+          ? 'Shapefile and related components uploaded successfully'
+          : 'File uploaded successfully');
+
+        return mainFile;
+      } catch (error) {
+        // Rollback on any error
+        await supabase.rpc('rollback_transaction');
+        throw error;
+      }
     } catch (error) {
       console.error('Error uploading file:', error);
       onError?.('Failed to save uploaded file to the database');
@@ -99,9 +142,9 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, supabase, onSuccess, onError]);
+  }, [projectId, onSuccess, onError]);
 
-  const handleImport = useCallback(async (result: LoaderResult, sourceFile: ProjectFile) => {
+  const handleImport = useCallback(async (result: any, sourceFile: ProjectFile) => {
     setIsLoading(true);
     try {
       // Check if file was already imported
@@ -135,20 +178,16 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       if (uploadError) throw uploadError;
 
       // Create import metadata
-      const importMetadata: ImportMetadata = {
+      const importMetadata = {
         sourceFile: {
           id: sourceFile.id,
           name: sourceFile.name
         },
-        importedLayers: result.layers.map(layer => ({
+        importedLayers: result.layers?.map((layer: string) => ({
           name: layer,
-          featureCount: result.features.filter(f => f.properties?.layer === layer).length,
+          featureCount: result.features.filter((f: any) => f.properties?.layer === layer).length,
           featureTypes: result.statistics?.featureTypes || {}
-        })),
-        coordinateSystem: {
-          source: result.coordinateSystem || COORDINATE_SYSTEMS.WGS84,
-          target: COORDINATE_SYSTEMS.WGS84
-        },
+        })) || [],
         statistics: {
           totalFeatures: result.features.length,
           failedTransformations: result.statistics?.failedTransformations,
@@ -168,7 +207,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           storage_path: storagePath,
           source_file_id: sourceFile.id,
           is_imported: true,
-          import_metadata: importMetadata
+          metadata: importMetadata
         })
         .select()
         .single();
@@ -189,49 +228,175 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
   const handleDelete = useCallback(async (fileId: string) => {
     setIsLoading(true);
     try {
-      // Get all related imported files
-      const { data: importedFiles } = await supabase
-        .from('project_files')
-        .select('storage_path')
-        .eq('source_file_id', fileId);
+      // Start a transaction
+      const { error: txError } = await supabase.rpc('begin_transaction');
+      if (txError) throw txError;
 
-      // Get the source file's storage path
-      const { data: sourceFile } = await supabase
-        .from('project_files')
-        .select('storage_path')
-        .eq('id', fileId)
-        .single();
+      try {
+        // Get all related files (main file and companions)
+        const { data: fileToDelete, error: mainFileError } = await supabase
+          .from('project_files')
+          .select('*')
+          .eq('id', fileId)
+          .single();
 
-      if (!sourceFile) throw new Error('File not found');
+        if (mainFileError) throw mainFileError;
+        if (!fileToDelete) throw new Error('File not found');
 
-      // Collect all storage paths to delete
-      const storagePaths = [
-        sourceFile.storage_path.replace(/^projects\//, ''),
-        ...(importedFiles || []).map((f: { storage_path: string }) => 
-          f.storage_path.replace(/^projects\//, '')
-        )
-      ];
+        console.log('Main file to delete:', {
+          id: fileToDelete.id,
+          name: fileToDelete.name,
+          project_id: fileToDelete.project_id,
+          storage_path: fileToDelete.storage_path
+        });
 
-      // Delete all files from storage
-      const { error: storageError } = await supabase.storage
-        .from('project-files')
-        .remove(storagePaths);
+        // Get companion files if this is a main file
+        const { data: companionFiles, error: companionError } = await supabase
+          .from('project_files')
+          .select('*')
+          .eq('main_file_id', fileId);
 
-      if (storageError) throw storageError;
+        if (companionError) throw companionError;
 
-      // Delete from database (cascade will handle imported files)
-      const { error: dbError } = await supabase
-        .from('project_files')
-        .delete()
-        .eq('id', fileId);
+        console.log('Companion files:', companionFiles?.map(f => ({
+          id: f.id,
+          name: f.name,
+          project_id: f.project_id,
+          storage_path: f.storage_path
+        })));
 
-      if (dbError) throw dbError;
+        // First, let's try to list files in the bucket to see what's actually there
+        const { data: bucketFiles, error: listError } = await supabase.storage
+          .from('project-files')
+          .list(fileToDelete.project_id);
 
-      await refreshProjectStorage();
-      onSuccess?.('File and related imports deleted successfully');
+        if (listError) {
+          console.error('Error listing bucket files:', listError);
+        } else {
+          console.log('Files in bucket:', bucketFiles);
+        }
+
+        // Use the storage_path directly from the database records
+        const storagePaths = [
+          fileToDelete.storage_path,
+          ...(companionFiles || []).map(f => f.storage_path)
+        ];
+
+        console.log('Attempting to delete storage paths:', storagePaths);
+
+        // Delete from storage first
+        const { error: storageError } = await supabase.storage
+          .from('project-files')
+          .remove(storagePaths);
+        
+        if (storageError) {
+          console.error('Failed to delete files from storage:', storageError);
+          throw storageError;
+        }
+
+        console.log('Storage deletion completed successfully');
+
+        // Delete from database (cascade will handle companion files)
+        const { error: dbError } = await supabase
+          .from('project_files')
+          .delete()
+          .eq('id', fileId);
+
+        if (dbError) throw dbError;
+
+        console.log('Database deletion completed successfully');
+
+        // Commit transaction
+        const { error: commitError } = await supabase.rpc('commit_transaction');
+        if (commitError) throw commitError;
+
+        await refreshProjectStorage();
+        onSuccess?.('File and related components deleted successfully');
+      } catch (error) {
+        // Rollback on any error
+        await supabase.rpc('rollback_transaction');
+        throw error;
+      }
     } catch (error) {
       console.error('Delete error:', error);
       onError?.(error instanceof Error ? error.message : 'Failed to delete file');
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [projectId, supabase, onSuccess, onError]);
+
+  const handleDownload = useCallback(async (fileId: string) => {
+    setIsLoading(true);
+    try {
+      // Get file info from database
+      const { data: file, error: dbError } = await supabase
+        .from('project_files')
+        .select('*')
+        .eq('id', fileId)
+        .single();
+
+      if (dbError) throw dbError;
+      if (!file) throw new Error('File not found');
+
+      // Get download URL
+      const { data: urlData, error: urlError } = await supabase.storage
+        .from('project-files')
+        .createSignedUrl(file.storage_path, 60); // URL valid for 60 seconds
+
+      if (urlError) throw urlError;
+
+      // If this is a shapefile, also get companion file URLs
+      const companionUrls: Record<string, string> = {};
+      if (file.metadata?.relatedFiles) {
+        const companions = Object.entries(file.metadata.relatedFiles) as [string, CompanionFile][];
+        for (const [ext, companionFile] of companions) {
+          const companionPath = `${projectId}/${companionFile.name}`;
+          const { data: companionUrlData, error: companionError } = await supabase.storage
+            .from('project-files')
+            .createSignedUrl(companionPath, 60);
+
+          if (companionError) {
+            console.error(`Failed to get URL for companion file ${ext}:`, companionError);
+            continue;
+          }
+
+          if (companionUrlData) {
+            companionUrls[ext] = companionUrlData.signedUrl;
+          }
+        }
+      }
+
+      // Start downloads
+      const downloadFile = async (url: string, filename: string) => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`Failed to download ${filename}`);
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = downloadUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(downloadUrl);
+      };
+
+      // Download main file
+      await downloadFile(urlData.signedUrl, file.name);
+
+      // Download companion files
+      for (const [ext, url] of Object.entries(companionUrls)) {
+        const companionName = file.metadata?.relatedFiles[ext]?.name;
+        if (companionName) {
+          await downloadFile(url, companionName);
+        }
+      }
+
+      onSuccess?.('Files downloaded successfully');
+    } catch (error) {
+      console.error('Download error:', error);
+      onError?.(error instanceof Error ? error.message : 'Failed to download file');
       throw error;
     } finally {
       setIsLoading(false);
@@ -259,6 +424,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     handleUploadComplete,
     handleImport,
     handleDelete,
+    handleDownload,
     refreshProjectStorage
   };
 } 

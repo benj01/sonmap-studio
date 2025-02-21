@@ -146,12 +146,14 @@ export default function DashboardPage() {
     <div className="container py-8">
       <div className="flex justify-between items-center mb-8">
         <h1 className="text-2xl font-bold">Projects</h1>
-        <Button asChild>
-          <a href="/projects/new">
-            <Plus className="mr-2 h-4 w-4" />
-            New Project
-          </a>
-        </Button>
+        {projects.length > 0 && (
+          <Button asChild>
+            <a href="/projects/new">
+              <Plus className="mr-2 h-4 w-4" />
+              New Project
+            </a>
+          </Button>
+        )}
       </div>
 
       {projects.length === 0 ? (

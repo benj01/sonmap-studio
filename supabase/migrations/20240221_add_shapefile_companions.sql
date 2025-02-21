@@ -1,3 +1,32 @@
+-- Add transaction helper functions
+CREATE OR REPLACE FUNCTION begin_transaction()
+RETURNS void AS $$
+BEGIN
+    -- Start a new transaction
+    -- This is mostly a no-op since we're already in a transaction,
+    -- but it's here for consistency
+    NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION commit_transaction()
+RETURNS void AS $$
+BEGIN
+    -- Commit the current transaction
+    -- This is mostly a no-op since the transaction will be committed anyway,
+    -- but it's here for consistency
+    NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION rollback_transaction()
+RETURNS void AS $$
+BEGIN
+    -- Rollback the current transaction
+    ROLLBACK;
+END;
+$$ LANGUAGE plpgsql;
+
 -- Add new columns for shapefile companion files
 ALTER TABLE project_files
 ADD COLUMN is_shapefile_component BOOLEAN DEFAULT false,

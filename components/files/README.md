@@ -14,7 +14,7 @@ A comprehensive file management system for handling geo-data files with Supabase
 │ │ └── toolbar.tsx   # File management toolbar
 │ ├── upload/         # File upload components
 │ │ ├── index.tsx    # Upload component exports
-│ │ ├── file-upload.tsx # Main upload component
+│ │ ├── s3-file-upload.tsx # S3 upload component
 │ │ ├── file-uploader.tsx # Drag-and-drop uploader
 │ │ ├── upload-progress.tsx # Progress indicator
 │ │ └── upload-dialog.tsx # Upload confirmation dialog
@@ -24,13 +24,13 @@ A comprehensive file management system for handling geo-data files with Supabase
 │   ├── file-icon.tsx # File type icon
 │   ├── file-actions.tsx # File action buttons
 │   └── file-metadata.tsx # File metadata display
+├── hooks/             # React hooks
+│ ├── useFileOperations.ts # File processing hook
+│ └── useFileActions.ts # File management actions
 ├── utils/             # Utility functions
 │ ├── file-types.ts   # File type handling
 │ ├── file-processor.ts # File processing
 │ └── validation.ts   # File validation
-├── hooks/             # React hooks
-│ ├── useFileOperations.ts # File processing hook
-│ └── useFileActions.ts # File management actions
 └── types/             # TypeScript types
     └── index.ts      # Type definitions
 ```
@@ -57,112 +57,77 @@ A comprehensive file management system for handling geo-data files with Supabase
   - S3-compatible storage
   - Pre-signed URL support
   - Upload progress tracking
-  - Chunked uploads
   - Companion file handling
-- Project-based file organization
-- File import and conversion
-- Coordinate system transformation
-- Storage usage tracking
-- Import metadata management
 
 ## Usage
 
-### File Manager
+### File Manager Component
 
 ```tsx
-import { FileManager } from '@/components/files';
+import { FileManager } from '@/components/files/components/manager';
 
 function MyComponent() {
-  const handleFilesProcessed = (files: ProcessedFiles) => {
-    // Handle processed files
-  };
-
-  const handleError = (error: string) => {
-    // Handle error
-  };
-
   return (
     <FileManager
-      projectId="my-project"
-      onFilesProcessed={handleFilesProcessed}
-      onError={handleError}
+      projectId="my-project-id"
+      onFilesProcessed={(files) => {
+        // Handle processed files
+        console.log('Files processed:', files);
+      }}
+      onError={(error) => {
+        // Handle errors
+        console.error('Error:', error);
+      }}
     />
   );
 }
 ```
 
-### File Upload with Supabase Integration
+### S3 File Upload Component
 
 ```tsx
-import { FileUpload } from '@/components/files';
-import { useFileActions } from '@/components/files/hooks/useFileActions';
+import { S3FileUpload } from '@/components/files/components/upload';
 
 function MyComponent() {
-  const { handleUploadComplete, isLoading } = useFileActions({
-    projectId: 'my-project',
-    onSuccess: (message) => console.log(message),
-    onError: (error) => console.error(error)
-  });
-
-  return (
-    <FileUpload
-      projectId="my-project"
-      onUploadComplete={handleUploadComplete}
-      acceptedFileTypes={['.shp', '.geojson', '.kml']}
-      disabled={isLoading}
-      maxFileSize={1024 * 1024 * 50} // 50MB
-    />
-  );
-}
-```
-
-### File Item with Import Support
-
-```tsx
-import { FileItem } from '@/components/files';
-import { useFileActions } from '@/components/files/hooks/useFileActions';
-
-function MyComponent({ file }: { file: ProcessedFile }) {
-  const { handleImport, handleDelete, isLoading } = useFileActions({
-    projectId: 'my-project'
-  });
-
-  const handleImportClick = async () => {
-    const result = await loadGeoFile(file); // Your geo file loader
-    await handleImport(result, file);
-  };
-
-  return (
-    <FileItem
-      file={file}
-      isMain={true}
-      onDelete={() => handleDelete(file.id)}
-      onImport={handleImportClick}
-      disabled={isLoading}
-    />
-  );
-}
-```
-
-### S3 File Upload
-
-```tsx
-import { S3FileUpload } from '@/components/files';
-import { useFileActions } from '@/components/files/hooks/useFileActions';
-
-function MyComponent() {
-  const handleUploadComplete = (file: UploadedFile) => {
-    // Handle uploaded file
-  };
-
   return (
     <S3FileUpload
-      projectId="my-project"
-      onUploadComplete={handleUploadComplete}
+      projectId="my-project-id"
+      onUploadComplete={(file) => {
+        console.log('Upload complete:', file);
+      }}
       acceptedFileTypes={['.shp', '.geojson', '.kml']}
-      maxFileSize={1024 * 1024 * 50} // 50MB
+      maxFileSize={50 * 1024 * 1024} // 50MB (Supabase free tier limit)
     />
   );
+}
+```
+
+### Using File Actions Hook
+
+```tsx
+import { useFileActions } from '@/components/files/hooks/useFileActions';
+
+function MyComponent() {
+  const { 
+    isLoading,
+    handleDelete,
+    handleDownload,
+    handleUploadComplete
+  } = useFileActions({
+    projectId: 'my-project-id',
+    onSuccess: (message) => toast.success(message),
+    onError: (error) => toast.error(error)
+  });
+
+  // Delete a file
+  const deleteFile = async (fileId: string) => {
+    await handleDelete(fileId);
+  };
+
+  // Download a file (includes companion files for shapefiles)
+  const downloadFile = async (fileId: string) => {
+    await handleDownload(fileId);
+  };
 }
 ```
 
@@ -191,6 +156,22 @@ Currently supported file types with their configurations:
 - Size limit: 256MB
 - No companion files required
 
+## Database Schema
+
+The system uses Supabase with the following tables:
+
+### project_files
+- id: uuid (primary key)
+- project_id: uuid (foreign key)
+- name: string
+- size: number
+- file_type: string
+- storage_path: string
+- is_imported: boolean
+- source_file_id: uuid (self-reference)
+- metadata: jsonb
+- uploaded_at: timestamp
+
 ## Development
 
 ### Adding a New File Type
@@ -210,36 +191,15 @@ export const FILE_TYPE_CONFIGS = {
         required: true,
         maxSize: 10 * 1024 * 1024 // 10MB
       }
-    ],
-    validateContent: async (file: File) => {
-      // Implement content validation
-      return true;
-    }
+    ]
   }
 };
 ```
 
-2. Add validation rules in `utils/validation.ts`
+2. Update validation rules in `utils/validation.ts`
 3. Update file processor in `utils/file-processor.ts`
-4. Add import support in `hooks/useFileActions.ts`
-5. Add custom icon in `components/item/file-icon.tsx` (optional)
-6. Add custom metadata display in `components/item/file-metadata.tsx` (optional)
-
-## Database Schema
-
-The system uses Supabase with the following tables:
-
-### project_files
-- id: uuid (primary key)
-- project_id: uuid (foreign key)
-- name: string
-- size: number
-- file_type: string
-- storage_path: string
-- is_imported: boolean
-- source_file_id: uuid (self-reference)
-- import_metadata: jsonb
-- uploaded_at: timestamp
+4. Add custom icon in `components/item/file-icon.tsx` (optional)
+5. Add custom metadata display in `components/item/file-metadata.tsx` (optional)
 
 ## Contributing
 
@@ -250,60 +210,42 @@ The system uses Supabase with the following tables:
 5. Use provided utilities for file handling
 6. Follow component composition patterns
 7. Maintain Supabase integration patterns
-8. Update import metadata schemas as needed
-
-## Testing
-
-```bash
-npm run test
-```
 
 ## Roadmap
 
 ### Completed
-- ✅ Migration from old file handling system
-  - Moved functionality from `core/io/file-reader.ts` to modular utilities
-  - Improved type safety and error handling
-  - Added comprehensive documentation
-  - Enhanced file validation and processing
+- ✅ Basic file management
+  - File upload with progress tracking
+  - File deletion with cleanup
+  - File download with companion files
+  - Modern UI components
 - ✅ S3 Integration
-  - Implemented direct S3 upload with pre-signed URLs
-  - Added progress tracking for S3 uploads
-  - Added companion file support
-  - Integrated with Supabase storage
-  - Added error handling and retries
+  - Direct S3 upload with pre-signed URLs
+  - Progress tracking
+  - Companion file support
+  - Supabase storage integration
 
-### 1. Performance Improvements
-- Implement file chunking for large files
-- Add caching for frequently accessed files
-- Optimize companion file processing
-- Add batch processing capabilities
+### Upcoming
+1. Performance Improvements
+   - Implement file chunking for large files
+   - Add caching for frequently accessed files
+   - Optimize companion file processing
+   - Add batch processing capabilities
 
-### 2. Enhanced File Support
-- Add support for more geo-data formats:
-  - TopoJSON
-  - GML (Geography Markup Language)
-  - CSV with geo-coordinates
-- Implement file format conversion utilities
-- Add preview generation for supported formats
+2. Enhanced File Support
+   - Add support for more geo-data formats
+   - Implement file format conversion utilities
+   - Add preview generation
+   - Add file comparison tools
 
-### 3. Security Enhancements
-- Implement file content validation
-- Add virus scanning integration
-- Enhance access control mechanisms
-- Add audit logging for file operations
+3. Security Enhancements
+   - Implement file content validation
+   - Add virus scanning integration
+   - Enhance access control mechanisms
+   - Add audit logging
 
-### 4. UI/UX Improvements
-- Add drag-and-drop file reordering
-- Implement batch file operations
-- Add file preview capabilities
-- Enhance progress indicators
-- Add file comparison tools
-
-### 5. Testing Coverage
-- Add end-to-end tests
-- Increase unit test coverage
-- Add performance benchmarks
-- Implement stress testing for large files
-
-To contribute to these improvements, please follow the contributing guidelines and submit PRs for review. 
+4. UI/UX Improvements
+   - Add drag-and-drop file reordering
+   - Implement batch operations
+   - Add file preview capabilities
+   - Enhance progress indicators 

@@ -27,7 +27,7 @@ export class FileTypeUtil {
         {
           extension: '.prj',
           description: 'Projection Definition',
-          required: false,
+          required: true,
           maxSize: 1 * 1024 * 1024, // 1MB
         }
       ]

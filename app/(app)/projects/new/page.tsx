@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
@@ -25,9 +25,24 @@ export default function NewProjectPage() {
     name: '',
     description: ''
   })
+  const [hasRedirected, setHasRedirected] = useState(false)
+
+  useEffect(() => {
+    console.log('Project page auth state:', { initialized, isLoading, hasUser: !!user })
+  }, [initialized, isLoading, user])
+
+  // Handle auth redirect
+  useEffect(() => {
+    if (initialized && !isLoading && !user && !hasRedirected) {
+      console.log('No user found, redirecting to sign-in')
+      setHasRedirected(true)
+      router.push('/auth-pages/sign-in?redirect=/projects/new')
+    }
+  }, [initialized, isLoading, user, router, hasRedirected])
 
   // Show loading state while auth is initializing
   if (!initialized || isLoading) {
+    console.log('Showing loading state')
     return (
       <div className="flex h-full items-center justify-center">
         <LoadingState text="Loading..." />
@@ -35,11 +50,13 @@ export default function NewProjectPage() {
     )
   }
 
-  // Redirect if not authenticated
-  if (initialized && !user) {
-    router.push('/sign-in')
+  // Don't render if no user
+  if (!user) {
+    console.log('No user, returning null')
     return null
   }
+
+  console.log('Rendering project form')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -47,6 +64,7 @@ export default function NewProjectPage() {
     
     setSubmitting(true)
     try {
+      console.log('Creating project...')
       const supabase = createClient()
       
       // Start a transaction by using a single Supabase call
@@ -63,7 +81,12 @@ export default function NewProjectPage() {
         .select()
         .single()
 
-      if (projectError) throw projectError
+      if (projectError) {
+        console.error('Project creation error:', projectError)
+        throw projectError
+      }
+
+      console.log('Project created:', project)
 
       // Add creator as admin member
       const { error: memberError } = await supabase
@@ -74,15 +97,19 @@ export default function NewProjectPage() {
           role: 'admin'
         })
 
-      if (memberError) throw memberError
+      if (memberError) {
+        console.error('Member creation error:', memberError)
+        throw memberError
+      }
 
+      console.log('Project member added')
       toast({
         title: "Success",
         description: "Project created successfully",
       })
 
+      // Navigate to the dashboard
       router.push('/dashboard')
-      router.refresh()
     } catch (error) {
       console.error('Error creating project:', error)
       toast({

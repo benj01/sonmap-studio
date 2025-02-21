@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ArrowLeft, Settings, Users, Files, Map } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
-import { FileManager } from '@/components/files/file-manager'
+import { FileManager } from '@/components/files/components/manager'
 import { useEffect, useState } from 'react'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
