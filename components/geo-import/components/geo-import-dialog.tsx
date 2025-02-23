@@ -8,6 +8,7 @@ import { Loader2 } from 'lucide-react';
 import { GeoFileUpload } from './geo-file-upload';
 import { LoaderResult, GeoFeature as LoaderGeoFeature } from '@/types/geo';
 import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-import';
+import { MapPreview } from './map-preview';
 
 interface GeoImportDialogProps {
   projectId: string;
@@ -36,6 +37,28 @@ function convertFeature(feature: ImportGeoFeature): LoaderGeoFeature {
   };
 }
 
+/**
+ * Format file size in a human-readable way
+ */
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+/**
+ * Get a human-readable file type description
+ */
+function getFileTypeDescription(type: string): string {
+  const typeMap: Record<string, string> = {
+    'application/x-esri-shape': 'ESRI Shapefile',
+    'application/geo+json': 'GeoJSON',
+    'application/vnd.google-earth.kml+xml': 'KML',
+    'application/gpx+xml': 'GPX'
+  };
+  return typeMap[type] || type;
+}
+
 export function GeoImportDialog({
   projectId,
   open,
@@ -44,25 +67,50 @@ export function GeoImportDialog({
   fileInfo
 }: GeoImportDialogProps) {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [importSession, setImportSession] = useState<ImportSession | null>(null);
+  const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
 
   const handleImportSessionCreated = async (session: ImportSession) => {
+    setImportSession(session);
+    // Initially select all features
+    if (session.previewDataset?.features) {
+      const allFeatureIds = session.previewDataset.features.map(f => f.originalFeatureIndex);
+      setSelectedFeatureIds(allFeatureIds);
+    }
+  };
+
+  const handleFeaturesSelected = (featureIds: number[]) => {
+    setSelectedFeatureIds(featureIds);
+  };
+
+  const handleImport = async () => {
+    if (!importSession?.fullDataset) return;
+
     try {
       setIsProcessing(true);
       
-      // Create a LoaderResult from the import session
+      // Filter the full dataset based on selected preview features
+      const selectedFeatures = importSession.fullDataset.features.filter(f => 
+        selectedFeatureIds.includes(f.originalIndex || f.id)
+      );
+
+      // Create a LoaderResult from the selected features
       const result: LoaderResult = {
-        features: (session.fullDataset?.features || []).map(convertFeature),
+        features: selectedFeatures.map(convertFeature),
         bounds: {
-          minX: session.fullDataset?.metadata?.bounds?.[0] || 0,
-          minY: session.fullDataset?.metadata?.bounds?.[1] || 0,
-          maxX: session.fullDataset?.metadata?.bounds?.[2] || 0,
-          maxY: session.fullDataset?.metadata?.bounds?.[3] || 0
+          minX: importSession.fullDataset.metadata?.bounds?.[0] || 0,
+          minY: importSession.fullDataset.metadata?.bounds?.[1] || 0,
+          maxX: importSession.fullDataset.metadata?.bounds?.[2] || 0,
+          maxY: importSession.fullDataset.metadata?.bounds?.[3] || 0
         },
-        layers: session.fullDataset?.metadata?.properties || [],
+        layers: importSession.fullDataset.metadata?.properties || [],
         statistics: {
-          pointCount: 0, // TODO: Calculate from features
-          layerCount: session.fullDataset?.metadata?.properties?.length || 0,
-          featureTypes: {} // TODO: Calculate from features
+          pointCount: selectedFeatures.length,
+          layerCount: importSession.fullDataset.metadata?.properties?.length || 0,
+          featureTypes: importSession.fullDataset.metadata?.geometryTypes.reduce((acc, type) => {
+            acc[type] = selectedFeatures.filter(f => f.geometry.type === type).length;
+            return acc;
+          }, {} as Record<string, number>) || {}
         }
       };
 
@@ -93,6 +141,11 @@ export function GeoImportDialog({
           <DialogTitle>Import Geodata</DialogTitle>
           <DialogDescription>
             Import your geodata file into the project for visualization and analysis.
+            {importSession?.previewDataset && (
+              <span className="block mt-1 text-sm">
+                Click features on the map to select/deselect them for import.
+              </span>
+            )}
           </DialogDescription>
         </DialogHeader>
         
@@ -114,12 +167,14 @@ export function GeoImportDialog({
                   <div>
                     <p className="text-sm font-medium">Size</p>
                     <p className="text-sm text-muted-foreground">
-                      {(fileInfo.size / 1024).toFixed(2)} KB
+                      {formatFileSize(fileInfo.size)}
                     </p>
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <p className="text-sm font-medium">Type</p>
-                    <p className="text-sm text-muted-foreground">{fileInfo.type}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {getFileTypeDescription(fileInfo.type)}
+                    </p>
                   </div>
                 </div>
               </CardContent>
@@ -131,7 +186,7 @@ export function GeoImportDialog({
             />
           )}
 
-          {/* Preview section - to be implemented */}
+          {/* Preview section */}
           <Card>
             <CardHeader>
               <CardTitle>Preview</CardTitle>
@@ -140,11 +195,63 @@ export function GeoImportDialog({
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-[300px] w-full bg-muted rounded-md flex items-center justify-center">
-                <p className="text-sm text-muted-foreground">Preview coming soon</p>
-              </div>
+              {importSession?.previewDataset ? (
+                <MapPreview
+                  features={importSession.previewDataset.features}
+                  bounds={importSession.previewDataset.metadata?.bounds}
+                  onFeaturesSelected={handleFeaturesSelected}
+                />
+              ) : (
+                <div className="h-[300px] w-full bg-muted rounded-md flex items-center justify-center">
+                  <p className="text-sm text-muted-foreground">
+                    {isProcessing ? 'Loading preview...' : 'No data to preview'}
+                  </p>
+                </div>
+              )}
             </CardContent>
           </Card>
+
+          {/* Import statistics */}
+          {importSession?.fullDataset?.metadata && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Import Details</CardTitle>
+                <CardDescription>
+                  Information about the data to be imported
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-medium">Features</p>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedFeatureIds.length} selected of {importSession.fullDataset.metadata.featureCount} total
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Geometry Types</p>
+                    <p className="text-sm text-muted-foreground">
+                      {importSession.fullDataset.metadata.geometryTypes.join(', ')}
+                    </p>
+                  </div>
+                  {importSession.fullDataset.metadata.srid && (
+                    <div>
+                      <p className="text-sm font-medium">Coordinate System</p>
+                      <p className="text-sm text-muted-foreground">
+                        EPSG:{importSession.fullDataset.metadata.srid}
+                      </p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-sm font-medium">Properties</p>
+                    <p className="text-sm text-muted-foreground">
+                      {importSession.fullDataset.metadata.properties.length} columns
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         <DialogFooter>
@@ -156,14 +263,8 @@ export function GeoImportDialog({
             Cancel
           </Button>
           <Button
-            onClick={() => handleImportSessionCreated({
-              fileId: '',
-              status: 'idle',
-              fullDataset: null,
-              previewDataset: null,
-              selectedFeatureIndices: []
-            })}
-            disabled={!fileInfo || isProcessing}
+            onClick={handleImport}
+            disabled={!importSession?.fullDataset || !selectedFeatureIds.length || isProcessing}
           >
             {isProcessing ? (
               <>
@@ -171,7 +272,7 @@ export function GeoImportDialog({
                 Importing...
               </>
             ) : (
-              'Import'
+              `Import ${selectedFeatureIds.length} Features`
             )}
           </Button>
         </DialogFooter>

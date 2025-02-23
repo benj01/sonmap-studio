@@ -3,6 +3,7 @@ import { FullDataset, GeoFeature } from '@/types/geo-import';
 import { read } from 'shapefile';
 import array from 'array-source';
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon } from 'geojson';
+import proj4 from 'proj4';
 
 /**
  * Gets coordinates from a GeoJSON geometry
@@ -27,39 +28,41 @@ function getCoordinates(geometry: Geometry): number[] {
 }
 
 /**
- * Updates bounds based on coordinates
+ * Updates bounds with new coordinates
  */
-function updateBounds(bounds: [number, number, number, number] | undefined, coords: number[]): [number, number, number, number] | undefined {
-  if (coords.length < 2) return bounds;
+function updateBounds(bounds: [number, number, number, number] | undefined, coords: number[]): [number, number, number, number] {
+  if (coords.length < 2) return bounds || [0, 0, 0, 0];
   
-  const coordPairs: [number, number][] = [];
+  const [minX, minY, maxX, maxY] = bounds || [Infinity, Infinity, -Infinity, -Infinity];
+  let newBounds: [number, number, number, number] = [minX, minY, maxX, maxY];
+  
   for (let i = 0; i < coords.length; i += 2) {
-    if (i + 1 < coords.length) {
-      coordPairs.push([coords[i], coords[i + 1]]);
-    }
+    const x = coords[i];
+    const y = coords[i + 1];
+    if (x < newBounds[0]) newBounds[0] = x;
+    if (y < newBounds[1]) newBounds[1] = y;
+    if (x > newBounds[2]) newBounds[2] = x;
+    if (y > newBounds[3]) newBounds[3] = y;
   }
+  
+  return newBounds;
+}
 
-  if (coordPairs.length === 0) return bounds;
-
-  if (!bounds) {
-    const [x, y] = coordPairs[0];
-    bounds = [x, y, x, y];
-  }
-
-  for (const [x, y] of coordPairs) {
-    bounds[0] = Math.min(bounds[0], x);
-    bounds[1] = Math.min(bounds[1], y);
-    bounds[2] = Math.max(bounds[2], x);
-    bounds[3] = Math.max(bounds[3], y);
-  }
-
-  return bounds;
+// Update the metadata type to include srid
+interface ShapefileMetadata {
+  featureCount: number;
+  bounds?: [number, number, number, number];
+  geometryTypes: string[];
+  properties: string[];
+  srid?: number;
 }
 
 /**
  * Parser for ESRI Shapefiles
  */
 export class ShapefileParser extends BaseGeoDataParser {
+  private srid?: number;
+
   /**
    * Parse a Shapefile and its companion files
    */
@@ -77,18 +80,40 @@ export class ShapefileParser extends BaseGeoDataParser {
         message: 'Starting Shapefile parsing'
       });
 
+      // Validate companion files
+      if (!companionFiles || !companionFiles['.dbf']) {
+        throw new InvalidFileFormatError('shapefile', 'Missing required .dbf file');
+      }
+
+      // Try to read projection from .prj file
+      if (companionFiles && companionFiles['.prj']) {
+        try {
+          const prjContent = new TextDecoder().decode(companionFiles['.prj']);
+          this.srid = this.parsePrjFile(prjContent);
+          
+          this.reportProgress(onProgress, {
+            phase: 'parsing',
+            progress: 5,
+            message: `Detected coordinate system: EPSG:${this.srid}`
+          });
+        } catch (error) {
+          console.warn('Failed to parse .prj file:', error);
+        }
+      }
+
       // Parse shapefile
       const features: GeoFeature[] = [];
       let featuresProcessed = 0;
       let metadata = {
         featureCount: 0,
         geometryTypes: new Set<string>(),
-        properties: [] as string[]
+        properties: [] as string[],
+        srid: this.srid
       };
 
       // Create array sources
       const shpSource = array(mainFile);
-      const dbfSource = companionFiles?.['.dbf'] ? array(companionFiles['.dbf']) : undefined;
+      const dbfSource = array(companionFiles['.dbf']);
 
       // Read features
       const source = await read(shpSource, dbfSource);
@@ -96,6 +121,21 @@ export class ShapefileParser extends BaseGeoDataParser {
         type: 'FeatureCollection',
         features: []
       };
+
+      // Count total features for progress reporting
+      let totalFeatures = 0;
+      const countSource = await read(array(mainFile), array(companionFiles['.dbf']));
+      while (true) {
+        const result = await countSource.read();
+        if (result.done) break;
+        totalFeatures++;
+      }
+
+      this.reportProgress(onProgress, {
+        phase: 'parsing',
+        progress: 10,
+        message: `Found ${totalFeatures} features`
+      });
 
       // Read all features and calculate bounds
       let bounds: [number, number, number, number] | undefined;
@@ -111,11 +151,6 @@ export class ShapefileParser extends BaseGeoDataParser {
           const coords = getCoordinates(feature.geometry);
           bounds = updateBounds(bounds, coords);
         }
-      }
-
-      // Process features
-      for (const feature of collection.features) {
-        if (!feature.geometry) continue;
 
         // Get properties from first feature
         if (featuresProcessed === 0) {
@@ -137,13 +172,13 @@ export class ShapefileParser extends BaseGeoDataParser {
         featuresProcessed++;
 
         // Report progress periodically
-        if (onProgress && featuresProcessed % 100 === 0) {
+        if (onProgress && featuresProcessed % Math.max(1, Math.floor(totalFeatures / 100)) === 0) {
           this.reportProgress(onProgress, {
             phase: 'parsing',
-            progress: (featuresProcessed / collection.features.length) * 100,
-            message: `Parsed ${featuresProcessed} features`,
+            progress: 10 + (featuresProcessed / totalFeatures * 90),
+            message: `Parsed ${featuresProcessed} of ${totalFeatures} features`,
             featuresProcessed,
-            totalFeatures: collection.features.length
+            totalFeatures
           });
         }
 
@@ -163,9 +198,18 @@ export class ShapefileParser extends BaseGeoDataParser {
         metadata: {
           ...metadata,
           geometryTypes: Array.from(metadata.geometryTypes),
-          bounds
+          bounds,
+          srid: this.srid
         }
       };
+
+      this.reportProgress(onProgress, {
+        phase: 'processing',
+        progress: 100,
+        message: `Successfully parsed ${featuresProcessed} features`,
+        featuresProcessed,
+        totalFeatures
+      });
 
       return dataset;
     } catch (error) {
@@ -200,6 +244,12 @@ export class ShapefileParser extends BaseGeoDataParser {
       const result = await source.read();
       if (result.done) {
         throw new Error('Shapefile is empty');
+      }
+
+      // Validate feature structure
+      const feature = result.value as Feature<Geometry, GeoJsonProperties>;
+      if (!feature || !feature.geometry) {
+        throw new Error('Invalid feature structure');
       }
 
       return true;
@@ -259,17 +309,64 @@ export class ShapefileParser extends BaseGeoDataParser {
         }
       }
 
+      // Try to read projection from .prj file
+      let srid: number | undefined;
+      if (companionFiles && companionFiles['.prj']) {
+        try {
+          const prjContent = new TextDecoder().decode(companionFiles['.prj']);
+          srid = this.parsePrjFile(prjContent);
+        } catch (error) {
+          console.warn('Failed to parse .prj file:', error);
+        }
+      }
+
       return {
         featureCount,
         bounds,
         geometryTypes: [geometryType],
         properties,
-        srid: undefined  // Shapefile doesn't store SRID in the file
+        srid
       };
     } catch (error) {
       throw new InvalidFileFormatError('shapefile', 
         error instanceof Error ? error.message : 'Failed to read metadata'
       );
+    }
+  }
+
+  /**
+   * Parse a .prj file and return the SRID if possible
+   */
+  private parsePrjFile(prjContent: string): number | undefined {
+    try {
+      // Common EPSG codes and their WKT patterns
+      const wktPatterns: Record<number, RegExp> = {
+        4326: /GEOGCS.*WGS.*84/i,
+        3857: /PROJCS.*Web.*Mercator/i,
+        // Add more common projections as needed
+      };
+
+      // Try to match against known patterns
+      for (const [epsg, pattern] of Object.entries(wktPatterns)) {
+        if (pattern.test(prjContent)) {
+          return parseInt(epsg);
+        }
+      }
+
+      // If no match found, try to parse with proj4
+      const def = proj4.defs(prjContent);
+      if (def && typeof def === 'string') {
+        // Extract EPSG code if available
+        const epsgMatch = /EPSG:(\d+)/i.exec(def);
+        if (epsgMatch) {
+          return parseInt(epsgMatch[1]);
+        }
+      }
+
+      return undefined;
+    } catch (error) {
+      console.warn('Failed to parse PRJ file:', error);
+      return undefined;
     }
   }
 } 

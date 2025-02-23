@@ -35,6 +35,7 @@ export interface FullDataset {
     featureCount: number;
     geometryTypes: string[];
     properties: string[];
+    srid?: number;  // Coordinate system EPSG code
   };
 }
 
@@ -81,4 +82,5 @@ export interface CreateImportSessionParams {
   fileName: string;
   fileType: string;
   fullDataset?: FullDataset;
+  previewDataset?: PreviewDataset;
 } 

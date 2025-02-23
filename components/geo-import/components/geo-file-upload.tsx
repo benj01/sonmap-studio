@@ -2,21 +2,28 @@
 
 import { useState, useEffect } from 'react';
 import { useGeoImport } from '../hooks/use-geo-import';
-import type { ImportSession } from '@/types/geo-import';
+import type { ImportSession, FullDataset } from '@/types/geo-import';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { AlertCircle } from 'lucide-react';
+import { AlertCircle, Loader2 } from 'lucide-react';
 import { ShapefileParser } from '@/core/processors/shapefile-parser';
+import { generatePreview } from '@/core/processors/preview-generator';
 import { createClient } from '@/utils/supabase/client';
+import { Progress } from '@/components/ui/progress';
 
 interface GeoFileUploadProps {
   projectId: string;
-  fileInfo: {
+  fileInfo?: {
     id: string;
     name: string;
     size: number;
     type: string;
   };
   onImportSessionCreated?: (session: ImportSession) => void;
+}
+
+interface CompanionFile {
+  id: string;
+  extension: string;
 }
 
 /**
@@ -29,6 +36,8 @@ export function GeoFileUpload({
 }: GeoFileUploadProps) {
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState<string>('');
   const { createImportSession } = useGeoImport();
   const supabase = createClient();
 
@@ -45,31 +54,98 @@ export function GeoFileUpload({
     return await data.arrayBuffer();
   };
 
+  const findCompanionFiles = async (baseName: string): Promise<CompanionFile[]> => {
+    const companions: CompanionFile[] = [];
+    const extensions = ['.dbf', '.shx', '.prj'];
+
+    // List files in the project directory
+    const { data: files, error } = await supabase
+      .storage
+      .from('project-files')
+      .list(projectId);
+
+    if (error) {
+      console.warn('Failed to list files:', error);
+      return companions;
+    }
+
+    // Find companion files with matching base name
+    for (const file of files) {
+      for (const ext of extensions) {
+        if (file.name === baseName + ext) {
+          companions.push({
+            id: file.id,
+            extension: ext
+          });
+          break;
+        }
+      }
+    }
+
+    return companions;
+  };
+
   const handleParseFile = async () => {
+    if (!fileInfo?.id) return;
+
     setError(null);
     setIsProcessing(true);
+    setProgress(0);
+    setProgressMessage('Starting file processing...');
 
     try {
-      // Download the file from Supabase storage
-      const fileData = await downloadFile(fileInfo.id);
+      // Get base name for finding companion files
+      const baseName = fileInfo.name.replace(/\.shp$/, '');
+      
+      // Download main file
+      setProgressMessage('Downloading main file...');
+      const mainFileData = await downloadFile(fileInfo.id);
 
+      // Find and download companion files
+      setProgressMessage('Looking for companion files...');
+      const companionFiles = await findCompanionFiles(baseName);
+      
+      // Download companion files
+      const companions: Record<string, ArrayBuffer> = {};
+      for (const companion of companionFiles) {
+        setProgressMessage(`Downloading ${companion.extension} file...`);
+        companions[companion.extension] = await downloadFile(companion.id);
+      }
+
+      setProgressMessage('Creating parser...');
       // Create a parser instance
       const parser = new ShapefileParser();
 
       // Parse the file
-      const fullDataset = await parser.parse(fileData, undefined, {
-        maxFeatures: 1000 // Limit for initial testing
+      const fullDataset = await parser.parse(mainFileData, companions, {
+        maxFeatures: 10000 // Increased limit for full dataset
       }, (event) => {
-        console.log('Parse progress:', event);
+        setProgress(event.progress * 0.7); // 70% for parsing
+        if (event.message) {
+          setProgressMessage(event.message);
+        }
       });
 
+      // Generate preview dataset
+      setProgressMessage('Generating preview...');
+      setProgress(75);
+      const previewDataset = generatePreview(fullDataset, {
+        maxFeatures: 500,
+        simplificationTolerance: 0.00001,
+        randomSampling: true
+      });
+      setProgress(85);
+
       // Create import session
+      setProgressMessage('Creating import session...');
       const session = await createImportSession({
         fileId: fileInfo.id,
         fileName: fileInfo.name,
         fileType: fileInfo.type,
-        fullDataset
+        fullDataset,
+        previewDataset
       });
+      setProgress(100);
 
       onImportSessionCreated?.(session);
     } catch (error) {
@@ -83,7 +159,7 @@ export function GeoFileUpload({
   // Start parsing when component mounts
   useEffect(() => {
     handleParseFile();
-  }, [fileInfo.id]);
+  }, [fileInfo?.id]);
 
   return (
     <div className="w-full space-y-4">
@@ -95,8 +171,12 @@ export function GeoFileUpload({
       )}
       
       {isProcessing && (
-        <div className="text-sm text-muted-foreground">
-          Parsing file and creating import session...
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>{progressMessage}</span>
+          </div>
+          <Progress value={progress} className="h-2" />
         </div>
       )}
     </div>
