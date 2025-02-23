@@ -1,5 +1,21 @@
 import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
 import { FileTypeUtil } from './file-types';
+import { LogManager } from '@/core/logging/log-manager';
+
+const SOURCE = 'FileProcessor';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  warn: (message: string, error?: any) => {
+    logManager.warn(SOURCE, message, error);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  }
+};
 
 /**
  * Custom error for file processing
@@ -21,18 +37,26 @@ export class FileProcessor {
    * @returns Array of file groups
    */
   static async groupFiles(files: File[]): Promise<FileGroup[]> {
+    logger.info('Starting file grouping', {
+      fileCount: files.length,
+      files: files.map(f => ({ name: f.name, type: f.type }))
+    });
+    
     const groups: FileGroup[] = [];
     const remainingFiles = new Set(files);
     
     // First pass: identify main files
     for (const file of files) {
       if (FileTypeUtil.isMainGeoFile(file.name)) {
+        logger.info('Found main geo file', { fileName: file.name });
         const group: FileGroup = {
           mainFile: file,
           companions: []
         };
         groups.push(group);
         remainingFiles.delete(file);
+      } else {
+        logger.info('Skipping non-main file', { fileName: file.name });
       }
     }
 
@@ -40,17 +64,35 @@ export class FileProcessor {
     for (const group of groups) {
       const requiredCompanions = FileTypeUtil.getRequiredCompanions(group.mainFile.name);
       const baseFileName = group.mainFile.name.replace(/\.[^.]+$/, '');
+      
+      logger.info('Looking for companions', {
+        mainFile: group.mainFile.name,
+        requiredCompanions,
+        baseFileName
+      });
 
       for (const companion of Array.from(remainingFiles)) {
         const companionExt = FileTypeUtil.getExtension(companion.name);
         const companionBase = companion.name.replace(/\.[^.]+$/, '');
 
         if (companionBase === baseFileName && requiredCompanions.includes(companionExt)) {
+          logger.info('Found matching companion', {
+            mainFile: group.mainFile.name,
+            companion: companion.name
+          });
           group.companions.push(companion);
           remainingFiles.delete(companion);
         }
       }
     }
+
+    logger.info('File grouping complete', {
+      groupCount: groups.length,
+      groups: groups.map(g => ({
+        mainFile: g.mainFile.name,
+        companionCount: g.companions.length
+      }))
+    });
 
     return groups;
   }
@@ -62,6 +104,11 @@ export class FileProcessor {
    * @returns ProcessedFiles object
    */
   static async processFiles(mainFile: File, companions: File[]): Promise<ProcessedFiles> {
+    logger.info('Processing file group', {
+      mainFile: mainFile.name,
+      companions: companions.map(c => c.name)
+    });
+
     const processedMain = await this.processFile(mainFile);
     const processedCompanions: ProcessedFile[] = [];
 
@@ -69,6 +116,19 @@ export class FileProcessor {
       const processed = await this.processFile(companion);
       processedCompanions.push(processed);
     }
+
+    logger.info('File processing complete', {
+      mainFile: {
+        name: processedMain.file.name,
+        isValid: processedMain.isValid,
+        error: processedMain.error
+      },
+      companions: processedCompanions.map(c => ({
+        name: c.file.name,
+        isValid: c.isValid,
+        error: c.error
+      }))
+    });
 
     return {
       main: processedMain,
@@ -83,25 +143,37 @@ export class FileProcessor {
    */
   private static async processFile(file: File): Promise<ProcessedFile> {
     try {
+      logger.info('Processing individual file', { fileName: file.name });
       const config = FileTypeUtil.getConfigForFile(file.name);
       let isValid = true;
       let error: string | undefined;
 
       if (config?.validateContent) {
         try {
+          logger.info('Validating file content', { fileName: file.name });
           isValid = await config.validateContent(file);
           if (!isValid) {
             error = 'File content validation failed';
+            logger.warn('File content validation failed', { fileName: file.name });
           }
         } catch (e) {
           isValid = false;
           error = e instanceof Error ? e.message : 'Validation error';
+          logger.error('File validation error', {
+            fileName: file.name,
+            error: error
+          });
         }
       }
 
       if (config?.maxSize && file.size > config.maxSize) {
         isValid = false;
         error = `File size exceeds maximum allowed size of ${config.maxSize} bytes`;
+        logger.warn('File size validation failed', {
+          fileName: file.name,
+          size: file.size,
+          maxSize: config.maxSize
+        });
       }
 
       return {
@@ -112,6 +184,10 @@ export class FileProcessor {
         error
       };
     } catch (e) {
+      logger.error('File processing error', {
+        fileName: file.name,
+        error: e instanceof Error ? e.message : 'Unknown error'
+      });
       throw new FileProcessingError(
         e instanceof Error ? e.message : 'Failed to process file',
         'PROCESSING_ERROR'

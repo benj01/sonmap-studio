@@ -1,5 +1,9 @@
 import React, { useRef } from 'react';
 import { FileTypeUtil } from '../../utils/file-types';
+import { createLogger } from '../../utils/logger';
+
+const SOURCE = 'FileUploader';
+const logger = createLogger(SOURCE);
 
 interface FileUploaderProps {
   onFilesSelected: (files: File[]) => void;
@@ -17,16 +21,40 @@ export function FileUploader({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
 
+  // Log component render and props
+  React.useEffect(() => {
+    logger.info('FileUploader rendered', {
+      disabled,
+      acceptedTypes: acceptedFileTypes,
+      maxFileSize
+    });
+  }, [disabled, acceptedFileTypes, maxFileSize]);
+
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
+    logger.info('handleFileChange triggered', {
+      hasFiles: !!files,
+      fileCount: files?.length || 0,
+      inputValue: event.target.value
+    });
+
     if (files && files.length > 0) {
+      logger.info('Files selected', {
+        count: files.length,
+        names: Array.from(files).map(f => f.name)
+      });
       onFilesSelected(Array.from(files));
+      
+      // Reset input and log
+      logger.info('Resetting file input');
+      event.target.value = '';
     }
   };
 
   const handleDragOver = (event: React.DragEvent) => {
     event.preventDefault();
     if (!disabled) {
+      logger.info('File drag over');
       dropZoneRef.current?.classList.add('border-blue-500');
     }
   };
@@ -39,16 +67,37 @@ export function FileUploader({
     event.preventDefault();
     dropZoneRef.current?.classList.remove('border-blue-500');
 
-    if (disabled) return;
+    logger.info('File drop event', {
+      disabled,
+      fileCount: event.dataTransfer.files.length
+    });
+
+    if (disabled) {
+      logger.warn('Drop ignored - uploader is disabled');
+      return;
+    }
 
     const files = Array.from(event.dataTransfer.files);
     if (files.length > 0) {
+      logger.info('Files dropped', {
+        count: files.length,
+        names: files.map(f => f.name)
+      });
       onFilesSelected(files);
     }
   };
 
   const handleButtonClick = () => {
-    fileInputRef.current?.click();
+    logger.info('Upload button clicked', {
+      disabled,
+      inputRef: !!fileInputRef.current
+    });
+
+    if (fileInputRef.current) {
+      // Reset and click
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
   };
 
   const acceptString = acceptedFileTypes?.join(',') || 

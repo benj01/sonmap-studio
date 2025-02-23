@@ -17,37 +17,12 @@ const logger = {
   }
 };
 
-export async function GET(request: Request) {
+export async function POST(request: Request) {
   logger.info('Starting upload-url endpoint');
   
   try {
-    logger.info('Parsing URL...');
-    let url: URL;
-    try {
-      url = new URL(request.url);
-    } catch (e) {
-      logger.error('Failed to parse request URL', e);
-      return NextResponse.json(
-        { error: 'Invalid request URL' },
-        { status: 400 }
-      );
-    }
-
-    logger.info('Getting search params...');
-    let searchParams: URLSearchParams;
-    try {
-      searchParams = url.searchParams;
-    } catch (e) {
-      logger.error('Failed to get search params', e);
-      return NextResponse.json(
-        { error: 'Invalid search parameters' },
-        { status: 400 }
-      );
-    }
-
-    logger.info('Extracting filename and projectId...');
-    const filename = searchParams.get('filename');
-    const projectId = searchParams.get('projectId');
+    const body = await request.json();
+    const { filename, projectId } = body;
 
     logger.info('Upload URL request', { filename, projectId });
 

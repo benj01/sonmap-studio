@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useCallback } from 'react';
 
 interface ToolbarProps {
   onFileSelect: (files: FileList) => void;
@@ -7,17 +7,51 @@ interface ToolbarProps {
 
 export function Toolbar({ onFileSelect, isProcessing }: ToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const processingRef = useRef(false);
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    // Prevent duplicate processing
+    if (processingRef.current) {
+      console.info('[Toolbar] Skipping duplicate file change event');
+      return;
+    }
+
+    console.info('[Toolbar] File input change event', {
+      hasFiles: !!event.target.files,
+      fileCount: event.target.files?.length || 0
+    });
+
     const files = event.target.files;
     if (files && files.length > 0) {
+      processingRef.current = true;
+      console.info('[Toolbar] Files selected', {
+        count: files.length,
+        names: Array.from(files).map(f => f.name)
+      });
       onFileSelect(files);
+      
+      // Reset processing flag after a short delay
+      setTimeout(() => {
+        processingRef.current = false;
+      }, 1000);
+      
+      // Reset input value to allow selecting the same file again
+      event.target.value = '';
     }
-  };
+  }, [onFileSelect]);
 
-  const handleButtonClick = () => {
+  const handleButtonClick = useCallback(() => {
+    if (isProcessing || processingRef.current) {
+      console.info('[Toolbar] Skipping button click - processing in progress');
+      return;
+    }
+    
+    console.info('[Toolbar] Select Files button clicked', {
+      isProcessing,
+      hasInputRef: !!fileInputRef.current
+    });
     fileInputRef.current?.click();
-  };
+  }, [isProcessing]);
 
   return (
     <div className="flex items-center gap-4">

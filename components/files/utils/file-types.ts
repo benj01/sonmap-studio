@@ -41,12 +41,41 @@ export class FileTypeUtil {
       companionFiles: [],
       validateContent: async (file: File) => {
         try {
-          const sample = await file.slice(0, 1024).text();
-          const json = JSON.parse(sample);
-          return json.type === 'FeatureCollection' || 
-                 json.type === 'Feature' || 
-                 ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'].includes(json.type);
-        } catch {
+          // Read the entire file
+          const content = await file.text();
+          let json;
+          try {
+            json = JSON.parse(content);
+          } catch (e) {
+            console.warn('[FileTypeUtil] Failed to parse GeoJSON', e);
+            return false;
+          }
+
+          // Check if it's a valid GeoJSON object
+          const isValidType = json.type === 'FeatureCollection' || 
+                            json.type === 'Feature' || 
+                            ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'].includes(json.type);
+
+          if (!isValidType) {
+            console.warn('[FileTypeUtil] Invalid GeoJSON type', { type: json.type });
+            return false;
+          }
+
+          // For FeatureCollection, check if it has features array
+          if (json.type === 'FeatureCollection' && !Array.isArray(json.features)) {
+            console.warn('[FileTypeUtil] FeatureCollection missing features array');
+            return false;
+          }
+
+          // For Feature, check if it has geometry
+          if (json.type === 'Feature' && !json.geometry) {
+            console.warn('[FileTypeUtil] Feature missing geometry');
+            return false;
+          }
+
+          return true;
+        } catch (error) {
+          console.error('[FileTypeUtil] GeoJSON validation error', error);
           return false;
         }
       }

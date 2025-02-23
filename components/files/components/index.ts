@@ -5,7 +5,7 @@ export { EmptyState } from './manager/empty-state';
 export { Toolbar } from './manager/toolbar';
 
 // Upload components
-export { FileUpload } from './upload';
+export { S3FileUpload } from './upload';
 export { FileUploader } from './upload/file-uploader';
 export { UploadProgress } from './upload/upload-progress';
 export { UploadDialog } from './upload/upload-dialog';

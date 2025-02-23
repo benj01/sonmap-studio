@@ -86,14 +86,31 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     const supabase = createClient();
     
     try {
+      logger.info('Starting file upload transaction', {
+        fileName: uploadedFile.name,
+        fileType: uploadedFile.type,
+        fileSize: uploadedFile.size,
+        hasRelatedFiles: !!uploadedFile.relatedFiles
+      });
+
       // Start a transaction
       const { error: txError } = await supabase.rpc('begin_transaction');
-      if (txError) throw txError;
+      if (txError) {
+        logger.error('Failed to start transaction', txError);
+        throw txError;
+      }
+      logger.info('Transaction started successfully');
 
       try {
         const storagePath = `${projectId}/${uploadedFile.name}`;
         const isShapefile = uploadedFile.name.toLowerCase().endsWith('.shp');
         
+        logger.info('Inserting main file record', {
+          fileName: uploadedFile.name,
+          storagePath,
+          isShapefile
+        });
+
         // Insert main file record
         const { data: mainFile, error: mainError } = await supabase
           .from('project_files')
@@ -112,10 +129,25 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           .select()
           .single();
 
-        if (mainError) throw mainError;
+        if (mainError) {
+          logger.error('Failed to insert main file record', {
+            error: mainError,
+            fileName: uploadedFile.name
+          });
+          throw mainError;
+        }
+        logger.info('Main file record inserted successfully', {
+          fileId: mainFile.id,
+          fileName: mainFile.name
+        });
 
         // If this is a shapefile, insert companion file records
         if (isShapefile && uploadedFile.relatedFiles) {
+          logger.info('Processing companion files', {
+            mainFileId: mainFile.id,
+            companionCount: Object.keys(uploadedFile.relatedFiles).length
+          });
+
           const companionInserts = Object.entries(uploadedFile.relatedFiles).map(([ext, file]) => ({
             project_id: projectId,
             name: file.name,
@@ -132,12 +164,28 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             .from('project_files')
             .insert(companionInserts);
 
-          if (companionError) throw companionError;
+          if (companionError) {
+            logger.error('Failed to insert companion files', {
+              error: companionError,
+              mainFileId: mainFile.id,
+              companions: companionInserts.map(c => c.name)
+            });
+            throw companionError;
+          }
+          logger.info('Companion files inserted successfully', {
+            mainFileId: mainFile.id,
+            count: companionInserts.length
+          });
         }
 
+        logger.info('Committing transaction');
         // Commit transaction
         const { error: commitError } = await supabase.rpc('commit_transaction');
-        if (commitError) throw commitError;
+        if (commitError) {
+          logger.error('Failed to commit transaction', commitError);
+          throw commitError;
+        }
+        logger.info('Transaction committed successfully');
 
         await refreshProjectStorage();
 
@@ -148,11 +196,21 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         return mainFile;
       } catch (error) {
         // Rollback on any error
-        await supabase.rpc('rollback_transaction');
+        logger.warn('Error during transaction, rolling back', error);
+        const { error: rollbackError } = await supabase.rpc('rollback_transaction');
+        if (rollbackError) {
+          logger.error('Failed to rollback transaction', rollbackError);
+        } else {
+          logger.info('Transaction rolled back successfully');
+        }
         throw error;
       }
     } catch (error) {
-      logger.error('Error uploading file', error);
+      logger.error('Error uploading file', {
+        error,
+        fileName: uploadedFile.name,
+        stack: error instanceof Error ? error.stack : undefined
+      });
       onError?.('Failed to save uploaded file to the database');
       throw error;
     } finally {
