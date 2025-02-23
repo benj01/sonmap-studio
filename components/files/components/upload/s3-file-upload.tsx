@@ -110,6 +110,7 @@ export function S3FileUpload({
       });
 
       onUploadComplete?.(result);
+      console.log('Upload complete:', fileGroup.mainFile.name);
     } catch (error) {
       let errorMessage = 'Upload failed';
       if (error instanceof Error) {
@@ -125,6 +126,7 @@ export function S3FileUpload({
         }
       }
       setCurrentError(errorMessage);
+      console.error('Upload failed:', error);
       throw error;
     }
   };

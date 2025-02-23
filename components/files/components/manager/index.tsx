@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { UploadProgress } from '../upload/upload-progress';
 import { GeoImportDialog } from '@/components/geo-import/components/geo-import-dialog';
 import { FileTypeUtil } from '../../utils/file-types';
+import { LogManager } from '@/core/logging/log-manager';
 
 interface FileManagerProps {
   projectId: string;
@@ -19,6 +20,21 @@ interface FileManagerProps {
 interface ImportFileInfo extends ProjectFile {
   type: string;
 }
+
+const SOURCE = 'FileManager';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  warn: (message: string, error?: any) => {
+    logManager.warn(SOURCE, message, error);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  }
+};
 
 export function FileManager({ projectId, onFilesProcessed, onError }: FileManagerProps) {
   const { isProcessing, error, processFiles, processGroup } = useFileOperations();
@@ -89,8 +105,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleImportComplete = async (result: any) => {
     try {
-      // TODO: Handle the import result
-      console.log('Import completed:', result);
+      logger.info('Import completed', result);
       setImportDialogOpen(false);
       setSelectedFile(null);
     } catch (e) {
@@ -144,14 +159,14 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const uploadFile = async (file: File) => {
     try {
-      console.log('Requesting signed URL for:', file.name);
+      logger.info('Requesting signed URL', { fileName: file.name });
       const response = await fetch(
         `/api/storage/upload-url-new?filename=${encodeURIComponent(file.name)}&projectId=${encodeURIComponent(projectId)}`
       );
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error('Failed to get signed URL:', {
+        logger.error('Failed to get signed URL', {
           status: response.status,
           statusText: response.statusText,
           error: errorText
@@ -160,16 +175,16 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
 
       const data = await response.json();
-      console.log('Received signed URL response:', data);
+      logger.info('Received signed URL response', data);
 
       if (!data.data?.signedUrl) {
-        console.error('Invalid signed URL response:', data);
+        logger.error('Invalid signed URL response', data);
         throw new Error('Invalid signed URL response from server');
       }
 
       const { signedUrl } = data.data;
       
-      console.log('Uploading file using signed URL...');
+      logger.info('Uploading file using signed URL...');
       const xhr = new XMLHttpRequest();
       await new Promise((resolve, reject) => {
         xhr.upload.addEventListener('progress', (event) => {
@@ -181,10 +196,10 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         xhr.addEventListener('load', () => {
           if (xhr.status === 200) {
-            console.log('Upload successful');
+            logger.info('Upload successful');
             resolve(xhr.response);
           } else {
-            console.error('Upload failed:', {
+            logger.error('Upload failed', {
               status: xhr.status,
               response: xhr.responseText
             });
@@ -193,7 +208,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         });
 
         xhr.addEventListener('error', () => {
-          console.error('Upload error:', xhr.statusText);
+          logger.error('Upload error', xhr.statusText);
           reject(new Error(`Upload failed: ${xhr.statusText}`));
         });
 
@@ -202,7 +217,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         xhr.send(file);
       });
     } catch (error) {
-      console.error('Upload process error:', error);
+      logger.error('Upload process error', error);
       throw error;
     }
   };

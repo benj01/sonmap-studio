@@ -1,15 +1,16 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Download } from 'lucide-react';
 import { GeoFileUpload } from './geo-file-upload';
 import { LoaderResult, GeoFeature as LoaderGeoFeature } from '@/types/geo';
 import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-import';
 import { MapPreview } from './map-preview';
 import { FileTypeUtil } from '@/components/files/utils/file-types';
+import { LogManager } from '@/core/logging/log-manager';
 
 interface GeoImportDialogProps {
   projectId: string;
@@ -58,15 +59,21 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
+const SOURCE = 'GeoImportDialog';
+const logManager = LogManager.getInstance();
+
 const logger = {
   info: (message: string, data?: any) => {
-    console.log(`[GeoImportDialog] ${message}`, data || '');
+    logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
-    console.warn(`[GeoImportDialog] ⚠️ ${message}`, error || '');
+    logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
-    console.error(`[GeoImportDialog] 🔴 ${message}`, error || '');
+    logManager.error(SOURCE, message, error);
+  },
+  debug: (message: string, data?: any) => {
+    logManager.debug(SOURCE, message, data);
   }
 };
 
@@ -80,32 +87,68 @@ export function GeoImportDialog({
   const [isProcessing, setIsProcessing] = useState(false);
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
+  const [processedFiles] = useState(() => new Set<string>());
+
+  const memoizedFileInfo = useMemo(() => 
+    fileInfo ? {
+      id: fileInfo.name, // Use filename as stable ID
+      ...fileInfo
+    } : undefined
+  , [fileInfo?.name, fileInfo?.size, fileInfo?.type]);
+
+  // Reset state when dialog closes
+  useEffect(() => {
+    if (!open) {
+      setImportSession(null);
+      setSelectedFeatureIds([]);
+    }
+  }, [open]);
 
   // Log initial props and detect file type
   useEffect(() => {
-    if (fileInfo) {
-      const fileType = FileTypeUtil.getConfigForFile(fileInfo.name);
-      logger.info('Dialog mounted/updated with props:', {
+    if (memoizedFileInfo) {
+      const fileType = FileTypeUtil.getConfigForFile(memoizedFileInfo.name);
+      logger.debug('Dialog mounted/updated', {
         projectId,
         open,
-        fileInfo,
+        fileInfo: memoizedFileInfo,
         detectedType: fileType?.description
       });
     }
-  }, [projectId, open, fileInfo]);
+  }, [projectId, open, memoizedFileInfo]);
 
   const handleImportSessionCreated = async (session: ImportSession) => {
-    logger.info('Import session created:', session);
+    logger.debug('Import session created', session);
     setImportSession(session);
-    // Initially select all features
-    if (session.previewDataset?.features) {
-      const allFeatureIds = session.previewDataset.features.map(f => f.originalFeatureIndex);
+    // Initially select all features from the full dataset, not just preview
+    if (session.fullDataset?.features) {
+      const allFeatureIds = session.fullDataset.features.map(f => f.originalIndex || f.id);
       setSelectedFeatureIds(allFeatureIds);
+      if (memoizedFileInfo?.name) {
+        processedFiles.add(memoizedFileInfo.name);
+      }
+      logger.info('Selected all features', { count: allFeatureIds.length });
     }
   };
 
-  const handleFeaturesSelected = (featureIds: number[]) => {
-    setSelectedFeatureIds(featureIds);
+  const handleFeaturesSelected = (previewFeatureIds: number[]) => {
+    if (!importSession?.fullDataset) return;
+
+    // Map preview feature selections back to full dataset features
+    const selectedOriginalIds = importSession.previewDataset?.features
+      .filter(f => previewFeatureIds.includes(f.previewId))
+      .map(f => f.originalFeatureIndex);
+
+    // Get all feature IDs from the full dataset that match the selected preview features
+    const fullDatasetSelectedIds = importSession.fullDataset.features
+      .filter(f => selectedOriginalIds?.includes(f.originalIndex || f.id))
+      .map(f => f.originalIndex || f.id);
+
+    logger.debug('Features selection updated', { 
+      selectedCount: fullDatasetSelectedIds.length,
+      totalFeatures: importSession.fullDataset.features.length
+    });
+    setSelectedFeatureIds(fullDatasetSelectedIds);
   };
 
   const handleImport = async () => {
@@ -113,8 +156,9 @@ export function GeoImportDialog({
 
     try {
       setIsProcessing(true);
+      logger.info('Starting import process', { selectedCount: selectedFeatureIds.length });
       
-      // Filter the full dataset based on selected preview features
+      // Filter the full dataset based on selected feature IDs
       const selectedFeatures = importSession.fullDataset.features.filter(f => 
         selectedFeatureIds.includes(f.originalIndex || f.id)
       );
@@ -139,10 +183,13 @@ export function GeoImportDialog({
         }
       };
 
+      logger.debug('Import result prepared', result);
+      logger.info('Import result statistics', result.statistics);
       await onImportComplete(result);
+      logger.info('Import completed successfully');
       onOpenChange(false);
     } catch (error) {
-      console.error('Import failed:', error);
+      logger.error('Import failed', error);
       // In case of error, create a minimal valid LoaderResult
       await onImportComplete({
         features: [],
@@ -157,6 +204,12 @@ export function GeoImportDialog({
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleDownloadLogs = () => {
+    const logManager = LogManager.getInstance();
+    const filename = `sonmap-import-${fileInfo?.name || 'unknown'}-${new Date().toISOString()}.txt`;
+    logManager.downloadLogs(filename);
   };
 
   return (
@@ -285,27 +338,37 @@ export function GeoImportDialog({
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="flex justify-between items-center">
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
-            disabled={isProcessing}
+            onClick={handleDownloadLogs}
+            className="flex items-center gap-2"
           >
-            Cancel
+            <Download className="h-4 w-4" />
+            Download Logs
           </Button>
-          <Button
-            onClick={handleImport}
-            disabled={!importSession?.fullDataset || !selectedFeatureIds.length || isProcessing}
-          >
-            {isProcessing ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Importing...
-              </>
-            ) : (
-              `Import ${selectedFeatureIds.length} Features`
-            )}
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={isProcessing}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleImport}
+              disabled={!importSession?.fullDataset || !selectedFeatureIds.length || isProcessing}
+            >
+              {isProcessing ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Importing...
+                </>
+              ) : (
+                `Import ${selectedFeatureIds.length} Features`
+              )}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

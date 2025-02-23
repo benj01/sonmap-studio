@@ -4,7 +4,7 @@ import { GeoFeature, FullDataset } from '@/types/geo-import';
  * Progress event for parser operations
  */
 export interface ParserProgressEvent {
-  phase: 'reading' | 'parsing' | 'processing';
+  phase: 'reading' | 'parsing' | 'processing' | 'complete';
   progress: number;  // 0-100
   message?: string;
   featuresProcessed?: number;

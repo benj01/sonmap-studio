@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
-import { createClient } from 'utils/supabase/client';
+import { createClient } from '@/utils/supabase/client';
 import { ProjectFile, FileUploadResult } from '../types';
+import { LogManager } from '@/core/logging/log-manager';
 
 interface UseFileActionsProps {
   projectId: string;
@@ -12,6 +13,21 @@ interface CompanionFile {
   name: string;
   size: number;
 }
+
+const SOURCE = 'FileActions';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  warn: (message: string, error?: any) => {
+    logManager.warn(SOURCE, message, error);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  }
+};
 
 export function useFileActions({ projectId, onSuccess, onError }: UseFileActionsProps) {
   const [isLoading, setIsLoading] = useState(false);
@@ -41,7 +57,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       if (importError) throw importError;
 
       // Group imported files by their source file
-      const importedBySource = importedFiles?.reduce((acc, file) => {
+      const importedBySource = importedFiles?.reduce((acc: Record<string, ProjectFile[]>, file: ProjectFile) => {
         if (file.source_file_id) {
           if (!acc[file.source_file_id]) {
             acc[file.source_file_id] = [];
@@ -52,12 +68,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       }, {} as Record<string, ProjectFile[]>);
 
       // Attach imported files to their source files
-      return sourceFiles?.map(file => ({
+      return sourceFiles?.map((file: ProjectFile) => ({
         ...file,
         importedFiles: importedBySource[file.id] || []
       })) || [];
     } catch (error) {
-      console.error('Error loading files:', error);
+      logger.error('Error loading files', error);
       onError?.('Failed to load files');
       throw error;
     } finally {
@@ -136,7 +152,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         throw error;
       }
     } catch (error) {
-      console.error('Error uploading file:', error);
+      logger.error('Error uploading file', error);
       onError?.('Failed to save uploaded file to the database');
       throw error;
     } finally {
@@ -217,7 +233,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       onSuccess?.('File imported and converted to GeoJSON successfully');
       return importedFile;
     } catch (error) {
-      console.error('Import error:', error);
+      logger.error('Import error', error);
       onError?.(error instanceof Error ? error.message : 'Failed to import and convert file');
       throw error;
     } finally {
@@ -243,7 +259,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         if (mainFileError) throw mainFileError;
         if (!fileToDelete) throw new Error('File not found');
 
-        console.log('Main file to delete:', {
+        logger.info('Main file to delete', {
           id: fileToDelete.id,
           name: fileToDelete.name,
           project_id: fileToDelete.project_id,
@@ -258,7 +274,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
 
         if (companionError) throw companionError;
 
-        console.log('Companion files:', companionFiles?.map(f => ({
+        logger.info('Companion files', companionFiles?.map((f: ProjectFile) => ({
           id: f.id,
           name: f.name,
           project_id: f.project_id,
@@ -271,18 +287,18 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           .list(fileToDelete.project_id);
 
         if (listError) {
-          console.error('Error listing bucket files:', listError);
+          logger.error('Error listing bucket files', listError);
         } else {
-          console.log('Files in bucket:', bucketFiles);
+          logger.info('Files in bucket', bucketFiles);
         }
 
         // Use the storage_path directly from the database records
         const storagePaths = [
           fileToDelete.storage_path,
-          ...(companionFiles || []).map(f => f.storage_path)
+          ...(companionFiles || []).map((f: ProjectFile) => f.storage_path)
         ];
 
-        console.log('Attempting to delete storage paths:', storagePaths);
+        logger.info('Attempting to delete storage paths', storagePaths);
 
         // Delete from storage first
         const { error: storageError } = await supabase.storage
@@ -290,11 +306,11 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           .remove(storagePaths);
         
         if (storageError) {
-          console.error('Failed to delete files from storage:', storageError);
+          logger.error('Failed to delete files from storage', storageError);
           throw storageError;
         }
 
-        console.log('Storage deletion completed successfully');
+        logger.info('Storage deletion completed successfully');
 
         // Delete from database (cascade will handle companion files)
         const { error: dbError } = await supabase
@@ -304,7 +320,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
 
         if (dbError) throw dbError;
 
-        console.log('Database deletion completed successfully');
+        logger.info('Database deletion completed successfully');
 
         // Commit transaction
         const { error: commitError } = await supabase.rpc('commit_transaction');
@@ -318,7 +334,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         throw error;
       }
     } catch (error) {
-      console.error('Delete error:', error);
+      logger.error('Delete error', error);
       onError?.(error instanceof Error ? error.message : 'Failed to delete file');
       throw error;
     } finally {
@@ -357,7 +373,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             .createSignedUrl(companionPath, 60);
 
           if (companionError) {
-            console.error(`Failed to get URL for companion file ${ext}:`, companionError);
+            logger.error(`Failed to get URL for companion file ${ext}`, companionError);
             continue;
           }
 
@@ -395,7 +411,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
 
       onSuccess?.('Files downloaded successfully');
     } catch (error) {
-      console.error('Download error:', error);
+      logger.error('Download error', error);
       onError?.(error instanceof Error ? error.message : 'Failed to download file');
       throw error;
     } finally {
@@ -412,9 +428,9 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         .single();
 
       if (error) throw error;
-      console.log('Updated storage usage:', data.storage_used);
+      logger.info('Updated storage usage', data.storage_used);
     } catch (error) {
-      console.error('Error refreshing storage:', error);
+      logger.error('Error refreshing storage', error);
     }
   }, [projectId, supabase]);
 

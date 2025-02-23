@@ -1,6 +1,7 @@
 import type { FullDataset, PreviewDataset, PreviewFeature, PreviewConfig } from '@/types/geo-import';
 import simplify from '@turf/simplify';
 import type { Feature, Geometry, GeoJsonProperties } from 'geojson';
+import { LogManager } from '@/core/logging/log-manager';
 
 const DEFAULT_CONFIG: Required<PreviewConfig> = {
   maxFeatures: 500,
@@ -8,15 +9,18 @@ const DEFAULT_CONFIG: Required<PreviewConfig> = {
   randomSampling: true
 };
 
+const SOURCE = 'PreviewGenerator';
+const logManager = LogManager.getInstance();
+
 const logger = {
   info: (message: string, data?: any) => {
-    console.log(`[PreviewGenerator] ${message}`, data || '');
+    logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
-    console.warn(`[PreviewGenerator] ⚠️ ${message}`, error || '');
+    logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
-    console.error(`[PreviewGenerator] 🔴 ${message}`, error || '');
+    logManager.error(SOURCE, message, error);
   }
 };
 

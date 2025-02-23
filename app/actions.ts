@@ -47,7 +47,7 @@ export const signUpAction = async (formData: FormData): Promise<NextResponse<Act
   });
 
   if (error) {
-    console.error(error.message, error?.code);
+    console.error('Sign up error:', error.message, error?.code);
     return errorResponse(error.message, error?.code);
   }
 
@@ -65,7 +65,7 @@ export const signInAction = async (formData: FormData): Promise<NextResponse<Act
   });
 
   if (error) {
-    console.error(error.message, error?.code);
+    console.error('Sign in error:', error.message, error?.code);
     return errorResponse(error.message, error?.code);
   }
 
@@ -89,7 +89,7 @@ export const forgotPasswordAction = async (formData: FormData): Promise<NextResp
   });
 
   if (error) {
-    console.error(error.message, error?.code);
+    console.error('Password reset error:', error.message, error?.code);
     return errorResponse("Could not reset password", error?.code);
   }
 
@@ -115,7 +115,7 @@ export const resetPasswordAction = async (formData: FormData): Promise<NextRespo
   });
 
   if (error) {
-    console.error(error.message, error?.code);
+    console.error('Password update error:', error.message, error?.code);
     return errorResponse("Password update failed", error?.code);
   }
 

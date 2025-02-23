@@ -7,8 +7,24 @@ import type {
   PreviewConfig,
   CreateImportSessionParams
 } from '@/types/geo-import';
+import { LogManager } from '@/core/logging/log-manager';
 
 const supabase = createClient();
+
+const SOURCE = 'GeoImport';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  warn: (message: string, error?: any) => {
+    logManager.warn(SOURCE, message, error);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  }
+};
 
 /**
  * Hook for managing geodata import sessions
@@ -21,14 +37,17 @@ export function useGeoImport() {
    * Creates a new import session for a file
    */
   const createImportSession = useCallback(async (params: CreateImportSessionParams): Promise<ImportSession> => {
+    logger.info('Creating import session', params);
+    
     const session: ImportSession = {
       fileId: params.fileId,
       status: params.fullDataset ? 'ready' : 'idle',
       fullDataset: params.fullDataset || null,
-      previewDataset: null,
+      previewDataset: params.previewDataset || null,
       selectedFeatureIndices: [],
     };
 
+    logger.info('Import session created', session);
     setCurrentSession(session);
     return session;
   }, []);

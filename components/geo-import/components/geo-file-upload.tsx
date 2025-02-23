@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useGeoImport } from '../hooks/use-geo-import';
 import type { ImportSession, FullDataset } from '@/types/geo-import';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -9,6 +9,7 @@ import { ShapefileParser } from '@/core/processors/shapefile-parser';
 import { generatePreview } from '@/core/processors/preview-generator';
 import { createClient } from '@/utils/supabase/client';
 import { Progress } from '@/components/ui/progress';
+import { LogManager } from '@/core/logging/log-manager';
 
 interface GeoFileUploadProps {
   projectId: string;
@@ -26,18 +27,24 @@ interface CompanionFile {
   extension: string;
 }
 
+const SOURCE = 'GeoFileUpload';
+const logManager = LogManager.getInstance();
+
 const logger = {
   info: (message: string, data?: any) => {
-    console.log(`[GeoFileUpload] ${message}`, data || '');
+    logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
-    console.warn(`[GeoFileUpload] ⚠️ ${message}`, error || '');
+    logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
-    console.error(`[GeoFileUpload] 🔴 ${message}`, error || '');
+    logManager.error(SOURCE, message, error);
   },
   progress: (message: string, progress: number) => {
-    console.log(`[GeoFileUpload] 📊 ${progress.toFixed(1)}% - ${message}`);
+    logManager.info(SOURCE, `${progress.toFixed(1)}% - ${message}`);
+  },
+  debug: (message: string, data?: any) => {
+    logManager.debug(SOURCE, message, data);
   }
 };
 
@@ -53,19 +60,44 @@ export function GeoFileUpload({
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState<string>('');
+  const [hasProcessed, setHasProcessed] = useState(false);
   const { createImportSession } = useGeoImport();
   const supabase = createClient();
+  const processedFiles = useRef(new Set<string>());
+  const lastProgress = useRef(-1);
+  const isProcessingRef = useRef(false);
+
+  // Memoize fileInfo to prevent unnecessary re-renders
+  const memoizedFileInfo = useMemo(() => {
+    if (!fileInfo?.id || !fileInfo.name || !fileInfo.type) return null;
+    return {
+      id: fileInfo.id,
+      name: fileInfo.name,
+      type: fileInfo.type,
+      size: fileInfo.size
+    };
+  }, [fileInfo?.id, fileInfo?.name, fileInfo?.type, fileInfo?.size]);
 
   // Log component mount and props
   useEffect(() => {
-    logger.info('Component mounted/updated with props:', {
+    logger.debug('Component mounted/updated with props:', {
       projectId,
       fileInfo
     });
   }, [projectId, fileInfo]);
 
+  // Throttle progress reporting
+  const reportProgress = useCallback((message: string, progress: number) => {
+    if (Math.abs(progress - lastProgress.current) >= 5) {
+      logger.debug(`Progress update: ${progress.toFixed(1)}% - ${message}`);
+      lastProgress.current = progress;
+      setProgress(progress);
+      setProgressMessage(message);
+    }
+  }, []);
+
   const downloadFile = async (fileId: string): Promise<ArrayBuffer> => {
-    logger.info(`Starting file download: ${fileId}`);
+    logger.info(`Downloading file: ${fileId}`);
     try {
       // First try to get the file path
       const { data: fileData, error: fileError } = await supabase
@@ -75,7 +107,7 @@ export function GeoFileUpload({
         .single();
 
       if (fileError || !fileData?.storage_path) {
-        logger.error('Failed to get file path', { fileId, error: fileError });
+        logger.error('Failed to get file path');
         throw new Error(`Failed to get file path: ${fileError?.message || 'File not found'}`);
       }
 
@@ -86,38 +118,32 @@ export function GeoFileUpload({
         .download(fileData.storage_path);
     
       if (error) {
-        logger.error('Failed to download file', { 
-          fileId, 
-          path: fileData.storage_path,
-          error 
-        });
+        logger.error('Failed to download file');
         throw new Error(`Failed to download file: ${error.message}`);
       }
 
       if (!data) {
-        logger.error('No data received from download', { fileId, path: fileData.storage_path });
+        logger.error('No data received from download');
         throw new Error('No data received from download');
       }
 
-      logger.info(`Successfully downloaded file: ${fileId}`, {
+      logger.debug('Download successful', {
         path: fileData.storage_path,
         size: data.size
       });
 
       return await data.arrayBuffer();
     } catch (error) {
-      logger.error('Download failed', { 
-        fileId, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      });
+      logger.error('Download failed');
       throw error;
     }
   };
 
-  const findCompanionFiles = async (baseName: string): Promise<CompanionFile[]> => {
-    logger.info(`Looking for companion files for: ${baseName}`);
+  const findCompanionFiles = useCallback(async (baseName: string): Promise<CompanionFile[]> => {
     const companions: CompanionFile[] = [];
     const extensions = ['.dbf', '.shx', '.prj'];
+
+    if (!memoizedFileInfo?.id) return companions;
 
     try {
       // Query the database directly for companion files
@@ -126,19 +152,20 @@ export function GeoFileUpload({
         .select('*')
         .eq('project_id', projectId)
         .eq('is_shapefile_component', true)
-        .eq('main_file_id', fileInfo?.id);
+        .eq('main_file_id', memoizedFileInfo.id);
 
       if (error) {
-        logger.warn('Failed to query companion files', error);
+        logger.warn('Failed to query companion files');
         return companions;
       }
-
-      logger.info('Found companion files in database:', files);
 
       // Map database results to companion files
       for (const file of (files || [])) {
         if (file.component_type && extensions.includes('.' + file.component_type)) {
-          logger.info(`Found companion file: ${file.name}`, file);
+          logger.debug('Found companion file', {
+            name: file.name,
+            type: file.component_type
+          });
           companions.push({
             id: file.id,
             extension: '.' + file.component_type
@@ -146,150 +173,106 @@ export function GeoFileUpload({
         }
       }
 
-      logger.info('Companion files mapped', {
-        baseName,
-        found: companions.map(c => ({
-          extension: c.extension,
-          id: c.id
-        }))
-      });
-
       return companions;
     } catch (error) {
       logger.error('Error finding companion files', error);
       return companions;
     }
-  };
+  }, [projectId, memoizedFileInfo?.id, supabase]);
 
-  const handleParseFile = async () => {
-    if (!fileInfo?.id) {
-      logger.warn('No file ID provided, cannot parse');
+  // Start parsing when component mounts or when fileInfo changes
+  useEffect(() => {
+    if (!memoizedFileInfo || isProcessingRef.current || hasProcessed || processedFiles.current.has(memoizedFileInfo.id)) {
       return;
     }
 
-    const startTime = Date.now();
-    logger.info('Starting file processing', fileInfo);
+    const parseFile = async () => {
+      if (isProcessingRef.current) return;
+      isProcessingRef.current = true;
+      setIsProcessing(true);
+      setError(null);
+      reportProgress('Starting file processing...', 0);
 
-    setError(null);
-    setIsProcessing(true);
-    setProgress(0);
-    setProgressMessage('Starting file processing...');
+      try {
+        // Get base name for finding companion files
+        const baseName = memoizedFileInfo.name.replace(/\.shp$/, '');
+        
+        // Download main file
+        reportProgress('Downloading main file...', 5);
+        const mainFileData = await downloadFile(memoizedFileInfo.id);
 
-    try {
-      // Get base name for finding companion files
-      const baseName = fileInfo.name.replace(/\.shp$/, '');
-      
-      // Download main file
-      setProgressMessage('Downloading main file...');
-      logger.progress('Downloading main file...', 5);
-      const mainFileData = await downloadFile(fileInfo.id);
-      logger.info('Main file downloaded', { size: mainFileData.byteLength });
+        // Find and download companion files
+        reportProgress('Looking for companion files...', 10);
+        const companionFiles = await findCompanionFiles(baseName);
+        
+        // Download companion files
+        const companions: Record<string, ArrayBuffer> = {};
+        let companionProgress = 15;
+        const progressPerFile = 10;
 
-      // Find and download companion files
-      setProgressMessage('Looking for companion files...');
-      logger.progress('Looking for companion files...', 10);
-      const companionFiles = await findCompanionFiles(baseName);
-      
-      // Download companion files
-      const companions: Record<string, ArrayBuffer> = {};
-      let companionProgress = 15;
-      const progressPerFile = 10;
-
-      for (const companion of companionFiles) {
-        setProgressMessage(`Downloading ${companion.extension} file...`);
-        logger.progress(`Downloading ${companion.extension} file...`, companionProgress);
-        companions[companion.extension] = await downloadFile(companion.id);
-        logger.info(`Companion file downloaded: ${companion.extension}`, {
-          size: companions[companion.extension].byteLength
-        });
-        companionProgress += progressPerFile;
-      }
-
-      setProgressMessage('Creating parser...');
-      logger.progress('Creating parser...', 40);
-      // Create a parser instance
-      const parser = new ShapefileParser();
-
-      // Parse the file
-      logger.info('Starting file parsing with companions:', {
-        mainFileSize: mainFileData.byteLength,
-        companions: Object.entries(companions).map(([ext, buf]) => ({
-          extension: ext,
-          size: buf.byteLength
-        }))
-      });
-
-      const fullDataset = await parser.parse(mainFileData, companions, {
-        maxFeatures: 10000 // Increased limit for full dataset
-      }, (event) => {
-        const currentProgress = 40 + (event.progress * 0.4); // 40-80% for parsing
-        setProgress(currentProgress);
-        if (event.message) {
-          setProgressMessage(event.message);
-          logger.progress(event.message, currentProgress);
+        for (const companion of companionFiles) {
+          reportProgress(`Downloading ${companion.extension} file...`, companionProgress);
+          companions[companion.extension] = await downloadFile(companion.id);
+          companionProgress += progressPerFile;
         }
-      });
 
-      logger.info('File parsing complete', {
-        features: fullDataset.features.length,
-        metadata: fullDataset.metadata
-      });
+        reportProgress('Creating parser...', 40);
+        const parser = new ShapefileParser();
 
-      // Generate preview dataset
-      setProgressMessage('Generating preview...');
-      logger.progress('Generating preview...', 80);
-      setProgress(80);
-      const previewDataset = generatePreview(fullDataset, {
-        maxFeatures: 500,
-        simplificationTolerance: 0.00001,
-        randomSampling: true
-      });
-      setProgress(90);
+        // Parse the file
+        const fullDataset = await parser.parse(mainFileData, companions, {
+          maxFeatures: 10000
+        }, (event) => {
+          const currentProgress = 40 + (event.progress * 0.4);
+          if (event.message) {
+            reportProgress(event.message, currentProgress);
+          }
+        });
 
-      logger.info('Preview generation complete', {
-        originalFeatures: fullDataset.features.length,
-        previewFeatures: previewDataset.features.length
-      });
+        // Generate preview dataset
+        reportProgress('Generating preview...', 80);
+        const previewDataset = generatePreview(fullDataset, {
+          maxFeatures: 500,
+          simplificationTolerance: 0.00001,
+          randomSampling: true
+        });
 
-      // Create import session
-      setProgressMessage('Creating import session...');
-      logger.progress('Creating import session...', 90);
-      const session = await createImportSession({
-        fileId: fileInfo.id,
-        fileName: fileInfo.name,
-        fileType: fileInfo.type,
-        fullDataset,
-        previewDataset
-      });
-      setProgress(100);
-      logger.progress('Import session created', 100);
+        // Create import session
+        reportProgress('Creating import session...', 90);
+        const session = await createImportSession({
+          fileId: memoizedFileInfo.id,
+          fileName: memoizedFileInfo.name,
+          fileType: memoizedFileInfo.type,
+          fullDataset,
+          previewDataset
+        });
 
-      const processingTime = Date.now() - startTime;
-      logger.info('Processing complete', {
-        processingTimeMs: processingTime,
-        featuresProcessed: fullDataset.features.length,
-        previewFeatures: previewDataset.features.length
-      });
+        reportProgress('Import session created', 100);
+        processedFiles.current.add(memoizedFileInfo.id);
+        setHasProcessed(true);
+        onImportSessionCreated?.(session);
+      } catch (error) {
+        logger.error('Failed to parse file', error);
+        setError(error instanceof Error ? error.message : 'Failed to parse file');
+      } finally {
+        isProcessingRef.current = false;
+        setIsProcessing(false);
+      }
+    };
 
-      onImportSessionCreated?.(session);
-    } catch (error) {
-      logger.error('Failed to parse file', error);
-      console.error('Failed to parse file:', error);
-      setError(error instanceof Error ? error.message : 'Failed to parse file');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
+    parseFile();
+  }, [memoizedFileInfo, hasProcessed, createImportSession, reportProgress]);
 
-  // Start parsing when component mounts
+  // Reset state when fileInfo changes
   useEffect(() => {
-    if (fileInfo?.id) {
-      logger.info('Starting file processing on mount', { fileId: fileInfo.id });
-      handleParseFile();
-    } else {
-      logger.warn('No file ID available, skipping parse');
+    if (memoizedFileInfo?.id && processedFiles.current.has(memoizedFileInfo.id)) {
+      return;
     }
-  }, [fileInfo?.id]);
+    setHasProcessed(false);
+    setProgress(0);
+    setProgressMessage('');
+    setError(null);
+  }, [memoizedFileInfo?.id]);
 
   return (
     <div className="w-full space-y-4">

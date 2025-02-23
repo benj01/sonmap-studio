@@ -1,8 +1,9 @@
 import { BaseGeoDataParser, ParserOptions, ParserProgressEvent, InvalidFileFormatError } from './base-parser';
 import { FullDataset, GeoFeature } from '@/types/geo-import';
 import { read } from 'shapefile';
-import type { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
+import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position } from 'geojson';
 import proj4 from 'proj4';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 /**
  * Gets coordinates from a GeoJSON geometry
@@ -23,6 +24,61 @@ function getCoordinates(geometry: Geometry): number[] {
       return geometry.geometries.flatMap(g => getCoordinates(g));
     default:
       return [];
+  }
+}
+
+/**
+ * Transform coordinates to WGS84
+ */
+function transformCoordinates(coords: Position, fromProj: string, logger: any): Position {
+  try {
+    return proj4(fromProj, 'EPSG:4326', coords);
+  } catch (error) {
+    logger.warn('Failed to transform coordinates:', error);
+    return coords;
+  }
+}
+
+/**
+ * Transform a GeoJSON geometry to WGS84
+ */
+function transformGeometry(geometry: Geometry, fromProj: string, logger: any): Geometry {
+  switch (geometry.type) {
+    case 'Point':
+      return {
+        ...geometry,
+        coordinates: transformCoordinates(geometry.coordinates, fromProj, logger)
+      };
+    case 'LineString':
+    case 'MultiPoint':
+      return {
+        ...geometry,
+        coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, fromProj, logger))
+      };
+    case 'Polygon':
+    case 'MultiLineString':
+      return {
+        ...geometry,
+        coordinates: geometry.coordinates.map(ring => 
+          ring.map(coord => transformCoordinates(coord, fromProj, logger))
+        )
+      };
+    case 'MultiPolygon':
+      return {
+        ...geometry,
+        coordinates: geometry.coordinates.map(polygon =>
+          polygon.map(ring => 
+            ring.map(coord => transformCoordinates(coord, fromProj, logger))
+          )
+        )
+      };
+    case 'GeometryCollection':
+      return {
+        ...geometry,
+        geometries: geometry.geometries.map(g => transformGeometry(g, fromProj, logger))
+      };
+    default:
+      return geometry;
   }
 }
 
@@ -61,18 +117,22 @@ interface ShapefileMetadata {
  */
 export class ShapefileParser extends BaseGeoDataParser {
   private srid?: number;
+  private projDef?: string;
+  private logManager = LogManager.getInstance();
+  private readonly SOURCE = 'ShapefileParser';
+
   private logger = {
     info: (message: string, data?: any) => {
-      console.log(`[ShapefileParser] ${message}`, data || '');
+      this.logManager.info(this.SOURCE, message, data);
     },
     warn: (message: string, error?: any) => {
-      console.warn(`[ShapefileParser] ⚠️ ${message}`, error || '');
+      this.logManager.warn(this.SOURCE, message, error);
     },
     error: (message: string, error?: any) => {
-      console.error(`[ShapefileParser] 🔴 ${message}`, error || '');
+      this.logManager.error(this.SOURCE, message, error);
     },
     progress: (message: string, progress: number) => {
-      console.log(`[ShapefileParser] 📊 ${progress.toFixed(1)}% - ${message}`);
+      this.logManager.info(this.SOURCE, `${progress.toFixed(1)}% - ${message}`);
     }
   };
 
@@ -104,12 +164,15 @@ export class ShapefileParser extends BaseGeoDataParser {
         throw new InvalidFileFormatError('shapefile', error);
       }
 
-      // Handle .prj file
+      // Handle .prj file and set up projection
       if (companionFiles['.prj']) {
         try {
           const prjContent = new TextDecoder().decode(companionFiles['.prj']);
+          this.projDef = prjContent;
           this.srid = this.parsePrjFile(prjContent);
-          this.logger.info(`Detected coordinate system: EPSG:${this.srid || 'unknown'}`);
+          this.logger.info(`Detected coordinate system: EPSG:${this.srid || 'unknown'}`, {
+            projDef: this.projDef
+          });
         } catch (error) {
           this.logger.warn('Failed to parse .prj file', error);
         }
@@ -123,6 +186,16 @@ export class ShapefileParser extends BaseGeoDataParser {
       this.logger.info('Shapefile parsed', {
         featureCount: geojson.features.length
       });
+
+      // Transform coordinates if projection is defined
+      if (this.projDef) {
+        this.logger.info('Transforming coordinates to WGS84...');
+        geojson.features = geojson.features.map(feature => ({
+          ...feature,
+          geometry: transformGeometry(feature.geometry, this.projDef!, this.logger)
+        }));
+        this.logger.info('Coordinate transformation complete');
+      }
 
       // Process GeoJSON into FullDataset
       const features: GeoFeature[] = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
@@ -159,9 +232,9 @@ export class ShapefileParser extends BaseGeoDataParser {
       };
 
       this.reportProgress(onProgress, {
-        phase: 'parsing',
+        phase: 'complete',
         progress: 100,
-        message: `Parsed ${features.length} features`
+        message: 'Parsing complete'
       });
 
       this.logger.info('Parse complete', dataset.metadata);
@@ -276,7 +349,7 @@ export class ShapefileParser extends BaseGeoDataParser {
 
       return undefined;
     } catch (error) {
-      console.warn('Failed to parse PRJ file:', error);
+      this.logger.warn('Failed to parse PRJ file:', error);
       return undefined;
     }
   }

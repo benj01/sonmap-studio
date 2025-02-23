@@ -1,6 +1,22 @@
 // utils/supabase/server-client.ts
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
+import { LogManager } from '@/core/logging/log-manager'
+
+const SOURCE = 'SupabaseServerClient'
+const logManager = LogManager.getInstance()
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  warn: (message: string, error?: any) => {
+    logManager.warn(SOURCE, message, error);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  }
+};
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -18,16 +34,14 @@ export async function createClient() {
           try {
             cookieStore.set({ name, value, ...options })
           } catch (error) {
-            // Handle cookie setting error
-            console.error('Error setting cookie:', error)
+            logger.error('Error setting cookie', { name, error })
           }
         },
         remove(name: string, options: any) {
           try {
             cookieStore.delete({ name, ...options })
           } catch (error) {
-            // Handle cookie removal error
-            console.error('Error removing cookie:', error)
+            logger.error('Error removing cookie', { name, error })
           }
         },
       },

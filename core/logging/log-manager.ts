@@ -321,7 +321,6 @@ export class LogManager {
       sanitizedDetails = details ? this.safeStringify(details) : undefined;
     } catch (error) {
       sanitizedDetails = '[Error: Could not stringify details]';
-      console.error('Error stringifying log details:', error);
     }
 
     const entry: LogEntry = {
@@ -338,30 +337,6 @@ export class LogManager {
     // Implement circular buffer if we exceed max logs
     if (this.logs.length > this.MAX_LOGS) {
       this.logs = this.logs.slice(-this.MAX_LOGS);
-    }
-    
-    // Always log to console in development mode
-    if (process.env.NODE_ENV === 'development') {
-      const consoleMessage = `[${timestamp}] [${levelStr}] [${source}] ${message}`;
-      
-      switch (level) {
-        case LogLevel.DEBUG:
-          console.debug(consoleMessage);
-          if (sanitizedDetails) console.debug('Details:', sanitizedDetails);
-          break;
-        case LogLevel.INFO:
-          console.info(consoleMessage);
-          if (sanitizedDetails) console.info('Details:', sanitizedDetails);
-          break;
-        case LogLevel.WARN:
-          console.warn(consoleMessage);
-          if (sanitizedDetails) console.warn('Details:', sanitizedDetails);
-          break;
-        case LogLevel.ERROR:
-          console.error(consoleMessage);
-          if (sanitizedDetails) console.error('Details:', sanitizedDetails);
-          break;
-      }
     }
   }
 
