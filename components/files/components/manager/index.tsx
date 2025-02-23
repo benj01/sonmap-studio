@@ -8,11 +8,16 @@ import { FileGroup, ProcessedFiles, ProjectFile } from '../../types';
 import { Button } from '@/components/ui/button';
 import { UploadProgress } from '../upload/upload-progress';
 import { GeoImportDialog } from '@/components/geo-import/components/geo-import-dialog';
+import { FileTypeUtil } from '../../utils/file-types';
 
 interface FileManagerProps {
   projectId: string;
   onFilesProcessed?: (files: ProcessedFiles) => void;
   onError?: (error: string) => void;
+}
+
+interface ImportFileInfo extends ProjectFile {
+  type: string;
 }
 
 export function FileManager({ projectId, onFilesProcessed, onError }: FileManagerProps) {
@@ -26,7 +31,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const [isUploading, setIsUploading] = React.useState(false);
   const [files, setFiles] = React.useState<ProjectFile[]>([]);
   const [importDialogOpen, setImportDialogOpen] = React.useState(false);
-  const [selectedFile, setSelectedFile] = React.useState<ProjectFile | null>(null);
+  const [selectedFile, setSelectedFile] = React.useState<ImportFileInfo | null>(null);
 
   // Load files on component mount
   React.useEffect(() => {
@@ -72,7 +77,12 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const handleFileImport = async (fileId: string) => {
     const file = files.find(f => f.id === fileId);
     if (file) {
-      setSelectedFile(file);
+      // Get the file type from the file name
+      const fileType = FileTypeUtil.getConfigForFile(file.name);
+      setSelectedFile({
+        ...file,
+        type: fileType?.mimeType || 'application/octet-stream'
+      });
       setImportDialogOpen(true);
     }
   };
@@ -254,9 +264,10 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         onOpenChange={setImportDialogOpen}
         onImportComplete={handleImportComplete}
         fileInfo={selectedFile ? {
+          id: selectedFile.id,
           name: selectedFile.name,
           size: selectedFile.size,
-          type: selectedFile.file_type
+          type: selectedFile.type
         } : undefined}
       />
     </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { GeoFileUpload } from './geo-file-upload';
 import { LoaderResult, GeoFeature as LoaderGeoFeature } from '@/types/geo';
 import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-import';
 import { MapPreview } from './map-preview';
+import { FileTypeUtil } from '@/components/files/utils/file-types';
 
 interface GeoImportDialogProps {
   projectId: string;
@@ -38,6 +39,17 @@ function convertFeature(feature: ImportGeoFeature): LoaderGeoFeature {
 }
 
 /**
+ * Get a descriptive name for the file type
+ */
+function getFileTypeDescription(fileName: string): string {
+  const extension = fileName.split('.').pop()?.toLowerCase();
+  if (!extension) return 'Unknown';
+  
+  const fileType = FileTypeUtil.getConfigForFile(fileName);
+  return fileType?.description || 'Unknown';
+}
+
+/**
  * Format file size in a human-readable way
  */
 function formatFileSize(bytes: number): string {
@@ -46,18 +58,17 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-/**
- * Get a human-readable file type description
- */
-function getFileTypeDescription(type: string): string {
-  const typeMap: Record<string, string> = {
-    'application/x-esri-shape': 'ESRI Shapefile',
-    'application/geo+json': 'GeoJSON',
-    'application/vnd.google-earth.kml+xml': 'KML',
-    'application/gpx+xml': 'GPX'
-  };
-  return typeMap[type] || type;
-}
+const logger = {
+  info: (message: string, data?: any) => {
+    console.log(`[GeoImportDialog] ${message}`, data || '');
+  },
+  warn: (message: string, error?: any) => {
+    console.warn(`[GeoImportDialog] ⚠️ ${message}`, error || '');
+  },
+  error: (message: string, error?: any) => {
+    console.error(`[GeoImportDialog] 🔴 ${message}`, error || '');
+  }
+};
 
 export function GeoImportDialog({
   projectId,
@@ -70,7 +81,21 @@ export function GeoImportDialog({
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
 
+  // Log initial props and detect file type
+  useEffect(() => {
+    if (fileInfo) {
+      const fileType = FileTypeUtil.getConfigForFile(fileInfo.name);
+      logger.info('Dialog mounted/updated with props:', {
+        projectId,
+        open,
+        fileInfo,
+        detectedType: fileType?.description
+      });
+    }
+  }, [projectId, open, fileInfo]);
+
   const handleImportSessionCreated = async (session: ImportSession) => {
+    logger.info('Import session created:', session);
     setImportSession(session);
     // Initially select all features
     if (session.previewDataset?.features) {
@@ -151,39 +176,45 @@ export function GeoImportDialog({
         
         <div className="grid gap-4 py-4">
           {fileInfo ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>File Information</CardTitle>
-                <CardDescription>
-                  Details about the file to be imported
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <p className="text-sm font-medium">Name</p>
-                    <p className="text-sm text-muted-foreground">{fileInfo.name}</p>
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>File Information</CardTitle>
+                  <CardDescription>
+                    Details about the file to be imported
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-sm font-medium">Name</p>
+                      <p className="text-sm text-muted-foreground">{fileInfo.name}</p>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium">Size</p>
+                      <p className="text-sm text-muted-foreground">
+                        {formatFileSize(fileInfo.size)}
+                      </p>
+                    </div>
+                    <div className="col-span-2">
+                      <p className="text-sm font-medium">Type</p>
+                      <p className="text-sm text-muted-foreground">
+                        {getFileTypeDescription(fileInfo.name)}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm font-medium">Size</p>
-                    <p className="text-sm text-muted-foreground">
-                      {formatFileSize(fileInfo.size)}
-                    </p>
-                  </div>
-                  <div className="col-span-2">
-                    <p className="text-sm font-medium">Type</p>
-                    <p className="text-sm text-muted-foreground">
-                      {getFileTypeDescription(fileInfo.type)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+              <GeoFileUpload
+                projectId={projectId}
+                fileInfo={fileInfo}
+                onImportSessionCreated={handleImportSessionCreated}
+              />
+            </>
           ) : (
-            <GeoFileUpload
-              projectId={projectId}
-              onImportSessionCreated={handleImportSessionCreated}
-            />
+            <div className="text-sm text-muted-foreground text-center p-4">
+              No file selected for import
+            </div>
           )}
 
           {/* Preview section */}

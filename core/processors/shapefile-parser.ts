@@ -1,8 +1,7 @@
 import { BaseGeoDataParser, ParserOptions, ParserProgressEvent, InvalidFileFormatError } from './base-parser';
 import { FullDataset, GeoFeature } from '@/types/geo-import';
 import { read } from 'shapefile';
-import array from 'array-source';
-import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon } from 'geojson';
+import type { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
 import proj4 from 'proj4';
 
 /**
@@ -62,6 +61,20 @@ interface ShapefileMetadata {
  */
 export class ShapefileParser extends BaseGeoDataParser {
   private srid?: number;
+  private logger = {
+    info: (message: string, data?: any) => {
+      console.log(`[ShapefileParser] ${message}`, data || '');
+    },
+    warn: (message: string, error?: any) => {
+      console.warn(`[ShapefileParser] ⚠️ ${message}`, error || '');
+    },
+    error: (message: string, error?: any) => {
+      console.error(`[ShapefileParser] 🔴 ${message}`, error || '');
+    },
+    progress: (message: string, progress: number) => {
+      console.log(`[ShapefileParser] 📊 ${progress.toFixed(1)}% - ${message}`);
+    }
+  };
 
   /**
    * Parse a Shapefile and its companion files
@@ -73,150 +86,91 @@ export class ShapefileParser extends BaseGeoDataParser {
     onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
     try {
-      // Report start of parsing
+      this.logger.info('Starting parse operation', {
+        mainFileSize: mainFile.byteLength,
+        companionFiles: companionFiles ? Object.keys(companionFiles) : [],
+        options
+      });
+
       this.reportProgress(onProgress, {
         phase: 'parsing',
         progress: 0,
         message: 'Starting Shapefile parsing'
       });
 
-      // Validate companion files
       if (!companionFiles || !companionFiles['.dbf']) {
-        throw new InvalidFileFormatError('shapefile', 'Missing required .dbf file');
+        const error = 'Missing required .dbf file';
+        this.logger.error(error);
+        throw new InvalidFileFormatError('shapefile', error);
       }
 
-      // Try to read projection from .prj file
-      if (companionFiles && companionFiles['.prj']) {
+      // Handle .prj file
+      if (companionFiles['.prj']) {
         try {
           const prjContent = new TextDecoder().decode(companionFiles['.prj']);
           this.srid = this.parsePrjFile(prjContent);
-          
-          this.reportProgress(onProgress, {
-            phase: 'parsing',
-            progress: 5,
-            message: `Detected coordinate system: EPSG:${this.srid}`
-          });
+          this.logger.info(`Detected coordinate system: EPSG:${this.srid || 'unknown'}`);
         } catch (error) {
-          console.warn('Failed to parse .prj file:', error);
+          this.logger.warn('Failed to parse .prj file', error);
         }
       }
 
-      // Parse shapefile
-      const features: GeoFeature[] = [];
-      let featuresProcessed = 0;
-      let metadata = {
-        featureCount: 0,
-        geometryTypes: new Set<string>(),
-        properties: [] as string[],
-        srid: this.srid
-      };
+      // Parse with read (no streaming needed for small files)
+      this.logger.info('Reading shapefile data...');
+      const result = await read(mainFile, companionFiles['.dbf']);
+      const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
 
-      // Create array sources
-      const shpSource = array(mainFile);
-      const dbfSource = array(companionFiles['.dbf']);
-
-      // Read features
-      const source = await read(shpSource, dbfSource);
-      const collection: FeatureCollection = {
-        type: 'FeatureCollection',
-        features: []
-      };
-
-      // Count total features for progress reporting
-      let totalFeatures = 0;
-      const countSource = await read(array(mainFile), array(companionFiles['.dbf']));
-      while (true) {
-        const result = await countSource.read();
-        if (result.done) break;
-        totalFeatures++;
-      }
-
-      this.reportProgress(onProgress, {
-        phase: 'parsing',
-        progress: 10,
-        message: `Found ${totalFeatures} features`
+      this.logger.info('Shapefile parsed', {
+        featureCount: geojson.features.length
       });
 
-      // Read all features and calculate bounds
-      let bounds: [number, number, number, number] | undefined;
-      while (true) {
-        const result = await source.read();
-        if (result.done) break;
-        
-        const feature = result.value as Feature<Geometry, GeoJsonProperties>;
-        collection.features.push(feature);
+      // Process GeoJSON into FullDataset
+      const features: GeoFeature[] = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
+        id: index,
+        geometry: feature.geometry,
+        properties: feature.properties || {},
+        originalIndex: index
+      }));
 
-        // Update bounds if feature has geometry
+      // Calculate metadata
+      let bounds: [number, number, number, number] | undefined;
+      const geometryTypes = new Set<string>();
+      const properties = features[0] ? Object.keys(features[0].properties) : [];
+
+      for (const feature of features) {
         if (feature.geometry) {
           const coords = getCoordinates(feature.geometry);
           bounds = updateBounds(bounds, coords);
-        }
-
-        // Get properties from first feature
-        if (featuresProcessed === 0) {
-          metadata.properties = Object.keys(feature.properties || {});
-        }
-
-        // Track geometry types
-        if (feature.geometry?.type) {
-          metadata.geometryTypes.add(feature.geometry.type);
-        }
-
-        features.push({
-          id: featuresProcessed,
-          geometry: feature.geometry,
-          properties: feature.properties || {},
-          originalIndex: featuresProcessed
-        });
-
-        featuresProcessed++;
-
-        // Report progress periodically
-        if (onProgress && featuresProcessed % Math.max(1, Math.floor(totalFeatures / 100)) === 0) {
-          this.reportProgress(onProgress, {
-            phase: 'parsing',
-            progress: 10 + (featuresProcessed / totalFeatures * 90),
-            message: `Parsed ${featuresProcessed} of ${totalFeatures} features`,
-            featuresProcessed,
-            totalFeatures
-          });
-        }
-
-        // Check if we've reached the maximum features
-        if (options?.maxFeatures && featuresProcessed >= options.maxFeatures) {
-          break;
+          geometryTypes.add(feature.geometry.type);
         }
       }
 
-      metadata.featureCount = featuresProcessed;
-
-      // Create the full dataset
       const dataset: FullDataset = {
         sourceFile: 'shapefile',
         fileType: 'shp',
         features,
         metadata: {
-          ...metadata,
-          geometryTypes: Array.from(metadata.geometryTypes),
+          featureCount: features.length,
           bounds,
+          geometryTypes: Array.from(geometryTypes),
+          properties,
           srid: this.srid
         }
       };
 
       this.reportProgress(onProgress, {
-        phase: 'processing',
+        phase: 'parsing',
         progress: 100,
-        message: `Successfully parsed ${featuresProcessed} features`,
-        featuresProcessed,
-        totalFeatures
+        message: `Parsed ${features.length} features`
       });
 
+      this.logger.info('Parse complete', dataset.metadata);
       return dataset;
     } catch (error) {
-      if (error instanceof Error) {
-        throw new InvalidFileFormatError('shapefile', error.message);
-      }
-      throw error;
+      this.logger.error('Parse failed', error);
+      throw new InvalidFileFormatError('shapefile', 
+        error instanceof Error ? error.message : 'Unknown error'
+      );
     }
   }
 
@@ -228,32 +182,15 @@ export class ShapefileParser extends BaseGeoDataParser {
     companionFiles?: Record<string, ArrayBuffer>
   ): Promise<boolean> {
     try {
-      // Check for required companion files
       if (!companionFiles || !companionFiles['.dbf']) {
-        throw new Error('Missing required companion files (.dbf)');
+        throw new Error('Missing required .dbf file');
       }
 
-      // Try to create readers
-      const shpSource = array(mainFile);
-      const dbfSource = array(companionFiles['.dbf']);
-
-      // Create readers
-      const source = await read(shpSource, dbfSource);
-
-      // Read the first feature to validate format
-      const result = await source.read();
-      if (result.done) {
-        throw new Error('Shapefile is empty');
-      }
-
-      // Validate feature structure
-      const feature = result.value as Feature<Geometry, GeoJsonProperties>;
-      if (!feature || !feature.geometry) {
-        throw new Error('Invalid feature structure');
-      }
-
-      return true;
+      const result = await read(mainFile, companionFiles['.dbf']);
+      const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
+      return geojson.features.length > 0 && !!geojson.features[0].geometry;
     } catch (error) {
+      this.logger.warn('Validation failed', error);
       return false;
     }
   }
@@ -264,71 +201,45 @@ export class ShapefileParser extends BaseGeoDataParser {
   async getMetadata(
     mainFile: ArrayBuffer,
     companionFiles?: Record<string, ArrayBuffer>
-  ): Promise<{
-    featureCount: number;
-    bounds?: [number, number, number, number];
-    geometryTypes: string[];
-    properties: string[];
-    srid?: number;
-  }> {
+  ): Promise<ShapefileMetadata> {
     try {
-      // Create array sources
-      const shpSource = array(mainFile);
-      const dbfSource = companionFiles?.['.dbf'] ? array(companionFiles['.dbf']) : undefined;
-
-      // Open source
-      const source = await read(shpSource, dbfSource);
-      const firstFeature = await source.read();
-
-      if (!firstFeature || firstFeature.done) {
-        throw new Error('Invalid shapefile format or empty file');
+      if (!companionFiles?.['.dbf']) {
+        throw new Error('Missing required .dbf file');
       }
 
-      const feature = firstFeature.value as Feature<Geometry, GeoJsonProperties>;
-      const properties = Object.keys(feature.properties || {});
-      const geometryType = feature.geometry?.type || 'Unknown';
+      const result = await read(mainFile, companionFiles['.dbf']);
+      const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
+      if (!geojson.features.length) {
+        throw new Error('Empty shapefile');
+      }
 
-      // Calculate bounds by reading all features
       let bounds: [number, number, number, number] | undefined;
-      if (feature.geometry) {
-        const coords = getCoordinates(feature.geometry);
-        bounds = updateBounds(bounds, coords);
-      }
+      const geometryTypes = new Set<string>();
+      const properties = Object.keys(geojson.features[0].properties || {});
 
-      // Count remaining features and update bounds
-      let featureCount = 1;
-      while (true) {
-        const result = await source.read();
-        if (result.done) break;
-        
-        featureCount++;
-        const feat = result.value as Feature<Geometry, GeoJsonProperties>;
-        if (feat.geometry) {
-          const coords = getCoordinates(feat.geometry);
+      for (const feature of geojson.features) {
+        if (feature.geometry) {
+          const coords = getCoordinates(feature.geometry);
           bounds = updateBounds(bounds, coords);
+          geometryTypes.add(feature.geometry.type);
         }
       }
 
-      // Try to read projection from .prj file
       let srid: number | undefined;
-      if (companionFiles && companionFiles['.prj']) {
-        try {
-          const prjContent = new TextDecoder().decode(companionFiles['.prj']);
-          srid = this.parsePrjFile(prjContent);
-        } catch (error) {
-          console.warn('Failed to parse .prj file:', error);
-        }
+      if (companionFiles['.prj']) {
+        const prjContent = new TextDecoder().decode(companionFiles['.prj']);
+        srid = this.parsePrjFile(prjContent);
       }
 
       return {
-        featureCount,
+        featureCount: geojson.features.length,
         bounds,
-        geometryTypes: [geometryType],
+        geometryTypes: Array.from(geometryTypes),
         properties,
         srid
       };
     } catch (error) {
-      throw new InvalidFileFormatError('shapefile', 
+      throw new InvalidFileFormatError('shapefile',
         error instanceof Error ? error.message : 'Failed to read metadata'
       );
     }
