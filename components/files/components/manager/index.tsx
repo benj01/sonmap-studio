@@ -374,7 +374,12 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           <div className="text-center py-4">Loading files...</div>
         ) : files.length > 0 ? (
           <div className="space-y-4">
-            <div className="font-medium text-gray-700">Uploaded Files</div>
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-medium text-gray-700">Uploaded Files</div>
+                <div className="text-sm text-gray-500">Select Import to use these files in your project</div>
+              </div>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {files.filter(file => !file.is_shapefile_component).map((mainFile) => (
                 <FileList

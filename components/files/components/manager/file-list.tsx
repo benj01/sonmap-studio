@@ -61,13 +61,13 @@ export function FileList({ mainFile, companions = [], onDelete, onDownload, onIm
               <div className="flex items-center gap-2 flex-shrink-0">
                 {isProjectFile && onImport && (
                   <Button
-                    variant="ghost"
+                    variant="default"
                     size="sm"
                     onClick={() => onImport(mainFile.id)}
-                    className="text-gray-500 hover:text-gray-700"
+                    className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
                   >
                     <Import className="h-4 w-4" />
-                    <span className="sr-only">Import</span>
+                    Import
                   </Button>
                 )}
                 {isProjectFile && onDownload && (
