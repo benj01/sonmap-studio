@@ -1,14 +1,65 @@
 import { BaseGeoDataParser, ParserOptions, ParserProgressEvent, InvalidFileFormatError } from './base-parser';
 import { FullDataset, GeoFeature } from '@/types/geo-import';
-import * as shp from 'shapefile';
+import { read } from 'shapefile';
+import array from 'array-source';
+import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon } from 'geojson';
+
+/**
+ * Gets coordinates from a GeoJSON geometry
+ */
+function getCoordinates(geometry: Geometry): number[] {
+  switch (geometry.type) {
+    case 'Point':
+      return geometry.coordinates;
+    case 'LineString':
+    case 'MultiPoint':
+      return geometry.coordinates.flat();
+    case 'Polygon':
+    case 'MultiLineString':
+      return geometry.coordinates.flat(2);
+    case 'MultiPolygon':
+      return geometry.coordinates.flat(3);
+    case 'GeometryCollection':
+      return geometry.geometries.flatMap(g => getCoordinates(g));
+    default:
+      return [];
+  }
+}
+
+/**
+ * Updates bounds based on coordinates
+ */
+function updateBounds(bounds: [number, number, number, number] | undefined, coords: number[]): [number, number, number, number] | undefined {
+  if (coords.length < 2) return bounds;
+  
+  const coordPairs: [number, number][] = [];
+  for (let i = 0; i < coords.length; i += 2) {
+    if (i + 1 < coords.length) {
+      coordPairs.push([coords[i], coords[i + 1]]);
+    }
+  }
+
+  if (coordPairs.length === 0) return bounds;
+
+  if (!bounds) {
+    const [x, y] = coordPairs[0];
+    bounds = [x, y, x, y];
+  }
+
+  for (const [x, y] of coordPairs) {
+    bounds[0] = Math.min(bounds[0], x);
+    bounds[1] = Math.min(bounds[1], y);
+    bounds[2] = Math.max(bounds[2], x);
+    bounds[3] = Math.max(bounds[3], y);
+  }
+
+  return bounds;
+}
 
 /**
  * Parser for ESRI Shapefiles
  */
 export class ShapefileParser extends BaseGeoDataParser {
-  private shpReader?: shp.ShapefileReader;
-  private dbfReader?: shp.DBFReader;
-
   /**
    * Parse a Shapefile and its companion files
    */
@@ -19,59 +70,80 @@ export class ShapefileParser extends BaseGeoDataParser {
     onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
     try {
-      // Validate companion files
-      this.validateCompanionFiles(
-        ['.shx', '.dbf'],
-        companionFiles
-      );
-
-      // Initialize readers
-      this.shpReader = await this.createShapefileReader(mainFile, companionFiles?.['.shx']);
-      this.dbfReader = companionFiles?.['.dbf'] 
-        ? await this.createDBFReader(companionFiles['.dbf'])
-        : undefined;
-
-      // Get metadata first
-      const metadata = await this.getMetadata(mainFile, companionFiles);
-      
       // Report start of parsing
       this.reportProgress(onProgress, {
         phase: 'parsing',
         progress: 0,
-        message: 'Starting Shapefile parsing',
-        totalFeatures: metadata.featureCount
+        message: 'Starting Shapefile parsing'
       });
 
+      // Parse shapefile
       const features: GeoFeature[] = [];
       let featuresProcessed = 0;
+      let metadata = {
+        featureCount: 0,
+        geometryTypes: new Set<string>(),
+        properties: [] as string[]
+      };
+
+      // Create array sources
+      const shpSource = array(mainFile);
+      const dbfSource = companionFiles?.['.dbf'] ? array(companionFiles['.dbf']) : undefined;
 
       // Read features
-      while (true) {
-        const result = await this.shpReader.read();
-        if (result.done) break;
+      const source = await read(shpSource, dbfSource);
+      const collection: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: []
+      };
 
-        const geometry = result.value.geometry;
-        const properties = this.dbfReader 
-          ? (await this.dbfReader.read()).value 
-          : {};
+      // Read all features and calculate bounds
+      let bounds: [number, number, number, number] | undefined;
+      while (true) {
+        const result = await source.read();
+        if (result.done) break;
+        
+        const feature = result.value as Feature<Geometry, GeoJsonProperties>;
+        collection.features.push(feature);
+
+        // Update bounds if feature has geometry
+        if (feature.geometry) {
+          const coords = getCoordinates(feature.geometry);
+          bounds = updateBounds(bounds, coords);
+        }
+      }
+
+      // Process features
+      for (const feature of collection.features) {
+        if (!feature.geometry) continue;
+
+        // Get properties from first feature
+        if (featuresProcessed === 0) {
+          metadata.properties = Object.keys(feature.properties || {});
+        }
+
+        // Track geometry types
+        if (feature.geometry?.type) {
+          metadata.geometryTypes.add(feature.geometry.type);
+        }
 
         features.push({
           id: featuresProcessed,
-          geometry,
-          properties,
+          geometry: feature.geometry,
+          properties: feature.properties || {},
           originalIndex: featuresProcessed
         });
 
         featuresProcessed++;
 
-        // Report progress
+        // Report progress periodically
         if (onProgress && featuresProcessed % 100 === 0) {
           this.reportProgress(onProgress, {
             phase: 'parsing',
-            progress: (featuresProcessed / metadata.featureCount) * 100,
-            message: 'Parsing features',
+            progress: (featuresProcessed / collection.features.length) * 100,
+            message: `Parsed ${featuresProcessed} features`,
             featuresProcessed,
-            totalFeatures: metadata.featureCount
+            totalFeatures: collection.features.length
           });
         }
 
@@ -81,12 +153,18 @@ export class ShapefileParser extends BaseGeoDataParser {
         }
       }
 
+      metadata.featureCount = featuresProcessed;
+
       // Create the full dataset
       const dataset: FullDataset = {
         sourceFile: 'shapefile',
         fileType: 'shp',
         features,
-        metadata
+        metadata: {
+          ...metadata,
+          geometryTypes: Array.from(metadata.geometryTypes),
+          bounds
+        }
       };
 
       return dataset;
@@ -95,8 +173,6 @@ export class ShapefileParser extends BaseGeoDataParser {
         throw new InvalidFileFormatError('shapefile', error.message);
       }
       throw error;
-    } finally {
-      this.dispose();
     }
   }
 
@@ -109,29 +185,21 @@ export class ShapefileParser extends BaseGeoDataParser {
   ): Promise<boolean> {
     try {
       // Check for required companion files
-      this.validateCompanionFiles(
-        ['.shx', '.dbf'],
-        companionFiles
-      );
-
-      // Try to create readers
-      const shpReader = await this.createShapefileReader(mainFile, companionFiles?.['.shx']);
-      const dbfReader = companionFiles?.['.dbf']
-        ? await this.createDBFReader(companionFiles['.dbf'])
-        : undefined;
-
-      // Read the first feature to validate format
-      const result = await shpReader.read();
-      if (result.done) {
-        throw new Error('Shapefile is empty');
+      if (!companionFiles || !companionFiles['.dbf']) {
+        throw new Error('Missing required companion files (.dbf)');
       }
 
-      // If we have a DBF, validate it matches
-      if (dbfReader) {
-        const dbfResult = await dbfReader.read();
-        if (dbfResult.done) {
-          throw new Error('DBF file is empty');
-        }
+      // Try to create readers
+      const shpSource = array(mainFile);
+      const dbfSource = array(companionFiles['.dbf']);
+
+      // Create readers
+      const source = await read(shpSource, dbfSource);
+
+      // Read the first feature to validate format
+      const result = await source.read();
+      if (result.done) {
+        throw new Error('Shapefile is empty');
       }
 
       return true;
@@ -154,34 +222,46 @@ export class ShapefileParser extends BaseGeoDataParser {
     srid?: number;
   }> {
     try {
-      // Create temporary readers
-      const shpReader = await this.createShapefileReader(mainFile, companionFiles?.['.shx']);
-      const dbfReader = companionFiles?.['.dbf']
-        ? await this.createDBFReader(companionFiles['.dbf'])
-        : undefined;
+      // Create array sources
+      const shpSource = array(mainFile);
+      const dbfSource = companionFiles?.['.dbf'] ? array(companionFiles['.dbf']) : undefined;
 
-      // Get header information
-      const header = await shpReader.header;
-      
-      // Read first feature to determine geometry type
-      const firstFeature = await shpReader.read();
-      const geometryType = firstFeature.value?.geometry?.type || 'Unknown';
+      // Open source
+      const source = await read(shpSource, dbfSource);
+      const firstFeature = await source.read();
 
-      // Get property names from DBF
-      let properties: string[] = [];
-      if (dbfReader) {
-        const dbfHeader = await dbfReader.header;
-        properties = dbfHeader.fields.map(f => f.name);
+      if (!firstFeature || firstFeature.done) {
+        throw new Error('Invalid shapefile format or empty file');
+      }
+
+      const feature = firstFeature.value as Feature<Geometry, GeoJsonProperties>;
+      const properties = Object.keys(feature.properties || {});
+      const geometryType = feature.geometry?.type || 'Unknown';
+
+      // Calculate bounds by reading all features
+      let bounds: [number, number, number, number] | undefined;
+      if (feature.geometry) {
+        const coords = getCoordinates(feature.geometry);
+        bounds = updateBounds(bounds, coords);
+      }
+
+      // Count remaining features and update bounds
+      let featureCount = 1;
+      while (true) {
+        const result = await source.read();
+        if (result.done) break;
+        
+        featureCount++;
+        const feat = result.value as Feature<Geometry, GeoJsonProperties>;
+        if (feat.geometry) {
+          const coords = getCoordinates(feat.geometry);
+          bounds = updateBounds(bounds, coords);
+        }
       }
 
       return {
-        featureCount: header.length,
-        bounds: [
-          header.bbox[0],
-          header.bbox[1],
-          header.bbox[2],
-          header.bbox[3]
-        ],
+        featureCount,
+        bounds,
         geometryTypes: [geometryType],
         properties,
         srid: undefined  // Shapefile doesn't store SRID in the file
@@ -191,45 +271,5 @@ export class ShapefileParser extends BaseGeoDataParser {
         error instanceof Error ? error.message : 'Failed to read metadata'
       );
     }
-  }
-
-  /**
-   * Clean up resources
-   */
-  dispose(): void {
-    if (this.shpReader) {
-      this.shpReader.close();
-      this.shpReader = undefined;
-    }
-    if (this.dbfReader) {
-      this.dbfReader.close();
-      this.dbfReader = undefined;
-    }
-  }
-
-  /**
-   * Create a Shapefile reader
-   */
-  private async createShapefileReader(
-    shpData: ArrayBuffer,
-    shxData?: ArrayBuffer
-  ): Promise<shp.ShapefileReader> {
-    return new shp.ShapefileReader(
-      shpData,
-      shxData,
-      { encoding: 'utf-8' }
-    );
-  }
-
-  /**
-   * Create a DBF reader
-   */
-  private async createDBFReader(
-    dbfData: ArrayBuffer
-  ): Promise<shp.DBFReader> {
-    return new shp.DBFReader(
-      dbfData,
-      { encoding: 'utf-8' }
-    );
   }
 } 

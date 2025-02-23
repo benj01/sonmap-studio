@@ -23,8 +23,8 @@ export function useGeoImport() {
   const createImportSession = useCallback(async (params: CreateImportSessionParams): Promise<ImportSession> => {
     const session: ImportSession = {
       fileId: params.fileId,
-      status: 'idle',
-      fullDataset: null,
+      status: params.fullDataset ? 'ready' : 'idle',
+      fullDataset: params.fullDataset || null,
       previewDataset: null,
       selectedFeatureIndices: [],
     };

@@ -1,7 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Loader2 } from 'lucide-react';
 import { GeoFileUpload } from './geo-file-upload';
 import { LoaderResult, GeoFeature as LoaderGeoFeature } from '@/types/geo';
 import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-import';
@@ -11,6 +14,11 @@ interface GeoImportDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportComplete: (result: LoaderResult) => Promise<void>;
+  fileInfo?: {
+    name: string;
+    size: number;
+    type: string;
+  };
 }
 
 /**
@@ -32,7 +40,8 @@ export function GeoImportDialog({
   projectId,
   open,
   onOpenChange,
-  onImportComplete
+  onImportComplete,
+  fileInfo
 }: GeoImportDialogProps) {
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -79,17 +88,93 @@ export function GeoImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px]">
+      <DialogContent className="sm:max-w-[800px]">
         <DialogHeader>
           <DialogTitle>Import Geodata</DialogTitle>
+          <DialogDescription>
+            Import your geodata file into the project for visualization and analysis.
+          </DialogDescription>
         </DialogHeader>
         
-        <div className="py-4">
-          <GeoFileUpload
-            projectId={projectId}
-            onImportSessionCreated={handleImportSessionCreated}
-          />
+        <div className="grid gap-4 py-4">
+          {fileInfo ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>File Information</CardTitle>
+                <CardDescription>
+                  Details about the file to be imported
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-sm font-medium">Name</p>
+                    <p className="text-sm text-muted-foreground">{fileInfo.name}</p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Size</p>
+                    <p className="text-sm text-muted-foreground">
+                      {(fileInfo.size / 1024).toFixed(2)} KB
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium">Type</p>
+                    <p className="text-sm text-muted-foreground">{fileInfo.type}</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (
+            <GeoFileUpload
+              projectId={projectId}
+              onImportSessionCreated={handleImportSessionCreated}
+            />
+          )}
+
+          {/* Preview section - to be implemented */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Preview</CardTitle>
+              <CardDescription>
+                Preview of the geodata to be imported
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[300px] w-full bg-muted rounded-md flex items-center justify-center">
+                <p className="text-sm text-muted-foreground">Preview coming soon</p>
+              </div>
+            </CardContent>
+          </Card>
         </div>
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isProcessing}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => handleImportSessionCreated({
+              fileId: '',
+              status: 'idle',
+              fullDataset: null,
+              previewDataset: null,
+              selectedFeatureIndices: []
+            })}
+            disabled={!fileInfo || isProcessing}
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Importing...
+              </>
+            ) : (
+              'Import'
+            )}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

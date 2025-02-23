@@ -80,4 +80,5 @@ export interface CreateImportSessionParams {
   fileId: string;
   fileName: string;
   fileType: string;
+  fullDataset?: FullDataset;
 } 

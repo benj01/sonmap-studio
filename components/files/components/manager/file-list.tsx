@@ -7,9 +7,10 @@ interface FileListProps {
   companions: File[] | ProjectFile[];
   onDelete?: (fileId: string) => Promise<void>;
   onDownload?: (fileId: string) => Promise<void>;
+  onImport?: (fileId: string) => Promise<void>;
 }
 
-export function FileList({ mainFile, companions, onDelete, onDownload }: FileListProps) {
+export function FileList({ mainFile, companions, onDelete, onDownload, onImport }: FileListProps) {
   // Type guard to check if a file is a ProjectFile
   function isProjectFile(file: File | ProjectFile): file is ProjectFile {
     return 'file_type' in file && 'id' in file;
@@ -61,6 +62,7 @@ export function FileList({ mainFile, companions, onDelete, onDownload }: FileLis
           isMain={isShapefile} // Only mark as main if it's a shapefile
           onDelete={onDelete ? () => onDelete(isProjectFile(mainFile) ? mainFile.id : mainFile.name) : undefined}
           onDownload={onDownload ? () => onDownload(isProjectFile(mainFile) ? mainFile.id : mainFile.name) : undefined}
+          onImport={onImport ? () => onImport(isProjectFile(mainFile) ? mainFile.id : mainFile.name) : undefined}
         />
       </div>
       {companionProcessedFiles.length > 0 && (

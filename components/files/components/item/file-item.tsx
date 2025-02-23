@@ -12,6 +12,7 @@ interface FileItemProps {
   onDelete?: () => void;
   onDownload?: () => void;
   onPreview?: () => void;
+  onImport?: () => void;
   disabled?: boolean;
 }
 
@@ -22,6 +23,7 @@ export function FileItem({
   onDelete,
   onDownload,
   onPreview,
+  onImport,
   disabled
 }: FileItemProps) {
   return (
@@ -59,6 +61,7 @@ export function FileItem({
         onDelete={onDelete}
         onDownload={onDownload}
         onPreview={onPreview}
+        onImport={onImport}
         disabled={disabled}
         isValid={file.isValid}
         isCompanion={isCompanion}

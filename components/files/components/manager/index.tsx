@@ -7,6 +7,7 @@ import { useFileActions } from '../../hooks/useFileActions';
 import { FileGroup, ProcessedFiles, ProjectFile } from '../../types';
 import { Button } from '@/components/ui/button';
 import { UploadProgress } from '../upload/upload-progress';
+import { GeoImportDialog } from '@/components/geo-import/components/geo-import-dialog';
 
 interface FileManagerProps {
   projectId: string;
@@ -24,6 +25,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const [uploadProgress, setUploadProgress] = React.useState(0);
   const [isUploading, setIsUploading] = React.useState(false);
   const [files, setFiles] = React.useState<ProjectFile[]>([]);
+  const [importDialogOpen, setImportDialogOpen] = React.useState(false);
+  const [selectedFile, setSelectedFile] = React.useState<ProjectFile | null>(null);
 
   // Load files on component mount
   React.useEffect(() => {
@@ -52,6 +55,36 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to process files';
+      onError?.(errorMessage);
+    }
+  };
+
+  const handleFileDelete = async (fileId: string) => {
+    try {
+      await handleDelete(fileId);
+      await loadExistingFiles(); // Reload files after deletion
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Failed to delete file';
+      onError?.(errorMessage);
+    }
+  };
+
+  const handleFileImport = async (fileId: string) => {
+    const file = files.find(f => f.id === fileId);
+    if (file) {
+      setSelectedFile(file);
+      setImportDialogOpen(true);
+    }
+  };
+
+  const handleImportComplete = async (result: any) => {
+    try {
+      // TODO: Handle the import result
+      console.log('Import completed:', result);
+      setImportDialogOpen(false);
+      setSelectedFile(null);
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
       onError?.(errorMessage);
     }
   };
@@ -96,17 +129,6 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       onError?.(errorMessage);
     } finally {
       setIsUploading(false);
-    }
-  };
-
-  const handleFileDelete = async (fileId: string) => {
-    try {
-      await handleDelete(fileId);
-      // Reload files after successful deletion
-      await loadExistingFiles();
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Failed to delete file';
-      onError?.(errorMessage);
     }
   };
 
@@ -195,8 +217,9 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
               key={mainFile.id}
               mainFile={mainFile}
               companions={files.filter(f => f.main_file_id === mainFile.id)}
-              onDelete={() => handleFileDelete(mainFile.id)}
-              onDownload={() => handleDownload(mainFile.id)}
+              onDelete={handleFileDelete}
+              onDownload={handleDownload}
+              onImport={handleFileImport}
             />
           ))}
         </div>
@@ -224,6 +247,18 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       ) : (
         <EmptyState />
       )}
+
+      <GeoImportDialog
+        projectId={projectId}
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        onImportComplete={handleImportComplete}
+        fileInfo={selectedFile ? {
+          name: selectedFile.name,
+          size: selectedFile.size,
+          type: selectedFile.file_type
+        } : undefined}
+      />
     </div>
   );
 } 
