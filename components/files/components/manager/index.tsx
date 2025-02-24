@@ -6,9 +6,11 @@ import { useFileOperations } from '../../hooks/useFileOperations';
 import { useFileActions } from '../../hooks/useFileActions';
 import { FileGroup, ProcessedFiles, ProjectFile } from '../../types';
 import { Button } from '@/components/ui/button';
-import { UploadProgress } from '../upload/upload-progress';
+import { UploadProgress } from './upload-progress';
 import { GeoImportDialog } from '@/components/geo-import/components/geo-import-dialog';
 import { FileTypeUtil } from '../../utils/file-types';
+import { Upload } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface FileManagerProps {
   projectId: string;
@@ -37,6 +39,9 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const [files, setFiles] = React.useState<ProjectFile[]>([]);
   const [importDialogOpen, setImportDialogOpen] = React.useState(false);
   const [selectedFile, setSelectedFile] = React.useState<ImportFileInfo | null>(null);
+  const [isDragging, setIsDragging] = React.useState(false);
+  const dropZoneRef = React.useRef<HTMLDivElement>(null);
+  const dragCountRef = React.useRef(0);
 
   // Load files on component mount
   React.useEffect(() => {
@@ -333,34 +338,88 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     }
   };
 
+  const handleDragEnter = React.useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    dragCountRef.current++;
+    
+    if (!isProcessing) {
+      setIsDragging(true);
+    }
+  }, [isProcessing]);
+
+  const handleDragOver = React.useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDragLeave = React.useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    dragCountRef.current--;
+    
+    // Only hide the drop zone when all drag events are complete
+    if (dragCountRef.current === 0) {
+      setIsDragging(false);
+    }
+  }, []);
+
+  const handleDrop = React.useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    dragCountRef.current = 0;
+    setIsDragging(false);
+
+    if (isProcessing) {
+      console.info('[FileManager] Skipping drop - already processing');
+      return;
+    }
+
+    const droppedFiles = e.dataTransfer.files;
+    if (droppedFiles.length > 0) {
+      console.info('[FileManager] Files dropped', {
+        count: droppedFiles.length,
+        names: Array.from(droppedFiles).map(f => f.name)
+      });
+      handleFileSelect(droppedFiles);
+    }
+  }, [isProcessing, handleFileSelect]);
+
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <Toolbar 
-        onFileSelect={handleFileSelect} 
-        isProcessing={isProcessing}
-      />
-      {error && (
-        <div className="text-red-500 text-sm">{error}</div>
+    <div 
+      ref={dropZoneRef}
+      className={cn(
+        "grid grid-cols-1 lg:grid-cols-4 gap-6",
+        "min-h-[400px]"
       )}
-      
-      {/* Show both existing and uploading files */}
-      <div className="space-y-6">
+    >
+      {/* Main content area */}
+      <div className="lg:col-span-3 space-y-6">
+        <div className="relative">
+          <Toolbar 
+            onFileSelect={handleFileSelect} 
+            isProcessing={isProcessing}
+          />
+          {error && (
+            <div className="text-red-500 text-sm mt-2">{error}</div>
+          )}
+        </div>
+        
         {/* Uploading Files Section */}
         {uploadingFiles.length > 0 && (
           <div className="space-y-4">
             <div className="font-medium text-gray-700">Uploading Files</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {uploadingFiles.map((uploadingFile) => (
                 <div key={uploadingFile.group.mainFile.name}>
                   <FileList
                     mainFile={uploadingFile.group.mainFile}
                     companions={uploadingFile.group.companions}
                   />
-                  <div className="mt-2 space-y-2">
-                    <div className="flex justify-between items-center text-sm text-gray-600">
-                      <span>Uploading...</span>
-                      <span>{Math.round(uploadingFile.progress)}%</span>
-                    </div>
+                  <div className="mt-2">
                     <UploadProgress progress={uploadingFile.progress} />
                   </div>
                 </div>
@@ -380,7 +439,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
                 <div className="text-sm text-gray-500">Select Import to use these files in your project</div>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {files.filter(file => !file.is_shapefile_component).map((mainFile) => (
                 <FileList
                   key={mainFile.id}
@@ -398,6 +457,42 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         )}
       </div>
 
+      {/* Persistent drop zone */}
+      <div 
+        className={cn(
+          "hidden lg:flex flex-col items-center justify-center",
+          "p-6 rounded-lg border-2 border-dashed",
+          "transition-colors duration-200",
+          isDragging
+            ? "bg-blue-50 border-blue-500 ring-4 ring-blue-100"
+            : "border-gray-200 bg-gray-50/50 hover:border-gray-300 hover:bg-gray-50"
+        )}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <Upload 
+          className={cn(
+            "w-8 h-8 mb-3",
+            isDragging ? "text-blue-500 animate-bounce" : "text-gray-400"
+          )}
+        />
+        <p className={cn(
+          "text-sm font-medium text-center",
+          isDragging ? "text-blue-700" : "text-gray-600"
+        )}>
+          Drop files here
+        </p>
+        <p className={cn(
+          "text-xs text-center mt-1",
+          isDragging ? "text-blue-600" : "text-gray-500"
+        )}>
+          Supported formats:{"\n"}Shapefile, GeoJSON, KML, GPX
+        </p>
+      </div>
+
+      {/* Import dialog */}
       <GeoImportDialog
         projectId={projectId}
         open={importDialogOpen}

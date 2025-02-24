@@ -2,274 +2,181 @@
 
 ## Current Implementation Overview
 
-The geodata import pipeline has been implemented with a focus on Shapefiles as the initial supported format. The implementation follows the conceptual design outlined in `CONCEPT.md` and provides a robust foundation for handling spatial data imports.
+The geodata import pipeline has been implemented with a focus on Shapefiles and GeoJSON as the initial supported formats. The implementation follows a user-centric design that emphasizes clarity and ease of use while maintaining robust functionality.
 
 ### Core Components
 
 1. **File Management**
-   - `FileManager` component for handling file uploads and management
-   - Support for main files and companion files (e.g., .shp with .dbf)
-   - File validation and type checking
-   - Integration with Supabase Storage
+   - Two-step process: Upload → Import
+   - Clear visual separation between uploaded files and import functionality
+   - Support for main files and companion files (e.g., .shp with .dbf, .shx, .prj)
+   - Automatic companion file grouping
+   - Real-time upload progress tracking
 
-2. **Import Dialog**
-   - `GeoImportDialog` component for the import workflow
-   - File information display
-   - Map preview integration (in progress)
-   - Import session management
+2. **User Interface**
+   - Simple and clear file selection button
+   - Grid-based file display with clear hierarchy
+   - Prominent import actions
+   - Visual feedback for file operations
+   - Companion file collapsible display
+   - Real-time upload progress indicators
 
-3. **Shapefile Parser**
-   - Complete implementation using `shapefile` library
-   - Support for both .shp and .dbf files
-   - Feature extraction and bounds calculation
-   - Metadata collection (properties, geometry types)
+3. **Data Processing**
+   - Client-side validation and processing
+   - Support for both single files and file groups
+   - Automatic file type detection
+   - Progress tracking throughout the pipeline
 
-## Technical Details
+## Technical Implementation
 
 ### File Upload Flow
 
 ```typescript
-// File selection and validation
-FileManager
-  → FileList
-    → FileItem
-      → FileActions (Import, Preview, Download, Delete)
+// Component hierarchy
+FileManager (components/files/components/manager/index.tsx)
+  → Toolbar (File Selection)
+  → FileList (Grid Display)
+    → FileItem (Individual File Card)
+      → Actions (Import, Download, Delete)
 ```
 
-### Import Process
+### File Processing Pipeline
 
 1. **File Selection**
    ```typescript
-   interface FileInfo {
-     id: string;
-     name: string;
-     size: number;
-     type: string;
+   interface FileGroup {
+     mainFile: File;
+     companions: File[];  // Related files for shapefiles
    }
    ```
 
-2. **Import Session Creation**
+2. **Validation & Processing**
    ```typescript
-   interface ImportSession {
-     fileId: string;
-     status: ImportStatus;
-     fullDataset: FullDataset | null;
-     previewDataset: PreviewDataset | null;
-     selectedFeatureIndices: number[];
-   }
-   ```
-
-3. **Data Parsing**
-   ```typescript
-   interface FullDataset {
-     sourceFile: string;
-     fileType: string;
-     features: GeoFeature[];
-     metadata?: {
-       bounds?: [number, number, number, number];
-       featureCount: number;
-       geometryTypes: string[];
-       properties: string[];
+   interface ProcessedFiles {
+     main: {
+       file: File;
+       isValid: boolean;
+       error?: string;
      };
+     companions: ProcessedFile[];
    }
    ```
 
-### Shapefile Processing
-
-The `ShapefileParser` class provides three main operations:
-
-1. **Parse**
-   - Reads features from .shp and .dbf files
-   - Calculates bounds dynamically
-   - Tracks geometry types and properties
-   - Supports progress reporting
-   - Performance threshold: Files > 50MB trigger server-side parsing
-
-2. **Validate**
-   - Checks for required companion files
-   - Validates file format
-   - Ensures non-empty content
-   - Verifies coordinate ranges
-
-3. **Get Metadata**
-   - Extracts feature count
-   - Calculates bounds
-   - Identifies geometry types
-   - Lists available properties
-
-## UI Components
-
-### Import Dialog
-The import dialog provides a structured workflow:
-
-1. **File Information Display**
+3. **Upload Process**
    ```typescript
-   interface FileInfo {
-     name: string;
-     size: number;
-     type: string;
+   interface UploadingFile {
+     group: FileGroup;
+     progress: number;  // Real-time upload progress
    }
    ```
 
-2. **Preview Section** (In Progress, Target: Q2 2024)
-   - Map preview using Mapbox GL JS with GeoJSON source
-   - Initial limit of 500 features with dynamic sampling:
-     ```typescript
-     function sampleFeatures(features: GeoFeature[]): GeoFeature[] {
-       if (features.length <= 500) return features;
-       const step = Math.ceil(features.length / 500);
-       return features.filter((_, i) => i % step === 0);
-     }
-     ```
-   - Progressive loading for large datasets
-   - Coordinate precision control:
-     ```typescript
-     function formatCoordinate(
-       value: number,
-       precision: number = 4,
-       isOwner: boolean
-     ): number {
-       return isOwner ? value : Number(value.toFixed(precision));
-     }
-     ```
+### UI Components
 
-### File Actions
-Integrated into the file list with:
-- Import button (primary action)
-- Preview capability
-- Download option
-- Delete functionality
-- Progress indicators for each action
+#### File Upload
+- Clear "Select Files for Upload" button
+- Drag-and-drop zone with visual feedback
+- Support for multiple file selection
+- Progress tracking during upload
 
-## Data Types
-
-### Feature Representation
+#### File Display
 ```typescript
-interface GeoFeature {
-  id: number;
-  geometry: GeoJSON.Geometry;
-  properties: Record<string, any>;
-  originalIndex?: number;
+// File card structure
+interface FileCard {
+  mainInfo: {
+    name: string;
+    size: string;
+    type: string;
+  };
+  companions?: {
+    count: number;
+    files: CompanionFile[];
+  };
+  actions: {
+    primary: 'import';
+    secondary: ['download', 'delete'];
+  };
 }
 ```
 
-### Preview Feature
+#### Import Action
+- Prominent "Import" button for each file
+- Clear visual hierarchy:
+  1. File information
+  2. Primary action (Import)
+  3. Utility actions (Download, Delete)
+- Companion file management with expandable view
+
+## File Type Support
+
+### 1. Shapefiles
+- Automatic companion file grouping (.shp, .dbf, .shx, .prj)
+- Validation of required companions
+- Group upload with progress tracking
+- Metadata extraction from .dbf
+
+### 2. GeoJSON
+- Direct validation of GeoJSON structure
+- Feature collection support
+- Property preservation
+- Coordinate validation
+
+## Error Handling
+
+### Upload Validation
 ```typescript
-interface PreviewFeature extends Omit<GeoFeature, 'geometry'> {
-  geometry: GeoJSON.Geometry;  // Simplified geometry
-  previewId: number;
-  originalFeatureIndex: number;
+interface ValidationError {
+  code: string;        // e.g., 'INVALID_TYPE'
+  message: string;     // User-friendly message
+  details?: string;    // Technical details
+  file?: string;       // Affected file
 }
 ```
 
-## Next Steps
-
-1. **Preview Implementation** (Q2 2024)
-   - Add map preview component with Mapbox GL JS
-   - Implement geometry simplification using Turf.js
-   - Add feature selection interface with:
-     - Multi-select capability
-     - Spatial lasso tool
-     - Property-based filtering
-
-2. **Backend Integration** (Q2-Q3 2024)
-   - Complete PostGIS import process
-   - Add coordinate system handling with proj4
-   - Implement feature filtering
-   - Add server-side processing for large files:
-     ```typescript
-     interface ProcessingJob {
-       fileId: string;
-       size: number;
-       processingType: 'client' | 'server';
-       queuePosition?: number;
-       estimatedDuration?: number;
-     }
-     ```
-
-3. **Additional File Types** (Q3-Q4 2024)
-   - Add support for DXF files
-   - Implement CSV/XYZ parsing
-   - Consider LIDAR data handling
-
-4. **UI Enhancements** (Ongoing)
-   - Add specific progress indicators:
-     - File upload progress percentage
-     - Feature parsing progress
-     - Import status with detailed steps
-   - Improve error handling with specific messages:
-     ```typescript
-     interface ImportError {
-       code: string;        // e.g., 'MISSING_DBF'
-       message: string;     // e.g., 'Missing required .dbf file'
-       details?: string;    // Additional context
-       recoverySteps?: string[]; // User actions to resolve
-     }
-     ```
-   - Enhance feature selection UX
-
-## Known Limitations
-
-1. **File Size**
-   - Browser processing limit: 50MB
-   - Files > 50MB automatically queued for server processing
-   - Implementation plan:
-     ```typescript
-     async function processLargeFile(file: File) {
-       if (file.size > 50 * 1024 * 1024) {
-         return await queueServerProcessing(file);
-       }
-       return await processInBrowser(file);
-     }
-     ```
-
-2. **Preview**
-   - Preview generation limited to 500 features
-   - Geometry simplification pending
-   - Progressive loading for large datasets planned
-
-3. **Coordinate Systems**
-   - .prj file parsing planned (Q2 2024 priority)
-   - Proj4 integration in progress
-   - Default fallback to EPSG:4326
-
-4. **Companion Files**
-   - Currently supports .dbf for attributes
-   - .prj parsing planned for coordinate system support (priority)
-   - .shx support optional (performance optimization)
+### Progress Tracking
+```typescript
+interface ProgressEvent {
+  stage: 'upload' | 'processing' | 'import';
+  progress: number;    // 0-100
+  file: string;
+  details?: string;
+}
+```
 
 ## Best Practices
 
-1. **File Handling**
-   - Validate file types and sizes before upload
-   - Handle companion files as a group
-   - Provide specific error messages for each validation step
+1. **User Experience**
+   - Clear separation of upload and import actions
+   - Immediate feedback for all operations
+   - Intuitive companion file management
+   - Progressive disclosure of advanced features
 
-2. **Performance**
-   - Use server-side processing for files > 50MB
-   - Implement feature sampling for large datasets
-   - Cache processed data when appropriate
-   - Monitor memory usage during parsing
+2. **File Management**
+   - Group related files automatically
+   - Validate before upload
+   - Track progress throughout the pipeline
+   - Preserve file relationships in storage
 
-3. **User Experience**
-   - Show detailed progress for long operations
-   - Provide specific error messages with recovery steps
-   - Maintain responsive UI during processing
-   - Implement proper loading states
+3. **Error Handling**
+   - User-friendly error messages
+   - Clear recovery steps
+   - Detailed logging for debugging
+   - Graceful fallbacks
 
-## Security Considerations
+## Next Steps
 
-1. **File Upload**
-   - Validate file types and sizes
-   - Use signed URLs with expiration
-   - Implement virus scanning
-   - Set appropriate CORS policies
+1. **Enhanced Preview** (Q2 2024)
+   - Map preview integration
+   - Feature selection interface
+   - Property inspection
+   - Coordinate system handling
 
-2. **Data Processing**
-   - Sanitize property names and values
-   - Validate geometry data
-   - Handle sensitive data:
-     - Truncate preview coordinates to 4 decimal places for non-owners
-     - Mask sensitive property values in preview
-     - Implement proper access control in PostGIS
-   - Audit logging for import operations 
+2. **Additional File Types** (Q3 2024)
+   - DXF/DWG support
+   - CSV with coordinate parsing
+   - KML/KMZ handling
+
+3. **Advanced Features** (Q4 2024)
+   - Batch import capabilities
+   - Advanced filtering options
+   - Custom coordinate system support
+   - Server-side processing for large files 
