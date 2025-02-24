@@ -119,6 +119,10 @@ interface FileCard {
 - Feature collection support
 - Property preservation
 - Coordinate validation
+- Support for QGIS metadata companion files (.qmd)
+  - Automatic coordinate system detection
+  - Optional companion file
+  - XML content validation
 
 ## Error Handling
 

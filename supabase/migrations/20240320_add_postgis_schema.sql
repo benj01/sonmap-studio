@@ -67,6 +67,7 @@ CREATE TRIGGER update_geo_features_updated_at
 ALTER TABLE feature_collections ENABLE ROW LEVEL SECURITY;
 ALTER TABLE layers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE geo_features ENABLE ROW LEVEL SECURITY;
+ALTER TABLE project_files ENABLE ROW LEVEL SECURITY;
 
 -- RLS policies for feature_collections
 CREATE POLICY "Users can view feature collections for their project files" ON feature_collections
@@ -236,5 +237,17 @@ CREATE POLICY "Users can delete features for their layers" ON geo_features
       JOIN project_files pf ON pf.id = fc.project_file_id
       WHERE l.id = layer_id
       AND pf.uploaded_by = auth.uid()
+    )
+  );
+
+-- Add missing UPDATE policy for project_files
+CREATE POLICY "Users can update their project files" ON project_files
+  FOR UPDATE
+  TO authenticated
+  USING (
+    auth.uid() IN (
+      SELECT user_id
+      FROM project_members
+      WHERE project_id = project_files.project_id
     )
   );

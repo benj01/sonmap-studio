@@ -12,6 +12,7 @@ import { FileTypeUtil } from '../../utils/file-types';
 import { Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/utils/supabase/client';
+import { ImportedFilesList } from '../imported-files-list';
 
 interface FileManagerProps {
   projectId: string;
@@ -454,8 +455,23 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     }
   }, [isProcessing, handleFileSelect]);
 
+  const handleViewLayer = (layerId: string) => {
+    // TODO: Implement layer viewing functionality
+    console.info('View layer requested', { layerId });
+  };
+
+  const handleDeleteImported = async (fileId: string) => {
+    try {
+      await handleDelete(fileId);
+      await loadExistingFiles();
+    } catch (e) {
+      const errorMessage = e instanceof Error ? e.message : 'Failed to delete imported file';
+      onError?.(errorMessage);
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-4 p-4 border rounded-lg bg-background">
           <div className="flex flex-col gap-4">
@@ -538,19 +554,23 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         </div>
       </div>
 
-      {/* Import dialog */}
-      <GeoImportDialog
+      {/* Imported Files Section */}
+      <ImportedFilesList
         projectId={projectId}
-        open={importDialogOpen}
-        onOpenChange={setImportDialogOpen}
-        onImportComplete={handleImportComplete}
-        fileInfo={selectedFile ? {
-          id: selectedFile.id,
-          name: selectedFile.name,
-          size: selectedFile.size,
-          type: selectedFile.type
-        } : undefined}
+        onViewLayer={handleViewLayer}
+        onDelete={handleDeleteImported}
       />
+
+      {/* Import Dialog */}
+      {selectedFile && (
+        <GeoImportDialog
+          open={importDialogOpen}
+          onOpenChange={setImportDialogOpen}
+          projectId={projectId}
+          fileInfo={selectedFile}
+          onImportComplete={handleImportComplete}
+        />
+      )}
     </div>
   );
 } 

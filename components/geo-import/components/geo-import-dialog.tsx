@@ -11,6 +11,9 @@ import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-impor
 import { MapPreview } from './map-preview';
 import { FileTypeUtil } from '@/components/files/utils/file-types';
 import { LogManager } from '@/core/logging/log-manager';
+import { supabaseBrowserClient as supabase } from '@/utils/supabase/browser-client';
+import { useToast } from '@/components/ui/use-toast';
+import { LogLevel } from '@/core/logging/log-manager';
 
 interface GeoImportDialogProps {
   projectId: string;
@@ -62,17 +65,24 @@ function formatFileSize(bytes: number): string {
 const SOURCE = 'GeoImportDialog';
 const logManager = LogManager.getInstance();
 
+// Configure logger to output to console
+logManager.addFilter(SOURCE, LogLevel.DEBUG);
+
 const logger = {
   info: (message: string, data?: any) => {
+    console.info(`[${SOURCE}] ${message}`, data);
     logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
+    console.warn(`[${SOURCE}] ${message}`, error);
     logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
+    console.error(`[${SOURCE}] ${message}`, error);
     logManager.error(SOURCE, message, error);
   },
   debug: (message: string, data?: any) => {
+    console.debug(`[${SOURCE}] ${message}`, data);
     logManager.debug(SOURCE, message, data);
   }
 };
@@ -84,6 +94,7 @@ export function GeoImportDialog({
   onImportComplete,
   fileInfo
 }: GeoImportDialogProps) {
+  const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
@@ -152,18 +163,154 @@ export function GeoImportDialog({
   };
 
   const handleImport = async () => {
-    if (!importSession?.fullDataset) return;
+    if (!importSession?.fullDataset) {
+      logger.error('No import session or dataset available');
+      return;
+    }
 
     try {
       setIsProcessing(true);
-      logger.info('Starting import process', { selectedCount: selectedFeatureIds.length });
+      logger.info('Starting import process', { 
+        selectedCount: selectedFeatureIds.length,
+        fileId: importSession.fileId,
+        fileName: fileInfo?.name,
+        metadata: importSession.fullDataset.metadata
+      });
+      
+      // Show starting toast
+      toast({
+        title: 'Starting Import',
+        description: `Importing ${selectedFeatureIds.length} features...`,
+        duration: 3000,
+      });
       
       // Filter the full dataset based on selected feature IDs
       const selectedFeatures = importSession.fullDataset.features.filter(f => 
         selectedFeatureIds.includes(f.originalIndex || f.id)
       );
 
-      // Create a LoaderResult from the selected features
+      logger.debug('Selected features prepared', {
+        count: selectedFeatures.length,
+        firstFeature: selectedFeatures[0],
+        srid: importSession.fullDataset.metadata?.srid || 2056
+      });
+
+      // Call our PostGIS import function
+      const importParams = {
+        p_project_file_id: importSession.fileId,
+        p_collection_name: fileInfo?.name || 'Imported Features',
+        p_features: selectedFeatures.map(f => ({
+          type: 'Feature',
+          geometry: f.geometry,
+          properties: f.properties
+        })),
+        p_source_srid: importSession.fullDataset.metadata?.srid || 2056,
+        p_target_srid: 4326
+      };
+
+      logger.debug('Calling import_geo_features with params', {
+        fileId: importParams.p_project_file_id,
+        collectionName: importParams.p_collection_name,
+        featureCount: importParams.p_features.length,
+        sourceSrid: importParams.p_source_srid,
+        targetSrid: importParams.p_target_srid,
+        sampleFeature: importParams.p_features[0]
+      });
+
+      const { data: importResults, error } = await supabase.rpc('import_geo_features', importParams);
+
+      if (error) {
+        logger.error('PostGIS import failed', { 
+          error: error.message,
+          code: error.code,
+          details: error.details,
+          hint: error.hint,
+          params: {
+            fileId: importParams.p_project_file_id,
+            featureCount: importParams.p_features.length
+          }
+        });
+        throw error;
+      }
+
+      // Get the first row of results since it's a table-returning function
+      const importResult = importResults?.[0];
+      
+      logger.info('PostGIS import completed', { 
+        result: importResult,
+        fileId: importSession.fileId,
+        featureCount: selectedFeatures.length
+      });
+
+      if (!importResult?.collection_id || !importResult?.layer_id) {
+        logger.error('Import result missing required fields', { importResult });
+        throw new Error('Import failed: Missing collection or layer ID in result');
+      }
+
+      // Update the project_files record to mark it as imported
+      const importMetadata = {
+        collection_id: importResult.collection_id,
+        layer_id: importResult.layer_id,
+        imported_count: importResult.imported_count || selectedFeatures.length,
+        failed_count: importResult.failed_count || 0,
+        imported_at: new Date().toISOString()
+      };
+
+      logger.debug('Updating project_files record', { 
+        fileId: importSession.fileId, 
+        metadata: importMetadata
+      });
+
+      // Update main file record
+      const { error: updateError, data: updateData } = await supabase
+        .from('project_files')
+        .update({
+          is_imported: true,
+          import_metadata: importMetadata
+        })
+        .eq('id', importSession.fileId)
+        .select();
+
+      if (updateError) {
+        logger.error('Failed to update file import status', { 
+          error: updateError,
+          code: updateError.code,
+          details: updateError.details,
+          message: updateError.message,
+          fileId: importSession.fileId
+        });
+
+        // Check if file exists
+        const { data: existingFile, error: checkError } = await supabase
+          .from('project_files')
+          .select('id, is_imported')
+          .eq('id', importSession.fileId)
+          .single();
+
+        if (checkError) {
+          logger.error('Failed to check if file exists', {
+            error: checkError,
+            fileId: importSession.fileId
+          });
+        } else {
+          logger.info('File check result', {
+            exists: !!existingFile,
+            isImported: existingFile?.is_imported,
+            fileId: importSession.fileId
+          });
+        }
+
+        throw updateError;
+      }
+
+      // Log the update result for debugging
+      logger.info('Project file updated successfully', { 
+        fileId: importSession.fileId,
+        metadata: importMetadata,
+        response: updateData
+      });
+      
+      // Create a LoaderResult for compatibility with existing code
       const result: LoaderResult = {
         features: selectedFeatures.map(convertFeature),
         bounds: {
@@ -174,8 +321,8 @@ export function GeoImportDialog({
         },
         layers: importSession.fullDataset.metadata?.properties || [],
         statistics: {
-          pointCount: selectedFeatures.length,
-          layerCount: importSession.fullDataset.metadata?.properties?.length || 0,
+          pointCount: importMetadata.imported_count,
+          layerCount: 1,
           featureTypes: importSession.fullDataset.metadata?.geometryTypes.reduce((acc, type) => {
             acc[type] = selectedFeatures.filter(f => f.geometry.type === type).length;
             return acc;
@@ -183,13 +330,30 @@ export function GeoImportDialog({
         }
       };
 
-      logger.debug('Import result prepared', result);
-      logger.info('Import result statistics', result.statistics);
       await onImportComplete(result);
-      logger.info('Import completed successfully');
+      logger.info('Import completed successfully', { result });
+      
+      // Show success toast with actual count
+      toast({
+        title: 'Import Complete',
+        description: `Successfully imported ${importMetadata.imported_count} features`,
+        duration: 5000,
+      });
+
+      // Close dialog
       onOpenChange(false);
+
     } catch (error) {
       logger.error('Import failed', error);
+      
+      // Show error toast
+      toast({
+        title: 'Import Failed',
+        description: error instanceof Error ? error.message : 'An unknown error occurred',
+        variant: 'destructive',
+        duration: 5000,
+      });
+
       // In case of error, create a minimal valid LoaderResult
       await onImportComplete({
         features: [],
