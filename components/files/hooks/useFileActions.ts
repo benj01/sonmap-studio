@@ -103,12 +103,15 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
 
       try {
         const storagePath = `${projectId}/${uploadedFile.name}`;
-        const isShapefile = uploadedFile.name.toLowerCase().endsWith('.shp');
+        const fileExt = uploadedFile.name.toLowerCase();
+        const isShapefile = fileExt.endsWith('.shp');
+        const isGeoJson = fileExt.endsWith('.geojson');
         
         logger.info('Inserting main file record', {
           fileName: uploadedFile.name,
           storagePath,
-          isShapefile
+          isShapefile,
+          isGeoJson
         });
 
         // Insert main file record
@@ -141,10 +144,11 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           fileName: mainFile.name
         });
 
-        // If this is a shapefile, insert companion file records
-        if (isShapefile && uploadedFile.relatedFiles) {
+        // Handle companion files for both Shapefiles and GeoJSON
+        if (uploadedFile.relatedFiles && (isShapefile || isGeoJson)) {
           logger.info('Processing companion files', {
             mainFileId: mainFile.id,
+            fileType: isShapefile ? 'Shapefile' : 'GeoJSON',
             companionCount: Object.keys(uploadedFile.relatedFiles).length
           });
 
@@ -152,12 +156,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             project_id: projectId,
             name: file.name,
             size: file.size,
-            file_type: 'application/octet-stream',
+            file_type: ext === '.qmd' ? 'application/xml' : 'application/octet-stream',
             storage_path: `${projectId}/${file.name}`,
             is_imported: false,
-            is_shapefile_component: true,
+            is_shapefile_component: isShapefile,
             main_file_id: mainFile.id,
-            component_type: ext.substring(1) // Remove the dot
+            component_type: ext.substring(1) // Set component_type for all companion files
           }));
 
           const { error: companionError } = await supabase
@@ -174,7 +178,8 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           }
           logger.info('Companion files inserted successfully', {
             mainFileId: mainFile.id,
-            count: companionInserts.length
+            count: companionInserts.length,
+            companions: companionInserts.map(c => c.name)
           });
         }
 
@@ -190,7 +195,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         await refreshProjectStorage();
 
         onSuccess?.(uploadedFile.relatedFiles
-          ? 'Shapefile and related components uploaded successfully'
+          ? `${isShapefile ? 'Shapefile' : 'GeoJSON'} and related components uploaded successfully`
           : 'File uploaded successfully');
 
         return mainFile;

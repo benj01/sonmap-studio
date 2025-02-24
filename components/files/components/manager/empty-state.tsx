@@ -19,7 +19,7 @@ export function EmptyState() {
       </svg>
       <h3 className="text-lg font-medium mb-2">No files selected</h3>
       <p className="text-sm">
-        Upload files by clicking the button above or drag and drop them here
+        Click the Select Files button above to upload files
       </p>
     </div>
   );

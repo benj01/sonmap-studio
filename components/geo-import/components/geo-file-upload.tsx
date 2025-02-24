@@ -5,11 +5,12 @@ import { useGeoImport } from '../hooks/use-geo-import';
 import type { ImportSession, FullDataset } from '@/types/geo-import';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertCircle, Loader2 } from 'lucide-react';
-import { ShapefileParser } from '@/core/processors/shapefile-parser';
 import { generatePreview } from '@/core/processors/preview-generator';
 import { createClient } from '@/utils/supabase/client';
 import { Progress } from '@/components/ui/progress';
 import { LogManager } from '@/core/logging/log-manager';
+import { ParserFactory } from '@/core/processors/parser-factory';
+import { FileTypeUtil } from '@/components/files/utils/file-types';
 
 interface GeoFileUploadProps {
   projectId: string;
@@ -141,9 +142,14 @@ export function GeoFileUpload({
 
   const findCompanionFiles = useCallback(async (baseName: string): Promise<CompanionFile[]> => {
     const companions: CompanionFile[] = [];
-    const extensions = ['.dbf', '.shx', '.prj'];
-
+    
     if (!memoizedFileInfo?.id) return companions;
+
+    // Get required companion extensions for this file type
+    const fileConfig = FileTypeUtil.getConfigForFile(memoizedFileInfo.name);
+    if (!fileConfig?.companionFiles) return companions;
+
+    const companionExtensions = fileConfig.companionFiles.map(c => c.extension);
 
     try {
       // Query the database directly for companion files
@@ -151,7 +157,6 @@ export function GeoFileUpload({
         .from('project_files')
         .select('*')
         .eq('project_id', projectId)
-        .eq('is_shapefile_component', true)
         .eq('main_file_id', memoizedFileInfo.id);
 
       if (error) {
@@ -161,14 +166,15 @@ export function GeoFileUpload({
 
       // Map database results to companion files
       for (const file of (files || [])) {
-        if (file.component_type && extensions.includes('.' + file.component_type)) {
+        const extension = FileTypeUtil.getExtension(file.name);
+        if (companionExtensions.includes(extension)) {
           logger.debug('Found companion file', {
             name: file.name,
-            type: file.component_type
+            extension: extension
           });
           companions.push({
             id: file.id,
-            extension: '.' + file.component_type
+            extension: extension
           });
         }
       }
@@ -195,7 +201,7 @@ export function GeoFileUpload({
 
       try {
         // Get base name for finding companion files
-        const baseName = memoizedFileInfo.name.replace(/\.shp$/, '');
+        const baseName = memoizedFileInfo.name.replace(/\.[^.]+$/, '');
         
         // Download main file
         reportProgress('Downloading main file...', 5);
@@ -217,7 +223,7 @@ export function GeoFileUpload({
         }
 
         reportProgress('Creating parser...', 40);
-        const parser = new ShapefileParser();
+        const parser = ParserFactory.createParser(memoizedFileInfo.name);
 
         // Parse the file
         const fullDataset = await parser.parse(mainFileData, companions, {

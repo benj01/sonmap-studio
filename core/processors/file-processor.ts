@@ -1,6 +1,7 @@
-import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
-import { FileTypeUtil } from './file-types';
+import { FileGroup, ProcessedFile, ProcessedFiles } from '@/components/files/types';
+import { FileTypeUtil } from '@/components/files/utils/file-types';
 import { LogManager } from '@/core/logging/log-manager';
+import { ParserFactory } from './parser-factory';
 
 const SOURCE = 'FileProcessor';
 const logManager = LogManager.getInstance();
@@ -33,8 +34,6 @@ export class FileProcessingError extends Error {
 export class FileProcessor {
   /**
    * Group files into main files and their companions
-   * @param files Array of files to process
-   * @returns Array of file groups
    */
   static async groupFiles(files: File[]): Promise<FileGroup[]> {
     logger.info('Starting file grouping', {
@@ -71,10 +70,7 @@ export class FileProcessor {
       logger.info('Looking for companions', {
         mainFile: group.mainFile.name,
         fileType: FileTypeUtil.getExtension(group.mainFile.name),
-        companionFiles: config?.companionFiles?.map(c => ({
-          extension: c.extension,
-          required: c.required
-        })),
+        config: config?.companionFiles?.map(c => c.extension),
         baseFileName
       });
 
@@ -98,24 +94,6 @@ export class FileProcessor {
             remainingFiles.delete(companion);
           }
         }
-
-        // Validate required companions
-        const missingRequired = config.companionFiles
-          .filter(c => c.required)
-          .filter(c => !group.companions.some(f => 
-            FileTypeUtil.getExtension(f.name).toLowerCase() === c.extension.toLowerCase()
-          ));
-
-        if (missingRequired.length > 0) {
-          logger.warn('Missing required companion files', {
-            mainFile: group.mainFile.name,
-            missing: missingRequired.map(c => c.extension)
-          });
-          throw new FileProcessingError(
-            `Missing required companion files: ${missingRequired.map(c => c.extension).join(', ')}`,
-            'MISSING_REQUIRED_COMPANIONS'
-          );
-        }
       }
     }
 
@@ -134,9 +112,6 @@ export class FileProcessor {
 
   /**
    * Process a main file and its companions
-   * @param mainFile Main file to process
-   * @param companions Array of companion files
-   * @returns ProcessedFiles object
    */
   static async processFiles(mainFile: File, companions: File[]): Promise<ProcessedFiles> {
     logger.info('Processing file group', {
@@ -173,8 +148,6 @@ export class FileProcessor {
 
   /**
    * Process a single file
-   * @param file File to process
-   * @returns ProcessedFile object
    */
   private static async processFile(file: File): Promise<ProcessedFile> {
     try {
@@ -183,10 +156,11 @@ export class FileProcessor {
       let isValid = true;
       let error: string | undefined;
 
-      if (config?.validateContent) {
+      if (FileTypeUtil.isMainGeoFile(file.name)) {
         try {
-          logger.info('Validating file content', { fileName: file.name });
-          isValid = await config.validateContent(file);
+          const parser = ParserFactory.createParser(file.name);
+          const buffer = await file.arrayBuffer();
+          isValid = await parser.validate(buffer);
           if (!isValid) {
             error = 'File content validation failed';
             logger.warn('File content validation failed', { fileName: file.name });
@@ -198,6 +172,33 @@ export class FileProcessor {
             fileName: file.name,
             error: error
           });
+        }
+      } else {
+        // Check if this is a companion file
+        const mainExt = FileTypeUtil.getExtension(file.name);
+        const companionConfig = FileTypeUtil.getAllConfigs()
+          .flatMap(c => c.companionFiles)
+          .find(c => c.extension.toLowerCase() === mainExt.toLowerCase());
+
+        if (companionConfig?.validateContent) {
+          try {
+            logger.info('Validating companion file content', { 
+              fileName: file.name,
+              extension: mainExt
+            });
+            isValid = await companionConfig.validateContent(file);
+            if (!isValid) {
+              error = 'File content validation failed';
+              logger.warn('Companion file content validation failed', { fileName: file.name });
+            }
+          } catch (e) {
+            isValid = false;
+            error = e instanceof Error ? e.message : 'Validation error';
+            logger.error('Companion file validation error', {
+              fileName: file.name,
+              error: error
+            });
+          }
         }
       }
 

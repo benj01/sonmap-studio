@@ -6,6 +6,8 @@ export interface CompanionFileConfig {
   description: string;
   required: boolean;
   maxSize: number;
+  mimeType?: string;
+  validateContent?: (file: File) => Promise<boolean>;
 }
 
 /**
@@ -84,7 +86,7 @@ export interface ProjectFile {
   source_file_id?: string;
   is_shapefile_component?: boolean;
   main_file_id?: string;
-  component_type?: 'shp' | 'shx' | 'dbf' | 'prj';
+  component_type?: 'shp' | 'shx' | 'dbf' | 'prj' | 'qmd';
   metadata?: {
     relatedFiles?: Record<string, {
       name: string;

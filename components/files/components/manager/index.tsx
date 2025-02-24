@@ -11,6 +11,7 @@ import { GeoImportDialog } from '@/components/geo-import/components/geo-import-d
 import { FileTypeUtil } from '../../utils/file-types';
 import { Upload } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { createClient } from '@/utils/supabase/client';
 
 interface FileManagerProps {
   projectId: string;
@@ -201,51 +202,70 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const uploadFile = async (file: File, onProgress: (progress: number) => void) => {
     const logContext = `[${file.name}]`;
     try {
-      const contentType = file.name.toLowerCase().endsWith('.geojson') 
+      const extension = file.name.toLowerCase();
+      const contentType = extension.endsWith('.geojson') 
         ? 'application/geo+json'
+        : extension.endsWith('.qmd')
+        ? 'application/xml'
         : file.type || 'application/octet-stream';
 
-      // Single log for upload start with all relevant info
       console.info(`[FileManager] ${logContext} Starting upload`, { 
         size: file.size,
-        type: contentType
+        type: contentType,
+        extension
       });
       
       // Get signed URL
+      console.info(`[FileManager] ${logContext} Requesting signed URL...`);
+      const supabase = createClient();
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      
+      if (sessionError || !session) {
+        console.error(`[FileManager] ${logContext} No valid session`, { error: sessionError });
+        throw new Error('Authentication required');
+      }
+
       const response = await fetch('/api/storage/upload-url-new', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
         },
         body: JSON.stringify({
           filename: file.name,
-          projectId: projectId
+          projectId: projectId,
+          contentType: contentType
         }),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Failed to get signed URL: ${response.status} ${response.statusText}`);
+        console.error(`[FileManager] ${logContext} Failed to get signed URL`, {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText
+        });
+        throw new Error(`Failed to get signed URL: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = await response.json();
       if (!data.data?.signedUrl) {
-        throw new Error('Invalid signed URL response from server');
+        console.error(`[FileManager] ${logContext} Invalid signed URL response`, { data });
+        throw new Error('Invalid signed URL response from server: ' + JSON.stringify(data));
       }
 
       const { signedUrl } = data.data;
+      console.info(`[FileManager] ${logContext} Got signed URL, starting upload to storage...`);
       
       // Upload the file
       const xhr = new XMLHttpRequest();
       await new Promise((resolve, reject) => {
-        // Only log progress at 25%, 50%, 75%, and 100%
         let lastProgressLog = 0;
         xhr.upload.addEventListener('progress', (event) => {
           if (event.lengthComputable) {
             const percentComplete = (event.loaded / event.total) * 100;
             onProgress(percentComplete);
             
-            // Log progress at 25% intervals
             const currentQuarter = Math.floor(percentComplete / 25);
             if (currentQuarter > lastProgressLog) {
               lastProgressLog = currentQuarter;
@@ -255,16 +275,34 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         });
 
         xhr.addEventListener('load', () => {
-          if (xhr.status === 200) {
-            console.info(`[FileManager] ${logContext} Upload completed`);
-            resolve(xhr.response);
+          if (xhr.status >= 200 && xhr.status < 300) {
+            console.info(`[FileManager] ${logContext} Upload completed successfully`);
+            resolve(undefined);
           } else {
-            reject(new Error(`Upload failed with status ${xhr.status}: ${xhr.responseText}`));
+            const error = new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText} - ${xhr.responseText}`);
+            console.error(`[FileManager] ${logContext} Upload failed`, {
+              status: xhr.status,
+              statusText: xhr.statusText,
+              response: xhr.responseText
+            });
+            reject(error);
           }
         });
 
         xhr.addEventListener('error', () => {
-          reject(new Error(`Upload failed: ${xhr.statusText}`));
+          const error = new Error(`Upload failed: Network error - ${xhr.statusText}`);
+          console.error(`[FileManager] ${logContext} Network error during upload`, {
+            status: xhr.status,
+            statusText: xhr.statusText,
+            response: xhr.responseText
+          });
+          reject(error);
+        });
+
+        xhr.addEventListener('abort', () => {
+          const error = new Error('Upload aborted');
+          console.error(`[FileManager] ${logContext} Upload aborted`);
+          reject(error);
         });
 
         xhr.open('PUT', signedUrl);
@@ -273,7 +311,13 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       });
     } catch (error) {
       console.error(`[FileManager] ${logContext} Upload failed`, {
-        error: error instanceof Error ? error.message : 'Unknown error'
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack
+        } : 'Unknown error',
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type
       });
       throw error;
     }
@@ -285,7 +329,16 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     
     try {
       console.info(`[FileManager] ${logContext} Starting upload process`, {
-        companions: group.companions.map(c => c.name)
+        mainFile: {
+          name: group.mainFile.name,
+          type: group.mainFile.type,
+          size: group.mainFile.size
+        },
+        companions: group.companions.map(c => ({
+          name: c.name,
+          type: c.type,
+          size: c.size
+        }))
       });
 
       // Upload main file first
@@ -298,8 +351,13 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       const relatedFiles: Record<string, { name: string; size: number }> = {};
       if (group.companions.length > 0) {
         for (const companion of group.companions) {
-          const ext = companion.name.substring(companion.name.lastIndexOf('.'));
-          console.info(`[FileManager] ${logContext} Uploading companion file ${ext}`);
+          const ext = FileTypeUtil.getExtension(companion.name);
+          console.info(`[FileManager] ${logContext} Uploading companion file`, {
+            name: companion.name,
+            extension: ext,
+            type: companion.type,
+            size: companion.size
+          });
           await uploadFile(companion, (progress) => {
             updateUploadProgress(mainFileName, progress);
           });
@@ -311,13 +369,21 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
 
       // Create database record
-      console.info(`[FileManager] ${logContext} Creating database record`);
+      console.info(`[FileManager] ${logContext} Creating database record`, {
+        mainFile: group.mainFile.name,
+        relatedFiles
+      });
       await handleUploadComplete({
         id: '',
         name: group.mainFile.name,
         size: group.mainFile.size,
         type: group.mainFile.type,
-        relatedFiles: Object.keys(relatedFiles).length > 0 ? relatedFiles : undefined
+        relatedFiles: Object.fromEntries(
+          group.companions.map(companion => [
+            FileTypeUtil.getExtension(companion.name),
+            { name: companion.name, size: companion.size }
+          ])
+        )
       });
 
       // Cleanup and reload
@@ -389,107 +455,87 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   }, [isProcessing, handleFileSelect]);
 
   return (
-    <div 
-      ref={dropZoneRef}
-      className={cn(
-        "grid grid-cols-1 lg:grid-cols-4 gap-6",
-        "min-h-[400px]"
-      )}
-    >
-      {/* Main content area */}
-      <div className="lg:col-span-3 space-y-6">
-        <div className="relative">
-          <Toolbar 
-            onFileSelect={handleFileSelect} 
-            isProcessing={isProcessing}
-          />
-          {error && (
-            <div className="text-red-500 text-sm mt-2">{error}</div>
-          )}
-        </div>
-        
-        {/* Uploading Files Section */}
-        {uploadingFiles.length > 0 && (
-          <div className="space-y-4">
-            <div className="font-medium text-gray-700">Uploading Files</div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {uploadingFiles.map((uploadingFile) => (
-                <div key={uploadingFile.group.mainFile.name}>
-                  <FileList
-                    mainFile={uploadingFile.group.mainFile}
-                    companions={uploadingFile.group.companions}
-                  />
-                  <div className="mt-2">
-                    <UploadProgress progress={uploadingFile.progress} />
-                  </div>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-4 p-4 border rounded-lg bg-background">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-4">
+              <div
+                className={cn(
+                  "flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg",
+                  "hover:border-primary/50 transition-colors duration-200",
+                  "cursor-pointer bg-muted/50"
+                )}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onClick={handleFileSelect}
+              >
+                <Upload className="w-8 h-8 mb-4 text-muted-foreground" />
+                <div className="text-sm text-center text-muted-foreground">
+                  <p>Drag and drop files here or click to select files</p>
+                  <p className="mt-2">Supported formats: Shapefile (.shp), GeoJSON (.geojson)</p>
                 </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Existing Files Section */}
-        {isLoading ? (
-          <div className="text-center py-4">Loading files...</div>
-        ) : files.length > 0 ? (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div className="font-medium text-gray-700">Uploaded Files</div>
-                <div className="text-sm text-gray-500">Select Import to use these files in your project</div>
+              </div>
+              <div className="relative">
+                <Toolbar 
+                  onFileSelect={handleFileSelect} 
+                  isProcessing={isProcessing}
+                />
+                {error && (
+                  <div className="text-red-500 text-sm mt-2">{error}</div>
+                )}
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {files.filter(file => !file.is_shapefile_component).map((mainFile) => (
-                <FileList
-                  key={mainFile.id}
-                  mainFile={mainFile}
-                  companions={files.filter(f => f.main_file_id === mainFile.id)}
-                  onDelete={handleFileDelete}
-                  onDownload={handleDownload}
-                  onImport={handleFileImport}
-                />
-              ))}
-            </div>
           </div>
-        ) : uploadingFiles.length === 0 && (
-          <EmptyState />
-        )}
-      </div>
-
-      {/* Persistent drop zone */}
-      <div 
-        className={cn(
-          "hidden lg:flex flex-col items-center justify-center",
-          "p-6 rounded-lg border-2 border-dashed",
-          "transition-colors duration-200",
-          isDragging
-            ? "bg-blue-50 border-blue-500 ring-4 ring-blue-100"
-            : "border-gray-200 bg-gray-50/50 hover:border-gray-300 hover:bg-gray-50"
-        )}
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        <Upload 
-          className={cn(
-            "w-8 h-8 mb-3",
-            isDragging ? "text-blue-500 animate-bounce" : "text-gray-400"
+          
+          {/* Uploading Files Section */}
+          {uploadingFiles.length > 0 && (
+            <div className="space-y-4">
+              <div className="font-medium text-gray-700">Uploading Files</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {uploadingFiles.map((uploadingFile) => (
+                  <div key={uploadingFile.group.mainFile.name}>
+                    <FileList
+                      mainFile={uploadingFile.group.mainFile}
+                      companions={uploadingFile.group.companions}
+                    />
+                    <div className="mt-2">
+                      <UploadProgress progress={uploadingFile.progress} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
-        />
-        <p className={cn(
-          "text-sm font-medium text-center",
-          isDragging ? "text-blue-700" : "text-gray-600"
-        )}>
-          Drop files here
-        </p>
-        <p className={cn(
-          "text-xs text-center mt-1",
-          isDragging ? "text-blue-600" : "text-gray-500"
-        )}>
-          Supported formats:{"\n"}Shapefile, GeoJSON, KML, GPX
-        </p>
+
+          {/* Existing Files Section */}
+          {isLoading ? (
+            <div className="text-center py-4">Loading files...</div>
+          ) : files.length > 0 ? (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-medium text-gray-700">Uploaded Files</div>
+                  <div className="text-sm text-gray-500">Select Import to use these files in your project</div>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {files.filter(file => !file.main_file_id).map((mainFile) => (
+                  <FileList
+                    key={mainFile.id}
+                    mainFile={mainFile}
+                    companions={files.filter(f => f.main_file_id === mainFile.id)}
+                    onDelete={handleFileDelete}
+                    onDownload={handleDownload}
+                    onImport={handleFileImport}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : uploadingFiles.length === 0 && (
+            <EmptyState />
+          )}
+        </div>
       </div>
 
       {/* Import dialog */}

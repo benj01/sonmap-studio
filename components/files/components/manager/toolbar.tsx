@@ -61,7 +61,7 @@ export function Toolbar({ onFileSelect, isProcessing }: ToolbarProps) {
         multiple
         onChange={handleFileChange}
         className="hidden"
-        accept=".shp,.dbf,.shx,.prj,.geojson,.json,.kml,.gpx"
+        accept=".shp,.dbf,.shx,.prj,.geojson,.json,.kml,.gpx,.qmd"
       />
       <button
         onClick={handleButtonClick}

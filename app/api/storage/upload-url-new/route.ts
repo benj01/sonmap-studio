@@ -21,10 +21,20 @@ export async function POST(request: Request) {
   logger.info('Starting upload-url endpoint');
   
   try {
-    const body = await request.json();
-    const { filename, projectId } = body;
+    // Get auth token from request header
+    const authHeader = request.headers.get('authorization');
+    if (!authHeader) {
+      logger.warn('No authorization header present');
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
+    }
 
-    logger.info('Upload URL request', { filename, projectId });
+    const body = await request.json();
+    const { filename, projectId, contentType } = body;
+
+    logger.info('Upload URL request', { filename, projectId, contentType });
 
     if (!filename || !projectId) {
       logger.warn('Missing required parameters', { filename, projectId });
@@ -34,18 +44,50 @@ export async function POST(request: Request) {
       );
     }
 
+    // Create Supabase client with auth context
     logger.info('Creating Supabase client...');
-    let supabase;
-    try {
-      supabase = await createClient();
-    } catch (e) {
-      logger.error('Failed to create Supabase client', e);
+    const token = authHeader.replace('Bearer ', '');
+    const supabase = await createClient();
+
+    // Verify user authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) {
+      logger.error('Invalid auth token', { error: authError, token: token.substring(0, 10) + '...' });
       return NextResponse.json(
-        { error: 'Failed to initialize storage client' },
-        { status: 500 }
+        { error: 'Unauthorized' },
+        { status: 401 }
       );
     }
-    logger.info('Supabase client created');
+    logger.info('User authenticated', { userId: user.id });
+
+    // Verify project access
+    const { data: project, error: projectError } = await supabase
+      .from('projects')
+      .select('id')
+      .eq('id', projectId)
+      .single();
+
+    if (projectError) {
+      logger.error('Project access check failed', { 
+        error: projectError,
+        userId: user.id,
+        projectId
+      });
+      return NextResponse.json(
+        { error: 'Project access check failed' },
+        { status: 403 }
+      );
+    }
+
+    if (!project) {
+      logger.warn('Project not found', { projectId });
+      return NextResponse.json(
+        { error: 'Project not found' },
+        { status: 404 }
+      );
+    }
+
+    logger.info('Project access verified', { projectId, userId: user.id });
 
     // Create the full storage path including project ID
     const storagePath = `${projectId}/${filename}`;
@@ -55,37 +97,18 @@ export async function POST(request: Request) {
     logger.info('Creating signed upload URL...');
     const { data: uploadData, error: signedUrlError } = await supabase.storage
       .from('project-files')
-      .createSignedUploadUrl(storagePath);
+      .createSignedUploadUrl(storagePath, {
+        upsert: true,
+        contentType: contentType || 'application/octet-stream'
+      });
 
     if (signedUrlError) {
       logger.error('Failed to create signed URL', {
         error: signedUrlError,
-        data: uploadData
+        path: storagePath,
+        userId: user.id,
+        projectId
       });
-
-      // Check if this is a permissions error
-      if (signedUrlError.message?.includes('security policy')) {
-        // First verify if the user has access to the project
-        const { data: project, error: projectError } = await supabase
-          .from('projects')
-          .select('id')
-          .eq('id', projectId)
-          .single();
-
-        if (projectError) {
-          return NextResponse.json(
-            { error: 'Not authorized to access this project' },
-            { status: 403 }
-          );
-        }
-
-        if (!project) {
-          return NextResponse.json(
-            { error: 'Project not found' },
-            { status: 404 }
-          );
-        }
-      }
 
       return NextResponse.json(
         { error: 'Failed to create upload URL: ' + signedUrlError.message },
@@ -94,13 +117,18 @@ export async function POST(request: Request) {
     }
 
     if (!uploadData?.signedUrl) {
+      logger.error('No signed URL in response', { uploadData });
       return NextResponse.json(
         { error: 'No signed URL received from storage' },
         { status: 500 }
       );
     }
 
-    logger.info('Successfully created signed URL');
+    logger.info('Successfully created signed URL', {
+      path: storagePath,
+      expiresIn: '10 minutes'
+    });
+    
     return NextResponse.json({
       data: {
         signedUrl: uploadData.signedUrl,
@@ -108,7 +136,6 @@ export async function POST(request: Request) {
       }
     });
   } catch (error) {
-    // Log the full error object
     logger.error('Unexpected error in upload-url route', {
       error,
       message: error instanceof Error ? error.message : 'Unknown error',
