@@ -5,13 +5,13 @@ import { Toolbar } from './toolbar';
 import { useFileOperations } from '../../hooks/useFileOperations';
 import { useFileActions } from '../../hooks/useFileActions';
 import { FileGroup, ProcessedFiles, ProjectFile } from '../../types';
-import { Button } from '@/components/ui/button';
+import { Button } from '../../../ui/button';
 import { UploadProgress } from './upload-progress';
-import { GeoImportDialog } from '@/components/geo-import/components/geo-import-dialog';
+import { GeoImportDialog } from '../../../geo-import/components/geo-import-dialog';
 import { FileTypeUtil } from '../../utils/file-types';
 import { Upload } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { createClient } from '@/utils/supabase/client';
+import { cn } from '../../../../lib/utils';
+import { createClient } from '../../../../utils/supabase/client';
 import { ImportedFilesList } from '../imported-files-list';
 
 interface FileManagerProps {
@@ -44,6 +44,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const [isDragging, setIsDragging] = React.useState(false);
   const dropZoneRef = React.useRef<HTMLDivElement>(null);
   const dragCountRef = React.useRef(0);
+  const [importedFilesKey, setImportedFilesKey] = React.useState(0);
 
   // Load files on component mount
   React.useEffect(() => {
@@ -56,7 +57,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       const loadedFiles = await loadFiles();
       console.info('[FileManager] Files loaded', {
         count: loadedFiles.length,
-        files: loadedFiles.map(f => f.name)
+        files: loadedFiles.map((file: ProjectFile) => file.name)
       });
       setFiles(loadedFiles);
     } catch (e) {
@@ -183,9 +184,21 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const handleImportComplete = async (result: any) => {
     try {
       console.info('Import completed', result);
+      
+      // Don't close the dialog until we've updated everything
+      const supabase = createClient();
+      
+      // Refresh both lists to ensure we have the latest data
+      await Promise.all([
+        loadExistingFiles(),
+        // Force the ImportedFilesList to refresh by changing its key
+        setImportedFilesKey(prev => prev + 1)
+      ]);
+
+      // Now close the dialog and reset selected file
       setImportDialogOpen(false);
       setSelectedFile(null);
-      await loadExistingFiles(); // Reload files after import
+      
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
       onError?.(errorMessage);
@@ -335,10 +348,10 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           type: group.mainFile.type,
           size: group.mainFile.size
         },
-        companions: group.companions.map(c => ({
-          name: c.name,
-          type: c.type,
-          size: c.size
+        companions: group.companions.map((companion: File) => ({
+          name: companion.name,
+          type: companion.type,
+          size: companion.size
         }))
       });
 
@@ -380,7 +393,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         size: group.mainFile.size,
         type: group.mainFile.type,
         relatedFiles: Object.fromEntries(
-          group.companions.map(companion => [
+          group.companions.map((companion: File) => [
             FileTypeUtil.getExtension(companion.name),
             { name: companion.name, size: companion.size }
           ])
@@ -484,7 +497,17 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
                 )}
                 onDrop={handleDrop}
                 onDragOver={handleDragOver}
-                onClick={handleFileSelect}
+                onClick={(e) => {
+                  e.preventDefault();
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.multiple = true;
+                  input.onchange = (e) => {
+                    const files = (e.target as HTMLInputElement).files;
+                    if (files) handleFileSelect(files);
+                  };
+                  input.click();
+                }}
               >
                 <Upload className="w-8 h-8 mb-4 text-muted-foreground" />
                 <div className="text-sm text-center text-muted-foreground">
@@ -556,6 +579,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
       {/* Imported Files Section */}
       <ImportedFilesList
+        key={importedFilesKey}
         projectId={projectId}
         onViewLayer={handleViewLayer}
         onDelete={handleDeleteImported}
@@ -573,4 +597,6 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       )}
     </div>
   );
-} 
+}
+
+// ... rest of the code ...

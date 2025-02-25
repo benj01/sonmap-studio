@@ -18,6 +18,8 @@ interface ImportedFile {
     failed_count: number;
     imported_at: string;
   };
+  source_file_id?: string;
+  is_imported: boolean;
 }
 
 interface ImportedFilesListProps {
@@ -46,14 +48,28 @@ export function ImportedFilesList({ projectId, onViewLayer, onDelete }: Imported
     async function loadImportedFiles() {
       try {
         const supabase = createClient();
+        
+        // Get all imported files and their source files
         const { data, error } = await supabase
           .from('project_files')
-          .select('id, name, import_metadata')
+          .select(`
+            id,
+            name,
+            import_metadata,
+            source_file_id,
+            is_imported,
+            uploaded_at
+          `)
           .eq('project_id', projectId)
           .eq('is_imported', true)
-          .order('name');
+          .order('uploaded_at', { ascending: false });
 
         if (error) throw error;
+
+        logger.info('Loaded imported files', {
+          count: data?.length,
+          files: data?.map(f => ({ id: f.id, name: f.name }))
+        });
 
         setImportedFiles(data || []);
       } catch (error) {

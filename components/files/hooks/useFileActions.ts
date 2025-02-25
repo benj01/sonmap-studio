@@ -36,50 +36,50 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
   const loadFiles = useCallback(async (): Promise<ProjectFile[]> => {
     setIsLoading(true);
     try {
-      // First get all non-imported files
-      const { data: sourceFiles, error: sourceError } = await supabase
+      // Get all files for the project
+      const { data: allFiles, error: filesError } = await supabase
         .from('project_files')
         .select('*')
         .eq('project_id', projectId)
-        .is('is_imported', false)
         .order('uploaded_at', { ascending: false });
 
-      if (sourceError) throw sourceError;
+      if (filesError) throw filesError;
 
-      // Then get all imported files
-      const { data: importedFiles, error: importError } = await supabase
-        .from('project_files')
-        .select('*')
-        .eq('project_id', projectId)
-        .eq('is_imported', true)
-        .order('uploaded_at', { ascending: false });
+      // Separate files into main files and their companions
+      const mainFiles = allFiles?.filter(file => !file.main_file_id) || [];
+      const companionFiles = allFiles?.filter(file => file.main_file_id) || [];
 
-      if (importError) throw importError;
-
-      // Group imported files by their source file
-      const importedBySource = importedFiles?.reduce((acc: Record<string, ProjectFile[]>, file: ProjectFile) => {
-        if (file.source_file_id) {
-          if (!acc[file.source_file_id]) {
-            acc[file.source_file_id] = [];
+      // Create a map of companion files by main file ID
+      const companionsByMainFile = companionFiles.reduce((acc, file) => {
+        if (file.main_file_id) {
+          if (!acc[file.main_file_id]) {
+            acc[file.main_file_id] = [];
           }
-          acc[file.source_file_id].push(file);
+          acc[file.main_file_id].push(file);
         }
         return acc;
       }, {} as Record<string, ProjectFile[]>);
 
-      // Attach imported files to their source files
-      return sourceFiles?.map((file: ProjectFile) => ({
+      // Attach companion files to their main files
+      const filesWithCompanions = mainFiles.map(file => ({
         ...file,
-        importedFiles: importedBySource[file.id] || []
-      })) || [];
+        companions: companionsByMainFile[file.id] || []
+      }));
+
+      logger.info('Files loaded', {
+        totalFiles: allFiles?.length,
+        mainFiles: mainFiles.length,
+        companionFiles: companionFiles.length
+      });
+
+      return filesWithCompanions;
     } catch (error) {
-      logger.error('Error loading files', error);
-      onError?.('Failed to load files');
+      logger.error('Failed to load files', error);
       throw error;
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, supabase, onError]);
+  }, [projectId]);
 
   const handleUploadComplete = useCallback(async (uploadedFile: FileUploadResult) => {
     setIsLoading(true);
