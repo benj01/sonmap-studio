@@ -1,9 +1,10 @@
 import React from 'react';
 import { FileIcon } from '../item/file-icon';
-import { ChevronDown, ChevronRight, Download, Import, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Download, Import, Trash2, Check } from 'lucide-react';
 import { ProjectFile } from '../../types';
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { Button } from '../../../ui/button';
+import { cn } from '../../../../lib/utils';
+import { Badge } from '../../../ui/badge';
 
 interface FileListProps {
   mainFile: File | ProjectFile;
@@ -17,6 +18,7 @@ export function FileList({ mainFile, companions = [], onDelete, onDownload, onIm
   const [isExpanded, setIsExpanded] = React.useState(false);
   const hasCompanions = companions.length > 0;
   const isProjectFile = 'id' in mainFile;
+  const isImported = isProjectFile && (mainFile as ProjectFile).is_imported;
 
   // Format file size
   const formatSize = (bytes: number) => {
@@ -35,12 +37,20 @@ export function FileList({ mainFile, companions = [], onDelete, onDownload, onIm
         <div className="flex items-start gap-3">
           {/* Icon and main info */}
           <div className="flex-shrink-0">
-            <FileIcon fileName={mainFile.name} size={32} />
+            <FileIcon fileName={mainFile.name} isMain={true} />
           </div>
           <div className="flex-grow min-w-0">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <h3 className="font-medium text-gray-900 truncate">{mainFile.name}</h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-medium text-gray-900 truncate">{mainFile.name}</h3>
+                  {isImported && (
+                    <Badge variant="secondary" className="flex items-center gap-1">
+                      <Check className="h-3 w-3" />
+                      Imported
+                    </Badge>
+                  )}
+                </div>
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <span>{formatSize(mainFile.size)}</span>
                   {hasCompanions && (
@@ -59,7 +69,7 @@ export function FileList({ mainFile, companions = [], onDelete, onDownload, onIm
               </div>
               {/* Actions */}
               <div className="flex items-center gap-2 flex-shrink-0">
-                {isProjectFile && onImport && (
+                {isProjectFile && onImport && !isImported && (
                   <Button
                     variant="default"
                     size="sm"
