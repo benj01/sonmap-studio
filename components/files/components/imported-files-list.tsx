@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Eye, Download, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { supabaseBrowserClient as supabase } from '@/utils/supabase/browser-client';
+import { createClient } from '@/utils/supabase/client';
 import { LogManager } from '@/core/logging/log-manager';
 
 interface ImportedFile {
@@ -45,6 +45,7 @@ export function ImportedFilesList({ projectId, onViewLayer, onDelete }: Imported
   useEffect(() => {
     async function loadImportedFiles() {
       try {
+        const supabase = createClient();
         const { data, error } = await supabase
           .from('project_files')
           .select('id, name, import_metadata')

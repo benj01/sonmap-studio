@@ -1,28 +1,35 @@
 # 📂 supabase
 
 ## Overview
-This folder contains 7 file(s) related to supabase.
+This folder contains Supabase client utilities for browser and server environments.
 
 ## 📄 Files in this folder
 
 | File Name | Description |
 |-----------|-------------|
-| `browser-client.ts` | [Add description] |
-| `check-env-vars.ts` | [Add description] |
-| `client.ts` | [Add description] |
-| `middleware.ts` | [Add description] |
-| `s3.ts` | [Add description] |
-| `server-client.ts` | [Add description] |
-| `server.ts` | [Add description] |
+| `client.ts` | Browser-side Supabase client with cookie handling |
+| `check-env-vars.ts` | Environment variable validation |
+| `middleware.ts` | Next.js middleware for Supabase auth |
+| `s3.ts` | S3 storage utilities |
+| `server-client.ts` | Server-side Supabase client |
+| `server.ts` | Server utilities |
 
 ## 🔗 Dependencies
-- [List important dependencies used in this folder]
+- @supabase/ssr
+- @supabase/supabase-js
+- next
 
 ## ⚙️ Usage Notes
-- [Add any specific setup or initialization details]
+- The `client.ts` file provides a singleton Supabase client for browser environments
+- The `server-client.ts` file provides server-side Supabase client functionality
+- Both clients handle cookies consistently for authentication
 
 ## 🔄 Related Folders/Modules
-- [List related folders or modules]
+- /components/auth
+- /app/auth
+- /middleware.ts
 
 ## 🚧 TODOs / Planned Improvements
-- [List any pending tasks or improvements]
+- Add comprehensive error handling
+- Add request retries for failed operations
+- Add caching layer for frequently accessed data

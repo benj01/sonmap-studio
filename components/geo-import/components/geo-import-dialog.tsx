@@ -11,7 +11,7 @@ import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-impor
 import { MapPreview } from './map-preview';
 import { FileTypeUtil } from '@/components/files/utils/file-types';
 import { LogManager } from '@/core/logging/log-manager';
-import { supabaseBrowserClient as supabase } from '@/utils/supabase/browser-client';
+import { createClient } from '@/utils/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
 import { LogLevel } from '@/core/logging/log-manager';
 
@@ -196,6 +196,7 @@ export function GeoImportDialog({
       });
 
       // Call our PostGIS import function
+      const supabase = createClient();
       const importParams = {
         p_project_file_id: importSession.fileId,
         p_collection_name: fileInfo?.name || 'Imported Features',
