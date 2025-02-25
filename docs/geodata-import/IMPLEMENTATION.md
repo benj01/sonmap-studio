@@ -8,24 +8,30 @@ The geodata import pipeline has been implemented with a focus on Shapefiles and 
 
 1. **File Management**
    - Two-step process: Upload → Import
-   - Clear visual separation between uploaded files and import functionality
+   - Clear visual separation between uploaded and imported files
    - Support for main files and companion files (e.g., .shp with .dbf, .shx, .prj)
    - Automatic companion file grouping
    - Real-time upload progress tracking
+   - Visual indicators for imported files
+   - Files remain visible in the upload list after import
 
 2. **User Interface**
    - Simple and clear file selection button
+   - Drag-and-drop support with visual feedback
    - Grid-based file display with clear hierarchy
    - Prominent import actions
    - Visual feedback for file operations
    - Companion file collapsible display
    - Real-time upload progress indicators
+   - "Imported" badge for files that have been processed
+   - Import button automatically hides after successful import
 
 3. **Data Processing**
    - Client-side validation and processing
    - Support for both single files and file groups
    - Automatic file type detection
    - Progress tracking throughout the pipeline
+   - Immediate UI updates after import completion
 
 ## Technical Implementation
 
@@ -38,6 +44,7 @@ FileManager (components/files/components/manager/index.tsx)
   → FileList (Grid Display)
     → FileItem (Individual File Card)
       → Actions (Import, Download, Delete)
+      → ImportStatus (Badge)
 ```
 
 ### File Processing Pipeline
@@ -70,6 +77,21 @@ FileManager (components/files/components/manager/index.tsx)
    }
    ```
 
+4. **Import Status**
+   ```typescript
+   interface ProjectFile {
+     id: string;
+     name: string;
+     size: number;
+     is_imported: boolean;  // Tracks import status
+     import_metadata?: {
+       imported_count: number;
+       failed_count: number;
+       imported_at: string;
+     };
+   }
+   ```
+
 ### UI Components
 
 #### File Upload
@@ -77,6 +99,7 @@ FileManager (components/files/components/manager/index.tsx)
 - Drag-and-drop zone with visual feedback
 - Support for multiple file selection
 - Progress tracking during upload
+- Immediate visual feedback after upload completion
 
 #### File Display
 ```typescript
@@ -86,13 +109,14 @@ interface FileCard {
     name: string;
     size: string;
     type: string;
+    isImported: boolean;  // Controls badge visibility
   };
   companions?: {
     count: number;
     files: CompanionFile[];
   };
   actions: {
-    primary: 'import';
+    primary: 'import' | null;  // Null when imported
     secondary: ['download', 'delete'];
   };
 }
@@ -100,9 +124,11 @@ interface FileCard {
 
 #### Import Action
 - Prominent "Import" button for each file
+- Button disappears after successful import
+- "Imported" badge appears after successful import
 - Clear visual hierarchy:
-  1. File information
-  2. Primary action (Import)
+  1. File information and import status
+  2. Primary action (Import) if not imported
   3. Utility actions (Download, Delete)
 - Companion file management with expandable view
 
@@ -113,6 +139,7 @@ interface FileCard {
 - Validation of required companions
 - Group upload with progress tracking
 - Metadata extraction from .dbf
+- Import status tracking per file
 
 ### 2. GeoJSON
 - Direct validation of GeoJSON structure
@@ -123,6 +150,7 @@ interface FileCard {
   - Automatic coordinate system detection
   - Optional companion file
   - XML content validation
+- Import status tracking per file
 
 ## Error Handling
 
@@ -149,7 +177,8 @@ interface ProgressEvent {
 ## Best Practices
 
 1. **User Experience**
-   - Clear separation of upload and import actions
+   - Clear separation of uploaded and imported files
+   - Visual indicators for file status
    - Immediate feedback for all operations
    - Intuitive companion file management
    - Progressive disclosure of advanced features
@@ -159,6 +188,7 @@ interface ProgressEvent {
    - Validate before upload
    - Track progress throughout the pipeline
    - Preserve file relationships in storage
+   - Maintain visibility of imported files
 
 3. **Error Handling**
    - User-friendly error messages

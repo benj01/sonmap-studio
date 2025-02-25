@@ -20,6 +20,7 @@ sonmap-studio/
 │   │   │   │   ├── file-icon.tsx
 │   │   │   │   ├── file-actions.tsx
 │   │   │   │   └── file-metadata.tsx
+│   │   │   ├── imported-files-list.tsx  # Imported files display
 │   │   │   └── upload/     # Upload components
 │   │   │       ├── file-upload.tsx
 │   │   │       ├── upload-progress.tsx
@@ -35,11 +36,11 @@ sonmap-studio/
 │       ├── components/
 │       │   ├── geo-import-dialog.tsx
 │       │   ├── geo-file-upload.tsx
-│       │   ├── map-preview/         # Map preview components (planned)
+│       │   ├── map-preview/         # Map preview components
 │       │   │   ├── index.tsx
 │       │   │   ├── map-container.tsx
 │       │   │   └── layer-controls.tsx
-│       │   ├── feature-selector/    # Feature selection UI (planned)
+│       │   ├── feature-selector/    # Feature selection UI
 │       │   │   ├── index.tsx
 │       │   │   ├── feature-list.tsx
 │       │   │   └── spatial-selector.tsx
@@ -48,8 +49,8 @@ sonmap-studio/
 │       │       └── field-mapper.tsx
 │       ├── hooks/
 │       │   ├── use-geo-import.ts
-│       │   ├── use-preview.ts       # Preview management (planned)
-│       │   └── use-selection.ts     # Selection management (planned)
+│       │   ├── use-preview.ts
+│       │   └── use-selection.ts
 │       └── utils/
 │           └── preview-utils.ts
 │
@@ -59,7 +60,7 @@ sonmap-studio/
 │   │   ├── shapefile-parser.ts
 │   │   ├── dxf-parser.ts          # Planned
 │   │   ├── csv-parser.ts          # Planned
-│   │   └── geometry-simplifier.ts  # Planned
+│   │   └── geometry-simplifier.ts
 │   ├── preview/           # Preview generation
 │   │   ├── preview-generator.ts
 │   │   ├── feature-sampler.ts
@@ -72,6 +73,9 @@ sonmap-studio/
 │   │   ├── file-validator.ts
 │   │   ├── geometry-validator.ts
 │   │   └── property-validator.ts
+│   ├── logging/          # Logging system
+│   │   ├── log-manager.ts
+│   │   └── log-types.ts
 │   ├── security/          # Security utilities
 │   │   ├── data-masker.ts
 │   │   └── access-control.ts
@@ -80,105 +84,128 @@ sonmap-studio/
 │       └── progress-tracker.ts
 │
 ├── types/                 # TypeScript type definitions
-│   ├── geo-import/
+│   ├── geo/
 │   │   ├── index.ts
-│   │   ├── shapefile.d.ts
-│   │   └── import-session.ts
-│   └── array-source.d.ts
+│   │   ├── feature.ts
+│   │   └── import.ts
+│   └── supabase.ts       # Supabase database types
 │
 └── docs/                  # Documentation
     └── geodata-import/
         ├── CONCEPT.md     # Design and implementation guide
-        └── PROJECT-STRUCTURE.md  # This file
+        ├── IMPLEMENTATION.md  # Implementation details
+        ├── PROJECT-STRUCTURE.md  # This file
+        └── README.md      # Quick start and overview
+
 ```
 
 ## Component Organization
 
 ### File Management (`components/files/`)
 Handles basic file operations and UI:
-- File list display
-- Upload functionality
+- File list display with import status indicators
+- Upload functionality with progress tracking
 - File actions (import, preview, download, delete)
 - Companion file management
+- Separate imported files list view
+- Real-time status updates
 
 ### Geodata Import (`components/geo-import/`)
 Manages the import workflow:
-- Import dialog and workflow
-- Map preview and controls
-- Feature selection interface
-- Property mapping UI
+- Import dialog with file preview
+- Map preview with feature selection
+- Feature count and metadata display
+- Progress tracking and error handling
+- Logging system integration
 
 ## Core Modules
 
 ### Processors (`core/processors/`)
 File format parsers and utilities:
 - Base parser interface
-- Format-specific implementations
+- Format-specific implementations (Shapefile, GeoJSON)
 - Geometry simplification
+- Coordinate system handling
 
 ### Preview (`core/preview/`)
 Preview generation utilities:
-- Feature sampling
+- Feature sampling for large datasets
 - Geometry simplification
 - Preview dataset generation
+- Real-time map updates
 
 ### Coordinates (`core/coordinates/`)
 Coordinate system handling:
 - PRJ file parsing
 - SRID management
 - Coordinate transformation
+- EPSG registry integration
 
 ### Validation (`core/validation/`)
 Data validation utilities:
 - File format validation
 - Geometry validation
 - Property validation
+- Error reporting
+
+### Logging (`core/logging/`)
+Comprehensive logging system:
+- Centralized log management
+- Log level filtering
+- Source-specific logging
+- Log export functionality
 
 ### Security (`core/security/`)
 Security-related utilities:
 - Data masking
 - Access control
 - Audit logging
+- Secure file handling
 
 ### Session (`core/session/`)
 Import session management:
 - Session state management
 - Progress tracking
 - Error handling
+- Real-time updates
 
 ## Type Definitions
 
-### Geodata Import Types (`types/geo-import/`)
-- Import session interfaces
-- Feature types
+### Geodata Types (`types/geo/`)
+- Feature interfaces
+- Import session types
 - Preview types
 - File format type definitions
 
-### External Module Types
-Type definitions for external libraries:
-- `array-source.d.ts`
-- `shapefile.d.ts`
+### Database Types (`types/supabase.ts`)
+- Database schema types
+- Query result types
+- Real-time subscription types
 
 ## Implementation Status
 
 ### Implemented
 - File management components
-- Basic import dialog
-- Shapefile parser
-- File upload handling
-- Type definitions
+- Import dialog with preview
+- Shapefile and GeoJSON support
+- File upload with progress
+- Import status tracking
+- Logging system
+- Basic map preview
+- Feature selection UI
 
 ### In Progress
-- Map preview component
-- Feature selection UI
-- Preview generation
+- Enhanced map preview features
+- Advanced feature selection tools
 - Coordinate system handling
+- Preview generation optimization
 
 ### Planned
 - Property mapping UI
-- Additional file format parsers
-- Geometry simplification
-- Advanced preview features
+- Additional file format parsers (DXF, CSV)
+- Advanced geometry simplification
+- Batch import capabilities
+- Custom coordinate system support
 
 ## Development Guidelines
 

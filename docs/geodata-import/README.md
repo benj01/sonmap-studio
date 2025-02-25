@@ -1,36 +1,34 @@
-# Geodata Import System
+# Geodata Import Documentation
 
-## Overview
-This document outlines the implementation of the geodata import pipeline, which handles various geodata file types (Shapefiles, DXF, DWG, CSV, XYZ, QSI) in a scalable and efficient manner.
+This directory contains documentation for the geodata import functionality in SonMap Studio.
 
-## Project Structure
+## Current Status
 
-```
-sonmap-studio/
-├── components/
-│   ├── geo-import/              # Main geodata import components
-│   │   ├── components/          # React components
-│   │   │   ├── geo-file-upload.tsx
-│   │   │   ├── geo-import-dialog.tsx
-│   │   └── ...
-│   │   ├── hooks/               # React hooks
-│   │   │   └── use-geo-import.ts
-│   └── shared/
-│       └── types/
-│           └── file-types.ts   # File type configurations
-├── core/                       # Core processing logic
-│   ├── processors/             # File format parsers
-│   │   ├── base-parser.ts
-│   │   ├── shapefile-parser.ts
-│   │   └── geometry-simplifier.ts
-│   ├── preview/                # Preview generation
-│   │   └── preview-generator.ts
-│   ├── coordinates/            # Coordinate systems and utilities
-│   │   └── coordinates.ts
-│   └── ...                     # Other core utilities and modules
-├── types/
-│   └── geo-import.ts          # Core type definitions
-└── docs/
-    └── geodata-import/        # Documentation
-        └── README.md          # This file
-```
+✅ **Implemented Features**
+- File upload with drag-and-drop support
+- Support for Shapefiles and GeoJSON
+- Companion file handling (e.g., .shp with .dbf, .shx, .prj)
+- Real-time upload progress tracking
+- Visual import status indicators
+- Files remain visible after import
+- Immediate UI updates after import
+- Clear separation of uploaded and imported files
+
+🚧 **In Progress**
+- Map preview integration
+- Feature selection interface
+- Property inspection
+- Coordinate system handling
+
+## Documentation Structure
+
+- [CONCEPT.md](./CONCEPT.md) - Design principles and architectural decisions
+- [IMPLEMENTATION.md](./IMPLEMENTATION.md) - Current implementation details and status
+- [PROJECT-STRUCTURE.md](./PROJECT-STRUCTURE.md) - Code organization and key components
+
+## Quick Links
+
+- [File Management Implementation](./IMPLEMENTATION.md#file-management)
+- [UI Components](./IMPLEMENTATION.md#ui-components)
+- [Error Handling](./IMPLEMENTATION.md#error-handling)
+- [Next Steps](./IMPLEMENTATION.md#next-steps)
