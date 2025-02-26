@@ -76,26 +76,26 @@ export interface UploadedFile {
  * Project file information from database
  */
 export interface ProjectFile {
-  id: string;
-  project_id: string;
-  name: string;
-  size: number;
-  file_type: string;
-  storage_path: string;
-  is_imported: boolean;
-  source_file_id?: string;
-  is_shapefile_component?: boolean;
-  main_file_id?: string;
-  component_type?: 'shp' | 'shx' | 'dbf' | 'prj' | 'qmd';
-  metadata?: {
-    relatedFiles?: Record<string, {
-      name: string;
-      size: number;
-    }>;
-  };
-  uploaded_at: string;
+  id: string;                    // uuid
+  project_id: string;           // uuid
+  name: string;                 // text
+  file_type: string;           // text
+  size: number;                // bigint
+  storage_path: string;         // text
+  uploaded_by?: string;         // uuid, nullable
+  uploaded_at: string;          // timestamp with time zone
+  metadata?: Record<string, any>;  // jsonb, default '{}'
+  source_file_id?: string;     // uuid, nullable
+  is_imported?: boolean;       // boolean, default false
+  import_metadata?: Record<string, any>;  // jsonb, nullable
+  is_shapefile_component?: boolean; // boolean, default false
+  main_file_id?: string;      // uuid, nullable
+  component_type?: 'shp' | 'shx' | 'dbf' | 'prj' | 'qmd'; // text, nullable with check constraint
+  // Runtime-only properties (not in database)
   importedFiles?: ProjectFile[];
   companions?: ProjectFile[];
+  source_file?: ProjectFile;   // Populated by join
+  imported_file?: ProjectFile; // Populated by join
 }
 
 /**

@@ -19,12 +19,15 @@ const logManager = LogManager.getInstance();
 
 const logger = {
   info: (message: string, data?: any) => {
+    console.info(`[${SOURCE}] ${message}`, data);
     logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
+    console.warn(`[${SOURCE}] ${message}`, error);
     logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
+    console.error(`[${SOURCE}] ${message}`, error);
     logManager.error(SOURCE, message, error);
   }
 };
@@ -32,6 +35,21 @@ const logger = {
 export function useFileActions({ projectId, onSuccess, onError }: UseFileActionsProps) {
   const [isLoading, setIsLoading] = useState(false);
   const supabase = createClient();
+
+  const refreshProjectStorage = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('projects')
+        .select('storage_used')
+        .eq('id', projectId)
+        .single();
+
+      if (error) throw error;
+      logger.info('Updated storage usage', data.storage_used);
+    } catch (error) {
+      logger.error('Error refreshing storage', error);
+    }
+  }, [projectId, supabase]);
 
   const loadFiles = useCallback(async (): Promise<ProjectFile[]> => {
     setIsLoading(true);
@@ -46,11 +64,11 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       if (filesError) throw filesError;
 
       // Separate files into main files and their companions
-      const mainFiles = allFiles?.filter(file => !file.main_file_id) || [];
-      const companionFiles = allFiles?.filter(file => file.main_file_id) || [];
+      const mainFiles = allFiles?.filter((file: ProjectFile) => !file.main_file_id) || [];
+      const companionFiles = allFiles?.filter((file: ProjectFile) => file.main_file_id) || [];
 
       // Create a map of companion files by main file ID
-      const companionsByMainFile = companionFiles.reduce((acc, file) => {
+      const companionsByMainFile = companionFiles.reduce((acc: Record<string, ProjectFile[]>, file: ProjectFile) => {
         if (file.main_file_id) {
           if (!acc[file.main_file_id]) {
             acc[file.main_file_id] = [];
@@ -58,10 +76,10 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           acc[file.main_file_id].push(file);
         }
         return acc;
-      }, {} as Record<string, ProjectFile[]>);
+      }, {});
 
       // Attach companion files to their main files
-      const filesWithCompanions = mainFiles.map(file => ({
+      const filesWithCompanions = mainFiles.map((file: ProjectFile) => ({
         ...file,
         companions: companionsByMainFile[file.id] || []
       }));
@@ -102,7 +120,13 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       logger.info('Transaction started successfully');
 
       try {
-        const storagePath = `${projectId}/${uploadedFile.name}`;
+        // Get current user
+        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        if (userError) throw userError;
+        if (!user) throw new Error('No authenticated user');
+
+        // Update storage path to include user ID
+        const storagePath = `${user.id}/${projectId}/${uploadedFile.name}`;
         const fileExt = uploadedFile.name.toLowerCase();
         const isShapefile = fileExt.endsWith('.shp');
         const isGeoJson = fileExt.endsWith('.geojson');
@@ -157,11 +181,11 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             name: file.name,
             size: file.size,
             file_type: ext === '.qmd' ? 'application/xml' : 'application/octet-stream',
-            storage_path: `${projectId}/${file.name}`,
+            storage_path: `${user.id}/${projectId}/${file.name}`,
             is_imported: false,
             is_shapefile_component: isShapefile,
             main_file_id: mainFile.id,
-            component_type: ext.substring(1) // Set component_type for all companion files
+            component_type: ext.substring(1)
           }));
 
           const { error: companionError } = await supabase
@@ -221,11 +245,16 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, onSuccess, onError]);
+  }, [projectId, onSuccess, onError, refreshProjectStorage]);
 
   const handleImport = useCallback(async (result: any, sourceFile: ProjectFile) => {
     setIsLoading(true);
     try {
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!user) throw new Error('No authenticated user');
+
       // Check if file was already imported
       const { data: existingImport } = await supabase
         .from('project_files')
@@ -248,8 +277,8 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       const blob = new Blob([geoJsonContent], { type: 'application/geo+json' });
       const geoJsonFile = new File([blob], `${sourceFile.name}.geojson`, { type: 'application/geo+json' });
 
-      // Upload GeoJSON file to storage
-      const storagePath = `${projectId}/imported/${geoJsonFile.name}`;
+      // Upload GeoJSON file to storage with user ID in path
+      const storagePath = `${user.id}/${projectId}/imported/${geoJsonFile.name}`;
       const { error: uploadError } = await supabase.storage
         .from('project-files')
         .upload(storagePath, geoJsonFile);
@@ -305,104 +334,144 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
   }, [projectId, supabase, onSuccess, onError]);
 
   const handleDelete = useCallback(async (fileId: string, deleteRelated: boolean = false) => {
-    setIsLoading(true);
     try {
-      // Get the file to delete and check if it has related files
-      const { data: fileToDelete, error: mainFileError } = await supabase
-        .from('project_files')
-        .select(`
-          *,
-          imported_file:project_files!source_file_id(*),
-          source_file:project_files!source_file_id(*)
-        `)
-        .eq('id', fileId)
-        .single();
-
-      if (mainFileError) throw mainFileError;
-      if (!fileToDelete) throw new Error('File not found');
-
-      logger.info('File to delete', {
-        id: fileToDelete.id,
-        name: fileToDelete.name,
-        isImported: fileToDelete.is_imported,
-        hasSourceFile: !!fileToDelete.source_file,
-        hasImportedFile: !!fileToDelete.imported_file
-      });
-
-      // Get companion files if this is a main file
-      const { data: companionFiles, error: companionError } = await supabase
+      logger.info('Starting file deletion', { fileId, deleteRelated });
+      const supabase = createClient();
+  
+      // Get current user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError) throw userError;
+      if (!user) throw new Error('No authenticated user');
+  
+      // First, fetch the file and its relationships
+      const { data: fileToDelete, error: fetchError } = await supabase
         .from('project_files')
         .select('*')
-        .eq('main_file_id', fileId);
-
-      if (companionError) throw companionError;
-
-      // Collect all files that need to be deleted
-      const filesToDelete = [fileToDelete];
-      
-      // Add companion files
-      if (companionFiles?.length) {
-        filesToDelete.push(...companionFiles);
-      }
-
-      // Handle related files based on deleteRelated flag
-      if (deleteRelated) {
-        if (fileToDelete.is_imported && fileToDelete.source_file) {
-          // If deleting an imported file and its source
-          const { data: sourceCompanions } = await supabase
-            .from('project_files')
-            .select('*')
-            .eq('main_file_id', fileToDelete.source_file.id);
+        .eq('id', fileId)
+        .single();
+  
+      if (fetchError) throw fetchError;
+      if (!fileToDelete) throw new Error('File not found');
+  
+      logger.info('File fetched', {
+        file: {
+          id: fileToDelete.id,
+          name: fileToDelete.name,
+          isImported: fileToDelete.is_imported,
+          sourceFileId: fileToDelete.source_file_id
+        }
+      });
+  
+      // Initialize arrays for deletion and relationship updates
+      let filesToDelete: { id: string; storage_path: string }[] = [{
+        id: fileToDelete.id,
+        storage_path: fileToDelete.storage_path
+      }];
+      let relationshipsToBreak: string[] = [];
+  
+      // If this file has relationships, fetch them
+      if (fileToDelete.is_imported || fileToDelete.source_file_id) {
+        const { data: relationships, error: relError } = await supabase
+          .from('project_files')
+          .select('id, storage_path, source_file_id, is_imported')
+          .or(`id.eq.${fileToDelete.source_file_id},source_file_id.eq.${fileToDelete.id}`);
+  
+        if (relError) {
+          logger.warn('Failed to fetch relationships', relError);
+        } else if (relationships?.length > 0) {
+          logger.info('Found related files', { count: relationships.length });
           
-          filesToDelete.push(fileToDelete.source_file);
-          if (sourceCompanions?.length) {
-            filesToDelete.push(...sourceCompanions);
+          if (deleteRelated) {
+            // Add related files to deletion list
+            filesToDelete.push(...relationships.map(f => ({
+              id: f.id,
+              storage_path: f.storage_path
+            })));
+          } else {
+            // Add files to have their relationships broken
+            relationshipsToBreak.push(...relationships.map(f => f.id));
           }
-        } else if (!fileToDelete.is_imported && fileToDelete.imported_file) {
-          // If deleting a source file and its import
-          filesToDelete.push(fileToDelete.imported_file);
         }
       }
-
-      // Collect all storage paths and ensure they are unique
-      const storagePaths = [...new Set(filesToDelete.map(f => f.storage_path))];
-      logger.info('Attempting to delete storage paths', storagePaths);
-
-      // Delete from storage first
-      const { error: storageError } = await supabase.storage
-        .from('project-files')
-        .remove(storagePaths);
-      
-      if (storageError) {
-        logger.error('Failed to delete files from storage', storageError);
-        throw storageError;
+  
+      // First, break any relationships that need to be preserved
+      if (relationshipsToBreak.length > 0) {
+        logger.info('Breaking relationships before deletion', { relationshipsToBreak });
+        const { error: updateError } = await supabase
+          .from('project_files')
+          .update({
+            source_file_id: null,
+            is_imported: false,
+            import_metadata: null
+          })
+          .in('id', relationshipsToBreak);
+  
+        if (updateError) throw updateError;
       }
-
-      logger.info('Storage deletion completed successfully');
-
-      // Delete all files from database in a single operation
-      const fileIds = [...new Set(filesToDelete.map(f => f.id))];
+  
+      // Now delete files from storage first
+      for (const file of filesToDelete) {
+        logger.info('Deleting from storage', { 
+          fileId: file.id,
+          storagePath: file.storage_path 
+        });
+  
+        try {
+          const { error: storageError } = await supabase.storage
+            .from('project-files')
+            .remove([file.storage_path]);
+        
+          if (storageError) {
+            logger.warn('Storage deletion failed', { 
+              error: storageError,
+              fileId: file.id,
+              storagePath: file.storage_path
+            });
+          } else {
+            logger.info('Successfully deleted from storage', {
+              fileId: file.id,
+              storagePath: file.storage_path
+            });
+          }
+        } catch (e) {
+          logger.warn('Storage deletion attempt failed', { 
+            error: e,
+            fileId: file.id,
+            storagePath: file.storage_path
+          });
+        }
+      }
+  
+      // Finally, delete from database
+      const fileIds = filesToDelete.map(f => f.id);
+      logger.info('Deleting from database', { fileIds });
+      
       const { error: dbError } = await supabase
         .from('project_files')
         .delete()
         .in('id', fileIds);
-
-      if (dbError) throw dbError;
-
-      logger.info('Database deletion completed successfully', {
-        deletedFiles: filesToDelete.map(f => ({ id: f.id, name: f.name }))
+  
+      if (dbError) {
+        logger.error('Database deletion failed', {
+          error: dbError,
+          fileIds
+        });
+        throw dbError;
+      }
+  
+      logger.info('File deletion completed successfully', {
+        deletedFiles: fileIds,
+        preservedRelationships: relationshipsToBreak
       });
-
+  
+      // Refresh storage usage after successful deletion
       await refreshProjectStorage();
-      onSuccess?.('Files deleted successfully');
+  
     } catch (error) {
-      logger.error('Delete error', error);
-      onError?.(error instanceof Error ? error.message : 'Failed to delete file');
+      logger.error('File deletion failed', error);
       throw error;
-    } finally {
-      setIsLoading(false);
     }
-  }, [projectId, supabase, onSuccess, onError]);
+  }, [projectId, refreshProjectStorage]);
 
   const handleDownload = useCallback(async (fileId: string) => {
     setIsLoading(true);
@@ -480,21 +549,6 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       setIsLoading(false);
     }
   }, [projectId, supabase, onSuccess, onError]);
-
-  const refreshProjectStorage = useCallback(async () => {
-    try {
-      const { data, error } = await supabase
-        .from('projects')
-        .select('storage_used')
-        .eq('id', projectId)
-        .single();
-
-      if (error) throw error;
-      logger.info('Updated storage usage', data.storage_used);
-    } catch (error) {
-      logger.error('Error refreshing storage', error);
-    }
-  }, [projectId, supabase]);
 
   return {
     isLoading,

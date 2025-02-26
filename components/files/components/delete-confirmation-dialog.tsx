@@ -27,17 +27,19 @@ export function DeleteConfirmationDialog({
             <AlertTriangle className="h-5 w-5 text-yellow-500" />
             Confirm Deletion
           </DialogTitle>
-          <DialogDescription>
-            Are you sure you want to delete {fileName}?
-            {hasRelatedFile && (
-              <div className="mt-2">
-                {type === 'uploaded' ? (
-                  <p>This file has been imported. Would you like to delete the imported file as well?</p>
-                ) : (
-                  <p>This is an imported file. Would you like to delete the source file as well?</p>
-                )}
-              </div>
-            )}
+          <DialogDescription asChild>
+            <div className="space-y-2">
+              <p>Are you sure you want to delete {fileName}?</p>
+              {hasRelatedFile && (
+                <p>
+                  {type === 'uploaded' ? (
+                    'This file has been imported. Would you like to delete the imported file as well?'
+                  ) : (
+                    'This is an imported file. Would you like to delete the source file as well?'
+                  )}
+                </p>
+              )}
+            </div>
           </DialogDescription>
         </DialogHeader>
 

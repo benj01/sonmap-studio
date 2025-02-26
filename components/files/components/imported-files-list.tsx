@@ -183,7 +183,7 @@ export function ImportedFilesList({ projectId, onViewLayer, onDelete }: Imported
         onConfirm={handleDeleteConfirm}
         fileName={fileToDelete?.name || ''}
         type="imported"
-        hasRelatedFile={!!fileToDelete?.source_file_id}
+        hasRelatedFile={true}
       />
     </>
   );

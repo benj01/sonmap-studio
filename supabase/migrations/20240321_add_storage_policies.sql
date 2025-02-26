@@ -7,10 +7,10 @@ FOR INSERT
 TO authenticated
 WITH CHECK (
   bucket_id = 'project-files' AND
-  (storage.foldername(name))[1] IN (
+  (storage.foldername(name))[2] IN (
     SELECT id::text
     FROM projects
-    WHERE id::text = (storage.foldername(name))[1]
+    WHERE id::text = (storage.foldername(name))[2]
     AND owner_id = auth.uid()
   )
 );
@@ -21,10 +21,10 @@ FOR SELECT
 TO authenticated
 USING (
   bucket_id = 'project-files' AND
-  (storage.foldername(name))[1] IN (
+  (storage.foldername(name))[2] IN (
     SELECT id::text
     FROM projects
-    WHERE id::text = (storage.foldername(name))[1]
+    WHERE id::text = (storage.foldername(name))[2]
     AND owner_id = auth.uid()
   )
 );
@@ -35,10 +35,10 @@ FOR DELETE
 TO authenticated
 USING (
   bucket_id = 'project-files' AND
-  (storage.foldername(name))[1] IN (
+  (storage.foldername(name))[2] IN (
     SELECT id::text
     FROM projects
-    WHERE id::text = (storage.foldername(name))[1]
+    WHERE id::text = (storage.foldername(name))[2]
     AND owner_id = auth.uid()
   )
 ); 

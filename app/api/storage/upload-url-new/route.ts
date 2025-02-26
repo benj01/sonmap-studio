@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     logger.info('Project access verified', { projectId, userId: user.id });
 
     // Create the full storage path including project ID
-    const storagePath = `${projectId}/${filename}`;
+    const storagePath = `${user.id}/${projectId}/${filename}`;
     logger.info('Storage path', { storagePath });
 
     // Create a signed URL for uploading
