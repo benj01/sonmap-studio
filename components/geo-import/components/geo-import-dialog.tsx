@@ -21,6 +21,7 @@ interface GeoImportDialogProps {
   onOpenChange: (open: boolean) => void;
   onImportComplete: (result: LoaderResult) => Promise<void>;
   fileInfo?: {
+    id: string;
     name: string;
     size: number;
     type: string;
@@ -102,10 +103,12 @@ export function GeoImportDialog({
 
   const memoizedFileInfo = useMemo(() => 
     fileInfo ? {
-      id: fileInfo.name, // Use filename as stable ID
-      ...fileInfo
+      id: fileInfo.id,
+      name: fileInfo.name,
+      size: fileInfo.size,
+      type: fileInfo.type
     } : undefined
-  , [fileInfo?.name, fileInfo?.size, fileInfo?.type]);
+  , [fileInfo?.id, fileInfo?.name, fileInfo?.size, fileInfo?.type]);
 
   // Reset state when dialog closes
   useEffect(() => {

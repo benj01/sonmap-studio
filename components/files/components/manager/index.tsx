@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { FileList } from './file-list';
 import { EmptyState } from './empty-state';
 import { Toolbar } from './toolbar';
@@ -13,6 +13,8 @@ import { Upload } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
 import { createClient } from '../../../../utils/supabase/client';
 import { ImportedFilesList } from '../imported-files-list';
+import { DeleteConfirmationDialog } from '../delete-confirmation-dialog';
+import { ImportFileInfo } from '@/types/files';
 
 interface FileManagerProps {
   projectId: string;
@@ -20,13 +22,16 @@ interface FileManagerProps {
   onError?: (error: string) => void;
 }
 
-interface ImportFileInfo extends ProjectFile {
-  type: string;
-}
-
 interface UploadingFile {
   group: FileGroup;
   progress: number;
+}
+
+interface FileListProps {
+  files: ProjectFile[];
+  onDelete: (file: ProjectFile) => Promise<void>;
+  onImport: (fileId: string) => Promise<void>;
+  isLoading: boolean;
 }
 
 const SOURCE = 'FileManager';
@@ -37,14 +42,16 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     projectId,
     onError: (msg) => onError?.(msg)
   });
-  const [uploadingFiles, setUploadingFiles] = React.useState<UploadingFile[]>([]);
-  const [files, setFiles] = React.useState<ProjectFile[]>([]);
-  const [importDialogOpen, setImportDialogOpen] = React.useState(false);
-  const [selectedFile, setSelectedFile] = React.useState<ImportFileInfo | null>(null);
-  const [isDragging, setIsDragging] = React.useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
+  const [files, setFiles] = useState<ProjectFile[]>([]);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<ImportFileInfo | undefined>();
+  const [importedFilesKey, setImportedFilesKey] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
   const dropZoneRef = React.useRef<HTMLDivElement>(null);
   const dragCountRef = React.useRef(0);
-  const [importedFilesKey, setImportedFilesKey] = React.useState(0);
+  const [fileToDelete, setFileToDelete] = useState<ProjectFile | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   // Load files on component mount
   React.useEffect(() => {
@@ -159,22 +166,27 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     }
   };
 
-  const handleFileDelete = async (fileId: string) => {
+  const handleFileDelete = useCallback(async (file: ProjectFile, deleteRelated: boolean) => {
     try {
-      await handleDelete(fileId);
-      await loadExistingFiles(); // Reload files after deletion
+      await handleDelete(file.id, deleteRelated);
+      const updatedFiles = await loadFiles();
+      setFiles(updatedFiles);
+      // Force the ImportedFilesList to refresh by changing its key
+      setImportedFilesKey(prev => prev + 1);
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to delete file';
       onError?.(errorMessage);
     }
-  };
+  }, [handleDelete, loadFiles, onError]);
 
   const handleFileImport = async (fileId: string) => {
     const file = files.find(f => f.id === fileId);
     if (file) {
       const fileType = FileTypeUtil.getConfigForFile(file.name);
       setSelectedFile({
-        ...file,
+        id: file.id,
+        name: file.name,
+        size: file.size,
         type: fileType?.mimeType || 'application/octet-stream'
       });
       setImportDialogOpen(true);
@@ -197,7 +209,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
       // Now close the dialog and reset selected file
       setImportDialogOpen(false);
-      setSelectedFile(null);
+      setSelectedFile(undefined);
       
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
@@ -418,55 +430,32 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     }
   };
 
-  const handleDragEnter = React.useCallback((e: React.DragEvent) => {
+  const handleDragEnter = useCallback((e: DragEvent) => {
     e.preventDefault();
-    e.stopPropagation();
-    
     dragCountRef.current++;
-    
-    if (!isProcessing) {
+    if (dragCountRef.current === 1) {
       setIsDragging(true);
     }
-  }, [isProcessing]);
-
-  const handleDragOver = React.useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
   }, []);
 
-  const handleDragLeave = React.useCallback((e: React.DragEvent) => {
+  const handleDragLeave = useCallback((e: DragEvent) => {
     e.preventDefault();
-    e.stopPropagation();
-
     dragCountRef.current--;
-    
-    // Only hide the drop zone when all drag events are complete
     if (dragCountRef.current === 0) {
       setIsDragging(false);
     }
   }, []);
 
-  const handleDrop = React.useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback((e: DragEvent) => {
     e.preventDefault();
-    e.stopPropagation();
-    
     dragCountRef.current = 0;
     setIsDragging(false);
-
-    if (isProcessing) {
-      console.info('[FileManager] Skipping drop - already processing');
-      return;
+    
+    const files = e.dataTransfer?.files;
+    if (files?.length) {
+      handleFileSelect(files);
     }
-
-    const droppedFiles = e.dataTransfer.files;
-    if (droppedFiles.length > 0) {
-      console.info('[FileManager] Files dropped', {
-        count: droppedFiles.length,
-        names: Array.from(droppedFiles).map(f => f.name)
-      });
-      handleFileSelect(droppedFiles);
-    }
-  }, [isProcessing, handleFileSelect]);
+  }, [handleFileSelect]);
 
   const handleViewLayer = (layerId: string) => {
     // TODO: Implement layer viewing functionality
@@ -476,125 +465,59 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const handleDeleteImported = async (fileId: string) => {
     try {
       await handleDelete(fileId);
-      await loadExistingFiles();
+      const updatedFiles = await loadFiles();
+      setFiles(updatedFiles);
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to delete imported file';
       onError?.(errorMessage);
     }
   };
 
+  const handleCompanionClick = useCallback((companion: ProjectFile) => {
+    setSelectedFile(companion as ImportFileInfo);
+  }, []);
+
+  const handleImportedFileClick = useCallback((file: ProjectFile) => {
+    setSelectedFile(file as ImportFileInfo);
+  }, []);
+
   return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-4 p-4 border rounded-lg bg-background">
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-col gap-4">
-              <div
-                className={cn(
-                  "flex flex-col items-center justify-center p-8 border-2 border-dashed rounded-lg",
-                  "hover:border-primary/50 transition-colors duration-200",
-                  "cursor-pointer bg-muted/50"
-                )}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onClick={(e) => {
-                  e.preventDefault();
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.multiple = true;
-                  input.onchange = (e) => {
-                    const files = (e.target as HTMLInputElement).files;
-                    if (files) handleFileSelect(files);
-                  };
-                  input.click();
-                }}
-              >
-                <Upload className="w-8 h-8 mb-4 text-muted-foreground" />
-                <div className="text-sm text-center text-muted-foreground">
-                  <p>Drag and drop files here or click to select files</p>
-                  <p className="mt-2">Supported formats: Shapefile (.shp), GeoJSON (.geojson)</p>
-                </div>
-              </div>
-              <div className="relative">
-                <Toolbar 
-                  onFileSelect={handleFileSelect} 
-                  isProcessing={isProcessing}
-                />
-                {error && (
-                  <div className="text-red-500 text-sm mt-2">{error}</div>
-                )}
-              </div>
-            </div>
-          </div>
-          
-          {/* Uploading Files Section */}
-          {uploadingFiles.length > 0 && (
-            <div className="space-y-4">
-              <div className="font-medium text-gray-700">Uploading Files</div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {uploadingFiles.map((uploadingFile) => (
-                  <div key={uploadingFile.group.mainFile.name}>
-                    <FileList
-                      mainFile={uploadingFile.group.mainFile}
-                      companions={uploadingFile.group.companions}
-                    />
-                    <div className="mt-2">
-                      <UploadProgress progress={uploadingFile.progress} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+    <div className={cn('relative min-h-[200px] rounded-lg border bg-card', {
+      'border-primary': isDragging
+    })}>
+      <div ref={dropZoneRef} className="p-4 space-y-4">
+        <Toolbar onFileSelect={handleFileSelect} isProcessing={isProcessing} />
+        
+        {/* Uploaded Files */}
+        <FileList
+          files={files.filter(f => !f.main_file_id)}
+          onDelete={handleFileDelete}
+          onImport={handleFileImport}
+          isLoading={isLoading}
+        />
 
-          {/* Existing Files Section */}
-          {isLoading ? (
-            <div className="text-center py-4">Loading files...</div>
-          ) : files.length > 0 ? (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-medium text-gray-700">Uploaded Files</div>
-                  <div className="text-sm text-gray-500">Select Import to use these files in your project</div>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {files.filter(file => !file.main_file_id).map((mainFile) => (
-                  <FileList
-                    key={mainFile.id}
-                    mainFile={mainFile}
-                    companions={files.filter(f => f.main_file_id === mainFile.id)}
-                    onDelete={handleFileDelete}
-                    onDownload={handleDownload}
-                    onImport={handleFileImport}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : uploadingFiles.length === 0 && (
-            <EmptyState />
-          )}
-        </div>
-      </div>
+        {/* Upload Progress */}
+        {uploadingFiles.length > 0 && (
+          <UploadProgress files={uploadingFiles} />
+        )}
 
-      {/* Imported Files Section */}
-      <ImportedFilesList
-        key={importedFilesKey}
-        projectId={projectId}
-        onViewLayer={handleViewLayer}
-        onDelete={handleDeleteImported}
-      />
+        {/* Imported Files */}
+        <ImportedFilesList
+          key={importedFilesKey}
+          projectId={projectId}
+          onViewLayer={handleViewLayer}
+          onDelete={handleFileDelete}
+        />
 
-      {/* Import Dialog */}
-      {selectedFile && (
+        {/* Import Dialog */}
         <GeoImportDialog
+          projectId={projectId}
           open={importDialogOpen}
           onOpenChange={setImportDialogOpen}
-          projectId={projectId}
-          fileInfo={selectedFile}
           onImportComplete={handleImportComplete}
+          fileInfo={selectedFile}
         />
-      )}
+      </div>
     </div>
   );
 }

@@ -95,6 +95,7 @@ export interface ProjectFile {
   };
   uploaded_at: string;
   importedFiles?: ProjectFile[];
+  companions?: ProjectFile[];
 }
 
 /**

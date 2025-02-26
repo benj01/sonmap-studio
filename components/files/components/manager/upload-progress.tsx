@@ -1,22 +1,30 @@
 import React from 'react';
+import { FileGroup } from '../../types';
 
-interface UploadProgressProps {
+interface UploadingFile {
+  group: FileGroup;
   progress: number;
 }
 
-export function UploadProgress({ progress }: UploadProgressProps) {
+interface UploadProgressProps {
+  files: UploadingFile[];
+}
+
+export function UploadProgress({ files }: UploadProgressProps) {
   return (
-    <div className="space-y-1.5">
-      <div className="flex justify-between text-sm text-gray-600">
-        <span>Uploading...</span>
-        <span>{Math.round(progress)}%</span>
-      </div>
-      <div className="w-full bg-gray-200 rounded-full h-1.5">
-        <div
-          className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
+    <div className="space-y-2">
+      {files.map(file => (
+        <div key={file.group.mainFile.name} className="flex items-center gap-2">
+          <span className="text-sm">{file.group.mainFile.name}</span>
+          <div className="flex-1 h-2 bg-muted rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary transition-all duration-200"
+              style={{ width: `${file.progress}%` }}
+            />
+          </div>
+          <span className="text-sm">{file.progress}%</span>
+        </div>
+      ))}
     </div>
   );
 } 

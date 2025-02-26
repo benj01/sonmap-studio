@@ -304,98 +304,97 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     }
   }, [projectId, supabase, onSuccess, onError]);
 
-  const handleDelete = useCallback(async (fileId: string) => {
+  const handleDelete = useCallback(async (fileId: string, deleteRelated: boolean = false) => {
     setIsLoading(true);
     try {
-      // Start a transaction
-      const { error: txError } = await supabase.rpc('begin_transaction');
-      if (txError) throw txError;
+      // Get the file to delete and check if it has related files
+      const { data: fileToDelete, error: mainFileError } = await supabase
+        .from('project_files')
+        .select(`
+          *,
+          imported_file:project_files!source_file_id(*),
+          source_file:project_files!source_file_id(*)
+        `)
+        .eq('id', fileId)
+        .single();
 
-      try {
-        // Get all related files (main file and companions)
-        const { data: fileToDelete, error: mainFileError } = await supabase
-          .from('project_files')
-          .select('*')
-          .eq('id', fileId)
-          .single();
+      if (mainFileError) throw mainFileError;
+      if (!fileToDelete) throw new Error('File not found');
 
-        if (mainFileError) throw mainFileError;
-        if (!fileToDelete) throw new Error('File not found');
+      logger.info('File to delete', {
+        id: fileToDelete.id,
+        name: fileToDelete.name,
+        isImported: fileToDelete.is_imported,
+        hasSourceFile: !!fileToDelete.source_file,
+        hasImportedFile: !!fileToDelete.imported_file
+      });
 
-        logger.info('Main file to delete', {
-          id: fileToDelete.id,
-          name: fileToDelete.name,
-          project_id: fileToDelete.project_id,
-          storage_path: fileToDelete.storage_path
-        });
+      // Get companion files if this is a main file
+      const { data: companionFiles, error: companionError } = await supabase
+        .from('project_files')
+        .select('*')
+        .eq('main_file_id', fileId);
 
-        // Get companion files if this is a main file
-        const { data: companionFiles, error: companionError } = await supabase
-          .from('project_files')
-          .select('*')
-          .eq('main_file_id', fileId);
+      if (companionError) throw companionError;
 
-        if (companionError) throw companionError;
-
-        logger.info('Companion files', companionFiles?.map((f: ProjectFile) => ({
-          id: f.id,
-          name: f.name,
-          project_id: f.project_id,
-          storage_path: f.storage_path
-        })));
-
-        // First, let's try to list files in the bucket to see what's actually there
-        const { data: bucketFiles, error: listError } = await supabase.storage
-          .from('project-files')
-          .list(fileToDelete.project_id);
-
-        if (listError) {
-          logger.error('Error listing bucket files', listError);
-        } else {
-          logger.info('Files in bucket', bucketFiles);
-        }
-
-        // Use the storage_path directly from the database records
-        const storagePaths = [
-          fileToDelete.storage_path,
-          ...(companionFiles || []).map((f: ProjectFile) => f.storage_path)
-        ];
-
-        logger.info('Attempting to delete storage paths', storagePaths);
-
-        // Delete from storage first
-        const { error: storageError } = await supabase.storage
-          .from('project-files')
-          .remove(storagePaths);
-        
-        if (storageError) {
-          logger.error('Failed to delete files from storage', storageError);
-          throw storageError;
-        }
-
-        logger.info('Storage deletion completed successfully');
-
-        // Delete from database (cascade will handle companion files)
-        const { error: dbError } = await supabase
-          .from('project_files')
-          .delete()
-          .eq('id', fileId);
-
-        if (dbError) throw dbError;
-
-        logger.info('Database deletion completed successfully');
-
-        // Commit transaction
-        const { error: commitError } = await supabase.rpc('commit_transaction');
-        if (commitError) throw commitError;
-
-        await refreshProjectStorage();
-        onSuccess?.('File and related components deleted successfully');
-      } catch (error) {
-        // Rollback on any error
-        await supabase.rpc('rollback_transaction');
-        throw error;
+      // Collect all files that need to be deleted
+      const filesToDelete = [fileToDelete];
+      
+      // Add companion files
+      if (companionFiles?.length) {
+        filesToDelete.push(...companionFiles);
       }
+
+      // Handle related files based on deleteRelated flag
+      if (deleteRelated) {
+        if (fileToDelete.is_imported && fileToDelete.source_file) {
+          // If deleting an imported file and its source
+          const { data: sourceCompanions } = await supabase
+            .from('project_files')
+            .select('*')
+            .eq('main_file_id', fileToDelete.source_file.id);
+          
+          filesToDelete.push(fileToDelete.source_file);
+          if (sourceCompanions?.length) {
+            filesToDelete.push(...sourceCompanions);
+          }
+        } else if (!fileToDelete.is_imported && fileToDelete.imported_file) {
+          // If deleting a source file and its import
+          filesToDelete.push(fileToDelete.imported_file);
+        }
+      }
+
+      // Collect all storage paths and ensure they are unique
+      const storagePaths = [...new Set(filesToDelete.map(f => f.storage_path))];
+      logger.info('Attempting to delete storage paths', storagePaths);
+
+      // Delete from storage first
+      const { error: storageError } = await supabase.storage
+        .from('project-files')
+        .remove(storagePaths);
+      
+      if (storageError) {
+        logger.error('Failed to delete files from storage', storageError);
+        throw storageError;
+      }
+
+      logger.info('Storage deletion completed successfully');
+
+      // Delete all files from database in a single operation
+      const fileIds = [...new Set(filesToDelete.map(f => f.id))];
+      const { error: dbError } = await supabase
+        .from('project_files')
+        .delete()
+        .in('id', fileIds);
+
+      if (dbError) throw dbError;
+
+      logger.info('Database deletion completed successfully', {
+        deletedFiles: filesToDelete.map(f => ({ id: f.id, name: f.name }))
+      });
+
+      await refreshProjectStorage();
+      onSuccess?.('Files deleted successfully');
     } catch (error) {
       logger.error('Delete error', error);
       onError?.(error instanceof Error ? error.message : 'Failed to delete file');
