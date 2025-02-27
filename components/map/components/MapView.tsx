@@ -84,8 +84,8 @@ export function MapView({
 
       mapInstance.current = map;
 
-      // Add navigation controls
-      map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+      // Add navigation controls with adjusted positioning
+      map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
       
       // Add scale control
       map.addControl(new mapboxgl.ScaleControl(), 'bottom-left');

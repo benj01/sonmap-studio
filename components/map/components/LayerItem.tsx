@@ -45,31 +45,48 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
   const { data, loading, error } = useLayerData(layer.id);
   const setupCompleteRef = useRef(false);
   const registeredRef = useRef(false);
+  const layerId = `layer-${layer.id}`;  // Define layerId once to ensure consistency
 
   // Register with context on mount
   useEffect(() => {
     if (!registeredRef.current) {
-      addLayer(`layer-${layer.id}`);
+      logger.debug('Registering layer with context', { layerId });
+      addLayer(layerId);
       registeredRef.current = true;
     }
-  }, [layer.id, addLayer]);
+  }, [layerId, addLayer]);
 
   // Register layer with context and add to map when data is loaded
   useEffect(() => {
     if (!map || !data || loading) {
+      logger.debug('Skipping layer setup - prerequisites not met', {
+        hasMap: !!map,
+        hasData: !!data,
+        isLoading: loading,
+        layerId
+      });
       return;
     }
 
     const sourceId = `source-${layer.id}`;
-    const layerId = `layer-${layer.id}`;
     let mounted = true;
 
-    const setupLayer = () => {
-      if (!mounted || setupCompleteRef.current || !map || !map.loaded()) return;
+    const setupLayer = async () => {
+      if (!mounted || setupCompleteRef.current || !map || !map.loaded()) {
+        logger.debug('Skipping layer setup - conditions not met', {
+          isMounted: mounted,
+          isSetupComplete: setupCompleteRef.current,
+          hasMap: !!map,
+          isMapLoaded: map?.loaded(),
+          layerId
+        });
+        return;
+      }
 
       try {
         // Skip if layer already exists and is properly set up
         if (map.getStyle() && map.getLayer(layerId) && map.getSource(sourceId)) {
+          logger.debug('Layer already exists', { layerId });
           setupCompleteRef.current = true;
           return;
         }
@@ -86,9 +103,13 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           logger.warn('Cleanup failed', { error });
         }
 
+        // Get initial visibility state
+        const isVisible = layers.get(layerId) ?? true;
+        logger.debug('Initial visibility state', { layerId, isVisible });
+
         // Validate features
         if (!data.features?.length) {
-          logger.warn('No features to display');
+          logger.warn('No features to display', { layerId });
           return;
         }
 
@@ -96,14 +117,32 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         logger.info('Setting up layer', {
           layerId,
           featureCount: data.features.length,
-          geometryTypes: [...new Set(data.features.map(f => f.geometry?.type))]
+          geometryTypes: [...new Set(data.features.map(f => f.geometry?.type))],
+          sampleFeature: data.features[0]
         });
+
+        // Wait for map style to be fully loaded
+        if (!map.isStyleLoaded()) {
+          logger.debug('Waiting for map style to load', { layerId });
+          await new Promise(resolve => map.once('style.load', resolve));
+        }
 
         // Create GeoJSON data
         const geojsonData: GeoJSON.FeatureCollection = {
           type: 'FeatureCollection',
-          features: data.features
+          features: data.features.map(feature => ({
+            type: 'Feature',
+            id: feature.id,
+            geometry: feature.geometry,
+            properties: feature.properties || {}
+          }))
         };
+
+        logger.debug('Adding source', { 
+          sourceId, 
+          featureCount: geojsonData.features.length,
+          sampleFeature: geojsonData.features[0]
+        });
 
         // Add source
         map.addSource(sourceId, {
@@ -113,53 +152,88 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
 
         // Determine geometry type and add appropriate layer
         const geometryType = data.features[0]?.geometry?.type;
-        switch (geometryType) {
-          case 'Point':
-          case 'MultiPoint':
-            map.addLayer({
-              id: layerId,
-              source: sourceId,
-              type: 'circle',
-              paint: {
-                'circle-color': '#088',
-                'circle-radius': 6
-              }
-            });
-            break;
-          case 'LineString':
-          case 'MultiLineString':
-            map.addLayer({
-              id: layerId,
-              source: sourceId,
-              type: 'line',
-              paint: {
-                'line-color': '#088',
-                'line-width': 2
-              }
-            });
-            break;
-          case 'Polygon':
-          case 'MultiPolygon':
-            map.addLayer({
-              id: layerId,
-              source: sourceId,
-              type: 'fill',
-              paint: {
-                'fill-color': '#088',
-                'fill-opacity': 0.4,
-                'fill-outline-color': '#066'
-              }
-            });
-            break;
-          default:
-            throw new Error(`Unsupported geometry type: ${geometryType}`);
+        logger.debug('Adding layer for geometry type', { geometryType, layerId });
+
+        // For line features
+        if (geometryType === 'LineString' || geometryType === 'MultiLineString') {
+          logger.debug('Adding line layer', { layerId, sourceId });
+          map.addLayer({
+            id: layerId,
+            source: sourceId,
+            type: 'line',
+            paint: {
+              'line-color': '#FF0000',
+              'line-width': 3,
+              'line-opacity': 0.8
+            },
+            layout: {
+              'line-join': 'round',
+              'line-cap': 'round',
+              visibility: isVisible ? 'visible' : 'none'
+            }
+          });
+
+          // Verify layer was added
+          const layerAdded = map.getLayer(layerId);
+          logger.debug('Line layer status', { 
+            layerId,
+            layerAdded: !!layerAdded,
+            visibility: map.getLayoutProperty(layerId, 'visibility'),
+            hasSource: !!map.getSource(sourceId)
+          });
+        }
+        // For point features
+        else if (geometryType === 'Point' || geometryType === 'MultiPoint') {
+          map.addLayer({
+            id: layerId,
+            source: sourceId,
+            type: 'circle',
+            paint: {
+              'circle-color': '#088',
+              'circle-radius': 6
+            }
+          });
+        }
+        // For polygon features
+        else if (geometryType === 'Polygon' || geometryType === 'MultiPolygon') {
+          map.addLayer({
+            id: layerId,
+            source: sourceId,
+            type: 'fill',
+            paint: {
+              'fill-color': '#088',
+              'fill-opacity': 0.4
+            }
+          });
+
+          // Add outline layer for polygons
+          map.addLayer({
+            id: `${layerId}-outline`,
+            source: sourceId,
+            type: 'line',
+            paint: {
+              'line-color': '#066',
+              'line-width': 1
+            }
+          });
+        } else {
+          throw new Error(`Unsupported geometry type: ${geometryType}`);
+        }
+
+        // Set initial visibility based on context
+        logger.debug('Setting initial visibility', { layerId, isVisible });
+        
+        map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+        if (geometryType === 'Polygon' || geometryType === 'MultiPolygon') {
+          map.setLayoutProperty(`${layerId}-outline`, 'visibility', isVisible ? 'visible' : 'none');
         }
 
         logger.info('Layer setup complete', { 
           layerId,
           name: data.name,
           featureCount: data.features.length,
-          geometryType
+          geometryType,
+          isVisible
         });
         
         setupCompleteRef.current = true;
@@ -208,18 +282,7 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
             }
           });
 
-          // Add padding for small features
-          const [[minLng, minLat], [maxLng, maxLat]] = bounds.toArray();
-          const lngDiff = Math.abs(maxLng - minLng);
-          const latDiff = Math.abs(maxLat - minLat);
-          
-          // If the feature is very small, add more padding
-          if (lngDiff < 0.001 || latDiff < 0.001) {
-            const padding = 0.001; // About 100m at the equator
-            bounds.extend([minLng - padding, minLat - padding]);
-            bounds.extend([maxLng + padding, maxLat + padding]);
-          }
-
+          logger.debug('Fitting to bounds', { bounds: bounds.toArray() });
           map.fitBounds(bounds, {
             padding: 50,
             animate: true,
@@ -227,14 +290,29 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           });
         }
       } catch (error) {
-        logger.error('Layer setup failed', { error });
+        logger.error('Layer setup failed', { error, layerId });
+        setupCompleteRef.current = false;
       }
     };
 
-    // Only set up when map is fully loaded
-    if (map.loaded() && map.getStyle()) {
-      setupLayer();
-    }
+    // Set up layer
+    setupLayer();
+
+    // Update visibility when context changes
+    const updateVisibility = () => {
+      if (!map.getLayer(layerId)) return;
+      
+      const isVisible = layers.get(layerId) ?? true;
+      logger.debug('Updating layer visibility', { layerId, isVisible });
+      
+      map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+      
+      // Update outline layer visibility for polygons
+      const geometryType = data.features[0]?.geometry?.type;
+      if ((geometryType === 'Polygon' || geometryType === 'MultiPolygon') && map.getLayer(`${layerId}-outline`)) {
+        map.setLayoutProperty(`${layerId}-outline`, 'visibility', isVisible ? 'visible' : 'none');
+      }
+    };
 
     // Listen for style load
     const onStyleLoad = () => {
@@ -254,6 +332,9 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           if (map.getLayer(layerId)) {
             map.removeLayer(layerId);
           }
+          if (map.getLayer(`${layerId}-outline`)) {
+            map.removeLayer(`${layerId}-outline`);
+          }
           if (map.getSource(sourceId)) {
             map.removeSource(sourceId);
           }
@@ -262,9 +343,9 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         logger.warn('Cleanup failed', { error });
       }
     };
-  }, [map, data, layer.id, layer.type, loading]);
+  }, [map, data, layer.id, layer.type, loading, layers]);
 
-  const isVisible = layers.get(`layer-${layer.id}`) ?? true;
+  const isVisible = layers.get(layerId) ?? true;
 
   if (loading) {
     return (
@@ -297,7 +378,14 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => toggleLayer(`layer-${layer.id}`)}
+          onClick={() => {
+            logger.debug('Toggle button clicked', { 
+              layerId,
+              currentVisibility: isVisible,
+              hasLayer: map?.getLayer(layerId) !== undefined
+            });
+            toggleLayer(layerId);
+          }}
           className="h-8 w-8"
         >
           {isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}

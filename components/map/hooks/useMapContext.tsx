@@ -67,21 +67,47 @@ export function MapProvider({ children }: { children: ReactNode }) {
       const currentVisibility = newLayers.get(layerId) ?? true;
       newLayers.set(layerId, !currentVisibility);
 
-      if (map && map.getStyle()) {
-        const layer = map.getLayer(layerId);
-        if (layer) {
-          const newVisibility = !currentVisibility ? 'visible' : 'none';
-          map.setLayoutProperty(
-            layerId,
-            'visibility',
-            newVisibility
-          );
-          logger.debug('Layer visibility changed', { 
+      if (map && map.loaded()) {
+        try {
+          logger.debug('Attempting to toggle layer visibility', { 
             layerId, 
-            visible: !currentVisibility
+            currentVisibility,
+            newVisibility: !currentVisibility,
+            hasLayer: map.getLayer(layerId) !== undefined
           });
-        } else {
-          logger.warn('Layer not found in map', { 
+
+          // Check if layer exists before attempting to modify it
+          if (map.getLayer(layerId)) {
+            const newVisibility = !currentVisibility ? 'visible' : 'none';
+            map.setLayoutProperty(
+              layerId,
+              'visibility',
+              newVisibility
+            );
+            logger.debug('Layer visibility changed', { 
+              layerId, 
+              visible: !currentVisibility
+            });
+
+            // Also toggle outline layer if it exists (for polygons)
+            const outlineLayerId = `${layerId}-outline`;
+            if (map.getLayer(outlineLayerId)) {
+              map.setLayoutProperty(
+                outlineLayerId,
+                'visibility',
+                newVisibility
+              );
+            }
+          } else {
+            logger.warn('Layer not found in map', { 
+              layerId,
+              mapLoaded: map.loaded(),
+              availableLayers: map.getStyle()?.layers?.map(l => l.id)
+            });
+          }
+        } catch (error) {
+          logger.error('Error toggling layer visibility', {
+            error,
             layerId,
             mapLoaded: map.loaded()
           });
@@ -89,7 +115,8 @@ export function MapProvider({ children }: { children: ReactNode }) {
       } else {
         logger.warn('Map not ready', { 
           layerId,
-          hasMap: !!map
+          hasMap: !!map,
+          mapLoaded: map?.loaded()
         });
       }
 

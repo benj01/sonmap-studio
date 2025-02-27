@@ -27,6 +27,7 @@ export function LayerPanel({ className = '', children }: LayerPanelProps) {
           size="icon"
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="mr-2"
+          title={isCollapsed ? "Expand panel" : "Collapse panel"}
         >
           {isCollapsed ? <ChevronLeft /> : <ChevronRight />}
         </Button>
@@ -40,9 +41,21 @@ export function LayerPanel({ className = '', children }: LayerPanelProps) {
       
       <div className={cn(
         'h-[calc(100%-3rem)] overflow-y-auto',
-        isCollapsed ? 'hidden' : 'block'
+        isCollapsed ? 'px-2 py-4' : 'p-4'
       )}>
-        {children}
+        {isCollapsed ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setIsCollapsed(false)}
+            className="w-full"
+            title="Expand panel"
+          >
+            <Layers className="w-5 h-5" />
+          </Button>
+        ) : (
+          children
+        )}
       </div>
     </div>
   );
