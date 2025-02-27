@@ -247,8 +247,12 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError || !session) {
-        console.error(`[FileManager] ${logContext} No valid session`, { error: sessionError });
-        throw new Error('Authentication required');
+        const error = new Error('Authentication required');
+        console.error(`[FileManager] ${logContext} No valid session`, { 
+          error: sessionError,
+          errorMessage: error.message 
+        });
+        throw error;
       }
 
       const response = await fetch('/api/storage/upload-url-new', {
@@ -264,23 +268,44 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         }),
       });
 
+      let responseData;
+      const responseText = await response.text();
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (e) {
+        console.error(`[FileManager] ${logContext} Failed to parse response`, {
+          text: responseText,
+          error: e
+        });
+      }
+
       if (!response.ok) {
-        const errorText = await response.text();
+        const error = new Error(
+          `Failed to get signed URL: ${response.status} ${response.statusText} - ${
+            responseData?.error || responseText
+          }`
+        );
         console.error(`[FileManager] ${logContext} Failed to get signed URL`, {
           status: response.status,
           statusText: response.statusText,
-          error: errorText
+          response: responseData || responseText,
+          error: error.message
         });
-        throw new Error(`Failed to get signed URL: ${response.status} ${response.statusText} - ${errorText}`);
+        throw error;
       }
 
-      const data = await response.json();
-      if (!data.data?.signedUrl) {
-        console.error(`[FileManager] ${logContext} Invalid signed URL response`, { data });
-        throw new Error('Invalid signed URL response from server: ' + JSON.stringify(data));
+      if (!responseData?.data?.signedUrl) {
+        const error = new Error(
+          'Invalid signed URL response from server: ' + JSON.stringify(responseData)
+        );
+        console.error(`[FileManager] ${logContext} Invalid signed URL response`, { 
+          data: responseData,
+          error: error.message
+        });
+        throw error;
       }
 
-      const { signedUrl } = data.data;
+      const { signedUrl } = responseData.data;
       console.info(`[FileManager] ${logContext} Got signed URL, starting upload to storage...`);
       
       // Upload the file
@@ -305,11 +330,14 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             console.info(`[FileManager] ${logContext} Upload completed successfully`);
             resolve(undefined);
           } else {
-            const error = new Error(`Upload failed with status ${xhr.status}: ${xhr.statusText} - ${xhr.responseText}`);
+            const error = new Error(
+              `Upload failed with status ${xhr.status}: ${xhr.statusText} - ${xhr.responseText}`
+            );
             console.error(`[FileManager] ${logContext} Upload failed`, {
               status: xhr.status,
               statusText: xhr.statusText,
-              response: xhr.responseText
+              response: xhr.responseText,
+              error: error.message
             });
             reject(error);
           }
@@ -320,14 +348,17 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           console.error(`[FileManager] ${logContext} Network error during upload`, {
             status: xhr.status,
             statusText: xhr.statusText,
-            response: xhr.responseText
+            response: xhr.responseText,
+            error: error.message
           });
           reject(error);
         });
 
         xhr.addEventListener('abort', () => {
           const error = new Error('Upload aborted');
-          console.error(`[FileManager] ${logContext} Upload aborted`);
+          console.error(`[FileManager] ${logContext} Upload aborted`, {
+            error: error.message
+          });
           reject(error);
         });
 
@@ -420,8 +451,13 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to upload files';
       console.error(`[FileManager] ${logContext} Upload process failed`, {
-        error: errorMessage,
-        stack: e instanceof Error ? e.stack : undefined
+        error: e instanceof Error ? {
+          message: e.message,
+          stack: e.stack
+        } : 'Unknown error',
+        fileName: mainFileName,
+        fileType: group.mainFile.type,
+        fileSize: group.mainFile.size
       });
       onError?.(errorMessage);
       

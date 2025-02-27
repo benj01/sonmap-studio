@@ -7,12 +7,15 @@ const logManager = LogManager.getInstance();
 
 const logger = {
   info: (message: string, data?: any) => {
+    console.info(`[${SOURCE}] ${message}`, data);
     logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
+    console.warn(`[${SOURCE}] ${message}`, error);
     logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
+    console.error(`[${SOURCE}] ${message}`, error);
     logManager.error(SOURCE, message, error);
   }
 };
@@ -26,7 +29,7 @@ export async function POST(request: Request) {
     if (!authHeader) {
       logger.warn('No authorization header present');
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Unauthorized - No authorization header' },
         { status: 401 }
       );
     }
@@ -51,10 +54,17 @@ export async function POST(request: Request) {
 
     // Verify user authentication
     const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !user) {
-      logger.error('Invalid auth token', { error: authError, token: token.substring(0, 10) + '...' });
+    if (authError) {
+      logger.error('Auth error', { error: authError, token: token.substring(0, 10) + '...' });
       return NextResponse.json(
-        { error: 'Unauthorized' },
+        { error: 'Authentication failed: ' + authError.message },
+        { status: 401 }
+      );
+    }
+    if (!user) {
+      logger.error('No user found with token', { token: token.substring(0, 10) + '...' });
+      return NextResponse.json(
+        { error: 'No authenticated user found' },
         { status: 401 }
       );
     }
@@ -63,7 +73,7 @@ export async function POST(request: Request) {
     // Verify project access
     const { data: project, error: projectError } = await supabase
       .from('projects')
-      .select('id')
+      .select('id, owner_id')
       .eq('id', projectId)
       .single();
 
@@ -74,7 +84,7 @@ export async function POST(request: Request) {
         projectId
       });
       return NextResponse.json(
-        { error: 'Project access check failed' },
+        { error: 'Project access check failed: ' + projectError.message },
         { status: 403 }
       );
     }
@@ -87,11 +97,24 @@ export async function POST(request: Request) {
       );
     }
 
+    // Verify project ownership
+    if (project.owner_id !== user.id) {
+      logger.warn('User does not own project', { 
+        userId: user.id,
+        projectId,
+        ownerId: project.owner_id
+      });
+      return NextResponse.json(
+        { error: 'You do not have permission to upload files to this project' },
+        { status: 403 }
+      );
+    }
+
     logger.info('Project access verified', { projectId, userId: user.id });
 
-    // Create the full storage path including project ID
+    // Create the full storage path including user ID
     const storagePath = `${user.id}/${projectId}/${filename}`;
-    logger.info('Storage path', { storagePath });
+    logger.info('Storage path constructed', { storagePath });
 
     // Create a signed URL for uploading
     logger.info('Creating signed upload URL...');
@@ -107,7 +130,8 @@ export async function POST(request: Request) {
         error: signedUrlError,
         path: storagePath,
         userId: user.id,
-        projectId
+        projectId,
+        contentType
       });
 
       return NextResponse.json(
@@ -119,13 +143,14 @@ export async function POST(request: Request) {
     if (!uploadData?.signedUrl) {
       logger.error('No signed URL in response', { uploadData });
       return NextResponse.json(
-        { error: 'No signed URL received from storage' },
+        { error: 'No signed URL received from storage service' },
         { status: 500 }
       );
     }
 
     logger.info('Successfully created signed URL', {
       path: storagePath,
+      contentType,
       expiresIn: '10 minutes'
     });
     
