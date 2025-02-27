@@ -193,20 +193,48 @@ export class ShapefileParser extends BaseGeoDataParser {
         featureCount: geojson.features.length
       });
 
-      // Store original coordinates without transformation
-      // PostGIS will handle the transformation when needed
-      this.features = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
+      // Store original features first
+      const originalFeatures = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
         id: index,
         geometry: feature.geometry,
         properties: feature.properties || {},
         originalIndex: index
       }));
 
+      // Try to detect SRID if not already set
+      if (!this.srid) {
+        // Try to detect Swiss coordinates by value range
+        const firstFeature = originalFeatures[0];
+        if (firstFeature?.geometry) {
+          const coords = getCoordinates(firstFeature.geometry);
+          if (coords.length >= 2) {
+            const [x, y] = coords;
+            if (x >= 2485000 && x <= 2834000 && y >= 1075000 && y <= 1299000) {
+              this.logger.info('Detected Swiss coordinates based on coordinate ranges', { x, y });
+              this.srid = 2056;
+            }
+          }
+        }
+      }
+
+      // Transform coordinates for preview if we have a valid SRID
+      if (this.srid) {
+        this.logger.info(`Transforming coordinates from EPSG:${this.srid} to WGS84 for preview...`);
+        this.features = originalFeatures.map(feature => ({
+          ...feature,
+          geometry: transformGeometry(feature.geometry, this.srid!, this.logger)
+        }));
+      } else {
+        this.logger.warn('No SRID detected, using original coordinates');
+        this.features = originalFeatures;
+      }
+
       // Calculate metadata
       let bounds: [number, number, number, number] | undefined;
       const geometryTypes = new Set<string>();
       const properties = this.features[0] ? Object.keys(this.features[0].properties) : [];
 
+      // Use transformed coordinates for bounds calculation
       for (const feature of this.features) {
         if (feature.geometry) {
           const coords = getCoordinates(feature.geometry);
@@ -218,13 +246,13 @@ export class ShapefileParser extends BaseGeoDataParser {
       const dataset: FullDataset = {
         sourceFile: 'shapefile',
         fileType: 'shp',
-        features: this.features,
+        features: originalFeatures, // Store original features for import
         metadata: {
           featureCount: this.features.length,
           bounds,
           geometryTypes: Array.from(geometryTypes),
           properties,
-          srid: this.srid
+          srid: this.srid || undefined // Store detected SRID
         }
       };
 
@@ -234,7 +262,11 @@ export class ShapefileParser extends BaseGeoDataParser {
         message: 'Parsing complete'
       });
 
-      this.logger.info('Parse complete', dataset.metadata);
+      this.logger.info('Parse complete', {
+        ...dataset.metadata,
+        previewFeatures: this.features.length
+      });
+      
       return dataset;
     } catch (error) {
       this.logger.error('Parse failed', error);

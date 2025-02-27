@@ -242,7 +242,7 @@ export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewP
           }
         }
       } catch (error) {
-        logger.error('Failed to update map data');
+        logger.error('Failed to update map data', error);
       }
     };
 
