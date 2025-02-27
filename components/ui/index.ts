@@ -19,6 +19,7 @@ export * from './toast'
 export * from './toaster'
 export * from './use-toast'
 export * from './user-avatar'
+export * from './skeleton'
 
 // Remove deprecated exports
 // export * from './dropdown' // Using dropdown-menu instead

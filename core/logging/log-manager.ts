@@ -15,10 +15,10 @@ export enum LogLevel {
  */
 export interface LogEntry {
   timestamp: string;
-  level: LogLevel;
+  level: 'debug' | 'info' | 'warn' | 'error';
   source: string;
   message: string;
-  details?: Record<string, any>;
+  data?: any;
 }
 
 /**
@@ -240,49 +240,87 @@ export class LogManager {
 
   private formatLogEntry(entry: LogEntry): string {
     let dataStr = '';
-    if (entry.details) {
+    if (entry.data) {
       try {
-        dataStr = '\n' + this.safeStringify(entry.details);
+        dataStr = '\n' + this.safeStringify(entry.data);
       } catch (error) {
-        dataStr = '\n[Error stringifying details]';
+        dataStr = '\n[Error stringifying data]';
       }
     }
     return `[${entry.timestamp}] [${entry.level}] [${entry.source}] ${entry.message}${dataStr}\n`;
   }
 
+  private addLog(entry: LogEntry) {
+    this.logs.push(entry);
+    // Also output to console for immediate feedback
+    const consoleMethod = entry.level === 'error' ? 'error' : 
+                         entry.level === 'warn' ? 'warn' : 
+                         entry.level === 'info' ? 'info' : 'debug';
+    
+    if (entry.data) {
+      console[consoleMethod](`[${entry.source}] ${entry.message}`, entry.data);
+    } else {
+      console[consoleMethod](`[${entry.source}] ${entry.message}`);
+    }
+  }
+
   /**
    * Log a debug message
    */
-  public debug(source: string, message: string, details?: Record<string, any>): void {
+  public debug(source: string, message: string, data?: any): void {
     if (this.shouldLog(LogLevel.DEBUG, source)) {
-      this.log(LogLevel.DEBUG, source, message, details);
+      this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'debug',
+        source,
+        message,
+        data
+      });
     }
   }
 
   /**
    * Log an info message
    */
-  public info(source: string, message: string, details?: Record<string, any>): void {
+  public info(source: string, message: string, data?: any): void {
     if (this.shouldLog(LogLevel.INFO, source)) {
-      this.log(LogLevel.INFO, source, message, details);
+      this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        source,
+        message,
+        data
+      });
     }
   }
 
   /**
    * Log a warning message
    */
-  public warn(source: string, message: string, details?: Record<string, any>): void {
+  public warn(source: string, message: string, data?: any): void {
     if (this.shouldLog(LogLevel.WARN, source)) {
-      this.log(LogLevel.WARN, source, message, details);
+      this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'warn',
+        source,
+        message,
+        data
+      });
     }
   }
 
   /**
    * Log an error message
    */
-  public error(source: string, message: string, details?: Record<string, any>): void {
+  public error(source: string, message: string, data?: any): void {
     if (this.shouldLog(LogLevel.ERROR, source)) {
-      this.log(LogLevel.ERROR, source, message, details);
+      this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        source,
+        message,
+        data
+      });
     }
   }
 
@@ -300,50 +338,10 @@ export class LogManager {
     this.logs = [];
   }
 
-  /**
-   * Internal logging method
-   */
-  private log(level: LogLevel, source: string, message: string, details?: Record<string, any>): void {
-    const componentLevel = this.getComponentLogLevel(source);
-    if (level < componentLevel) return;
-
-    const timestamp = new Date().toISOString();
-    const levelStr = level;
-    
-    // Skip logging if details contain only internal properties
-    if (details && Object.keys(details).every(key => key.startsWith('_'))) {
-      return;
-    }
-
-    // Sanitize details before logging
-    let sanitizedDetails;
-    try {
-      sanitizedDetails = details ? this.safeStringify(details) : undefined;
-    } catch (error) {
-      sanitizedDetails = '[Error: Could not stringify details]';
-    }
-
-    const entry: LogEntry = {
-      timestamp,
-      level,
-      source,
-      message,
-      details: sanitizedDetails ? JSON.parse(sanitizedDetails) : undefined
-    };
-
-    // Always add to logs array regardless of environment
-    this.logs.push(entry);
-    
-    // Implement circular buffer if we exceed max logs
-    if (this.logs.length > this.MAX_LOGS) {
-      this.logs = this.logs.slice(-this.MAX_LOGS);
-    }
-  }
-
   public downloadLogs(filename: string = 'sonmap-logs.txt'): void {
     // Format logs with proper timestamps and structure
     const formattedLogs = this.logs.map(entry => {
-      const detailsStr = entry.details ? `\nDetails: ${this.safeStringify(entry.details, 2)}` : '';
+      const detailsStr = entry.data ? `\nDetails: ${this.safeStringify(entry.data, 2)}` : '';
       return `[${entry.timestamp}] [${entry.level}] [${entry.source}] ${entry.message}${detailsStr}\n`;
     }).join('\n');
 

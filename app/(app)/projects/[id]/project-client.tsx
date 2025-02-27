@@ -10,6 +10,10 @@ import { ArrowLeft, Settings, Users, Files, Map } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
 import { FileManager } from '@/components/files/components/manager'
 import { useEffect, useState } from 'react'
+import { MapView } from '@/components/map/components/MapView'
+import { LayerPanel } from '@/components/map/components/LayerPanel'
+import { LayerList } from '@/components/map/components/LayerList'
+import { MapProvider } from '@/components/map/hooks/useMapContext'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -146,8 +150,13 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="h-[500px] bg-muted rounded-lg flex items-center justify-center">
-                Map Component Coming Soon
+              <div className="relative h-[500px] bg-muted rounded-lg overflow-hidden">
+                <MapProvider>
+                  <MapView />
+                  <LayerPanel>
+                    <LayerList projectId={projectId} />
+                  </LayerPanel>
+                </MapProvider>
               </div>
             </CardContent>
           </Card>
