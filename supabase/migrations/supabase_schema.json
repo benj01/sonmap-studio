@@ -1,0 +1,1470 @@
+{
+  "tables": {
+    "spatial_ref_sys": {
+      "columns": [
+        {
+          "column_name": "proj4text",
+          "data_type": "varchar",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "auth_srid",
+          "data_type": "int4",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "srid",
+          "data_type": "int4",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "auth_name",
+          "data_type": "varchar",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "srtext",
+          "data_type": "varchar",
+          "is_nullable": "YES",
+          "default_value": null
+        }
+      ],
+      "constraints": [],
+      "indexes": [
+        {
+          "index_name": "spatial_ref_sys_pkey",
+          "index_definition": "CREATE UNIQUE INDEX spatial_ref_sys_pkey ON public.spatial_ref_sys USING btree (srid)"
+        }
+      ],
+      "rls_enabled": false,
+      "policies": []
+    },
+    "geography_columns": {
+      "columns": [
+        {
+          "column_name": "srid",
+          "data_type": "int4",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "coord_dimension",
+          "data_type": "int4",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "f_table_catalog",
+          "data_type": "name",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "f_table_name",
+          "data_type": "name",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "f_geography_column",
+          "data_type": "name",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "f_table_schema",
+          "data_type": "name",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "type",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "default_value": null
+        }
+      ],
+      "constraints": [],
+      "indexes": [],
+      "rls_enabled": false,
+      "policies": []
+    },
+    "geometry_columns": {
+      "columns": [
+        {
+          "column_name": "f_table_schema",
+          "data_type": "name",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "f_table_name",
+          "data_type": "name",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "f_table_catalog",
+          "data_type": "varchar",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "f_geometry_column",
+          "data_type": "name",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "type",
+          "data_type": "varchar",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "coord_dimension",
+          "data_type": "int4",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "srid",
+          "data_type": "int4",
+          "is_nullable": "YES",
+          "default_value": null
+        }
+      ],
+      "constraints": [],
+      "indexes": [],
+      "rls_enabled": false,
+      "policies": []
+    },
+    "geo_features": {
+      "columns": [
+        {
+          "column_name": "geometry",
+          "data_type": "geometry",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "properties",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "default_value": "'{}'::jsonb"
+        },
+        {
+          "column_name": "srid",
+          "data_type": "int4",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "now()"
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "now()"
+        },
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": "gen_random_uuid()"
+        },
+        {
+          "column_name": "layer_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "2200_30965_6_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30965_7_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "geo_features_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "id",
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "valid_geometry",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "geo_features_layer_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "layer_id",
+          "foreign_table": "layers",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "2200_30965_1_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30965_2_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30965_3_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30965_5_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        }
+      ],
+      "indexes": [
+        {
+          "index_name": "geo_features_layer_id_idx",
+          "index_definition": "CREATE INDEX geo_features_layer_id_idx ON public.geo_features USING btree (layer_id)"
+        },
+        {
+          "index_name": "geo_features_geometry_idx",
+          "index_definition": "CREATE INDEX geo_features_geometry_idx ON public.geo_features USING gist (geometry)"
+        },
+        {
+          "index_name": "geo_features_pkey",
+          "index_definition": "CREATE UNIQUE INDEX geo_features_pkey ON public.geo_features USING btree (id)"
+        }
+      ],
+      "rls_enabled": true,
+      "policies": [
+        {
+          "policy_name": "Users can update features for their layers",
+          "command": "UPDATE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM ((layers l\n     JOIN feature_collections fc ON ((fc.id = l.collection_id)))\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((l.id = geo_features.layer_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": "(EXISTS ( SELECT 1\n   FROM ((layers l\n     JOIN feature_collections fc ON ((fc.id = l.collection_id)))\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((l.id = geo_features.layer_id) AND (pf.uploaded_by = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can view their features",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM ((layers l\n     JOIN feature_collections fc ON ((fc.id = l.collection_id)))\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((l.id = geo_features.layer_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can view features for their layers",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM ((layers l\n     JOIN feature_collections fc ON ((fc.id = l.collection_id)))\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((l.id = geo_features.layer_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can delete features for their layers",
+          "command": "DELETE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM ((layers l\n     JOIN feature_collections fc ON ((fc.id = l.collection_id)))\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((l.id = geo_features.layer_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can insert their features",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM ((layers l\n     JOIN feature_collections fc ON ((fc.id = l.collection_id)))\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((l.id = geo_features.layer_id) AND (pf.uploaded_by = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can insert features for their layers",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM ((layers l\n     JOIN feature_collections fc ON ((fc.id = l.collection_id)))\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((l.id = geo_features.layer_id) AND (pf.uploaded_by = auth.uid()))))"
+        }
+      ]
+    },
+    "feature_collections": {
+      "columns": [
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": "gen_random_uuid()"
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "now()"
+        },
+        {
+          "column_name": "name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "description",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "project_file_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "now()"
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "feature_collections_project_file_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "project_file_id",
+          "foreign_table": "project_files",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "2200_30957_1_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30957_2_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "feature_collections_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "id",
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30957_3_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30957_5_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30957_6_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        }
+      ],
+      "indexes": [
+        {
+          "index_name": "feature_collections_project_file_idx",
+          "index_definition": "CREATE INDEX feature_collections_project_file_idx ON public.feature_collections USING btree (project_file_id)"
+        },
+        {
+          "index_name": "feature_collections_pkey",
+          "index_definition": "CREATE UNIQUE INDEX feature_collections_pkey ON public.feature_collections USING btree (id)"
+        }
+      ],
+      "rls_enabled": true,
+      "policies": [
+        {
+          "policy_name": "Users can view their feature collections",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM project_files\n  WHERE ((project_files.id = feature_collections.project_file_id) AND (project_files.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can delete feature collections for their project files",
+          "command": "DELETE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM project_files pf\n  WHERE ((pf.id = feature_collections.project_file_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can update feature collections for their project files",
+          "command": "UPDATE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM project_files pf\n  WHERE ((pf.id = feature_collections.project_file_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": "(EXISTS ( SELECT 1\n   FROM project_files pf\n  WHERE ((pf.id = feature_collections.project_file_id) AND (pf.uploaded_by = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can insert feature collections for their project files",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM project_files pf\n  WHERE ((pf.id = feature_collections.project_file_id) AND (pf.uploaded_by = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can view feature collections for their project files",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM project_files pf\n  WHERE ((pf.id = feature_collections.project_file_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can insert their feature collections",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM project_files\n  WHERE ((project_files.id = feature_collections.project_file_id) AND (project_files.uploaded_by = auth.uid()))))"
+        }
+      ]
+    },
+    "profiles": {
+      "columns": [
+        {
+          "column_name": "username",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "avatar_url",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "timezone('utc'::text, now())"
+        },
+        {
+          "column_name": "full_name",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "default_value": null
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "profiles_username_key",
+          "constraint_type": "UNIQUE",
+          "column_name": "username",
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "profiles_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "id",
+          "foreign_table": "users",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "profiles_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "id",
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30984_1_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30984_5_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        }
+      ],
+      "indexes": [
+        {
+          "index_name": "profiles_username_key",
+          "index_definition": "CREATE UNIQUE INDEX profiles_username_key ON public.profiles USING btree (username)"
+        },
+        {
+          "index_name": "profiles_pkey",
+          "index_definition": "CREATE UNIQUE INDEX profiles_pkey ON public.profiles USING btree (id)"
+        },
+        {
+          "index_name": "idx_profiles_username",
+          "index_definition": "CREATE INDEX idx_profiles_username ON public.profiles USING btree (username)"
+        }
+      ],
+      "rls_enabled": true,
+      "policies": [
+        {
+          "policy_name": "Users can insert their own profile",
+          "command": "INSERT",
+          "roles": [
+            "public"
+          ],
+          "qual": null,
+          "with_check": "(auth.uid() = id)"
+        },
+        {
+          "policy_name": "Users can view their own profile",
+          "command": "SELECT",
+          "roles": [
+            "public"
+          ],
+          "qual": "(auth.uid() = id)",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can update their own profile",
+          "command": "UPDATE",
+          "roles": [
+            "public"
+          ],
+          "qual": "(auth.uid() = id)",
+          "with_check": null
+        }
+      ]
+    },
+    "project_files": {
+      "columns": [
+        {
+          "column_name": "metadata",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "default_value": "'{}'::jsonb"
+        },
+        {
+          "column_name": "source_file_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "is_imported",
+          "data_type": "bool",
+          "is_nullable": "YES",
+          "default_value": "false"
+        },
+        {
+          "column_name": "import_metadata",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "is_shapefile_component",
+          "data_type": "bool",
+          "is_nullable": "YES",
+          "default_value": "false"
+        },
+        {
+          "column_name": "main_file_id",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": "gen_random_uuid()"
+        },
+        {
+          "column_name": "project_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "size",
+          "data_type": "int8",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "uploaded_by",
+          "data_type": "uuid",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "uploaded_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "timezone('utc'::text, now())"
+        },
+        {
+          "column_name": "component_type",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "file_type",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "storage_path",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "2200_30990_1_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "project_files_component_type_check",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "project_files_main_file_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "main_file_id",
+          "foreign_table": "project_files",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "project_files_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "id",
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "project_files_project_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "project_id",
+          "foreign_table": "projects",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "project_files_source_file_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "source_file_id",
+          "foreign_table": "project_files",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "project_files_uploaded_by_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "uploaded_by",
+          "foreign_table": "users",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "2200_30990_2_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30990_3_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30990_4_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30990_5_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30990_6_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30990_8_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        }
+      ],
+      "indexes": [
+        {
+          "index_name": "idx_project_files_project",
+          "index_definition": "CREATE INDEX idx_project_files_project ON public.project_files USING btree (project_id)"
+        },
+        {
+          "index_name": "idx_project_files_source_file",
+          "index_definition": "CREATE INDEX idx_project_files_source_file ON public.project_files USING btree (source_file_id) WHERE (source_file_id IS NOT NULL)"
+        },
+        {
+          "index_name": "idx_project_files_component_type",
+          "index_definition": "CREATE INDEX idx_project_files_component_type ON public.project_files USING btree (component_type) WHERE (component_type IS NOT NULL)"
+        },
+        {
+          "index_name": "project_files_pkey",
+          "index_definition": "CREATE UNIQUE INDEX project_files_pkey ON public.project_files USING btree (id)"
+        },
+        {
+          "index_name": "idx_project_files_is_imported",
+          "index_definition": "CREATE INDEX idx_project_files_is_imported ON public.project_files USING btree (is_imported) WHERE (is_imported = true)"
+        },
+        {
+          "index_name": "idx_project_files_main_file",
+          "index_definition": "CREATE INDEX idx_project_files_main_file ON public.project_files USING btree (main_file_id) WHERE (main_file_id IS NOT NULL)"
+        }
+      ],
+      "rls_enabled": true,
+      "policies": [
+        {
+          "policy_name": "Users can update their project files",
+          "command": "UPDATE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(auth.uid() IN ( SELECT project_members.user_id\n   FROM project_members\n  WHERE (project_members.project_id = project_files.project_id)))",
+          "with_check": "(auth.uid() IN ( SELECT project_members.user_id\n   FROM project_members\n  WHERE (project_members.project_id = project_files.project_id)))"
+        },
+        {
+          "policy_name": "Users can delete files from their projects",
+          "command": "DELETE",
+          "roles": [
+            "public"
+          ],
+          "qual": "(auth.uid() IN ( SELECT project_members.user_id\n   FROM project_members\n  WHERE (project_members.project_id = project_files.project_id)))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can upload files to their projects",
+          "command": "INSERT",
+          "roles": [
+            "public"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM project_members\n  WHERE ((project_members.project_id = project_files.project_id) AND (project_members.user_id = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can view project files",
+          "command": "SELECT",
+          "roles": [
+            "public"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM project_members\n  WHERE ((project_members.project_id = project_files.project_id) AND (project_members.user_id = auth.uid()))))",
+          "with_check": null
+        }
+      ]
+    },
+    "layers": {
+      "columns": [
+        {
+          "column_name": "properties",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "default_value": "'{}'::jsonb"
+        },
+        {
+          "column_name": "collection_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "now()"
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "now()"
+        },
+        {
+          "column_name": "type",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": "gen_random_uuid()"
+        },
+        {
+          "column_name": "name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "2200_30975_7_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30975_6_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30975_4_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30975_3_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30975_2_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_30975_1_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "layers_collection_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "collection_id",
+          "foreign_table": "feature_collections",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "layers_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "id",
+          "foreign_table": null,
+          "foreign_column": null
+        }
+      ],
+      "indexes": [
+        {
+          "index_name": "layers_collection_id_idx",
+          "index_definition": "CREATE INDEX layers_collection_id_idx ON public.layers USING btree (collection_id)"
+        },
+        {
+          "index_name": "layers_pkey",
+          "index_definition": "CREATE UNIQUE INDEX layers_pkey ON public.layers USING btree (id)"
+        }
+      ],
+      "rls_enabled": true,
+      "policies": [
+        {
+          "policy_name": "Users can insert layers for their feature collections",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM (feature_collections fc\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((fc.id = layers.collection_id) AND (pf.uploaded_by = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can delete layers for their feature collections",
+          "command": "DELETE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM (feature_collections fc\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((fc.id = layers.collection_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can view their layers",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM (feature_collections fc\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((fc.id = layers.collection_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can insert their layers",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM (feature_collections fc\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((fc.id = layers.collection_id) AND (pf.uploaded_by = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can update layers for their feature collections",
+          "command": "UPDATE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM (feature_collections fc\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((fc.id = layers.collection_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": "(EXISTS ( SELECT 1\n   FROM (feature_collections fc\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((fc.id = layers.collection_id) AND (pf.uploaded_by = auth.uid()))))"
+        },
+        {
+          "policy_name": "Users can view layers for their feature collections",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM (feature_collections fc\n     JOIN project_files pf ON ((pf.id = fc.project_file_id)))\n  WHERE ((fc.id = layers.collection_id) AND (pf.uploaded_by = auth.uid()))))",
+          "with_check": null
+        }
+      ]
+    },
+    "project_members": {
+      "columns": [
+        {
+          "column_name": "joined_at",
+          "data_type": "timestamptz",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "invited_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "timezone('utc'::text, now())"
+        },
+        {
+          "column_name": "project_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "role",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "user_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "2200_31001_1_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31001_2_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31001_3_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31001_4_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "project_members_user_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "user_id",
+          "foreign_table": "users",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "project_members_role_check",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "project_members_project_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "project_id",
+          "foreign_table": "projects",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "project_members_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "user_id",
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "project_members_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "project_id",
+          "foreign_table": null,
+          "foreign_column": null
+        }
+      ],
+      "indexes": [
+        {
+          "index_name": "project_members_pkey",
+          "index_definition": "CREATE UNIQUE INDEX project_members_pkey ON public.project_members USING btree (project_id, user_id)"
+        },
+        {
+          "index_name": "idx_project_members_user",
+          "index_definition": "CREATE INDEX idx_project_members_user ON public.project_members USING btree (user_id)"
+        }
+      ],
+      "rls_enabled": true,
+      "policies": [
+        {
+          "policy_name": "Enable update access for project owners",
+          "command": "UPDATE",
+          "roles": [
+            "public"
+          ],
+          "qual": "(auth.uid() = ( SELECT projects.owner_id\n   FROM projects\n  WHERE (projects.id = project_members.project_id)))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Enable read access for project members and owners",
+          "command": "SELECT",
+          "roles": [
+            "public"
+          ],
+          "qual": "((user_id = auth.uid()) OR (project_id IN ( SELECT projects.id\n   FROM projects\n  WHERE (projects.owner_id = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Enable read access for project members",
+          "command": "SELECT",
+          "roles": [
+            "public"
+          ],
+          "qual": "((auth.uid() = ( SELECT projects.owner_id\n   FROM projects\n  WHERE (projects.id = project_members.project_id))) OR (auth.uid() = user_id))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Enable insert for project owners",
+          "command": "INSERT",
+          "roles": [
+            "public"
+          ],
+          "qual": null,
+          "with_check": "(project_id IN ( SELECT projects.id\n   FROM projects\n  WHERE (projects.owner_id = auth.uid())))"
+        },
+        {
+          "policy_name": "Enable insert access for project owners",
+          "command": "INSERT",
+          "roles": [
+            "public"
+          ],
+          "qual": null,
+          "with_check": "(auth.uid() = ( SELECT projects.owner_id\n   FROM projects\n  WHERE (projects.id = project_members.project_id)))"
+        },
+        {
+          "policy_name": "project_members_insert_policy",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(EXISTS ( SELECT 1\n   FROM projects\n  WHERE ((projects.id = project_members.project_id) AND (projects.owner_id = auth.uid()))))"
+        },
+        {
+          "policy_name": "Enable delete for project owners",
+          "command": "DELETE",
+          "roles": [
+            "public"
+          ],
+          "qual": "(project_id IN ( SELECT projects.id\n   FROM projects\n  WHERE (projects.owner_id = auth.uid())))",
+          "with_check": null
+        },
+        {
+          "policy_name": "project_members_select_policy",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "((user_id = auth.uid()) OR (EXISTS ( SELECT 1\n   FROM projects\n  WHERE ((projects.id = project_members.project_id) AND (projects.owner_id = auth.uid())))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "project_members_update_policy",
+          "command": "UPDATE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM projects\n  WHERE ((projects.id = project_members.project_id) AND (projects.owner_id = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Project owners can manage members",
+          "command": "ALL",
+          "roles": [
+            "public"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM projects\n  WHERE ((projects.id = project_members.project_id) AND (projects.owner_id = auth.uid()))))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Enable delete access for project owners",
+          "command": "DELETE",
+          "roles": [
+            "public"
+          ],
+          "qual": "(auth.uid() = ( SELECT projects.owner_id\n   FROM projects\n  WHERE (projects.id = project_members.project_id)))",
+          "with_check": null
+        },
+        {
+          "policy_name": "Enable update for project owners",
+          "command": "UPDATE",
+          "roles": [
+            "public"
+          ],
+          "qual": "(project_id IN ( SELECT projects.id\n   FROM projects\n  WHERE (projects.owner_id = auth.uid())))",
+          "with_check": null
+        },
+        {
+          "policy_name": "project_members_delete_policy",
+          "command": "DELETE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(EXISTS ( SELECT 1\n   FROM projects\n  WHERE ((projects.id = project_members.project_id) AND (projects.owner_id = auth.uid()))))",
+          "with_check": null
+        }
+      ]
+    },
+    "projects": {
+      "columns": [
+        {
+          "column_name": "name",
+          "data_type": "text",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": "gen_random_uuid()"
+        },
+        {
+          "column_name": "metadata",
+          "data_type": "jsonb",
+          "is_nullable": "YES",
+          "default_value": "'{}'::jsonb"
+        },
+        {
+          "column_name": "last_accessed_at",
+          "data_type": "timestamptz",
+          "is_nullable": "YES",
+          "default_value": null
+        },
+        {
+          "column_name": "storage_used",
+          "data_type": "int8",
+          "is_nullable": "NO",
+          "default_value": "0"
+        },
+        {
+          "column_name": "owner_id",
+          "data_type": "uuid",
+          "is_nullable": "NO",
+          "default_value": null
+        },
+        {
+          "column_name": "updated_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "timezone('utc'::text, now())"
+        },
+        {
+          "column_name": "created_at",
+          "data_type": "timestamptz",
+          "is_nullable": "NO",
+          "default_value": "timezone('utc'::text, now())"
+        },
+        {
+          "column_name": "status",
+          "data_type": "project_status",
+          "is_nullable": "NO",
+          "default_value": "'active'::project_status"
+        },
+        {
+          "column_name": "description",
+          "data_type": "text",
+          "is_nullable": "YES",
+          "default_value": null
+        }
+      ],
+      "constraints": [
+        {
+          "constraint_name": "2200_31008_6_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31008_8_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "projects_owner_id_fkey",
+          "constraint_type": "FOREIGN KEY",
+          "column_name": "owner_id",
+          "foreign_table": "users",
+          "foreign_column": "id"
+        },
+        {
+          "constraint_name": "2200_31008_4_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31008_5_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31008_7_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31008_1_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "2200_31008_2_not_null",
+          "constraint_type": "CHECK",
+          "column_name": null,
+          "foreign_table": null,
+          "foreign_column": null
+        },
+        {
+          "constraint_name": "projects_pkey",
+          "constraint_type": "PRIMARY KEY",
+          "column_name": "id",
+          "foreign_table": null,
+          "foreign_column": null
+        }
+      ],
+      "indexes": [
+        {
+          "index_name": "projects_pkey",
+          "index_definition": "CREATE UNIQUE INDEX projects_pkey ON public.projects USING btree (id)"
+        },
+        {
+          "index_name": "idx_projects_owner",
+          "index_definition": "CREATE INDEX idx_projects_owner ON public.projects USING btree (owner_id)"
+        }
+      ],
+      "rls_enabled": true,
+      "policies": [
+        {
+          "policy_name": "projects_insert_policy",
+          "command": "INSERT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": null,
+          "with_check": "(owner_id = auth.uid())"
+        },
+        {
+          "policy_name": "Users can create their own projects",
+          "command": "INSERT",
+          "roles": [
+            "public"
+          ],
+          "qual": null,
+          "with_check": "(auth.uid() = owner_id)"
+        },
+        {
+          "policy_name": "projects_delete_policy",
+          "command": "DELETE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(owner_id = auth.uid())",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can delete their own projects",
+          "command": "DELETE",
+          "roles": [
+            "public"
+          ],
+          "qual": "(auth.uid() = owner_id)",
+          "with_check": null
+        },
+        {
+          "policy_name": "projects_select_policy",
+          "command": "SELECT",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(owner_id = auth.uid())",
+          "with_check": null
+        },
+        {
+          "policy_name": "projects_update_policy",
+          "command": "UPDATE",
+          "roles": [
+            "authenticated"
+          ],
+          "qual": "(owner_id = auth.uid())",
+          "with_check": null
+        },
+        {
+          "policy_name": "Users can update their own projects",
+          "command": "UPDATE",
+          "roles": [
+            "public"
+          ],
+          "qual": "((auth.uid() = owner_id) OR (EXISTS ( SELECT 1\n   FROM project_members\n  WHERE ((project_members.project_id = projects.id) AND (project_members.user_id = auth.uid()) AND (project_members.role = 'admin'::text)))))",
+          "with_check": null
+        }
+      ]
+    }
+  },
+  "enums": {
+    "project_status": {
+      "type": "e",
+      "values": [
+        "active",
+        "archived",
+        "deleted"
+      ]
+    }
+  },
+  "generated_at": "2025-02-27T08:23:44.789451+00:00"
+}

@@ -322,6 +322,16 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
 
       if (dbError) throw dbError;
 
+      // Update source file to mark it as imported
+      const { error: updateError } = await supabase
+        .from('project_files')
+        .update({ is_imported: true })
+        .eq('id', sourceFile.id);
+
+      if (updateError) {
+        logger.warn('Failed to update source file import status', updateError);
+      }
+
       onSuccess?.('File imported and converted to GeoJSON successfully');
       return importedFile;
     } catch (error) {
@@ -343,10 +353,16 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       if (userError) throw userError;
       if (!user) throw new Error('No authenticated user');
   
-      // First, fetch the file and its relationships
+      // First, fetch the file and its feature collections
       const { data: fileToDelete, error: fetchError } = await supabase
         .from('project_files')
-        .select('*')
+        .select(`
+          *,
+          feature_collections (
+            id,
+            layers (id)
+          )
+        `)
         .eq('id', fileId)
         .single();
   
@@ -358,58 +374,146 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           id: fileToDelete.id,
           name: fileToDelete.name,
           isImported: fileToDelete.is_imported,
-          sourceFileId: fileToDelete.source_file_id
+          sourceFileId: fileToDelete.source_file_id,
+          featureCollections: fileToDelete.feature_collections
         }
       });
   
-      // Initialize arrays for deletion and relationship updates
+      // Initialize arrays for deletion
       let filesToDelete: { id: string; storage_path: string }[] = [{
         id: fileToDelete.id,
         storage_path: fileToDelete.storage_path
       }];
-      let relationshipsToBreak: string[] = [];
-  
-      // If this file has relationships, fetch them
-      if (fileToDelete.is_imported || fileToDelete.source_file_id) {
-        const { data: relationships, error: relError } = await supabase
+
+      // Add companion files if this is a main file
+      if (!fileToDelete.main_file_id && fileToDelete.metadata?.relatedFiles) {
+        const companions = Object.entries(fileToDelete.metadata.relatedFiles) as [string, CompanionFile][];
+        for (const [_, companion] of companions) {
+          // Get companion file path using the same pattern as the main file
+          const companionPath = fileToDelete.storage_path.replace(
+            fileToDelete.name,
+            companion.name
+          );
+          filesToDelete.push({
+            id: fileToDelete.id, // We use the same ID since companions share the main file's ID
+            storage_path: companionPath
+          });
+        }
+        logger.info('Added companion files for deletion', {
+          mainFile: fileToDelete.name,
+          companions: companions.map(([_, c]: [string, CompanionFile]) => c.name)
+        });
+      }
+
+      // Handle relationships based on file type
+      if (fileToDelete.is_imported) {
+        // If this is an imported file and has a source file, fetch it
+        if (fileToDelete.source_file_id) {
+          const { data: sourceFile, error: sourceError } = await supabase
+            .from('project_files')
+            .select('id, storage_path, is_imported')
+            .eq('id', fileToDelete.source_file_id)
+            .single();
+
+          if (sourceError) {
+            logger.warn('Failed to fetch source file', sourceError);
+          } else if (sourceFile) {
+            if (deleteRelated) {
+              // Add source file to deletion list
+              filesToDelete.push({
+                id: sourceFile.id,
+                storage_path: sourceFile.storage_path
+              });
+            } else {
+              // Update source file to remove imported flag
+              logger.info('Updating source file to remove imported flag', { sourceFileId: sourceFile.id });
+              const { error: updateError } = await supabase
+                .from('project_files')
+                .update({ is_imported: false })
+                .eq('id', sourceFile.id);
+
+              if (updateError) {
+                logger.warn('Failed to update source file', updateError);
+              }
+            }
+          }
+        }
+      } else {
+        // If this is a source file, fetch any imported files that reference it
+        const { data: importedFiles, error: importedError } = await supabase
           .from('project_files')
-          .select('id, storage_path, source_file_id, is_imported')
-          .or(`id.eq.${fileToDelete.source_file_id},source_file_id.eq.${fileToDelete.id}`);
-  
-        if (relError) {
-          logger.warn('Failed to fetch relationships', relError);
-        } else if (relationships?.length > 0) {
-          logger.info('Found related files', { count: relationships.length });
+          .select('id, storage_path, is_imported')
+          .eq('source_file_id', fileToDelete.id)
+          .eq('is_imported', true);
+
+        if (importedError) {
+          logger.warn('Failed to fetch imported files', importedError);
+        } else if (importedFiles?.length > 0) {
+          logger.info('Found imported files', { count: importedFiles.length });
           
           if (deleteRelated) {
-            // Add related files to deletion list
-            filesToDelete.push(...relationships.map(f => ({
+            // Add imported files to deletion list
+            filesToDelete.push(...importedFiles.map(f => ({
               id: f.id,
               storage_path: f.storage_path
             })));
           } else {
-            // Add files to have their relationships broken
-            relationshipsToBreak.push(...relationships.map(f => f.id));
+            // Update imported files to remove source reference
+            const { error: updateError } = await supabase
+              .from('project_files')
+              .update({ source_file_id: null })
+              .in('id', importedFiles.map(f => f.id));
+
+            if (updateError) {
+              logger.warn('Failed to update imported files', updateError);
+            }
+          }
+        }
+      }
+
+      // If this is an imported file, clean up PostGIS data
+      if (fileToDelete.is_imported && fileToDelete.feature_collections) {
+        for (const collection of fileToDelete.feature_collections) {
+          if (collection.layers) {
+            // Delete geo_features for each layer
+            for (const layer of collection.layers) {
+              logger.info('Deleting geo_features for layer', { layerId: layer.id });
+              const { error: featuresError } = await supabase
+                .from('geo_features')
+                .delete()
+                .eq('layer_id', layer.id);
+
+              if (featuresError) {
+                logger.warn('Failed to delete geo_features', featuresError);
+              }
+            }
+
+            // Delete layers
+            logger.info('Deleting layers for collection', { collectionId: collection.id });
+            const { error: layersError } = await supabase
+              .from('layers')
+              .delete()
+              .eq('collection_id', collection.id);
+
+            if (layersError) {
+              logger.warn('Failed to delete layers', layersError);
+            }
+          }
+
+          // Delete feature collection
+          logger.info('Deleting feature collection', { collectionId: collection.id });
+          const { error: collectionError } = await supabase
+            .from('feature_collections')
+            .delete()
+            .eq('id', collection.id);
+
+          if (collectionError) {
+            logger.warn('Failed to delete feature collection', collectionError);
           }
         }
       }
   
-      // First, break any relationships that need to be preserved
-      if (relationshipsToBreak.length > 0) {
-        logger.info('Breaking relationships before deletion', { relationshipsToBreak });
-        const { error: updateError } = await supabase
-          .from('project_files')
-          .update({
-            source_file_id: null,
-            is_imported: false,
-            import_metadata: null
-          })
-          .in('id', relationshipsToBreak);
-  
-        if (updateError) throw updateError;
-      }
-  
-      // Now delete files from storage first
+      // Delete files from storage
       for (const file of filesToDelete) {
         logger.info('Deleting from storage', { 
           fileId: file.id,
@@ -442,9 +546,9 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         }
       }
   
-      // Finally, delete from database
-      const fileIds = filesToDelete.map(f => f.id);
-      logger.info('Deleting from database', { fileIds });
+      // Delete from project_files table
+      const fileIds = [...new Set(filesToDelete.map((f: { id: string }) => f.id))]; // Remove duplicates since companions share the same ID
+      logger.info('Deleting from project_files', { fileIds });
       
       const { error: dbError } = await supabase
         .from('project_files')
@@ -461,7 +565,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
   
       logger.info('File deletion completed successfully', {
         deletedFiles: fileIds,
-        preservedRelationships: relationshipsToBreak
+        deletedPaths: filesToDelete.map(f => f.storage_path)
       });
   
       // Refresh storage usage after successful deletion
