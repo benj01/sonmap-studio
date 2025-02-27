@@ -1,7 +1,7 @@
 'use client';
 
 import { LogManager } from '@/core/logging/log-manager';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Eye, EyeOff, Settings, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -43,109 +43,91 @@ interface LayerItemProps {
 export function LayerItem({ layer, className = '' }: LayerItemProps) {
   const { map, layers, toggleLayer, addLayer } = useMapContext();
   const { data, loading, error } = useLayerData(layer.id);
+  const setupCompleteRef = useRef(false);
+  const registeredRef = useRef(false);
 
-  // Add logging for component mount and data loading
+  // Register with context on mount
   useEffect(() => {
-    logger.info('LayerItem mounted', {
-      layerId: layer.id,
-      hasMap: !!map,
-      mapLoaded: map?.loaded(),
-      loading,
-      hasData: !!data,
-      featureCount: data?.features?.length,
-      error: !!error
-    });
-
-    return () => {
-      logger.info('LayerItem unmounting', {
-        layerId: layer.id,
-        hasMap: !!map,
-        mapLoaded: map?.loaded()
-      });
-    };
-  }, []);
-
-  // Log data loading state changes
-  useEffect(() => {
-    logger.info('Layer data state changed', {
-      layerId: layer.id,
-      loading,
-      hasData: !!data,
-      featureCount: data?.features?.length,
-      error: !!error
-    });
-  }, [data, loading, error, layer.id]);
+    if (!registeredRef.current) {
+      addLayer(`layer-${layer.id}`);
+      registeredRef.current = true;
+    }
+  }, [layer.id, addLayer]);
 
   // Register layer with context and add to map when data is loaded
   useEffect(() => {
     if (!map || !data || loading) {
-      logger.info('Map or data not ready', { 
-        hasMap: !!map, 
-        hasData: !!data,
-        mapLoaded: map?.loaded(),
-        layerId: layer.id,
-        loading,
-        error: !!error
-      });
       return;
     }
 
     const sourceId = `source-${layer.id}`;
     const layerId = `layer-${layer.id}`;
+    let mounted = true;
 
     const setupLayer = () => {
+      if (!mounted || setupCompleteRef.current || !map || !map.loaded()) return;
+
       try {
-        if (!map.getStyle()) {
-          logger.warn('Map style not available yet', { layerId });
+        // Skip if layer already exists and is properly set up
+        if (map.getStyle() && map.getLayer(layerId) && map.getSource(sourceId)) {
+          setupCompleteRef.current = true;
           return;
         }
 
-        logger.info('Setting up layer', { 
-          sourceId, 
-          layerId, 
-          featureCount: data.features.length,
-          mapLoaded: map.loaded(),
-          hasStyle: true,
-          styleLoaded: map.isStyleLoaded(),
-          existingSource: !!map.getSource(sourceId),
-          existingLayer: !!map.getLayer(layerId)
-        });
-
-        // Add source if it doesn't exist
-        if (!map.getSource(sourceId)) {
-          try {
-            logger.info('Adding source', { 
-              sourceId, 
-              featureCount: data.features.length,
-              firstFeature: data.features[0]
-            });
-            
-            const geojsonData: GeoJSON.FeatureCollection = {
-              type: 'FeatureCollection',
-              features: data.features
-            };
-            
-            map.addSource(sourceId, {
-              type: 'geojson',
-              data: geojsonData
-            });
-            logger.info('Source added successfully', { sourceId });
-          } catch (error) {
-            logger.error('Failed to add source', { error, sourceId });
-            return;
+        // Clean up any partial setup
+        try {
+          if (map.getStyle() && map.getLayer(layerId)) {
+            map.removeLayer(layerId);
           }
+          if (map.getStyle() && map.getSource(sourceId)) {
+            map.removeSource(sourceId);
+          }
+        } catch (error) {
+          logger.warn('Cleanup failed', { error });
         }
 
-        // Add layer if it doesn't exist
-        if (!map.getLayer(layerId)) {
-          try {
-            logger.info('Adding layer', { 
-              layerId, 
-              type: layer.type,
-              sourceId,
-              firstFeatureType: data.features[0]?.geometry?.type
-            });
+        // Validate features
+        if (!data.features?.length) {
+          logger.warn('No features to display');
+          return;
+        }
 
+        // Log feature information for debugging
+        logger.info('Setting up layer', {
+          layerId,
+          featureCount: data.features.length,
+          geometryTypes: [...new Set(data.features.map(f => f.geometry?.type))]
+        });
+
+        // Create GeoJSON data
+        const geojsonData: GeoJSON.FeatureCollection = {
+          type: 'FeatureCollection',
+          features: data.features
+        };
+
+        // Add source
+        map.addSource(sourceId, {
+          type: 'geojson',
+          data: geojsonData
+        });
+
+        // Determine geometry type and add appropriate layer
+        const geometryType = data.features[0]?.geometry?.type;
+        switch (geometryType) {
+          case 'Point':
+          case 'MultiPoint':
+            map.addLayer({
+              id: layerId,
+              source: sourceId,
+              type: 'circle',
+              paint: {
+                'circle-color': '#088',
+                'circle-radius': 6
+              }
+            });
+            break;
+          case 'LineString':
+          case 'MultiLineString':
             map.addLayer({
               id: layerId,
               source: sourceId,
@@ -155,88 +137,132 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
                 'line-width': 2
               }
             });
+            break;
+          case 'Polygon':
+          case 'MultiPolygon':
+            map.addLayer({
+              id: layerId,
+              source: sourceId,
+              type: 'fill',
+              paint: {
+                'fill-color': '#088',
+                'fill-opacity': 0.4,
+                'fill-outline-color': '#066'
+              }
+            });
+            break;
+          default:
+            throw new Error(`Unsupported geometry type: ${geometryType}`);
+        }
 
-            // Verify layer was added
-            if (!map.getLayer(layerId)) {
-              logger.error('Layer not found after adding', { layerId });
-              return;
-            }
+        logger.info('Layer setup complete', { 
+          layerId,
+          name: data.name,
+          featureCount: data.features.length,
+          geometryType
+        });
+        
+        setupCompleteRef.current = true;
 
-            // Register with context
-            addLayer(layerId);
-            logger.info('Layer added successfully', { layerId });
+        // Calculate bounds
+        if (data.features.length > 0) {
+          const bounds = new mapboxgl.LngLatBounds();
+          data.features.forEach(feature => {
+            if (!feature.geometry) return;
             
-            // Fit map to layer bounds if we have features
-            if (data.features.length > 0) {
-              try {
-                const bounds = new mapboxgl.LngLatBounds();
-                let hasValidBounds = false;
-
-                data.features.forEach(feature => {
-                  if (feature.geometry?.type === 'LineString') {
-                    const coords = (feature.geometry as GeoJSON.LineString).coordinates;
-                    coords.forEach(coord => {
-                      bounds.extend([coord[0], coord[1]]);
-                      hasValidBounds = true;
-                    });
-                  } else if (feature.geometry?.type === 'MultiLineString') {
-                    const coords = (feature.geometry as GeoJSON.MultiLineString).coordinates;
-                    coords.forEach(line => {
-                      line.forEach(coord => {
-                        bounds.extend([coord[0], coord[1]]);
-                        hasValidBounds = true;
-                      });
-                    });
-                  }
-                });
-                
-                if (hasValidBounds) {
-                  logger.info('Fitting to bounds', { 
-                    bounds: bounds.toArray(),
-                    featureCount: data.features.length
-                  });
-                  map.fitBounds(bounds, { 
-                    padding: 50,
-                    animate: true
-                  });
-                } else {
-                  logger.warn('No valid bounds found for layer', { layerId });
-                }
-              } catch (error) {
-                logger.error('Error fitting to bounds', { error, layerId });
+            switch (feature.geometry.type) {
+              case 'Point': {
+                const point = feature.geometry as GeoJSON.Point;
+                bounds.extend(point.coordinates as [number, number]);
+                break;
+              }
+              case 'LineString': {
+                const line = feature.geometry as GeoJSON.LineString;
+                line.coordinates.forEach(coord => bounds.extend(coord as [number, number]));
+                break;
+              }
+              case 'Polygon': {
+                const polygon = feature.geometry as GeoJSON.Polygon;
+                polygon.coordinates[0].forEach(coord => bounds.extend(coord as [number, number]));
+                break;
+              }
+              case 'MultiPoint': {
+                const multiPoint = feature.geometry as GeoJSON.MultiPoint;
+                multiPoint.coordinates.forEach(coord => bounds.extend(coord as [number, number]));
+                break;
+              }
+              case 'MultiLineString': {
+                const multiLine = feature.geometry as GeoJSON.MultiLineString;
+                multiLine.coordinates.forEach(line => 
+                  line.forEach(coord => bounds.extend(coord as [number, number]))
+                );
+                break;
+              }
+              case 'MultiPolygon': {
+                const multiPolygon = feature.geometry as GeoJSON.MultiPolygon;
+                multiPolygon.coordinates.forEach(polygon => 
+                  polygon[0].forEach(coord => bounds.extend(coord as [number, number]))
+                );
+                break;
               }
             }
-          } catch (error) {
-            logger.error('Failed to setup layer', { error, layerId, sourceId });
+          });
+
+          // Add padding for small features
+          const [[minLng, minLat], [maxLng, maxLat]] = bounds.toArray();
+          const lngDiff = Math.abs(maxLng - minLng);
+          const latDiff = Math.abs(maxLat - minLat);
+          
+          // If the feature is very small, add more padding
+          if (lngDiff < 0.001 || latDiff < 0.001) {
+            const padding = 0.001; // About 100m at the equator
+            bounds.extend([minLng - padding, minLat - padding]);
+            bounds.extend([maxLng + padding, maxLat + padding]);
           }
+
+          map.fitBounds(bounds, {
+            padding: 50,
+            animate: true,
+            maxZoom: 18
+          });
         }
       } catch (error) {
-        logger.error('Failed to setup layer', { error, layerId, sourceId });
+        logger.error('Layer setup failed', { error });
       }
     };
 
-    // Wait for map to be ready
-    if (!map.loaded()) {
-      logger.info('Map not loaded, waiting for load event', { layerId });
-      map.once('load', setupLayer);
-    } else {
+    // Only set up when map is fully loaded
+    if (map.loaded() && map.getStyle()) {
       setupLayer();
     }
 
-    return () => {
-      logger.info('Cleaning up layer', { layerId, sourceId });
-      if (map && map.getStyle()) {
-        if (map.getLayer(layerId)) {
-          map.removeLayer(layerId);
-          logger.info('Layer removed', { layerId });
-        }
-        if (map.getSource(sourceId)) {
-          map.removeSource(sourceId);
-          logger.info('Source removed', { sourceId });
-        }
+    // Listen for style load
+    const onStyleLoad = () => {
+      if (mounted && !setupCompleteRef.current) {
+        setupLayer();
       }
     };
-  }, [map, data, layer.id, layer.type, loading, addLayer]);
+    map.on('style.load', onStyleLoad);
+
+    return () => {
+      mounted = false;
+      map.off('style.load', onStyleLoad);
+      
+      try {
+        // Only clean up if setup was completed and map is still valid
+        if (setupCompleteRef.current && map.getStyle()) {
+          if (map.getLayer(layerId)) {
+            map.removeLayer(layerId);
+          }
+          if (map.getSource(sourceId)) {
+            map.removeSource(sourceId);
+          }
+        }
+      } catch (error) {
+        logger.warn('Cleanup failed', { error });
+      }
+    };
+  }, [map, data, layer.id, layer.type, loading]);
 
   const isVisible = layers.get(`layer-${layer.id}`) ?? true;
 

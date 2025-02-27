@@ -37,11 +37,11 @@ export function LayerList({ projectId }: LayerListProps) {
   const supabase = createClient();
 
   useEffect(() => {
-    logger.info('LayerList initializing', { projectId });
+    logger.debug('Initializing layer list');
 
     async function fetchLayers() {
       try {
-        logger.info('Fetching layers for project', { projectId });
+        logger.debug('Fetching project layers', { projectId });
         const { data, error: layersError } = await supabase
           .from('layers')
           .select(`
@@ -63,20 +63,16 @@ export function LayerList({ projectId }: LayerListProps) {
           .eq('feature_collections.project_files.project_id', projectId);
 
         if (layersError) {
-          logger.error('Failed to fetch layers', { error: layersError, projectId });
+          logger.error('Failed to fetch layers', { error: layersError });
           throw layersError;
         }
 
-        logger.info('Layers fetched successfully', { 
-          projectId,
-          count: data?.length || 0,
-          layerIds: data?.map(l => l.id) || []
-        });
+        logger.info('Layers loaded', { count: data?.length || 0 });
         
         setLayers(data || []);
       } catch (err) {
         const error = err as Error;
-        logger.error('Failed to fetch layers', { error, projectId });
+        logger.error('Failed to fetch layers', { error });
         setError(error);
       } finally {
         setLoading(false);

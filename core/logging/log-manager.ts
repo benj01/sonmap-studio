@@ -30,8 +30,25 @@ export class LogManager {
   private readonly MAX_LOGS = 10000; // Prevent memory issues
   private logLevel: LogLevel = LogLevel.INFO; // Default to INFO level
   private sourceFilters: Map<string, LogLevel> = new Map(); // Source-specific log levels
+  private rateLimits: Map<string, number> = new Map(); // Track last log time for rate limiting
+  private readonly RATE_LIMIT_MS = 1000; // Minimum ms between similar logs
 
   private constructor() {}
+
+  /**
+   * Configure specific components to use debug logging
+   */
+  public configureDefaultSources() {
+    // Keep important components at INFO level for debugging
+    this.sourceFilters.set('MapView', LogLevel.INFO);
+    this.sourceFilters.set('useLayerData', LogLevel.INFO);
+    this.sourceFilters.set('LayerItem', LogLevel.INFO);
+    this.sourceFilters.set('MapContext', LogLevel.INFO);
+    
+    // Less critical components can stay at WARN
+    this.sourceFilters.set('LayerList', LogLevel.WARN);
+    this.sourceFilters.set('FileManager', LogLevel.WARN);
+  }
 
   /**
    * Get the singleton instance
@@ -39,6 +56,7 @@ export class LogManager {
   public static getInstance(): LogManager {
     if (!LogManager.instance) {
       LogManager.instance = new LogManager();
+      LogManager.instance.configureDefaultSources();
     }
     return LogManager.instance;
   }
@@ -95,6 +113,23 @@ export class LogManager {
     // Fall back to global log level
     const levels = [LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR];
     return levels.indexOf(level) >= levels.indexOf(this.logLevel);
+  }
+
+  private shouldRateLimit(key: string): boolean {
+    // Only rate limit DEBUG level logs and specific noisy patterns
+    if (!key.includes('debug') && 
+        !key.includes('cleanup') && 
+        !key.includes('lifecycle')) {
+      return false;
+    }
+
+    const now = Date.now();
+    const lastLog = this.rateLimits.get(key);
+    if (lastLog && now - lastLog < this.RATE_LIMIT_MS) {
+      return true;
+    }
+    this.rateLimits.set(key, now);
+    return false;
   }
 
   /**
@@ -251,6 +286,12 @@ export class LogManager {
   }
 
   private addLog(entry: LogEntry) {
+    // Rate limit similar logs
+    const rateKey = `${entry.source}:${entry.level}:${entry.message}`;
+    if (this.shouldRateLimit(rateKey)) {
+      return;
+    }
+
     this.logs.push(entry);
     // Also output to console for immediate feedback
     const consoleMethod = entry.level === 'error' ? 'error' : 
@@ -261,6 +302,11 @@ export class LogManager {
       console[consoleMethod](`[${entry.source}] ${entry.message}`, entry.data);
     } else {
       console[consoleMethod](`[${entry.source}] ${entry.message}`);
+    }
+
+    // Trim old logs if we exceed MAX_LOGS
+    if (this.logs.length > this.MAX_LOGS) {
+      this.logs = this.logs.slice(-this.MAX_LOGS);
     }
   }
 

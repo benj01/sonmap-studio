@@ -5,6 +5,9 @@ import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position 
 import proj4 from 'proj4';
 import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
+// Initialize proj4 with Swiss coordinate system
+proj4.defs('EPSG:2056', '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs');
+
 /**
  * Gets coordinates from a GeoJSON geometry
  */
@@ -30,11 +33,15 @@ function getCoordinates(geometry: Geometry): number[] {
 /**
  * Transform coordinates to WGS84
  */
-function transformCoordinates(coords: Position, fromProj: string, logger: any): Position {
+function transformCoordinates(coords: Position, fromSrid: number, logger: any): Position {
   try {
-    return proj4(fromProj, 'EPSG:4326', coords);
+    // Use EPSG code instead of raw proj definition
+    const fromProj = `EPSG:${fromSrid}`;
+    const result = proj4(fromProj, 'EPSG:4326', coords);
+    logger.info('Transformed coordinates', { from: coords, to: result });
+    return result;
   } catch (error) {
-    logger.warn('Failed to transform coordinates:', error);
+    logger.warn('Failed to transform coordinates:', { error, coords });
     return coords;
   }
 }
@@ -42,25 +49,25 @@ function transformCoordinates(coords: Position, fromProj: string, logger: any): 
 /**
  * Transform a GeoJSON geometry to WGS84
  */
-function transformGeometry(geometry: Geometry, fromProj: string, logger: any): Geometry {
+function transformGeometry(geometry: Geometry, srid: number, logger: any): Geometry {
   switch (geometry.type) {
     case 'Point':
       return {
         ...geometry,
-        coordinates: transformCoordinates(geometry.coordinates, fromProj, logger)
+        coordinates: transformCoordinates(geometry.coordinates, srid, logger)
       };
     case 'LineString':
     case 'MultiPoint':
       return {
         ...geometry,
-        coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, fromProj, logger))
+        coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, srid, logger))
       };
     case 'Polygon':
     case 'MultiLineString':
       return {
         ...geometry,
         coordinates: geometry.coordinates.map(ring => 
-          ring.map(coord => transformCoordinates(coord, fromProj, logger))
+          ring.map(coord => transformCoordinates(coord, srid, logger))
         )
       };
     case 'MultiPolygon':
@@ -68,14 +75,14 @@ function transformGeometry(geometry: Geometry, fromProj: string, logger: any): G
         ...geometry,
         coordinates: geometry.coordinates.map(polygon =>
           polygon.map(ring => 
-            ring.map(coord => transformCoordinates(coord, fromProj, logger))
+            ring.map(coord => transformCoordinates(coord, srid, logger))
           )
         )
       };
     case 'GeometryCollection':
       return {
         ...geometry,
-        geometries: geometry.geometries.map(g => transformGeometry(g, fromProj, logger))
+        geometries: geometry.geometries.map(g => transformGeometry(g, srid, logger))
       };
     default:
       return geometry;
@@ -117,7 +124,7 @@ interface ShapefileMetadata {
  */
 export class ShapefileParser extends BaseGeoDataParser {
   private srid?: number;
-  private projDef?: string;
+  private features: GeoFeature[] = [];
   private logManager = LogManager.getInstance();
   private readonly SOURCE = 'ShapefileParser';
 
@@ -168,17 +175,16 @@ export class ShapefileParser extends BaseGeoDataParser {
       if (companionFiles['.prj']) {
         try {
           const prjContent = new TextDecoder().decode(companionFiles['.prj']);
-          this.projDef = prjContent;
           this.srid = this.parsePrjFile(prjContent);
           this.logger.info(`Detected coordinate system: EPSG:${this.srid || 'unknown'}`, {
-            projDef: this.projDef
+            prjContent
           });
         } catch (error) {
           this.logger.warn('Failed to parse .prj file', error);
         }
       }
 
-      // Parse with read (no streaming needed for small files)
+      // Parse with read
       this.logger.info('Reading shapefile data...');
       const result = await read(mainFile, companionFiles['.dbf']);
       const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
@@ -187,18 +193,9 @@ export class ShapefileParser extends BaseGeoDataParser {
         featureCount: geojson.features.length
       });
 
-      // Transform coordinates if projection is defined
-      if (this.projDef) {
-        this.logger.info('Transforming coordinates to WGS84...');
-        geojson.features = geojson.features.map(feature => ({
-          ...feature,
-          geometry: transformGeometry(feature.geometry, this.projDef!, this.logger)
-        }));
-        this.logger.info('Coordinate transformation complete');
-      }
-
-      // Process GeoJSON into FullDataset
-      const features: GeoFeature[] = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
+      // Store original coordinates without transformation
+      // PostGIS will handle the transformation when needed
+      this.features = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
         id: index,
         geometry: feature.geometry,
         properties: feature.properties || {},
@@ -208,9 +205,9 @@ export class ShapefileParser extends BaseGeoDataParser {
       // Calculate metadata
       let bounds: [number, number, number, number] | undefined;
       const geometryTypes = new Set<string>();
-      const properties = features[0] ? Object.keys(features[0].properties) : [];
+      const properties = this.features[0] ? Object.keys(this.features[0].properties) : [];
 
-      for (const feature of features) {
+      for (const feature of this.features) {
         if (feature.geometry) {
           const coords = getCoordinates(feature.geometry);
           bounds = updateBounds(bounds, coords);
@@ -221,9 +218,9 @@ export class ShapefileParser extends BaseGeoDataParser {
       const dataset: FullDataset = {
         sourceFile: 'shapefile',
         fileType: 'shp',
-        features,
+        features: this.features,
         metadata: {
-          featureCount: features.length,
+          featureCount: this.features.length,
           bounds,
           geometryTypes: Array.from(geometryTypes),
           properties,
@@ -327,29 +324,59 @@ export class ShapefileParser extends BaseGeoDataParser {
       const wktPatterns: Record<number, RegExp> = {
         4326: /GEOGCS.*WGS.*84/i,
         3857: /PROJCS.*Web.*Mercator/i,
-        // Add more common projections as needed
+        2056: /PROJCS.*CH1903\+.*LV95/i,
+        21781: /PROJCS.*CH1903/i
       };
+
+      // First try to detect Swiss coordinates by looking for typical value ranges
+      const firstFeature = this.getFirstFeatureCoordinates();
+      if (firstFeature) {
+        const [x, y] = firstFeature;
+        // Check if coordinates are in typical Swiss range
+        if (x >= 2485000 && x <= 2834000 && y >= 1075000 && y <= 1299000) {
+          this.logger.info('Detected Swiss coordinates based on coordinate ranges', { x, y });
+          return 2056;
+        }
+      }
 
       // Try to match against known patterns
       for (const [epsg, pattern] of Object.entries(wktPatterns)) {
         if (pattern.test(prjContent)) {
+          this.logger.info(`Detected coordinate system from PRJ pattern: EPSG:${epsg}`);
           return parseInt(epsg);
         }
       }
 
-      // If no match found, try to parse with proj4
-      const def = proj4.defs(prjContent);
-      if (def && typeof def === 'string') {
-        // Extract EPSG code if available
-        const epsgMatch = /EPSG:(\d+)/i.exec(def);
-        if (epsgMatch) {
-          return parseInt(epsgMatch[1]);
-        }
+      // If we still haven't identified the system but coordinates look like they might be Swiss
+      if (prjContent.includes('Switzerland') || prjContent.includes('Swiss') || 
+          prjContent.includes('CH') || prjContent.includes('LV95')) {
+        this.logger.info('Defaulting to Swiss LV95 (EPSG:2056) based on PRJ content');
+        return 2056;
       }
 
+      this.logger.warn('Could not determine coordinate system from PRJ file', { prjContent });
       return undefined;
     } catch (error) {
       this.logger.warn('Failed to parse PRJ file:', error);
+      return undefined;
+    }
+  }
+
+  /**
+   * Helper method to get coordinates of the first feature for analysis
+   */
+  private getFirstFeatureCoordinates(): [number, number] | undefined {
+    try {
+      const firstFeature = this.features?.[0];
+      if (firstFeature?.geometry) {
+        const coords = getCoordinates(firstFeature.geometry);
+        if (coords.length >= 2) {
+          return [coords[0], coords[1]];
+        }
+      }
+      return undefined;
+    } catch (error) {
+      this.logger.warn('Failed to get first feature coordinates:', error);
       return undefined;
     }
   }

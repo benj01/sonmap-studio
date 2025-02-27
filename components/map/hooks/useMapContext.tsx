@@ -37,6 +37,7 @@ export function MapProvider({ children }: { children: ReactNode }) {
   const [map, setMapInstance] = useState<mapboxgl.Map | null>(null);
   const [layers, setLayers] = useState<Map<string, boolean>>(new Map());
   const mapRef = useRef<mapboxgl.Map | null>(null);
+  const registeredLayers = useRef<Set<string>>(new Set());
 
   const setMap = (mapInstance: mapboxgl.Map) => {
     if (mapInstance === mapRef.current) {
@@ -75,30 +76,20 @@ export function MapProvider({ children }: { children: ReactNode }) {
             'visibility',
             newVisibility
           );
-          logger.debug('Layer visibility toggled', { 
+          logger.debug('Layer visibility changed', { 
             layerId, 
-            visible: !currentVisibility,
-            type: layer.type,
-            source: layer.source,
-            hasData: !!map.getSource(layer.source as string)
+            visible: !currentVisibility
           });
         } else {
-          logger.warn('Layer not found when toggling visibility', { 
+          logger.warn('Layer not found in map', { 
             layerId,
-            availableLayers: Object.keys(map.getStyle()?.layers || {})
-              .filter(id => id.startsWith('layer-')),
-            mapLoaded: map.loaded(),
-            styleLoaded: map.isStyleLoaded(),
-            hasStyle: !!map.getStyle()
+            mapLoaded: map.loaded()
           });
         }
       } else {
-        logger.warn('Map or style not available when toggling layer', { 
+        logger.warn('Map not ready', { 
           layerId,
-          layerCount: prev.size,
-          existingLayers: Array.from(prev.keys()),
-          hasMap: !!map,
-          hasStyle: !!map?.getStyle()
+          hasMap: !!map
         });
       }
 
@@ -107,22 +98,18 @@ export function MapProvider({ children }: { children: ReactNode }) {
   };
 
   const addLayer = (layerId: string, initialVisibility = true) => {
+    if (registeredLayers.current.has(layerId)) {
+      return;
+    }
+
+    registeredLayers.current.add(layerId);
     setLayers(prev => {
       const newLayers = new Map(prev);
       if (!newLayers.has(layerId)) {
         newLayers.set(layerId, initialVisibility);
-        logger.debug('Layer added to context', { 
+        logger.debug('Layer added', { 
           layerId, 
-          initialVisibility,
-          totalLayers: newLayers.size,
-          mapReady: !!map,
-          mapLoaded: map?.loaded()
-        });
-      } else {
-        logger.debug('Layer already exists in context', { 
-          layerId,
-          currentVisibility: newLayers.get(layerId),
-          totalLayers: newLayers.size
+          visible: initialVisibility
         });
       }
       return newLayers;
@@ -130,15 +117,14 @@ export function MapProvider({ children }: { children: ReactNode }) {
   };
 
   const removeLayer = (layerId: string) => {
+    registeredLayers.current.delete(layerId);
     setLayers(prev => {
       const newLayers = new Map(prev);
       const existed = newLayers.has(layerId);
       newLayers.delete(layerId);
-      logger.debug('Layer removed from context', { 
+      logger.debug('Layer removed', { 
         layerId,
-        existed,
-        remainingLayers: newLayers.size,
-        remainingLayerIds: Array.from(newLayers.keys())
+        existed
       });
       return newLayers;
     });

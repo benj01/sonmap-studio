@@ -46,7 +46,7 @@ export function useLayerData(layerId: string) {
   useEffect(() => {
     async function fetchLayerData() {
       try {
-        logger.info('Starting layer data fetch', { layerId });
+        logger.debug('Fetching layer data', { layerId });
         
         // First get the layer metadata
         const { data: layerData, error: layerError } = await supabase
@@ -56,7 +56,7 @@ export function useLayerData(layerId: string) {
           .single();
 
         if (layerError) {
-          logger.error('Layer metadata fetch error', { error: layerError, layerId });
+          logger.error('Layer metadata fetch error', { error: layerError });
           throw layerError;
         }
         if (!layerData) {
@@ -64,7 +64,7 @@ export function useLayerData(layerId: string) {
           throw new Error('Layer not found');
         }
 
-        logger.info('Layer metadata fetched', { layerId, layerData });
+        logger.debug('Layer metadata fetched', { name: layerData.name });
 
         // Then get the features for this layer with PostGIS geometry
         const { data: features, error: featuresError } = await supabase
@@ -73,22 +73,24 @@ export function useLayerData(layerId: string) {
           });
 
         if (featuresError) {
-          logger.error('Features fetch error', { error: featuresError, layerId });
+          logger.error('Features fetch error', { error: featuresError });
           throw featuresError;
         }
 
-        logger.info('Features fetched', { 
-          layerId,
+        logger.debug('Features fetched', { 
           featureCount: features?.length || 0
         });
 
         // Convert features to GeoJSON
-        const geoJsonFeatures: GeoJSON.Feature[] = (features || []).map((feature: any) => ({
-          type: 'Feature',
-          id: feature.id,
-          geometry: JSON.parse(feature.geojson),
-          properties: feature.properties || {}
-        }));
+        const geoJsonFeatures: GeoJSON.Feature[] = (features || []).map((feature: any) => {
+          const geometry = JSON.parse(feature.geojson);
+          return {
+            type: 'Feature',
+            id: feature.id,
+            geometry,
+            properties: feature.properties || {}
+          };
+        });
 
         const preparedData = {
           id: layerData.id,
@@ -98,8 +100,7 @@ export function useLayerData(layerId: string) {
           features: geoJsonFeatures
         };
 
-        logger.info('Layer data prepared successfully', { 
-          layerId,
+        logger.info('Layer loaded', { 
           name: preparedData.name,
           featureCount: geoJsonFeatures.length
         });
@@ -107,18 +108,18 @@ export function useLayerData(layerId: string) {
         setData(preparedData);
       } catch (err) {
         const error = err as Error;
-        logger.error('Failed to load layer data', { error, layerId });
+        logger.error('Failed to load layer data', { error });
         setError(error);
       } finally {
         setLoading(false);
       }
     }
 
-    logger.info('useLayerData hook initialized', { layerId });
+    logger.debug('Initializing layer data fetch', { layerId });
     fetchLayerData();
 
     return () => {
-      logger.info('useLayerData hook cleanup', { layerId });
+      logger.debug('Cleaning up layer data', { layerId });
     };
   }, [layerId]);
 
