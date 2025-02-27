@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useRef, useState, ReactNode } from 'react';
+import { createContext, useContext, useRef, useState, ReactNode, useCallback, useEffect } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { LogManager } from '@/core/logging/log-manager';
 
@@ -22,13 +22,22 @@ const logger = {
   }
 };
 
+interface LayerState {
+  id: string;
+  sourceId?: string;
+  visible: boolean;
+  added: boolean;  // Track if layer has been added to map
+}
+
 interface MapContextType {
   map: mapboxgl.Map | null;
   setMap: (map: mapboxgl.Map) => void;
   layers: Map<string, boolean>;
   toggleLayer: (layerId: string) => void;
-  addLayer: (layerId: string, initialVisibility?: boolean) => void;
+  addLayer: (layerId: string, initialVisibility?: boolean, sourceId?: string) => void;
   removeLayer: (layerId: string) => void;
+  isSourceLoaded: (sourceId: string) => boolean;
+  registerLayerAddition: (layerId: string) => void;  // New method to track successful layer addition
 }
 
 const MapContext = createContext<MapContextType | null>(null);
@@ -37,16 +46,90 @@ export function MapProvider({ children }: { children: ReactNode }) {
   const [map, setMapInstance] = useState<mapboxgl.Map | null>(null);
   const [layers, setLayers] = useState<Map<string, boolean>>(new Map());
   const mapRef = useRef<mapboxgl.Map | null>(null);
-  const registeredLayers = useRef<Set<string>>(new Set());
+  const registeredLayers = useRef<Map<string, LayerState>>(new Map());
+  const pendingLayers = useRef<Map<string, LayerState>>(new Map());
+  const sourceDataListeners = useRef<Map<string, () => void>>(new Map());
 
-  const setMap = (mapInstance: mapboxgl.Map) => {
+  // Cleanup function for source data listeners
+  const cleanupSourceDataListeners = useCallback(() => {
+    if (mapRef.current) {
+      sourceDataListeners.current.forEach(listener => {
+        mapRef.current?.off('sourcedata', listener);
+      });
+      sourceDataListeners.current.clear();
+    }
+  }, []);
+
+  const isSourceLoaded = useCallback((sourceId: string): boolean => {
+    if (!map?.loaded()) return false;
+    try {
+      return map.isSourceLoaded(sourceId);
+    } catch (error) {
+      logger.warn('Error checking source loaded state', { sourceId, error });
+      return false;
+    }
+  }, [map]);
+
+  const applyLayerVisibility = useCallback((mapInstance: mapboxgl.Map, layerId: string, visible: boolean) => {
+    try {
+      if (mapInstance.getLayer(layerId)) {
+        const visibility = visible ? 'visible' : 'none';
+        mapInstance.setLayoutProperty(layerId, 'visibility', visibility);
+
+        // Handle outline layer
+        const outlineLayerId = `${layerId}-outline`;
+        if (mapInstance.getLayer(outlineLayerId)) {
+          mapInstance.setLayoutProperty(outlineLayerId, 'visibility', visibility);
+        }
+        
+        logger.debug('Layer visibility applied', { 
+          layerId, 
+          visibility,
+          hasOutline: mapInstance.getLayer(outlineLayerId) !== undefined
+        });
+      }
+    } catch (error) {
+      logger.warn('Error applying layer visibility', { layerId, visible, error });
+    }
+  }, []);
+
+  const handlePendingLayers = useCallback((mapInstance: mapboxgl.Map) => {
+    pendingLayers.current.forEach((layerState, layerId) => {
+      if (!layerState.sourceId || isSourceLoaded(layerState.sourceId)) {
+        if (mapInstance.getLayer(layerId)) {
+          applyLayerVisibility(mapInstance, layerId, layerState.visible);
+          registeredLayers.current.set(layerId, { ...layerState, added: true });
+          pendingLayers.current.delete(layerId);
+          
+          logger.debug('Pending layer processed', { 
+            layerId, 
+            sourceId: layerState.sourceId,
+            visible: layerState.visible 
+          });
+        }
+      }
+    });
+  }, [isSourceLoaded, applyLayerVisibility]);
+
+  // New method to track successful layer addition
+  const registerLayerAddition = useCallback((layerId: string) => {
+    const layerState = registeredLayers.current.get(layerId) || pendingLayers.current.get(layerId);
+    if (layerState) {
+      layerState.added = true;
+      logger.debug('Layer registered as added', { layerId });
+    }
+  }, []);
+
+  const setMap = useCallback((mapInstance: mapboxgl.Map) => {
     if (mapInstance === mapRef.current) {
       logger.debug('Map instance already set in context, skipping');
       return;
     }
     
-    if (mapRef.current && mapRef.current !== mapInstance) {
+    // Clean up old map instance and listeners
+    if (mapRef.current) {
       logger.info('Cleaning up old map instance');
+      cleanupSourceDataListeners();
       mapRef.current.remove();
     }
     
@@ -57,94 +140,105 @@ export function MapProvider({ children }: { children: ReactNode }) {
       zoom: mapInstance.getZoom()
     });
 
+    // Set up source data monitoring
+    const handleSourceData = () => {
+      if (mapInstance.loaded()) {
+        handlePendingLayers(mapInstance);
+      }
+    };
+
+    mapInstance.on('sourcedata', handleSourceData);
+    sourceDataListeners.current.set('global', handleSourceData);
+
+    // Initial sync of registered layers
+    if (mapInstance.loaded()) {
+      registeredLayers.current.forEach((layerState, layerId) => {
+        if (layerState.added) {
+          applyLayerVisibility(mapInstance, layerId, layerState.visible);
+        }
+      });
+      handlePendingLayers(mapInstance);
+    }
+
     mapRef.current = mapInstance;
     setMapInstance(mapInstance);
-  };
+  }, [cleanupSourceDataListeners, handlePendingLayers, applyLayerVisibility]);
 
-  const toggleLayer = (layerId: string) => {
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      cleanupSourceDataListeners();
+      if (mapRef.current) {
+        mapRef.current.remove();
+      }
+    };
+  }, [cleanupSourceDataListeners]);
+
+  const addLayer = useCallback((layerId: string, initialVisibility = true, sourceId?: string) => {
+    const layerState: LayerState = {
+      id: layerId,
+      sourceId,
+      visible: initialVisibility,
+      added: false
+    };
+
+    if (!map?.loaded() || (sourceId && !isSourceLoaded(sourceId))) {
+      logger.debug('Adding layer to pending queue', { 
+        layerId, 
+        sourceId,
+        mapLoaded: map?.loaded(),
+        sourceLoaded: sourceId ? isSourceLoaded(sourceId) : true
+      });
+      pendingLayers.current.set(layerId, layerState);
+    } else {
+      registeredLayers.current.set(layerId, layerState);
+      if (map) {
+        applyLayerVisibility(map, layerId, initialVisibility);
+      }
+    }
+
+    setLayers(prev => {
+      const newLayers = new Map(prev);
+      newLayers.set(layerId, initialVisibility);
+      return newLayers;
+    });
+  }, [map, isSourceLoaded, applyLayerVisibility]);
+
+  const toggleLayer = useCallback((layerId: string) => {
     setLayers(prev => {
       const newLayers = new Map(prev);
       const currentVisibility = newLayers.get(layerId) ?? true;
-      newLayers.set(layerId, !currentVisibility);
+      const newVisibility = !currentVisibility;
+      newLayers.set(layerId, newVisibility);
 
-      if (map && map.loaded()) {
-        try {
-          logger.debug('Attempting to toggle layer visibility', { 
-            layerId, 
-            currentVisibility,
-            newVisibility: !currentVisibility,
-            hasLayer: map.getLayer(layerId) !== undefined
-          });
+      const layerState = registeredLayers.current.get(layerId);
+      if (layerState) {
+        layerState.visible = newVisibility;
+      }
 
-          // Check if layer exists before attempting to modify it
-          if (map.getLayer(layerId)) {
-            const newVisibility = !currentVisibility ? 'visible' : 'none';
-            map.setLayoutProperty(
-              layerId,
-              'visibility',
-              newVisibility
-            );
-            logger.debug('Layer visibility changed', { 
-              layerId, 
-              visible: !currentVisibility
-            });
-
-            // Also toggle outline layer if it exists (for polygons)
-            const outlineLayerId = `${layerId}-outline`;
-            if (map.getLayer(outlineLayerId)) {
-              map.setLayoutProperty(
-                outlineLayerId,
-                'visibility',
-                newVisibility
-              );
-            }
-          } else {
-            logger.warn('Layer not found in map', { 
-              layerId,
-              mapLoaded: map.loaded(),
-              availableLayers: map.getStyle()?.layers?.map(l => l.id)
-            });
-          }
-        } catch (error) {
-          logger.error('Error toggling layer visibility', {
-            error,
+      if (map?.loaded()) {
+        if (!layerState?.sourceId || isSourceLoaded(layerState.sourceId)) {
+          applyLayerVisibility(map, layerId, newVisibility);
+        } else {
+          logger.debug('Layer toggle queued - waiting for source', {
             layerId,
-            mapLoaded: map.loaded()
+            sourceId: layerState.sourceId
+          });
+          pendingLayers.current.set(layerId, {
+            ...layerState,
+            visible: newVisibility,
+            added: false
           });
         }
-      } else {
-        logger.warn('Map not ready', { 
-          layerId,
-          hasMap: !!map,
-          mapLoaded: map?.loaded()
-        });
       }
 
       return newLayers;
     });
-  };
+  }, [map, isSourceLoaded, applyLayerVisibility]);
 
-  const addLayer = (layerId: string, initialVisibility = true) => {
-    if (registeredLayers.current.has(layerId)) {
-      return;
-    }
-
-    registeredLayers.current.add(layerId);
-    setLayers(prev => {
-      const newLayers = new Map(prev);
-      if (!newLayers.has(layerId)) {
-        newLayers.set(layerId, initialVisibility);
-        logger.debug('Layer added', { 
-          layerId, 
-          visible: initialVisibility
-        });
-      }
-      return newLayers;
-    });
-  };
-
-  const removeLayer = (layerId: string) => {
+  const removeLayer = useCallback((layerId: string) => {
     registeredLayers.current.delete(layerId);
+    pendingLayers.current.delete(layerId);
     setLayers(prev => {
       const newLayers = new Map(prev);
       const existed = newLayers.has(layerId);
@@ -155,7 +249,7 @@ export function MapProvider({ children }: { children: ReactNode }) {
       });
       return newLayers;
     });
-  };
+  }, []);
 
   return (
     <MapContext.Provider
@@ -166,6 +260,8 @@ export function MapProvider({ children }: { children: ReactNode }) {
         toggleLayer,
         addLayer,
         removeLayer,
+        isSourceLoaded,
+        registerLayerAddition
       }}
     >
       {children}

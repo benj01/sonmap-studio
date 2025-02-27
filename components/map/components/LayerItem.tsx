@@ -157,7 +157,18 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         // For line features
         if (geometryType === 'LineString' || geometryType === 'MultiLineString') {
           logger.debug('Adding line layer', { layerId, sourceId });
-          map.addLayer({
+          
+          // Find the first symbol layer in the map style
+          const layers = map.getStyle()?.layers || [];
+          const firstSymbolId = layers.find(layer => layer.type === 'symbol')?.id;
+          
+          logger.debug('Layer insertion point', { 
+            firstSymbolId,
+            layerCount: layers.length
+          });
+
+          // Add the custom layer before the first symbol layer
+          const layerOptions: mapboxgl.LineLayer = {
             id: layerId,
             source: sourceId,
             type: 'line',
@@ -169,9 +180,15 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
             layout: {
               'line-join': 'round',
               'line-cap': 'round',
-              visibility: isVisible ? 'visible' : 'none'
+              'visibility': isVisible ? 'visible' : 'none'
             }
-          });
+          };
+
+          if (firstSymbolId) {
+            map.addLayer(layerOptions, firstSymbolId);
+          } else {
+            map.addLayer(layerOptions);
+          }
 
           // Verify layer was added
           const layerAdded = map.getLayer(layerId);
@@ -179,7 +196,8 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
             layerId,
             layerAdded: !!layerAdded,
             visibility: map.getLayoutProperty(layerId, 'visibility'),
-            hasSource: !!map.getSource(sourceId)
+            hasSource: !!map.getSource(sourceId),
+            zIndex: layers.findIndex(l => l.id === layerId)
           });
         }
         // For point features
