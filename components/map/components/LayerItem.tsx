@@ -72,10 +72,9 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
     let mounted = true;
 
     const setupLayer = async () => {
-      if (!mounted || setupCompleteRef.current || !map || !map.loaded()) {
+      if (!mounted || !map || !map.loaded()) {
         logger.debug('Skipping layer setup - conditions not met', {
           isMounted: mounted,
-          isSetupComplete: setupCompleteRef.current,
           hasMap: !!map,
           isMapLoaded: map?.loaded(),
           layerId
@@ -83,20 +82,21 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         return;
       }
 
-      try {
-        // Skip if layer already exists and is properly set up
-        if (map.getStyle() && map.getLayer(layerId) && map.getSource(sourceId)) {
-          logger.debug('Layer already exists', { layerId });
-          setupCompleteRef.current = true;
-          return;
-        }
+      // If layer is already set up properly, just update visibility
+      if (setupCompleteRef.current && map.getLayer(layerId) && map.getSource(sourceId)) {
+        const isVisible = layers.get(layerId) ?? true;
+        logger.debug('Layer exists, updating visibility', { layerId, isVisible });
+        map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+        return;
+      }
 
+      try {
         // Clean up any partial setup
         try {
-          if (map.getStyle() && map.getLayer(layerId)) {
+          if (map.getLayer(layerId)) {
             map.removeLayer(layerId);
           }
-          if (map.getStyle() && map.getSource(sourceId)) {
+          if (map.getSource(sourceId)) {
             map.removeSource(sourceId);
           }
         } catch (error) {
@@ -105,7 +105,6 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
 
         // Get initial visibility state
         const isVisible = layers.get(layerId) ?? true;
-        logger.debug('Initial visibility state', { layerId, isVisible });
 
         // Validate features
         if (!data.features?.length) {
@@ -113,36 +112,11 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           return;
         }
 
-        // Log feature information for debugging
-        logger.info('Setting up layer', {
-          layerId,
-          featureCount: data.features.length,
-          geometryTypes: [...new Set(data.features.map(f => f.geometry?.type))],
-          sampleFeature: data.features[0]
-        });
-
-        // Wait for map style to be fully loaded
-        if (!map.isStyleLoaded()) {
-          logger.debug('Waiting for map style to load', { layerId });
-          await new Promise(resolve => map.once('style.load', resolve));
-        }
-
         // Create GeoJSON data
         const geojsonData: GeoJSON.FeatureCollection = {
           type: 'FeatureCollection',
-          features: data.features.map(feature => ({
-            type: 'Feature',
-            id: feature.id,
-            geometry: feature.geometry,
-            properties: feature.properties || {}
-          }))
+          features: data.features
         };
-
-        logger.debug('Adding source', { 
-          sourceId, 
-          featureCount: geojsonData.features.length,
-          sampleFeature: geojsonData.features[0]
-        });
 
         // Add source
         map.addSource(sourceId, {
@@ -152,20 +126,12 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
 
         // Determine geometry type and add appropriate layer
         const geometryType = data.features[0]?.geometry?.type;
-        logger.debug('Adding layer for geometry type', { geometryType, layerId });
-
+        
         // For line features
         if (geometryType === 'LineString' || geometryType === 'MultiLineString') {
-          logger.debug('Adding line layer', { layerId, sourceId });
-          
           // Find the first symbol layer in the map style
           const layers = map.getStyle()?.layers || [];
           const firstSymbolId = layers.find(layer => layer.type === 'symbol')?.id;
-          
-          logger.debug('Layer insertion point', { 
-            firstSymbolId,
-            layerCount: layers.length
-          });
 
           // Add the custom layer before the first symbol layer
           const layerOptions: mapboxgl.LineLayer = {
@@ -189,16 +155,6 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           } else {
             map.addLayer(layerOptions);
           }
-
-          // Verify layer was added
-          const layerAdded = map.getLayer(layerId);
-          logger.debug('Line layer status', { 
-            layerId,
-            layerAdded: !!layerAdded,
-            visibility: map.getLayoutProperty(layerId, 'visibility'),
-            hasSource: !!map.getSource(sourceId),
-            zIndex: layers.findIndex(l => l.id === layerId)
-          });
         }
         // For point features
         else if (geometryType === 'Point' || geometryType === 'MultiPoint') {
@@ -238,14 +194,7 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           throw new Error(`Unsupported geometry type: ${geometryType}`);
         }
 
-        // Set initial visibility based on context
-        logger.debug('Setting initial visibility', { layerId, isVisible });
-        
-        map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
-        if (geometryType === 'Polygon' || geometryType === 'MultiPolygon') {
-          map.setLayoutProperty(`${layerId}-outline`, 'visibility', isVisible ? 'visible' : 'none');
-        }
-
+        setupCompleteRef.current = true;
         logger.info('Layer setup complete', { 
           layerId,
           name: data.name,
@@ -253,8 +202,6 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           geometryType,
           isVisible
         });
-        
-        setupCompleteRef.current = true;
 
         // Calculate bounds
         if (data.features.length > 0) {
@@ -300,7 +247,6 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
             }
           });
 
-          logger.debug('Fitting to bounds', { bounds: bounds.toArray() });
           map.fitBounds(bounds, {
             padding: 50,
             animate: true,
@@ -316,25 +262,10 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
     // Set up layer
     setupLayer();
 
-    // Update visibility when context changes
-    const updateVisibility = () => {
-      if (!map.getLayer(layerId)) return;
-      
-      const isVisible = layers.get(layerId) ?? true;
-      logger.debug('Updating layer visibility', { layerId, isVisible });
-      
-      map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
-      
-      // Update outline layer visibility for polygons
-      const geometryType = data.features[0]?.geometry?.type;
-      if ((geometryType === 'Polygon' || geometryType === 'MultiPolygon') && map.getLayer(`${layerId}-outline`)) {
-        map.setLayoutProperty(`${layerId}-outline`, 'visibility', isVisible ? 'visible' : 'none');
-      }
-    };
-
     // Listen for style load
     const onStyleLoad = () => {
-      if (mounted && !setupCompleteRef.current) {
+      if (mounted) {
+        setupCompleteRef.current = false;  // Reset on style load
         setupLayer();
       }
     };
@@ -344,24 +275,22 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
       mounted = false;
       map.off('style.load', onStyleLoad);
       
-      try {
-        // Only clean up if setup was completed and map is still valid
-        if (setupCompleteRef.current && map.getStyle()) {
-          if (map.getLayer(layerId)) {
-            map.removeLayer(layerId);
-          }
-          if (map.getLayer(`${layerId}-outline`)) {
-            map.removeLayer(`${layerId}-outline`);
-          }
-          if (map.getSource(sourceId)) {
-            map.removeSource(sourceId);
-          }
-        }
-      } catch (error) {
-        logger.warn('Cleanup failed', { error });
+      // Don't remove the layer on unmount unless we're really cleaning up
+      // This prevents the layer from being removed when the component re-renders
+      if (map.getStyle() && !map._removed) {
+        logger.debug('Component unmounting - preserving layer', { layerId });
       }
     };
-  }, [map, data, layer.id, layer.type, loading, layers]);
+  }, [map, data?.features, layerId]); // Simplified dependencies
+
+  // Handle visibility changes separately
+  useEffect(() => {
+    if (!map || !map.getLayer(layerId)) return;
+    
+    const isVisible = layers.get(layerId) ?? true;
+    logger.debug('Updating layer visibility', { layerId, isVisible });
+    map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+  }, [map, layerId, layers]);
 
   const isVisible = layers.get(layerId) ?? true;
 

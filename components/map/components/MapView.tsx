@@ -124,12 +124,40 @@ export function MapView({
       logger.info('Map initialization complete');
 
       return () => {
-        if (map) {
-          logger.info('Cleaning up map');
-          map.off('style.load', onStyleLoad);
-          map.off('load', onLoad);
-          map.off('error', onError);
-          map.remove();
+        if (map && !map._removed) {
+          try {
+            logger.info('Cleaning up map');
+            map.off('style.load', onStyleLoad);
+            map.off('load', onLoad);
+            map.off('error', onError);
+            
+            // Only attempt to clean up style resources if the style is loaded
+            if (map.isStyleLoaded()) {
+              try {
+                const style = map.getStyle();
+                if (style && style.layers) {
+                  [...style.layers].reverse().forEach(layer => {
+                    if (layer.id && map.getLayer(layer.id)) {
+                      map.removeLayer(layer.id);
+                    }
+                  });
+                }
+                if (style && style.sources) {
+                  Object.keys(style.sources).forEach(sourceId => {
+                    if (map.getSource(sourceId)) {
+                      map.removeSource(sourceId);
+                    }
+                  });
+                }
+              } catch (styleError) {
+                logger.warn('Error cleaning up map style resources:', styleError);
+              }
+            }
+            
+            map.remove();
+          } catch (error) {
+            logger.error('Error during map cleanup:', error);
+          }
           mapInstance.current = null;
         }
       };
