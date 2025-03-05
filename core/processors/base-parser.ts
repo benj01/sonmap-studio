@@ -67,6 +67,7 @@ export interface ParserOptions {
   encoding?: string;
   srid?: number;
   transformCoordinates?: boolean;
+  filename?: string;
 }
 
 /**

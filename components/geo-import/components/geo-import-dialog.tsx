@@ -205,12 +205,11 @@ export function GeoImportDialog({
         p_collection_name: fileInfo?.name || 'Imported Features',
         p_features: selectedFeatures.map(f => ({
           type: 'Feature' as const,
-          // Use the original untransformed geometry
           geometry: f.geometry,
           properties: f.properties
         })),
-        p_source_srid: importSession.fullDataset.metadata?.srid || 2056,
-        p_target_srid: 4326
+        p_source_srid: 4326,  // Features are already in WGS84
+        p_target_srid: 4326   // Keep them in WGS84
       };
 
       logger.debug('Calling import_geo_features with params', {

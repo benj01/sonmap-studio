@@ -5,6 +5,8 @@ import { LogManager } from '@/core/logging/log-manager';
 import * as turf from '@turf/turf';
 import proj4 from 'proj4';
 import { XMLParser } from 'fast-xml-parser';
+import { getCoordinateSystem } from '@/lib/coordinate-systems';
+import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 
 // Define the Swiss coordinate system
 proj4.defs('EPSG:2056', '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs +type=crs');
@@ -55,9 +57,15 @@ async function extractCRSFromQMD(qmdContent: string): Promise<{ srid: number; pr
 /**
  * Transform coordinates using the provided proj4 string
  */
-function transformCoordinates(coords: Position, proj4String: string): Position {
+async function transformCoordinates(coords: Position, fromSrid: number): Promise<Position> {
   try {
-    return proj4(proj4String, 'EPSG:4326', coords);
+    // Get coordinate system definition
+    const fromSystem = await getCoordinateSystem(fromSrid);
+    // Define the coordinate system if not already defined
+    if (!proj4.defs(`EPSG:${fromSrid}`)) {
+      proj4.defs(`EPSG:${fromSrid}`, fromSystem.proj4);
+    }
+    return proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, coords);
   } catch (error) {
     logger.warn('Failed to transform coordinates:', error);
     return coords;
@@ -65,42 +73,42 @@ function transformCoordinates(coords: Position, proj4String: string): Position {
 }
 
 /**
- * Transform a GeoJSON geometry using the provided proj4 string
+ * Transform a GeoJSON geometry using the provided SRID
  */
-function transformGeometry(geometry: Geometry, proj4String: string): Geometry {
+async function transformGeometry(geometry: Geometry, fromSrid: number): Promise<Geometry> {
   switch (geometry.type) {
     case 'Point':
       return {
         ...geometry,
-        coordinates: transformCoordinates(geometry.coordinates, proj4String)
+        coordinates: await transformCoordinates(geometry.coordinates, fromSrid)
       };
     case 'LineString':
     case 'MultiPoint':
       return {
         ...geometry,
-        coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, proj4String))
+        coordinates: await Promise.all(geometry.coordinates.map(coord => transformCoordinates(coord, fromSrid)))
       };
     case 'Polygon':
     case 'MultiLineString':
       return {
         ...geometry,
-        coordinates: geometry.coordinates.map(ring => 
-          ring.map(coord => transformCoordinates(coord, proj4String))
-        )
+        coordinates: await Promise.all(geometry.coordinates.map(async ring => 
+          await Promise.all(ring.map(coord => transformCoordinates(coord, fromSrid)))
+        ))
       };
     case 'MultiPolygon':
       return {
         ...geometry,
-        coordinates: geometry.coordinates.map(polygon =>
-          polygon.map(ring => 
-            ring.map(coord => transformCoordinates(coord, proj4String))
-          )
-        )
+        coordinates: await Promise.all(geometry.coordinates.map(async polygon =>
+          await Promise.all(polygon.map(async ring => 
+            await Promise.all(ring.map(coord => transformCoordinates(coord, fromSrid)))
+          ))
+        ))
       };
     case 'GeometryCollection':
       return {
         ...geometry,
-        geometries: geometry.geometries.map(g => transformGeometry(g, proj4String))
+        geometries: await Promise.all(geometry.geometries.map(g => transformGeometry(g, fromSrid)))
       };
     default:
       return geometry;
@@ -215,19 +223,21 @@ export class GeoJsonParser extends BaseGeoDataParser {
       // Transform coordinates if we have CRS information
       if (sourceCRS) {
         logger.info(`Transforming coordinates from EPSG:${sourceCRS.srid} to WGS84...`);
-        geojson.features = geojson.features.map(feature => ({
+        const transformedFeatures = await Promise.all(geojson.features.map(async feature => ({
           ...feature,
-          geometry: transformGeometry(feature.geometry, sourceCRS.proj4String)
-        }));
+          geometry: await transformGeometry(feature.geometry, sourceCRS.srid)
+        })));
+        geojson.features = transformedFeatures;
         logger.info('Coordinate transformation complete');
       } else {
         // Fallback to CH1903+/LV95 if no CRS information is available
         logger.info('No CRS information found, assuming CH1903+/LV95...');
-        const defaultProj4 = '+proj=somerc +lat_0=46.9524055555556 +lon_0=7.43958333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs';
-        geojson.features = geojson.features.map(feature => ({
+        const defaultSrid = 2056; // Swiss LV95
+        const transformedFeatures = await Promise.all(geojson.features.map(async feature => ({
           ...feature,
-          geometry: transformGeometry(feature.geometry, defaultProj4)
-        }));
+          geometry: await transformGeometry(feature.geometry, defaultSrid)
+        })));
+        geojson.features = transformedFeatures;
         logger.info('Coordinate transformation complete (using default CRS)');
       }
 
@@ -246,15 +256,16 @@ export class GeoJsonParser extends BaseGeoDataParser {
       const properties = features[0] ? Object.keys(features[0].properties) : [];
 
       const dataset: FullDataset = {
-        sourceFile: 'geojson',
+        sourceFile: options?.filename || 'unknown.geojson',
         fileType: 'geojson',
         features,
+        previewFeatures: features.slice(0, 100), // Add first 100 features as preview
         metadata: {
           featureCount: features.length,
           bounds,
-          geometryTypes: Array.from(geometryTypes),
+          geometryTypes: Array.from(geometryTypes) as any[],
           properties,
-          srid: 4326 // Now actually in WGS84
+          srid: sourceCRS?.srid || 2056 // Use source SRID or default to Swiss LV95
         }
       };
 
