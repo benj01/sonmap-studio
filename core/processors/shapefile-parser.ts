@@ -7,6 +7,7 @@ import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 // Initialize proj4 with Swiss coordinate system
 proj4.defs('EPSG:2056', '+proj=somerc +lat_0=46.95240555555556 +lon_0=7.439583333333333 +k_0=1 +x_0=2600000 +y_0=1200000 +ellps=bessel +towgs84=674.374,15.056,405.346,0,0,0,0 +units=m +no_defs');
+proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs');
 
 /**
  * Gets coordinates from a GeoJSON geometry
@@ -45,16 +46,9 @@ function transformCoordinates(coords: Position, fromSrid: number, logger: any): 
     const result = proj4(fromProj, 'EPSG:4326', [coords[0], coords[1]]);
     
     // Add Z coordinate back if it existed
-    const finalResult = hasZ && z !== null ? [result[0], result[1], z] : result;
-    
-    logger.info('Transformed coordinates', { 
-      from: coords, 
-      to: finalResult,
-      hasZ
-    });
-    return finalResult;
+    return hasZ && z !== null ? [result[0], result[1], z] : result;
   } catch (error) {
-    logger.warn('Failed to transform coordinates:', { error, coords });
+    logger.warn('Failed to transform coordinates:', { error });
     return coords;
   }
 }
@@ -63,42 +57,47 @@ function transformCoordinates(coords: Position, fromSrid: number, logger: any): 
  * Transform a GeoJSON geometry to WGS84
  */
 function transformGeometry(geometry: Geometry, srid: number, logger: any): Geometry {
-  switch (geometry.type) {
-    case 'Point':
-      return {
-        ...geometry,
-        coordinates: transformCoordinates(geometry.coordinates, srid, logger)
-      };
-    case 'LineString':
-    case 'MultiPoint':
-      return {
-        ...geometry,
-        coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, srid, logger))
-      };
-    case 'Polygon':
-    case 'MultiLineString':
-      return {
-        ...geometry,
-        coordinates: geometry.coordinates.map(ring => 
-          ring.map(coord => transformCoordinates(coord, srid, logger))
-        )
-      };
-    case 'MultiPolygon':
-      return {
-        ...geometry,
-        coordinates: geometry.coordinates.map(polygon =>
-          polygon.map(ring => 
+  try {
+    switch (geometry.type) {
+      case 'Point':
+        return {
+          ...geometry,
+          coordinates: transformCoordinates(geometry.coordinates, srid, logger)
+        };
+      case 'LineString':
+      case 'MultiPoint':
+        return {
+          ...geometry,
+          coordinates: geometry.coordinates.map(coord => transformCoordinates(coord, srid, logger))
+        };
+      case 'Polygon':
+      case 'MultiLineString':
+        return {
+          ...geometry,
+          coordinates: geometry.coordinates.map(ring => 
             ring.map(coord => transformCoordinates(coord, srid, logger))
           )
-        )
-      };
-    case 'GeometryCollection':
-      return {
-        ...geometry,
-        geometries: geometry.geometries.map(g => transformGeometry(g, srid, logger))
-      };
-    default:
-      return geometry;
+        };
+      case 'MultiPolygon':
+        return {
+          ...geometry,
+          coordinates: geometry.coordinates.map(polygon =>
+            polygon.map(ring => 
+              ring.map(coord => transformCoordinates(coord, srid, logger))
+            )
+          )
+        };
+      case 'GeometryCollection':
+        return {
+          ...geometry,
+          geometries: geometry.geometries.map(g => transformGeometry(g, srid, logger))
+        };
+      default:
+        return geometry;
+    }
+  } catch (error) {
+    logger.warn('Failed to transform geometry:', { error, geometryType: geometry.type });
+    return geometry;
   }
 }
 
@@ -231,24 +230,22 @@ export class ShapefileParser extends BaseGeoDataParser {
       }
 
       // Transform coordinates for preview if we have a valid SRID
+      let transformedFeatures = originalFeatures;
       if (this.srid) {
         this.logger.info(`Transforming coordinates from EPSG:${this.srid} to WGS84 for preview...`);
-        this.features = originalFeatures.map(feature => ({
+        transformedFeatures = originalFeatures.map(feature => ({
           ...feature,
           geometry: transformGeometry(feature.geometry, this.srid!, this.logger)
         }));
-      } else {
-        this.logger.warn('No SRID detected, using original coordinates');
-        this.features = originalFeatures;
       }
 
-      // Calculate metadata
+      // Calculate metadata using transformed coordinates for bounds
       let bounds: [number, number, number, number] | undefined;
       const geometryTypes = new Set<string>();
-      const properties = this.features[0] ? Object.keys(this.features[0].properties) : [];
+      const properties = originalFeatures[0] ? Object.keys(originalFeatures[0].properties) : [];
 
       // Use transformed coordinates for bounds calculation
-      for (const feature of this.features) {
+      for (const feature of transformedFeatures) {
         if (feature.geometry) {
           const coords = getCoordinates(feature.geometry);
           bounds = updateBounds(bounds, coords);
@@ -260,8 +257,9 @@ export class ShapefileParser extends BaseGeoDataParser {
         sourceFile: 'shapefile',
         fileType: 'shp',
         features: originalFeatures, // Store original features for import
+        previewFeatures: transformedFeatures, // Store transformed features for preview
         metadata: {
-          featureCount: this.features.length,
+          featureCount: originalFeatures.length,
           bounds,
           geometryTypes: Array.from(geometryTypes),
           properties,
@@ -277,7 +275,7 @@ export class ShapefileParser extends BaseGeoDataParser {
 
       this.logger.info('Parse complete', {
         ...dataset.metadata,
-        previewFeatures: this.features.length
+        previewFeatures: transformedFeatures.length
       });
       
       return dataset;

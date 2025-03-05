@@ -467,7 +467,7 @@ export function GeoImportDialog({
             <CardContent>
               {importSession?.previewDataset ? (
                 <MapPreview
-                  features={importSession.previewDataset.features}
+                  features={importSession.fullDataset?.previewFeatures || []}
                   bounds={importSession.previewDataset.metadata?.bounds}
                   onFeaturesSelected={handleFeaturesSelected}
                 />

@@ -30,9 +30,10 @@ export interface FullDataset {
   sourceFile: string;
   fileType: string;
   features: GeoFeature[];
+  previewFeatures: GeoFeature[]; // Features with transformed coordinates for preview
   metadata?: {
-    bounds?: [number, number, number, number];
     featureCount: number;
+    bounds?: [number, number, number, number];
     geometryTypes: string[];
     properties: string[];
     srid?: number;  // Coordinate system EPSG code
