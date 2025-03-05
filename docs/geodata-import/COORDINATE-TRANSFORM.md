@@ -16,38 +16,66 @@ The application leverages PostGIS's `spatial_ref_sys` table for coordinate syste
 A new API endpoint (`/api/coordinate-systems`) provides access to these definitions, with client-side caching for improved performance.
 
 ### Client-Side Implementation
-The application defines coordinate systems in two ways:
+The application now uses a centralized approach for coordinate system management:
 
-1. **Static Definitions** (Legacy)
-In `core/coordinates/coordinates.ts`:
+1. **Core Coordinate System Definitions** (`core/coordinates/coordinates.ts`):
 ```typescript
+export const EPSG = {
+  WGS84: 4326,
+  WEB_MERCATOR: 3857,
+  SWISS_LV95: 2056,
+  SWISS_LV03: 21781
+} as const;
+
 export const COORDINATE_SYSTEMS = {
-  /** No specific coordinate system (treated as WGS84) */
   NONE: 'none',
-  /** WGS84 (EPSG:4326) - Global latitude/longitude */
-  WGS84: 'EPSG:4326',
-  /** Swiss LV95 (EPSG:2056) - Swiss coordinates, newer system */
-  SWISS_LV95: 'EPSG:2056',
-  /** Swiss LV03 (EPSG:21781) - Swiss coordinates, older system */
-  SWISS_LV03: 'EPSG:21781',
-  /** Web Mercator (EPSG:3857) - Web mapping projection */
-  WEB_MERCATOR: 'EPSG:3857'
+  WGS84: `EPSG:${EPSG.WGS84}`,
+  SWISS_LV95: `EPSG:${EPSG.SWISS_LV95}`,
+  SWISS_LV03: `EPSG:${EPSG.SWISS_LV03}`,
+  WEB_MERCATOR: `EPSG:${EPSG.WEB_MERCATOR}`
 } as const;
 ```
 
-2. **Dynamic Loading** (New)
-Using the new coordinate system service:
+2. **Coordinate System Detection** (`core/coordinates/coordinate-detection.ts`):
 ```typescript
-import { getCoordinateSystem } from '@/lib/coordinate-systems';
+// Coordinate range detection
+export const COORDINATE_RANGES = [{
+  minX: 2485000, maxX: 2834000,
+  minY: 1075000, maxY: 1299000,
+  srid: 2056,
+  name: 'Swiss LV95'
+}];
 
-// Fetch coordinate system definition
-const coordSystem = await getCoordinateSystem(2056);
-// Use with proj4js
-proj4.defs(coordSystem.srid.toString(), coordSystem.proj4);
+// WKT pattern detection
+export const WKT_PATTERNS = [{
+  srid: 2056,
+  pattern: /CH1903\+|LV95|EPSG:2056/i,
+  name: 'Swiss LV95'
+}, /* ... */];
+
+// Fallback detection
+export const FALLBACK_PATTERNS = [{
+  keywords: ['Switzerland', 'Swiss', 'CH', 'LV95'],
+  srid: 2056,
+  name: 'Swiss LV95'
+}];
 ```
 
-## Migration Plan
-The application is transitioning from hardcoded coordinate system definitions to dynamic loading from PostGIS. The migration involves:
+3. **Dynamic Loading** (`lib/coordinate-systems.ts`):
+```typescript
+// Fetch and cache coordinate system definitions
+export async function getCoordinateSystem(srid: number): Promise<CoordinateSystem>;
+
+// Preload common systems
+const COMMON_SRIDS = [
+  EPSG.WGS84,
+  EPSG.WEB_MERCATOR,
+  EPSG.SWISS_LV95,
+  EPSG.SWISS_LV03
+];
+```
+
+## Migration Status
 
 1. **Phase 1** (✓ Completed):
    - Implementation of `/api/coordinate-systems` endpoint
@@ -60,97 +88,60 @@ The application is transitioning from hardcoded coordinate system definitions to
    - Adding proper error handling and fallbacks
    - Implementing coordinate system detection improvements
 
-3. **Phase 3** (In Progress):
-   - Removal of remaining hardcoded coordinate system definitions
-   - Testing with various coordinate systems
-   - Performance monitoring and optimization
-   - Documentation updates
+3. **Phase 3** (✓ Completed):
+   - Removal of hardcoded coordinate system definitions
+   - Creation of centralized coordinate system configuration
+   - Implementation of flexible coordinate detection system
+   - Improved coordinate system management utilities
 
 ### Implementation Details
 
-#### API Endpoint
-The new `/api/coordinate-systems` endpoint provides access to PostGIS's spatial reference system definitions:
-```typescript
-// Example response for SRID 2056 (Swiss LV95)
-{
-  "srid": 2056,
-  "authority": "EPSG",
-  "authorityCode": 2056,
-  "wkt": "PROJCS[\"CH1903+ / LV95\",...",
-  "proj4": "+proj=somerc +lat_0=46.95240555555556 ..."
-}
-```
+#### Coordinate System Detection
+The application now uses a three-tiered approach for detecting coordinate systems:
 
-#### Client-Side Utilities
-New coordinate system management utilities in `lib/coordinate-systems.ts`:
-```typescript
-// Fetch coordinate system with caching
-const coordSystem = await getCoordinateSystem(2056);
-// Use with proj4js
-proj4.defs(coordSystem.srid.toString(), coordSystem.proj4);
+1. **PRJ/WKT Content Analysis**:
+   - Pattern matching against common WKT formats
+   - Keyword detection for specific coordinate systems
+   - Fallback patterns for ambiguous cases
 
-// Preload commonly used systems
-await preloadCommonCoordinateSystems();
-```
+2. **Coordinate Range Analysis**:
+   - Checking coordinate values against known ranges
+   - Support for multiple coordinate system ranges
+   - Configurable through `COORDINATE_RANGES`
+
+3. **Metadata Analysis**:
+   - QGIS metadata file parsing
+   - File format specific metadata extraction
+   - Default fallback to Swiss LV95 when no system is detected
 
 #### Parser Updates
-Both GeoJSON and Shapefile parsers now use dynamic coordinate system loading:
-- Improved coordinate system detection from PRJ files and coordinate ranges
-- Fallback to Swiss LV95 (EPSG:2056) when no system is detected
+Both GeoJSON and Shapefile parsers now use:
+- Dynamic coordinate system loading from PostGIS
+- Improved coordinate system detection
 - Proper error handling with meaningful messages
-- Client-side caching to improve performance
+- Client-side caching for better performance
 
-## Transformation Locations
-
-### 1. GeoJSON Parser (`core/processors/geojson-parser.ts`)
-The GeoJSON parser transforms coordinates during the parsing process:
-
-- **Definition**: Uses dynamic coordinate system loading from PostGIS
-- **Transformation functions**:
-  - `transformCoordinates()`: transforms individual coordinate pairs using proj4js
-  - `transformGeometry()`: transforms entire geometries based on their type
-- **Transformation Process**:
-  - If a source CRS is detected, transforms from that CRS to WGS84
-  - If no CRS is found, assumes Swiss coordinates (CH1903+/LV95)
-
-### 2. Shapefile Parser (`core/processors/shapefile-parser.ts`)
-Similar to the GeoJSON parser, the Shapefile parser handles coordinate transformations:
-
-- **Definition**: Uses dynamic coordinate system loading from PostGIS
-- **Transformation functions**:
-  - `transformCoordinates()`: transforms coordinates from a specified SRID to WGS84
-  - `transformGeometry()`: handles different geometry types
-- **SRID Detection**: Attempts to detect coordinate system from:
-  1. PRJ file content
-  2. Coordinate value ranges
-  3. Fallback to Swiss LV95
-- **Coordinate Transformation**: Transforms coordinates if a valid SRID is detected
-
-### 3. GeoImport Dialog (`components/geo-import/components/geo-import-dialog.tsx`)
-During the import process:
-
-- Lines 202-225 handle the coordinate transformation process where coordinates are sent to PostGIS
-- Import parameters (lines 203-214) include:
-  - `p_source_srid`: The source SRID (defaults to 2056 if not specified)
-  - `p_target_srid`: The target SRID (hardcoded to 4326, which is WGS84)
-
-### 4. Map Preview (`components/geo-import/components/map-preview.tsx`)
-The map preview component uses transformed coordinates to display features on a MapBox map, handling bounds calculation and map fitting.
+#### Import Process
+The import process has been updated to:
+1. Detect source coordinate system using the new detection system
+2. Transform coordinates to WGS84 during parsing
+3. Store features in WGS84 format in PostGIS
+4. Maintain original coordinate system information in metadata
 
 ## Data Flow
 1. **Upload**: User uploads geospatial data (GeoJSON, Shapefile)
-2. **Parsing**: The appropriate parser detects the coordinate system and transforms coordinates to WGS84 for preview
-3. **Preview**: Transformed coordinates are displayed on the MapBox preview map
-4. **Import**: During actual import, the original geometries are sent to PostGIS along with source and target SRIDs
-5. **Storage**: PostGIS performs the final transformation and stores the data in the database
+2. **Detection**: System detects coordinate system using the new detection utilities
+3. **Parsing**: Parser transforms coordinates to WGS84 using dynamically loaded definitions
+4. **Preview**: Transformed coordinates are displayed on the MapBox preview map
+5. **Import**: Features are stored in PostGIS in WGS84 format
+6. **Display**: Features are displayed correctly on the main map
 
 ## Summary
-The application has successfully transitioned from hardcoded coordinate system definitions to a more flexible approach using PostGIS's comprehensive coordinate system database. This change makes the application more maintainable and capable of handling a wider range of coordinate systems. The implementation includes:
-
-- Dynamic coordinate system loading from PostGIS
-- Client-side caching for improved performance
+The application has successfully transitioned from hardcoded coordinate system definitions to a flexible, maintainable approach using:
+- PostGIS's comprehensive coordinate system database
+- Centralized coordinate system configuration
+- Dynamic coordinate system loading with caching
 - Improved coordinate system detection
 - Proper error handling and fallbacks
-- Comprehensive documentation
 
-The system maintains its strong support for Swiss coordinate systems while being more flexible and maintainable for future additions.
+The system maintains strong support for Swiss coordinate systems while being more flexible and maintainable for future additions.

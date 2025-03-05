@@ -1,3 +1,5 @@
+import { EPSG } from '@/core/coordinates/coordinates';
+
 interface CoordinateSystem {
   srid: number;
   authority: string;
@@ -37,19 +39,22 @@ export async function getCoordinateSystem(srid: number): Promise<CoordinateSyste
 }
 
 /**
+ * List of commonly used coordinate systems that should be preloaded
+ */
+const COMMON_SRIDS = [
+  EPSG.WGS84,      // WGS84
+  EPSG.WEB_MERCATOR, // Web Mercator
+  EPSG.SWISS_LV95,   // Swiss LV95
+  EPSG.SWISS_LV03    // Swiss LV03
+] as const;
+
+/**
  * Preloads commonly used coordinate systems into cache
  * Call this during app initialization
  */
 export async function preloadCommonCoordinateSystems(): Promise<void> {
-  const commonSRIDs = [
-    4326,  // WGS84
-    3857,  // Web Mercator
-    2056,  // Swiss LV95
-    21781  // Swiss LV03
-  ];
-
   await Promise.all(
-    commonSRIDs.map(srid => 
+    COMMON_SRIDS.map(srid => 
       getCoordinateSystem(srid).catch(error => 
         console.warn(`Failed to preload SRID ${srid}:`, error)
       )

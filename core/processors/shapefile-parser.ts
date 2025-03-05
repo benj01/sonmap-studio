@@ -7,6 +7,7 @@ import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 import * as turf from '@turf/turf';
+import { detectSRIDFromCoordinates, detectSRIDFromWKT } from '@/core/coordinates/coordinate-detection';
 
 const SOURCE = 'ShapefileParser';
 const logManager = LogManager.getInstance();
@@ -43,20 +44,6 @@ function getCoordinates(geometry: Geometry): number[] {
     default:
       return [];
   }
-}
-
-/**
- * Detect SRID based on coordinate ranges
- * Returns null if coordinates don't match any known ranges
- */
-function detectSRIDFromCoordinates(x: number, y: number): number | null {
-  // Swiss LV95 coordinate range
-  if (x >= 2485000 && x <= 2834000 && y >= 1075000 && y <= 1299000) {
-    logger.info('Detected Swiss LV95 coordinates based on coordinate ranges', { x, y });
-    return 2056;
-  }
-  // Add more coordinate range checks here if needed
-  return null;
 }
 
 /**
@@ -224,9 +211,10 @@ export class ShapefileParser extends BaseGeoDataParser {
         const coords = getCoordinates(firstFeature.geometry);
         if (coords.length >= 2) {
           const [x, y] = coords;
-          const detectedSrid = detectSRIDFromCoordinates(x, y);
-          if (detectedSrid !== null) {
-            this.srid = detectedSrid;
+          const detected = detectSRIDFromCoordinates(x, y);
+          if (detected) {
+            logger.info(`Detected coordinate system from coordinate ranges: ${detected.name} (EPSG:${detected.srid})`);
+            this.srid = detected.srid;
           }
         }
       }
@@ -361,29 +349,12 @@ export class ShapefileParser extends BaseGeoDataParser {
    */
   private parsePrjFile(prjContent: string): number | undefined {
     try {
-      // Common WKT patterns for coordinate systems
-      const wktPatterns = {
-        '2056': /CH1903\+|LV95|EPSG:2056/i,
-        '21781': /CH1903|LV03|EPSG:21781/i,
-        '4326': /WGS84|EPSG:4326/i,
-        '3857': /Web_Mercator|EPSG:3857/i
-      };
-
-      // Try to match against known patterns
-      for (const [epsg, pattern] of Object.entries(wktPatterns)) {
-        if (pattern.test(prjContent)) {
-          logger.info(`Detected coordinate system from PRJ pattern: EPSG:${epsg}`);
-          return parseInt(epsg);
-        }
+      const detected = detectSRIDFromWKT(prjContent);
+      if (detected) {
+        logger.info(`Detected coordinate system from PRJ content: ${detected.name} (EPSG:${detected.srid})`);
+        return detected.srid;
       }
-
-      // Fallback to Swiss LV95 if PRJ content suggests Swiss coordinates
-      if (prjContent.includes('Switzerland') || prjContent.includes('Swiss') || 
-          prjContent.includes('CH') || prjContent.includes('LV95')) {
-        logger.info('Defaulting to Swiss LV95 (EPSG:2056) based on PRJ content');
-        return 2056;
-      }
-
+      
       logger.warn('Could not determine coordinate system from PRJ file', { prjContent });
       return undefined;
     } catch (error) {

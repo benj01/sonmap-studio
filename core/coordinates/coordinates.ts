@@ -1,20 +1,40 @@
 import { Position } from 'geojson';
 
 /**
- * Available coordinate systems
+ * Standard EPSG codes for commonly used coordinate systems
+ */
+export const EPSG = {
+  /** WGS84 - Global latitude/longitude */
+  WGS84: 4326,
+  /** Web Mercator - Web mapping projection */
+  WEB_MERCATOR: 3857,
+  /** Swiss LV95 - Swiss coordinates, newer system */
+  SWISS_LV95: 2056,
+  /** Swiss LV03 - Swiss coordinates, older system */
+  SWISS_LV03: 21781
+} as const;
+
+/**
+ * Coordinate system identifiers used throughout the application
+ * These are EPSG URNs following the format 'EPSG:code'
  */
 export const COORDINATE_SYSTEMS = {
   /** No specific coordinate system (treated as WGS84) */
   NONE: 'none',
   /** WGS84 (EPSG:4326) - Global latitude/longitude */
-  WGS84: 'EPSG:4326',
+  WGS84: `EPSG:${EPSG.WGS84}`,
   /** Swiss LV95 (EPSG:2056) - Swiss coordinates, newer system */
-  SWISS_LV95: 'EPSG:2056',
+  SWISS_LV95: `EPSG:${EPSG.SWISS_LV95}`,
   /** Swiss LV03 (EPSG:21781) - Swiss coordinates, older system */
-  SWISS_LV03: 'EPSG:21781',
+  SWISS_LV03: `EPSG:${EPSG.SWISS_LV03}`,
   /** Web Mercator (EPSG:3857) - Web mapping projection */
-  WEB_MERCATOR: 'EPSG:3857'
+  WEB_MERCATOR: `EPSG:${EPSG.WEB_MERCATOR}`
 } as const;
+
+/**
+ * Default coordinate system to use when none is specified
+ */
+export const DEFAULT_SRID = EPSG.SWISS_LV95;
 
 /** Type for coordinate system identifiers */
 export type CoordinateSystem = typeof COORDINATE_SYSTEMS[keyof typeof COORDINATE_SYSTEMS];
