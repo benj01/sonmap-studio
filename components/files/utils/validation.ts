@@ -30,7 +30,9 @@ export class FileValidator {
     // Get required companions
     const requiredCompanions = FileTypeUtil.getRequiredCompanions(group.mainFile.name);
     const missingCompanions = requiredCompanions.filter(ext => 
-      !group.companions.some((file: File) => FileTypeUtil.getExtension(file.name) === ext)
+      !group.companions.some((file: File) => 
+        FileTypeUtil.getExtension(file.name).toLowerCase() === ext.toLowerCase()
+      )
     );
 
     if (missingCompanions.length > 0) {
@@ -41,9 +43,9 @@ export class FileValidator {
 
     // Validate each companion
     for (const companion of group.companions) {
-      const companionExt = FileTypeUtil.getExtension(companion.name);
+      const companionExt = FileTypeUtil.getExtension(companion.name).toLowerCase();
       const companionConfig = mainConfig.companionFiles.find(
-        (config: CompanionFileConfig) => config.extension === companionExt
+        (config: CompanionFileConfig) => config.extension.toLowerCase() === companionExt
       );
 
       if (!companionConfig) {
@@ -85,5 +87,60 @@ export class FileValidator {
         `Invalid file extension: ${extension}. Allowed extensions: ${allowedExtensions.join(', ')}`
       );
     }
+  }
+
+  /**
+   * Validate companion files with case-insensitive matching
+   * @param mainFileName Main file name
+   * @param companions Array of companion files
+   * @param requiredExtensions Array of required extensions
+   * @throws ValidationError if required companions are missing
+   */
+  static validateCompanions(mainFileName: string, companions: File[], requiredExtensions: string[]): void {
+    const baseFileName = mainFileName.replace(/\.[^.]+$/, '');
+    
+    const missingCompanions = requiredExtensions.filter(ext => 
+      !companions.some(file => {
+        const fileBase = file.name.replace(/\.[^.]+$/, '');
+        const fileExt = FileTypeUtil.getExtension(file.name);
+        
+        return fileBase.toLowerCase() === baseFileName.toLowerCase() && 
+               fileExt.toLowerCase() === ext.toLowerCase();
+      })
+    );
+
+    if (missingCompanions.length > 0) {
+      throw new ValidationError(
+        `Missing required companion files: ${missingCompanions.join(', ')}`
+      );
+    }
+  }
+
+  /**
+   * Check if a file matches a companion configuration
+   * @param mainFileName Main file name
+   * @param companionFile Potential companion file
+   * @param companionExtension Required companion extension
+   * @returns boolean indicating if the file is a matching companion
+   */
+  static isMatchingCompanion(mainFileName: string, companionFile: File, companionExtension: string): boolean {
+    const mainBase = mainFileName.replace(/\.[^.]+$/, '');
+    const companionBase = companionFile.name.replace(/\.[^.]+$/, '');
+    const companionExt = FileTypeUtil.getExtension(companionFile.name);
+
+    const matches = companionBase.toLowerCase() === mainBase.toLowerCase() && 
+           companionExt.toLowerCase() === companionExtension.toLowerCase();
+           
+    console.log('Matching companion check:', {
+      mainFile: mainFileName,
+      companion: companionFile.name,
+      mainBase: mainBase.toLowerCase(),
+      companionBase: companionBase.toLowerCase(),
+      companionExt: companionExt.toLowerCase(),
+      requiredExt: companionExtension.toLowerCase(),
+      matches
+    });
+    
+    return matches;
   }
 } 

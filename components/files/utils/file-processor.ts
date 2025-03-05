@@ -1,6 +1,7 @@
 import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
 import { FileTypeUtil } from './file-types';
-import { LogManager } from '@/core/logging/log-manager';
+import { LogManager } from '../../../core/logging/log-manager';
+import { FileValidator } from './validation';
 
 const SOURCE = 'FileProcessor';
 const logManager = LogManager.getInstance();
@@ -71,50 +72,54 @@ export class FileProcessor {
       logger.info('Looking for companions', {
         mainFile: group.mainFile.name,
         fileType: FileTypeUtil.getExtension(group.mainFile.name),
-        companionFiles: config?.companionFiles?.map(c => ({
-          extension: c.extension,
-          required: c.required
-        })),
-        baseFileName
+        config: config?.companionFiles?.map(c => c.extension),
+        baseFileName,
+        remainingFiles: Array.from(remainingFiles).map(f => f.name)
       });
 
       if (config?.companionFiles) {
-        for (const companion of Array.from(remainingFiles)) {
-          const companionExt = FileTypeUtil.getExtension(companion.name);
-          const companionBase = companion.name.replace(/\.[^.]+$/, '');
-
-          const matchingCompanionConfig = config.companionFiles.find(c => 
-            c.extension.toLowerCase() === companionExt.toLowerCase()
+        // Process each required companion type
+        for (const companionConfig of config.companionFiles) {
+          // Find a matching companion file using case-insensitive comparison
+          const matchingCompanion = Array.from(remainingFiles).find(file => 
+            FileValidator.isMatchingCompanion(group.mainFile.name, file, companionConfig.extension)
           );
 
-          if (companionBase === baseFileName && matchingCompanionConfig) {
+          if (matchingCompanion) {
             logger.info('Found matching companion', {
               mainFile: group.mainFile.name,
-              companion: companion.name,
-              extension: companionExt,
-              required: matchingCompanionConfig.required
+              companion: matchingCompanion.name,
+              extension: companionConfig.extension,
+              required: companionConfig.required
             });
-            group.companions.push(companion);
-            remainingFiles.delete(companion);
+            group.companions.push(matchingCompanion);
+            remainingFiles.delete(matchingCompanion);
+          } else if (companionConfig.required) {
+            logger.warn('Missing required companion', {
+              mainFile: group.mainFile.name,
+              extension: companionConfig.extension,
+              required: true,
+              remainingFiles: Array.from(remainingFiles).map(f => f.name)
+            });
           }
         }
 
-        // Validate required companions
-        const missingRequired = config.companionFiles
-          .filter(c => c.required)
-          .filter(c => !group.companions.some(f => 
-            FileTypeUtil.getExtension(f.name).toLowerCase() === c.extension.toLowerCase()
-          ));
-
-        if (missingRequired.length > 0) {
-          logger.warn('Missing required companion files', {
-            mainFile: group.mainFile.name,
-            missing: missingRequired.map(c => c.extension)
-          });
-          throw new FileProcessingError(
-            `Missing required companion files: ${missingRequired.map(c => c.extension).join(', ')}`,
-            'MISSING_REQUIRED_COMPANIONS'
-          );
+        // Check for missing required companions
+        try {
+          const requiredExtensions = config.companionFiles
+            .filter(c => c.required)
+            .map(c => c.extension);
+          
+          FileValidator.validateCompanions(group.mainFile.name, group.companions, requiredExtensions);
+        } catch (error) {
+          if (error instanceof Error) {
+            logger.warn('Missing required companion files', {
+              mainFile: group.mainFile.name,
+              error: error.message
+            });
+            throw new FileProcessingError(error.message, 'MISSING_REQUIRED_COMPANIONS');
+          }
+          throw error;
         }
       }
     }
