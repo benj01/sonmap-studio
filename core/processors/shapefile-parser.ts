@@ -37,9 +37,22 @@ function transformCoordinates(coords: Position, fromSrid: number, logger: any): 
   try {
     // Use EPSG code instead of raw proj definition
     const fromProj = `EPSG:${fromSrid}`;
-    const result = proj4(fromProj, 'EPSG:4326', coords);
-    logger.info('Transformed coordinates', { from: coords, to: result });
-    return result;
+    // Extract Z coordinate if it exists
+    const hasZ = coords.length > 2;
+    const z = hasZ ? coords[2] : null;
+    
+    // Transform X,Y coordinates
+    const result = proj4(fromProj, 'EPSG:4326', [coords[0], coords[1]]);
+    
+    // Add Z coordinate back if it existed
+    const finalResult = hasZ && z !== null ? [result[0], result[1], z] : result;
+    
+    logger.info('Transformed coordinates', { 
+      from: coords, 
+      to: finalResult,
+      hasZ
+    });
+    return finalResult;
   } catch (error) {
     logger.warn('Failed to transform coordinates:', { error, coords });
     return coords;

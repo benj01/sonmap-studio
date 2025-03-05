@@ -5,6 +5,7 @@ import { AuthProvider } from 'components/providers/auth-provider'
 import { ThemeProvider } from 'components/providers/theme-provider'
 import { Header } from 'components/layout/header'
 import { ModalProvider } from 'components/providers/modal-provider'
+import { DebugPanel } from '@/components/shared/debug-panel'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -40,6 +41,7 @@ export default function RootLayout({
             </div>
             <Toaster />
             <ModalProvider />
+            <DebugPanel />
           </AuthProvider>
         </ThemeProvider>
       </body>

@@ -204,7 +204,8 @@ export function GeoImportDialog({
         p_project_file_id: importSession.fileId,
         p_collection_name: fileInfo?.name || 'Imported Features',
         p_features: selectedFeatures.map(f => ({
-          type: 'Feature',
+          type: 'Feature' as const,
+          // Use the original untransformed geometry
           geometry: f.geometry,
           properties: f.properties
         })),
@@ -225,16 +226,21 @@ export function GeoImportDialog({
 
       if (error) {
         logger.error('PostGIS import failed', { 
-          error: error.message,
-          code: error.code,
-          details: error.details,
-          hint: error.hint,
+          error: {
+            message: error.message,
+            code: error.code,
+            details: error.details,
+            hint: error.hint
+          },
           params: {
             fileId: importParams.p_project_file_id,
-            featureCount: importParams.p_features.length
+            featureCount: importParams.p_features.length,
+            sourceSrid: importParams.p_source_srid,
+            targetSrid: importParams.p_target_srid,
+            firstFeature: importParams.p_features[0]
           }
         });
-        throw error;
+        throw new Error(`Import failed: ${error.message}${error.details ? ` (${error.details})` : ''}`);
       }
 
       // Get the first row of results since it's a table-returning function
@@ -348,12 +354,24 @@ export function GeoImportDialog({
       onOpenChange(false);
 
     } catch (error) {
-      logger.error('Import failed', error);
+      logger.error('Import failed', {
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : error,
+        importSession: {
+          fileId: importSession.fileId,
+          fileName: fileInfo?.name,
+          featureCount: selectedFeatureIds.length,
+          metadata: importSession.fullDataset.metadata
+        }
+      });
       
-      // Show error toast
+      // Show error toast with more details
       toast({
         title: 'Import Failed',
-        description: error instanceof Error ? error.message : 'An unknown error occurred',
+        description: error instanceof Error ? error.message : 'An unknown error occurred during import',
         variant: 'destructive',
         duration: 5000,
       });
