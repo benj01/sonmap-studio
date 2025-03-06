@@ -65,6 +65,7 @@ function formatFileSize(bytes: number): string {
 
 const SOURCE = 'GeoImportDialog';
 const logManager = LogManager.getInstance();
+const supabase = createClient();
 
 // Configure logger to output to console
 logManager.addFilter(SOURCE, LogLevel.DEBUG);
@@ -100,6 +101,8 @@ export function GeoImportDialog({
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
   const [processedFiles] = useState(() => new Set<string>());
+  const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState('');
 
   const memoizedFileInfo = useMemo(() => 
     fileInfo ? {
@@ -194,34 +197,37 @@ export function GeoImportDialog({
 
       logger.debug('Selected features prepared', {
         count: selectedFeatures.length,
-        firstFeature: selectedFeatures[0],
-        srid: importSession.fullDataset.metadata?.srid || 2056
+        firstFeature: JSON.stringify(selectedFeatures[0], null, 2),
+        srid: importSession.fullDataset.metadata?.srid || 2056,
+        geometryType: selectedFeatures[0]?.geometry?.type,
+        sampleCoordinates: selectedFeatures[0]?.geometry?.['coordinates']
       });
 
       // Call our PostGIS import function
-      const supabase = createClient();
       const importParams = {
         p_project_file_id: importSession.fileId,
         p_collection_name: fileInfo?.name || 'Imported Features',
         p_features: selectedFeatures.map(f => ({
           type: 'Feature' as const,
           geometry: f.geometry,
-          properties: f.properties
+          properties: f.properties || {}
         })),
-        p_source_srid: 4326,  // Features are already in WGS84
-        p_target_srid: 4326   // Keep them in WGS84
+        p_source_srid: importSession.fullDataset.metadata?.srid || 2056,
+        p_batch_size: 100
       };
 
-      logger.debug('Calling import_geo_features with params', {
+      logger.debug('Import parameters prepared', {
         fileId: importParams.p_project_file_id,
         collectionName: importParams.p_collection_name,
         featureCount: importParams.p_features.length,
         sourceSrid: importParams.p_source_srid,
-        targetSrid: importParams.p_target_srid,
-        sampleFeature: importParams.p_features[0]
+        sampleFeature: JSON.stringify(importParams.p_features[0], null, 2)
       });
 
-      const { data: importResults, error } = await supabase.rpc('import_geo_features', importParams);
+      const { data: importResults, error } = await supabase.rpc(
+        'import_geo_features_with_transform', 
+        importParams
+      );
 
       if (error) {
         logger.error('PostGIS import failed', { 
@@ -235,8 +241,7 @@ export function GeoImportDialog({
             fileId: importParams.p_project_file_id,
             featureCount: importParams.p_features.length,
             sourceSrid: importParams.p_source_srid,
-            targetSrid: importParams.p_target_srid,
-            firstFeature: importParams.p_features[0]
+            firstFeature: JSON.stringify(importParams.p_features[0], null, 2)
           }
         });
         throw new Error(`Import failed: ${error.message}${error.details ? ` (${error.details})` : ''}`);
@@ -248,7 +253,7 @@ export function GeoImportDialog({
       logger.info('PostGIS import completed', { 
         result: importResult,
         fileId: importSession.fileId,
-        featureCount: selectedFeatures.length
+        featureCount: importParams.p_features.length
       });
 
       if (!importResult?.collection_id || !importResult?.layer_id) {
@@ -256,15 +261,15 @@ export function GeoImportDialog({
         throw new Error('Import failed: Missing collection or layer ID in result');
       }
 
-      // Update the project_files record to mark it as imported
+      // Update the project_files record
       const importMetadata = {
         collection_id: importResult.collection_id,
         layer_id: importResult.layer_id,
-        imported_count: importResult.imported_count || selectedFeatures.length,
+        imported_count: importResult.imported_count || importParams.p_features.length,
         failed_count: importResult.failed_count || 0,
         imported_at: new Date().toISOString()
       };
-
+      
       logger.debug('Updating project_files record', { 
         fileId: importSession.fileId, 
         metadata: importMetadata
@@ -321,7 +326,7 @@ export function GeoImportDialog({
       
       // Create a LoaderResult for compatibility with existing code
       const result: LoaderResult = {
-        features: selectedFeatures.map(convertFeature),
+        features: importParams.p_features.map(convertFeature),
         bounds: {
           minX: importSession.fullDataset.metadata?.bounds?.[0] || 0,
           minY: importSession.fullDataset.metadata?.bounds?.[1] || 0,
@@ -333,7 +338,7 @@ export function GeoImportDialog({
           pointCount: importMetadata.imported_count,
           layerCount: 1,
           featureTypes: importSession.fullDataset.metadata?.geometryTypes.reduce((acc, type) => {
-            acc[type] = selectedFeatures.filter(f => f.geometry.type === type).length;
+            acc[type] = importParams.p_features.filter(f => f.geometry.type === type).length;
             return acc;
           }, {} as Record<string, number>) || {}
         }
@@ -388,6 +393,159 @@ export function GeoImportDialog({
       });
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleImportLargeFile = async () => {
+    if (!importSession?.fullDataset) {
+      logger.error('No import session or dataset available');
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      
+      // Filter the full dataset based on selected feature IDs
+      const selectedFeatures = importSession.fullDataset.features.filter(f => 
+        selectedFeatureIds.includes(f.originalIndex || f.id)
+      );
+      
+      // Show starting toast
+      toast({
+        title: 'Starting Import',
+        description: `Importing ${selectedFeatures.length} features in batches...`,
+        duration: 3000,
+      });
+      
+      // Determine batch size based on feature count
+      const BATCH_SIZE = selectedFeatures.length > 1000 ? 100 : 500;
+      const totalBatches = Math.ceil(selectedFeatures.length / BATCH_SIZE);
+      
+      let totalImported = 0;
+      let totalFailed = 0;
+      let collectionId, layerId;
+      
+      // Process in batches
+      for (let i = 0; i < totalBatches; i++) {
+        const startIdx = i * BATCH_SIZE;
+        const endIdx = Math.min(startIdx + BATCH_SIZE, selectedFeatures.length);
+        const batchFeatures = selectedFeatures.slice(startIdx, endIdx);
+        
+        // Update progress
+        setProgress(Math.round((i / totalBatches) * 100));
+        setProgressMessage(`Processing batch ${i+1}/${totalBatches} (${batchFeatures.length} features)`);
+        
+        // Call the streaming API
+        const response = await fetch('/api/geo-import/stream', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            fileId: importSession.fileId,
+            collectionName: fileInfo?.name || 'Imported Features',
+            features: batchFeatures.map(f => ({
+              type: 'Feature',
+              geometry: f.geometry,
+              properties: f.properties
+            })),
+            sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
+            batchIndex: i,
+            totalBatches
+          })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`Batch ${i+1} failed: ${errorData.error}`);
+        }
+        
+        const result = await response.json();
+        totalImported += result.importedCount;
+        totalFailed += result.failedCount;
+        
+        // Store collection and layer IDs from first batch
+        if (i === 0) {
+          collectionId = result.collectionId;
+          layerId = result.layerId;
+        }
+        
+        // Allow UI to update
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      
+      // Final update
+      setProgress(100);
+      setProgressMessage('Import complete');
+      
+      // Update the project_files record
+      const importMetadata = {
+        collection_id: collectionId,
+        layer_id: layerId,
+        imported_count: totalImported,
+        failed_count: totalFailed,
+        imported_at: new Date().toISOString()
+      };
+      
+      logger.debug('Updating project_files record', { 
+        fileId: importSession.fileId, 
+        metadata: importMetadata
+      });
+
+      // Update main file record
+      const { error: updateError } = await supabase
+        .from('project_files')
+        .update({
+          is_imported: true,
+          import_metadata: importMetadata
+        })
+        .eq('id', importSession.fileId)
+        .select();
+
+      if (updateError) {
+        logger.error('Failed to update file import status', updateError);
+        throw new Error(`Failed to update file status: ${updateError.message}`);
+      }
+      
+      toast({
+        title: 'Import Complete',
+        description: `Successfully imported ${totalImported} features (${totalFailed} failed)`,
+        duration: 5000,
+      });
+      
+      onOpenChange(false);
+      
+    } catch (error) {
+      logger.error('Import failed', error);
+      toast({
+        title: 'Import Failed',
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+        variant: 'destructive',
+        duration: 5000,
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleImportWithSizeDetection = async () => {
+    if (!importSession?.fullDataset) return;
+    
+    const selectedFeatures = importSession.fullDataset.features.filter(f => 
+      selectedFeatureIds.includes(f.originalIndex || f.id)
+    );
+    
+    // Determine which import method to use based on feature count and complexity
+    const featureCount = selectedFeatures.length;
+    const isComplex = selectedFeatures.some(f => 
+      f.geometry.type === 'MultiPolygon' || 
+      (f.geometry.type === 'Polygon' && JSON.stringify(f.geometry).length > 10000)
+    );
+    
+    if (featureCount > 1000 || (featureCount > 500 && isComplex)) {
+      // Use chunked approach for large datasets
+      await handleImportLargeFile();
+    } else {
+      // Use single-call approach for smaller datasets
+      await handleImport();
     }
   };
 
@@ -482,10 +640,10 @@ export function GeoImportDialog({
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {importSession?.previewDataset ? (
+              {importSession?.fullDataset ? (
                 <MapPreview
-                  features={importSession.fullDataset?.previewFeatures || []}
-                  bounds={importSession.previewDataset.metadata?.bounds}
+                  features={importSession.fullDataset.previewFeatures || []}
+                  bounds={importSession.fullDataset.metadata?.bounds}
                   onFeaturesSelected={handleFeaturesSelected}
                 />
               ) : (
@@ -569,16 +727,16 @@ export function GeoImportDialog({
               Cancel
             </Button>
             <Button
-              onClick={handleImport}
+              onClick={handleImportWithSizeDetection}
               disabled={!importSession?.fullDataset || !selectedFeatureIds.length || isProcessing}
             >
               {isProcessing ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Importing...
+                  {progressMessage || 'Importing...'}
                 </>
               ) : (
-                `Import ${selectedFeatureIds.length} Features`
+                <>Import Selected Features</>
               )}
             </Button>
           </div>

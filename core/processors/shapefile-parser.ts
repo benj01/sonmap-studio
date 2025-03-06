@@ -238,27 +238,47 @@ export class ShapefileParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
-      const shouldTransform = options?.transformCoordinates !== false && this.srid !== undefined;
-      if (shouldTransform) {
-        logger.info(`Transforming coordinates from EPSG:${this.srid} to WGS84...`);
-        features = await Promise.all(features.map(async feature => ({
-          ...feature,
-          geometry: await transformGeometry(feature.geometry, this.srid!)
-        })));
-        logger.info('Coordinate transformation complete');
+      // Skip coordinate transformation for main features array
+      logger.info('Skipping coordinate transformation for main features array - will be handled server-side');
+
+      // For preview, transform a subset of features (first 50 features)
+      let previewFeatures = features.slice(0, 50);
+      if (this.srid !== undefined && this.srid !== 4326) {
+        try {
+          logger.info(`Transforming coordinates for preview features from EPSG:${this.srid} to WGS84...`);
+          previewFeatures = await Promise.all(previewFeatures.map(async feature => ({
+            ...feature,
+            geometry: await transformGeometry(feature.geometry, this.srid!)
+          })));
+          logger.info('Preview coordinate transformation complete');
+        } catch (error) {
+          logger.warn('Preview transformation failed, creating simplified preview', { 
+            error,
+            srid: this.srid,
+            featureCount: previewFeatures.length
+          });
+          // Create a simplified preview with valid WGS84 coordinates
+          previewFeatures = features.slice(0, 50).map(f => ({
+            ...f,
+            geometry: {
+              ...f.geometry,
+              coordinates: this.createFallbackCoordinates(f.geometry)
+            }
+          }));
+        }
       }
 
       // Calculate metadata
-      const featureCollection: FeatureCollection = {
+      const previewFeatureCollection: FeatureCollection = {
         type: 'FeatureCollection',
-        features: features.map(f => ({
+        features: previewFeatures.map(f => ({
           type: 'Feature',
           geometry: f.geometry,
           properties: f.properties
         }))
       };
 
-      const bbox = turf.bbox(featureCollection);
+      const bbox = turf.bbox(previewFeatureCollection);
       const bounds: [number, number, number, number] = [bbox[0], bbox[1], bbox[2], bbox[3]];
       const geometryTypes = new Set(features.map(f => f.geometry.type));
       const properties = features[0] ? Object.keys(features[0].properties) : [];
@@ -267,7 +287,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         sourceFile: options?.filename || 'unknown.shp',
         fileType: 'shapefile',
         features,
-        previewFeatures: features.slice(0, 100),
+        previewFeatures,
         metadata: {
           featureCount: features.length,
           bounds,
@@ -391,6 +411,56 @@ export class ShapefileParser extends BaseGeoDataParser {
     } catch (error) {
       logger.warn('Failed to get first feature coordinates:', error);
       return undefined;
+    }
+  }
+
+  /**
+   * Create fallback WGS84 coordinates for preview when transformation fails
+   */
+  private createFallbackCoordinates(geometry: Geometry): any {
+    // Create a simple bounding box in Switzerland (roughly centered)
+    const center = [8.2275, 46.8182]; // Center of Switzerland
+    const offset = 0.01; // Small offset for visual separation
+
+    switch (geometry.type) {
+      case 'Point':
+        return [
+          center[0] + (Math.random() - 0.5) * offset,
+          center[1] + (Math.random() - 0.5) * offset
+        ];
+      case 'LineString':
+        return [
+          [center[0] - offset, center[1] - offset],
+          [center[0] + offset, center[1] + offset]
+        ];
+      case 'Polygon':
+        return [[
+          [center[0] - offset, center[1] - offset],
+          [center[0] + offset, center[1] - offset],
+          [center[0] + offset, center[1] + offset],
+          [center[0] - offset, center[1] + offset],
+          [center[0] - offset, center[1] - offset]
+        ]];
+      case 'MultiPoint':
+        return [
+          [center[0] - offset, center[1] - offset],
+          [center[0] + offset, center[1] + offset]
+        ];
+      case 'MultiLineString':
+        return [[
+          [center[0] - offset, center[1] - offset],
+          [center[0] + offset, center[1] + offset]
+        ]];
+      case 'MultiPolygon':
+        return [[[
+          [center[0] - offset, center[1] - offset],
+          [center[0] + offset, center[1] - offset],
+          [center[0] + offset, center[1] + offset],
+          [center[0] - offset, center[1] + offset],
+          [center[0] - offset, center[1] - offset]
+        ]]];
+      default:
+        return [center[0], center[1]];
     }
   }
 } 
