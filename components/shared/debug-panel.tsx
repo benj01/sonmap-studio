@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { LogManager } from '@/core/logging/log-manager';
-import { Download, Bug } from 'lucide-react';
+import { Download, Bug, Trash } from 'lucide-react';
 
 export function DebugPanel() {
   const [isOpen, setIsOpen] = useState(false);
@@ -20,6 +20,10 @@ export function DebugPanel() {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+  };
+
+  const clearLogs = () => {
+    logManager.clearLogs();
   };
 
   if (!isOpen) {
@@ -46,6 +50,13 @@ export function DebugPanel() {
             onClick={exportLogs}
           >
             <Download className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={clearLogs}
+          >
+            <Trash className="h-4 w-4" />
           </Button>
           <Button
             variant="ghost"

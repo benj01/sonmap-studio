@@ -11,6 +11,7 @@ import { detectSRIDFromCoordinates, detectSRIDFromWKT } from '@/core/coordinates
 
 const SOURCE = 'ShapefileParser';
 const logManager = LogManager.getInstance();
+const DEFAULT_SRID = 2056; // Swiss LV95
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -180,14 +181,20 @@ export class ShapefileParser extends BaseGeoDataParser {
         throw new InvalidFileFormatError('shapefile', error);
       }
 
-      // Try to detect coordinate system from .prj file
-      if (companionFiles['.prj']) {
+      // First check if SRID is provided in options
+      if (options?.srid) {
+        this.srid = options.srid;
+        logger.info(`Using provided coordinate system: EPSG:${this.srid}`);
+      }
+      
+      // If no SRID in options, try to detect from .prj file
+      if (!this.srid && companionFiles['.prj']) {
         try {
           const prjContent = new TextDecoder().decode(companionFiles['.prj']);
           const detectedSrid = this.parsePrjFile(prjContent);
           if (detectedSrid !== null) {
             this.srid = detectedSrid;
-            logger.info(`Detected coordinate system: EPSG:${this.srid}`, {
+            logger.info(`Detected coordinate system from PRJ: EPSG:${this.srid}`, {
               prjContent
             });
           }
@@ -205,7 +212,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         featureCount: geojson.features.length
       });
 
-      // If no SRID detected from PRJ, try to detect from coordinates
+      // If still no SRID, try to detect from coordinates
       if (!this.srid && geojson.features.length > 0) {
         const firstFeature = geojson.features[0];
         const coords = getCoordinates(firstFeature.geometry);
@@ -213,13 +220,17 @@ export class ShapefileParser extends BaseGeoDataParser {
           const [x, y] = coords;
           const detected = detectSRIDFromCoordinates(x, y);
           if (detected) {
-            logger.info(`Detected coordinate system from coordinate ranges: ${detected.name} (EPSG:${detected.srid})`);
             this.srid = detected.srid;
+            logger.info(`Detected coordinate system from coordinates: ${detected.name} (EPSG:${detected.srid})`);
+          } else {
+            // If no SRID detected, use default Swiss LV95
+            this.srid = DEFAULT_SRID;
+            logger.info(`No coordinate system detected, using default: EPSG:${DEFAULT_SRID} (Swiss LV95)`);
           }
         }
       }
 
-      // Transform coordinates if SRID is detected
+      // Transform coordinates if SRID is detected and transformation is not explicitly disabled
       let features = geojson.features.map((feature, index) => ({
         id: index,
         geometry: feature.geometry,
@@ -227,7 +238,8 @@ export class ShapefileParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
-      if (this.srid) {
+      const shouldTransform = options?.transformCoordinates !== false && this.srid !== undefined;
+      if (shouldTransform) {
         logger.info(`Transforming coordinates from EPSG:${this.srid} to WGS84...`);
         features = await Promise.all(features.map(async feature => ({
           ...feature,
@@ -261,7 +273,7 @@ export class ShapefileParser extends BaseGeoDataParser {
           bounds,
           geometryTypes: Array.from(geometryTypes) as any[],
           properties,
-          srid: this.srid || 2056 // Use detected SRID or default to Swiss LV95
+          srid: this.srid
         }
       };
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Loader2, Download } from 'lucide-react';
+import { Loader2, Download, Trash } from 'lucide-react';
 import { GeoFileUpload } from './geo-file-upload';
 import { LoaderResult, GeoFeature as LoaderGeoFeature } from '@/types/geo';
 import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-import';
@@ -393,8 +393,26 @@ export function GeoImportDialog({
 
   const handleDownloadLogs = () => {
     const logManager = LogManager.getInstance();
-    const filename = `sonmap-import-${fileInfo?.name || 'unknown'}-${new Date().toISOString()}.txt`;
-    logManager.downloadLogs(filename);
+    const logs = logManager.getLogs();
+    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `geo-import-logs-${new Date().toISOString()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleClearLogs = () => {
+    const logManager = LogManager.getInstance();
+    logManager.clearLogs();
+    toast({
+      title: 'Logs Cleared',
+      description: 'All debug logs have been cleared.',
+      duration: 3000,
+    });
   };
 
   return (
@@ -524,14 +542,24 @@ export function GeoImportDialog({
         </div>
 
         <DialogFooter className="flex justify-between items-center">
-          <Button
-            variant="outline"
-            onClick={handleDownloadLogs}
-            className="flex items-center gap-2"
-          >
-            <Download className="h-4 w-4" />
-            Download Logs
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={handleDownloadLogs}
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              Download Logs
+            </Button>
+            <Button
+              variant="outline"
+              onClick={handleClearLogs}
+              className="flex items-center gap-2"
+            >
+              <Trash className="h-4 w-4" />
+              Clear Logs
+            </Button>
+          </div>
           <div className="flex gap-2">
             <Button
               variant="outline"
