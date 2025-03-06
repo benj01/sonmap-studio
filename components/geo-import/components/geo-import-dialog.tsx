@@ -14,6 +14,7 @@ import { LogManager } from '@/core/logging/log-manager';
 import { createClient } from '@/utils/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
 import { LogLevel } from '@/core/logging/log-manager';
+import { PostgrestError } from '@supabase/supabase-js';
 
 interface GeoImportDialogProps {
   projectId: string;
@@ -200,11 +201,11 @@ export function GeoImportDialog({
         metadata: importSession.fullDataset.metadata
       });
       
-      // Show starting toast
+      // Show starting toast with more detail
       toast({
         title: 'Starting Import',
-        description: `Importing ${selectedFeatureIds.length} features...`,
-        duration: 3000,
+        description: `Processing ${selectedFeatureIds.length} features. This may take a while for complex geometries...`,
+        duration: 5000,
       });
       
       // Filter the full dataset based on selected feature IDs
@@ -220,31 +221,32 @@ export function GeoImportDialog({
         sampleCoordinates: selectedFeatures[0]?.geometry?.['coordinates']
       });
 
-      // Call our PostGIS import function
-      const importParams = {
-        p_project_file_id: importSession.fileId,
-        p_collection_name: fileInfo?.name || 'Imported Features',
-        p_features: selectedFeatures.map(f => ({
-          type: 'Feature' as const,
-          geometry: f.geometry,
-          properties: f.properties || {}
-        })),
-        p_source_srid: importSession.fullDataset.metadata?.srid || 2056,
-        p_batch_size: 100
-      };
-
-      logger.debug('Import parameters prepared', {
-        fileId: importParams.p_project_file_id,
-        collectionName: importParams.p_collection_name,
-        featureCount: importParams.p_features.length,
-        sourceSrid: importParams.p_source_srid,
-        sampleFeature: JSON.stringify(importParams.p_features[0], null, 2)
+      // Call our PostGIS import function with timeout handling
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Import timeout')), 300000); // 5 minute timeout
       });
 
-      const { data: importResults, error } = await supabase.rpc(
+      const importPromise = supabase.rpc(
         'import_geo_features_with_transform', 
-        importParams
+        {
+          p_project_file_id: importSession.fileId,
+          p_collection_name: fileInfo?.name || 'Imported Features',
+          p_features: selectedFeatures.map(f => ({
+            type: 'Feature' as const,
+            geometry: f.geometry,
+            properties: f.properties || {}
+          })),
+          p_source_srid: importSession.fullDataset.metadata?.srid || 2056,
+          p_batch_size: 100
+        }
       );
+
+      const { data: importResults, error } = await Promise.race([
+        importPromise,
+        timeoutPromise
+      ]).catch((error: Error) => {
+        return { data: null, error: error as PostgrestError };
+      }) as { data: any, error: PostgrestError | null };
 
       if (error) {
         logger.error('PostGIS import failed', { 
@@ -255,10 +257,10 @@ export function GeoImportDialog({
             hint: error.hint
           },
           params: {
-            fileId: importParams.p_project_file_id,
-            featureCount: importParams.p_features.length,
-            sourceSrid: importParams.p_source_srid,
-            firstFeature: JSON.stringify(importParams.p_features[0], null, 2)
+            fileId: importSession.fileId,
+            featureCount: selectedFeatures.length,
+            sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
+            firstFeature: JSON.stringify(selectedFeatures[0], null, 2)
           }
         });
         throw new Error(`Import failed: ${error.message}${error.details ? ` (${error.details})` : ''}`);
@@ -270,7 +272,7 @@ export function GeoImportDialog({
       logger.info('PostGIS import completed', { 
         result: importResult,
         fileId: importSession.fileId,
-        featureCount: importParams.p_features.length
+        featureCount: selectedFeatures.length
       });
 
       if (!importResult?.collection_id || !importResult?.layer_id) {
@@ -278,13 +280,61 @@ export function GeoImportDialog({
         throw new Error('Import failed: Missing collection or layer ID in result');
       }
 
+      // Show detailed import results
+      const showImportSummary = () => {
+        // Show repair notification if any geometries were repaired
+        if (importResult.debug_info?.repaired_count > 0) {
+          toast({
+            title: 'Geometries Repaired',
+            description: importResult.debug_info.repair_summary,
+            duration: 7000,
+          });
+        }
+
+        // Show skipped features notification if any were skipped
+        if (importResult.debug_info?.skipped_count > 0) {
+          toast({
+            title: 'Features Skipped',
+            description: importResult.debug_info.skipped_summary,
+            duration: 7000,
+          });
+
+          // Log skipped features for debugging
+          if (importResult.debug_info?.feature_errors) {
+            logger.warn('Skipped features details', {
+              errors: importResult.debug_info.feature_errors
+            });
+          }
+        }
+
+        // Show final success toast with complete summary
+        const totalProcessed = importResult.imported_count + importResult.failed_count + 
+                             (importResult.debug_info?.skipped_count || 0);
+        
+        toast({
+          title: 'Import Complete',
+          description: `Processed ${totalProcessed} features:
+            • ${importResult.imported_count} imported successfully
+            ${importResult.debug_info?.repaired_count ? `• ${importResult.debug_info.repaired_count} repaired\n` : ''}
+            ${importResult.debug_info?.skipped_count ? `• ${importResult.debug_info.skipped_count} skipped\n` : ''}
+            ${importResult.failed_count ? `• ${importResult.failed_count} failed` : ''}`,
+          duration: 10000,
+        });
+      };
+
+      // Show the import summary
+      showImportSummary();
+
       // Update the project_files record
       const importMetadata = {
         collection_id: importResult.collection_id,
         layer_id: importResult.layer_id,
-        imported_count: importResult.imported_count || importParams.p_features.length,
-        failed_count: importResult.failed_count || 0,
-        imported_at: new Date().toISOString()
+        imported_count: importResult.imported_count,
+        failed_count: importResult.failed_count,
+        skipped_count: importResult.debug_info?.skipped_count || 0,
+        repaired_count: importResult.debug_info?.repaired_count || 0,
+        imported_at: new Date().toISOString(),
+        debug_info: importResult.debug_info
       };
       
       logger.debug('Updating project_files record', { 
@@ -343,7 +393,7 @@ export function GeoImportDialog({
       
       // Create a LoaderResult for compatibility with existing code
       const result: LoaderResult = {
-        features: importParams.p_features.map(convertFeature),
+        features: selectedFeatures.map(convertFeature),
         bounds: {
           minX: importSession.fullDataset.metadata?.bounds?.[0] || 0,
           minY: importSession.fullDataset.metadata?.bounds?.[1] || 0,
@@ -352,10 +402,10 @@ export function GeoImportDialog({
         },
         layers: importSession.fullDataset.metadata?.properties || [],
         statistics: {
-          pointCount: importMetadata.imported_count,
+          pointCount: importResult.imported_count,
           layerCount: 1,
           featureTypes: importSession.fullDataset.metadata?.geometryTypes.reduce((acc, type) => {
-            acc[type] = importParams.p_features.filter(f => f.geometry.type === type).length;
+            acc[type] = selectedFeatures.filter(f => f.geometry.type === type).length;
             return acc;
           }, {} as Record<string, number>) || {}
         }
@@ -364,13 +414,6 @@ export function GeoImportDialog({
       await onImportComplete(result);
       logger.info('Import completed successfully', { result });
       
-      // Show success toast with actual count
-      toast({
-        title: 'Import Complete',
-        description: `Successfully imported ${importMetadata.imported_count} features`,
-        duration: 5000,
-      });
-
       // Close dialog
       onOpenChange(false);
 
@@ -443,6 +486,7 @@ export function GeoImportDialog({
       let collectionId, layerId;
       
       // Process in batches
+      let totalRepairedCount = 0;
       for (let i = 0; i < totalBatches; i++) {
         const startIdx = i * BATCH_SIZE;
         const endIdx = Math.min(startIdx + BATCH_SIZE, selectedFeatures.length);
@@ -478,6 +522,7 @@ export function GeoImportDialog({
         const result = await response.json();
         totalImported += result.importedCount;
         totalFailed += result.failedCount;
+        totalRepairedCount += result.debug_info?.repaired_count || 0;
         
         // Store collection and layer IDs from first batch
         if (i === 0) {
@@ -492,6 +537,15 @@ export function GeoImportDialog({
       // Final update
       setProgress(100);
       setProgressMessage('Import complete');
+
+      // Show repair notification if any geometries were repaired
+      if (totalRepairedCount > 0) {
+        toast({
+          title: 'Geometries Repaired',
+          description: `${totalRepairedCount} geometries were automatically repaired during import`,
+          duration: 5000,
+        });
+      }
       
       // Update the project_files record
       const importMetadata = {
