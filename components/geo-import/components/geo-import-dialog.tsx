@@ -72,20 +72,37 @@ logManager.addFilter(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
-    console.info(`[${SOURCE}] ${message}`, data);
-    logManager.info(SOURCE, message, data);
+    // Only log specific import-related messages
+    if (message.includes('import') || 
+        message.includes('Import') || 
+        message.includes('feature') ||
+        message.includes('geometry')) {
+      console.info(`[${SOURCE}] ${message}`, data);
+      logManager.info(SOURCE, message, data);
+    }
   },
   warn: (message: string, error?: any) => {
-    console.warn(`[${SOURCE}] ${message}`, error);
-    logManager.warn(SOURCE, message, error);
+    if (message.includes('import') || 
+        message.includes('Import') || 
+        message.includes('feature') ||
+        message.includes('geometry')) {
+      console.warn(`[${SOURCE}] ${message}`, error);
+      logManager.warn(SOURCE, message, error);
+    }
   },
   error: (message: string, error?: any) => {
     console.error(`[${SOURCE}] ${message}`, error);
     logManager.error(SOURCE, message, error);
   },
   debug: (message: string, data?: any) => {
-    console.debug(`[${SOURCE}] ${message}`, data);
-    logManager.debug(SOURCE, message, data);
+    // Only log specific import-related debug messages
+    if (message.includes('import') || 
+        message.includes('Import') || 
+        message.includes('feature') ||
+        message.includes('geometry')) {
+      console.debug(`[${SOURCE}] ${message}`, data);
+      logManager.debug(SOURCE, message, data);
+    }
   }
 };
 
