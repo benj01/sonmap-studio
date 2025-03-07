@@ -10,6 +10,7 @@ interface MapPreviewProps {
   features: GeoFeature[];
   bounds?: [number, number, number, number];
   onFeaturesSelected?: (featureIds: number[]) => void;
+  onProgress?: (progress: number) => void;
 }
 
 const SOURCE = 'MapPreview';
@@ -30,14 +31,13 @@ const logger = {
   }
 };
 
-export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewProps) {
+export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }: MapPreviewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const mapInitialized = useRef(false);
-  const [selectedFeatures, setSelectedFeatures] = useState<Set<number>>(
-    // Initialize with all features selected
-    new Set(features.map(f => f.id))
-  );
+  const [loadedFeatures, setLoadedFeatures] = useState<GeoFeature[]>([]);
+  const [selectedFeatures, setSelectedFeatures] = useState<Set<number>>(new Set());
+  const [isLoading, setIsLoading] = useState(true);
 
   const handleFeatureClick = useCallback((e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
     if (!e.features?.length) return;
@@ -78,7 +78,8 @@ export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewP
         style: 'mapbox://styles/mapbox/light-v11',
         center: [0, 0],
         zoom: 1,
-        accessToken: process.env.NEXT_PUBLIC_MAPBOX_TOKEN
+        accessToken: process.env.NEXT_PUBLIC_MAPBOX_TOKEN,
+        preserveDrawingBuffer: true // Improve performance for frequent updates
       });
 
       map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
@@ -106,9 +107,39 @@ export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewP
     }
   }, []);
 
-  // Update source data and feature states
+  // Progressive loading of features
   useEffect(() => {
     if (!map.current || !features.length || !mapInitialized.current) return;
+
+    const CHUNK_SIZE = 50;
+    let currentChunk = 0;
+
+    const loadNextChunk = () => {
+      const start = currentChunk * CHUNK_SIZE;
+      const end = Math.min(start + CHUNK_SIZE, features.length);
+      const chunk = features.slice(start, end);
+
+      setLoadedFeatures(prev => [...prev, ...chunk]);
+      
+      const progress = Math.min(100, (end / features.length) * 100);
+      onProgress?.(progress);
+
+      if (end < features.length) {
+        currentChunk++;
+        requestAnimationFrame(loadNextChunk);
+      } else {
+        setIsLoading(false);
+      }
+    };
+
+    setLoadedFeatures([]);
+    setIsLoading(true);
+    loadNextChunk();
+  }, [features]);
+
+  // Update source data and feature states
+  useEffect(() => {
+    if (!map.current || !loadedFeatures.length || !mapInitialized.current) return;
 
     const updateMapData = () => {
       const mapInstance = map.current;
@@ -116,80 +147,25 @@ export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewP
 
       try {
         const source = mapInstance.getSource('preview') as mapboxgl.GeoJSONSource;
+        
+        // Create or update source
+        const sourceData: GeoJSON.FeatureCollection<GeoJSON.Geometry> = {
+          type: 'FeatureCollection',
+          features: loadedFeatures.map(f => ({
+            type: 'Feature',
+            id: f.id,
+            geometry: f.geometry,
+            properties: { ...f.properties, id: f.id }
+          }))
+        };
+
         if (source) {
-          // Update existing source data
-          logger.debug('Updating source data');
-          source.setData({
-            type: 'FeatureCollection',
-            features: features.map(f => ({
-              type: 'Feature',
-              id: f.id,
-              geometry: f.geometry,
-              properties: { ...f.properties, id: f.id }
-            }))
-          });
-
-          // Update feature states
-          features.forEach(feature => {
-            mapInstance.setFeatureState(
-              { source: 'preview', id: feature.id },
-              { selected: selectedFeatures.has(feature.id) }
-            );
-          });
-
-          // Update bounds if provided
-          if (bounds) {
-            logger.debug('Fitting to bounds', bounds);
-            mapInstance.fitBounds(
-              [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
-              { padding: 50, animate: false }
-            );
-          } else {
-            // If no bounds provided, fit to the data extent
-            const coordinates: number[][] = [];
-            features.forEach(feature => {
-              if (feature.geometry.type === 'Point') {
-                coordinates.push(feature.geometry.coordinates as number[]);
-              } else if (feature.geometry.type === 'LineString') {
-                coordinates.push(...(feature.geometry.coordinates as number[][]));
-              } else if (feature.geometry.type === 'Polygon') {
-                coordinates.push(...(feature.geometry.coordinates[0] as number[][]));
-              }
-            });
-
-            if (coordinates.length > 0) {
-              const bbox = coordinates.reduce(
-                (bounds, coord) => {
-                  bounds.xMin = Math.min(bounds.xMin, coord[0]);
-                  bounds.yMin = Math.min(bounds.yMin, coord[1]);
-                  bounds.xMax = Math.max(bounds.xMax, coord[0]);
-                  bounds.yMax = Math.max(bounds.yMax, coord[1]);
-                  return bounds;
-                },
-                { xMin: Infinity, yMin: Infinity, xMax: -Infinity, yMax: -Infinity }
-              );
-
-              logger.debug('Fitting to calculated bounds', bbox);
-              mapInstance.fitBounds(
-                [[bbox.xMin, bbox.yMin], [bbox.xMax, bbox.yMax]],
-                { padding: 50, animate: false }
-              );
-            }
-          }
+          source.setData(sourceData);
         } else {
-          // Initial setup of source and layers
-          logger.info('Setting up initial map layers');
           mapInstance.addSource('preview', {
             type: 'geojson',
-            data: {
-              type: 'FeatureCollection',
-              features: features.map(f => ({
-                type: 'Feature',
-                id: f.id,
-                geometry: f.geometry,
-                properties: { ...f.properties, id: f.id }
-              }))
-            }
+            data: sourceData,
+            generateId: true // Let Mapbox handle IDs for better performance
           });
 
           // Add layers
@@ -231,15 +207,22 @@ export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewP
               });
             }
           });
+        }
 
-          // Fit to bounds after layers are added
-          if (bounds) {
-            logger.debug('Fitting to initial bounds', bounds);
-            mapInstance.fitBounds(
-              [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
-              { padding: 50, animate: false }
-            );
-          }
+        // Update feature states
+        loadedFeatures.forEach(feature => {
+          mapInstance.setFeatureState(
+            { source: 'preview', id: feature.id },
+            { selected: selectedFeatures.has(feature.id) }
+          );
+        });
+
+        // Update bounds only when all features are loaded
+        if (!isLoading && bounds) {
+          mapInstance.fitBounds(
+            [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
+            { padding: 50, animate: false }
+          );
         }
       } catch (error) {
         logger.error('Failed to update map data', error);
@@ -252,7 +235,7 @@ export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewP
     } else {
       map.current.once('load', updateMapData);
     }
-  }, [features, bounds, selectedFeatures]);
+  }, [loadedFeatures, selectedFeatures, bounds, isLoading]);
 
   return (
     <div className="space-y-2">
@@ -261,7 +244,7 @@ export function MapPreview({ features, bounds, onFeaturesSelected }: MapPreviewP
         className="h-[300px] w-full rounded-md overflow-hidden"
       />
       <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{features.length} features available</span>
+        <span>{isLoading ? `Loading... (${loadedFeatures.length}/${features.length})` : `${features.length} features available`}</span>
         <span>{selectedFeatures.size} features selected</span>
       </div>
     </div>

@@ -56,6 +56,7 @@ export interface PreviewConfig {
   maxFeatures?: number;  // Maximum number of features to include in preview
   simplificationTolerance?: number;  // Tolerance for geometry simplification
   randomSampling?: boolean;  // Whether to use random sampling
+  chunkSize?: number;  // Size of chunks for processing features
 }
 
 /**
