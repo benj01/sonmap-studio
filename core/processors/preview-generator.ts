@@ -3,8 +3,11 @@ import simplify from '@turf/simplify';
 import kinks from '@turf/kinks';
 import unkink from '@turf/unkink-polygon';
 import area from '@turf/area';
+import cleanCoords from '@turf/clean-coords';
 import type { Feature, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from 'geojson';
 import { LogManager } from '@/core/logging/log-manager';
+import buffer from '@turf/buffer';
+import explode from '@turf/explode';
 
 const DEFAULT_CONFIG: Required<PreviewConfig> = {
   maxFeatures: 500,
@@ -25,73 +28,174 @@ const logger = {
   },
   error: (message: string, error?: any) => {
     logManager.error(SOURCE, message, error);
+  },
+  debug: (message: string, data?: any) => {
+    logManager.debug(SOURCE, message, data);
   }
 };
 
+interface ValidationResult {
+  hasIssues: boolean;
+  issues: string[];
+}
+
 /**
- * Validates and repairs a polygon geometry
+ * Validates and repairs a polygon geometry with timeout protection
  */
-function validateAndRepairGeometry(geometry: Geometry): { 
+export async function validateAndRepairGeometry(geometry: Geometry): Promise<{ 
   geometry: Geometry | null; 
   wasRepaired: boolean;
+  wasCleaned: boolean;
   error?: string;
-} {
-  try {
-    // Only process polygon geometries
-    if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') {
-      return { geometry, wasRepaired: false };
-    }
+}> {
+  // Skip validation for non-polygon geometries
+  if (geometry.type !== 'Polygon' && geometry.type !== 'MultiPolygon') {
+    return { geometry, wasRepaired: false, wasCleaned: false };
+  }
 
+  // Check geometry complexity
+  const pointCount = geometry.type === 'Polygon' 
+    ? geometry.coordinates.reduce((sum, ring) => sum + ring.length, 0)
+    : geometry.coordinates.reduce((sum, poly) => sum + poly.reduce((s, ring) => s + ring.length, 0), 0);
+
+  // Skip validation for very complex geometries (more than 1000 points)
+  if (pointCount > 1000) {
+    logger.warn('Skipping validation for complex geometry', { pointCount });
+    return { geometry, wasRepaired: false, wasCleaned: false };
+  }
+
+  try {
     const feature: Feature<Polygon | MultiPolygon> = {
       type: 'Feature',
       geometry: geometry as Polygon | MultiPolygon,
       properties: {}
     };
 
-    // Check for self-intersections
-    const intersections = kinks(feature);
-    if (intersections.features.length === 0) {
-      // No self-intersections found
-      return { geometry, wasRepaired: false };
+    // First clean duplicate vertices with a small tolerance
+    let cleaned = feature;
+    let wasCleaned = false;
+
+    try {
+      // Function to clean near-duplicate points within a tolerance
+      const cleanWithTolerance = (coords: number[][]): number[][] => {
+        const tolerance = 0.0000002; // About 2cm in degrees at Swiss latitude
+        const result: number[][] = [];
+        let lastPoint: number[] | null = null;
+
+        for (const point of coords) {
+          if (!lastPoint) {
+            result.push(point);
+            lastPoint = point;
+            continue;
+          }
+
+          // Check if point is too close to last point
+          const dx = point[0] - lastPoint[0];
+          const dy = point[1] - lastPoint[1];
+          const distance = Math.sqrt(dx * dx + dy * dy);
+
+          if (distance > tolerance) {
+            result.push(point);
+            lastPoint = point;
+          }
+        }
+
+        // Ensure the ring is closed
+        if (result.length > 0 && result[0].length === 2) {
+          result.push([...result[0]]);
+        }
+
+        return result;
+      };
+
+      // Clean each ring of the polygon
+      if (geometry.type === 'Polygon') {
+        const cleanedCoords = geometry.coordinates.map(ring => cleanWithTolerance(ring));
+        cleaned = {
+          ...feature,
+          geometry: {
+            type: 'Polygon',
+            coordinates: cleanedCoords
+          }
+        };
+      } else {
+        const cleanedCoords = geometry.coordinates.map(poly => 
+          poly.map(ring => cleanWithTolerance(ring))
+        );
+        cleaned = {
+          ...feature,
+          geometry: {
+            type: 'MultiPolygon',
+            coordinates: cleanedCoords
+          }
+        };
+      }
+
+      // Check if cleaning made any changes
+      wasCleaned = JSON.stringify(cleaned.geometry) !== JSON.stringify(feature.geometry);
+      
+      if (wasCleaned) {
+        logger.info('Cleaned duplicate/near-duplicate vertices from geometry');
+      }
+    } catch (error) {
+      logger.warn('Failed to clean vertices', { error });
+      cleaned = feature;
     }
 
-    logger.info('Found self-intersections in geometry', { 
-      intersectionCount: intersections.features.length 
-    });
-
-    // Try to repair using unkink-polygon
-    const unkinked = unkink(feature);
-    if (!unkinked || !unkinked.features.length) {
+    // Check for self-intersections with timeout protection
+    let intersections: GeoJSON.FeatureCollection;
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout checking for self-intersections')), 1000);
+      });
+      
+      const kinksPromise = Promise.resolve(kinks(cleaned.geometry));
+      intersections = await Promise.race([timeoutPromise, kinksPromise]);
+    } catch (error) {
+      logger.warn('Failed or timed out checking for self-intersections', { error });
       return { 
-        geometry: null, 
+        geometry: cleaned.geometry,
         wasRepaired: false,
-        error: 'Failed to repair self-intersecting polygon' 
+        wasCleaned
       };
     }
-
-    // If we got multiple polygons after unkinking, use the largest one
-    if (unkinked.features.length > 1) {
-      const largestPolygon = unkinked.features.reduce((largest, current) => {
-        const currentArea = area(current);
-        const largestArea = area(largest);
-        return currentArea > largestArea ? current : largest;
+    
+    if (intersections.features.length > 0) {
+      logger.info('Found self-intersections in geometry', {
+        intersectionCount: intersections.features.length
       });
 
-      logger.info('Repaired self-intersecting polygon', {
-        originalPolygons: unkinked.features.length,
-        selectedArea: area(largestPolygon)
-      });
+      try {
+        // Try to repair using buffer with a small value
+        const buffered = buffer(cleaned, 0.00002, { units: 'degrees' });
+        if (!buffered) {
+          return { 
+            geometry: null, 
+            wasRepaired: false,
+            wasCleaned,
+            error: 'Failed to repair self-intersecting polygon' 
+          };
+        }
 
-      return { 
-        geometry: largestPolygon.geometry, 
-        wasRepaired: true 
-      };
+        return { 
+          geometry: buffered.geometry as Geometry, 
+          wasRepaired: true,
+          wasCleaned 
+        };
+      } catch (error) {
+        logger.warn('Failed to repair geometry', { error });
+        return { 
+          geometry: cleaned.geometry,
+          wasRepaired: false,
+          wasCleaned
+        };
+      }
     }
 
-    // Single polygon after unkinking
     return { 
-      geometry: unkinked.features[0].geometry, 
-      wasRepaired: true 
+      geometry: cleaned.geometry, 
+      wasRepaired: false,
+      wasCleaned
     };
 
   } catch (error) {
@@ -99,9 +203,54 @@ function validateAndRepairGeometry(geometry: Geometry): {
     return { 
       geometry: null, 
       wasRepaired: false,
-      error: error instanceof Error ? error.message : 'Unknown error during geometry repair'
+      wasCleaned: false
     };
   }
+}
+
+/**
+ * Validates a geometry and returns any issues found
+ */
+function validateGeometry(geometry: Geometry): ValidationResult {
+  const issues: string[] = [];
+  
+  // Check for self-intersections in polygons
+  if (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon') {
+    const feature: Feature<Polygon | MultiPolygon> = {
+      type: 'Feature',
+      geometry: geometry as Polygon | MultiPolygon,
+      properties: {}
+    };
+    
+    try {
+      const intersections = kinks(feature);
+      if (intersections.features.length > 0) {
+        issues.push(`Has ${intersections.features.length} self-intersection${intersections.features.length > 1 ? 's' : ''}`);
+      }
+    } catch (error) {
+      logger.warn('Failed to check for self-intersections', { error });
+      issues.push('Failed to validate geometry');
+    }
+  }
+
+  // Check for degenerate geometries
+  if (geometry.type === 'Polygon') {
+    const exteriorRing = geometry.coordinates[0];
+    if (exteriorRing.length < 4) {
+      issues.push('Polygon has less than 3 points');
+    }
+  } else if (geometry.type === 'MultiPolygon') {
+    geometry.coordinates.forEach((polygon, i) => {
+      if (polygon[0].length < 4) {
+        issues.push(`Part ${i + 1} has less than 3 points`);
+      }
+    });
+  }
+
+  return {
+    hasIssues: issues.length > 0,
+    issues
+  };
 }
 
 /**
@@ -166,6 +315,8 @@ function sampleFeatures(features: Feature[], maxFeatures: number, random: boolea
 interface ProcessedFeature extends PreviewFeature {
   properties: Record<string, any> & {
     wasRepaired: boolean;
+    wasCleaned: boolean;
+    validation?: ValidationResult;
   };
 }
 
@@ -184,8 +335,10 @@ async function processChunks(
   stats: { 
     processed: number;
     repaired: number;
+    cleaned: number;
     failed: number;
     simplified: number;
+    withIssues: number;
   };
 }> {
   const chunks: Feature[][] = [];
@@ -195,15 +348,17 @@ async function processChunks(
 
   const results: ProcessedFeature[] = [];
   let repairedCount = 0;
+  let cleanedCount = 0;
   let failedCount = 0;
   let simplifiedCount = 0;
+  let issuesCount = 0;
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     const chunkResults = await Promise.all(chunk.map(async (feature, index) => {
       try {
         // First validate and repair if necessary
-        const { geometry: repairedGeometry, wasRepaired, error } = validateAndRepairGeometry(feature.geometry);
+        const { geometry: repairedGeometry, wasRepaired, wasCleaned, error } = await validateAndRepairGeometry(feature.geometry);
         
         if (error || !repairedGeometry) {
           logger.warn('Geometry repair failed', { 
@@ -219,9 +374,22 @@ async function processChunks(
           logger.info('Geometry repaired', { featureId: feature.id });
         }
 
+        if (wasCleaned) {
+          cleanedCount++;
+          logger.info('Geometry cleaned', { featureId: feature.id });
+        }
+
         // Then simplify the repaired geometry
         const simplifiedGeometry = simplifyGeometry(repairedGeometry, tolerance);
-        simplifiedCount++;
+        if (JSON.stringify(simplifiedGeometry) !== JSON.stringify(repairedGeometry)) {
+          simplifiedCount++;
+        }
+        
+        // Validate the simplified geometry
+        const validation = validateGeometry(simplifiedGeometry);
+        if (validation.hasIssues) {
+          issuesCount++;
+        }
         
         const processedFeature: ProcessedFeature = {
           id: feature.id as number,
@@ -230,7 +398,9 @@ async function processChunks(
           geometry: simplifiedGeometry,
           properties: {
             ...feature.properties || {},
-            wasRepaired: wasRepaired || false
+            wasRepaired: wasRepaired || false,
+            wasCleaned: wasCleaned || false,
+            validation
           }
         };
 
@@ -258,8 +428,10 @@ async function processChunks(
     totalFeatures: features.length,
     processedFeatures: results.length,
     repairedCount,
+    cleanedCount,
     failedCount,
-    simplifiedCount
+    simplifiedCount,
+    issuesCount
   });
 
   return {
@@ -267,8 +439,10 @@ async function processChunks(
     stats: {
       processed: results.length,
       repaired: repairedCount,
+      cleaned: cleanedCount,
       failed: failedCount,
-      simplified: simplifiedCount
+      simplified: simplifiedCount,
+      withIssues: issuesCount
     }
   };
 }
@@ -285,7 +459,8 @@ export async function generatePreview(
     processed: number; 
     repaired: number; 
     failed: number; 
-    simplified: number; 
+    simplified: number;
+    withIssues: number;
   }; 
 }> {
   logger.info('Starting preview generation', {
@@ -340,7 +515,18 @@ export async function generatePreview(
   return {
     sourceFile: dataset.sourceFile,
     features: previewFeatures,
-    metadata: dataset.metadata,
+    metadata: {
+      ...dataset.metadata,
+      featureCount: dataset.metadata?.featureCount || previewFeatures.length,
+      bounds: dataset.metadata?.bounds,
+      geometryTypes: dataset.metadata?.geometryTypes || [],
+      properties: dataset.metadata?.properties || [],
+      srid: dataset.metadata?.srid,
+      validationSummary: {
+        featuresWithIssues: stats.withIssues,
+        totalFeatures: stats.processed
+      }
+    },
     stats
   };
 } 

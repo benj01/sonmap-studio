@@ -81,16 +81,16 @@ export function GeoFileUpload({
 
   // Log component mount and props
   useEffect(() => {
-    logger.debug('Component mounted/updated with props:', {
-      projectId,
-      fileInfo
+    logger.debug('Component mounted/updated', {
+      hasFileInfo: !!fileInfo,
+      fileName: fileInfo?.name
     });
   }, [projectId, fileInfo]);
 
   // Throttle progress reporting
   const reportProgress = useCallback((message: string, progress: number) => {
     if (Math.abs(progress - lastProgress.current) >= 5) {
-      logger.debug(`Progress update: ${progress.toFixed(1)}% - ${message}`);
+      logger.debug(`Progress: ${progress.toFixed(1)}%`, { message });
       lastProgress.current = progress;
       setProgress(progress);
       setProgressMessage(message);
@@ -98,7 +98,7 @@ export function GeoFileUpload({
   }, []);
 
   const downloadFile = async (fileId: string): Promise<ArrayBuffer> => {
-    logger.info(`Downloading file: ${fileId}`);
+    logger.info(`Downloading file`, { fileId });
     try {
       // First try to get the file path
       const { data: fileData, error: fileError } = await supabase
@@ -108,7 +108,7 @@ export function GeoFileUpload({
         .single();
 
       if (fileError || !fileData?.storage_path) {
-        logger.error('Failed to get file path');
+        logger.error('Failed to get file path', { fileId });
         throw new Error(`Failed to get file path: ${fileError?.message || 'File not found'}`);
       }
 
@@ -119,23 +119,23 @@ export function GeoFileUpload({
         .download(fileData.storage_path);
     
       if (error) {
-        logger.error('Failed to download file');
+        logger.error('Failed to download file', { fileId });
         throw new Error(`Failed to download file: ${error.message}`);
       }
 
       if (!data) {
-        logger.error('No data received from download');
+        logger.error('No data received', { fileId });
         throw new Error('No data received from download');
       }
 
       logger.debug('Download successful', {
-        path: fileData.storage_path,
+        fileId,
         size: data.size
       });
 
       return await data.arrayBuffer();
     } catch (error) {
-      logger.error('Download failed');
+      logger.error('Download failed', { fileId, error });
       throw error;
     }
   };

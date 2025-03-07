@@ -2,9 +2,12 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
+import type { AnyLayer, LayerSpecification } from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import type { GeoFeature } from '@/types/geo-import';
 import { LogManager } from '@/core/logging/log-manager';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
 
 interface MapPreviewProps {
   features: GeoFeature[];
@@ -38,41 +41,28 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
   const [loadedFeatures, setLoadedFeatures] = useState<GeoFeature[]>([]);
   const [selectedFeatures, setSelectedFeatures] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
+  const [validationStats, setValidationStats] = useState<{ total: number; withIssues: number }>({ total: 0, withIssues: 0 });
 
-  const handleFeatureClick = useCallback((e: mapboxgl.MapMouseEvent & { features?: mapboxgl.MapboxGeoJSONFeature[] }) => {
-    if (!e.features?.length) return;
-
-    const feature = e.features[0];
-    const featureId = feature.properties?.id as number;
-    
-    // Toggle selection
-    const newSelection = new Set(selectedFeatures);
-    if (newSelection.has(featureId)) {
-      newSelection.delete(featureId);
+  const handleFeatureClick = (featureId: number) => {
+    if (selectedFeatures.has(featureId)) {
+      selectedFeatures.delete(featureId);
       logger.info('Feature deselected', { featureId });
     } else {
-      newSelection.add(featureId);
+      selectedFeatures.add(featureId);
       logger.info('Feature selected', { featureId });
     }
-    
-    setSelectedFeatures(newSelection);
-    onFeaturesSelected?.(Array.from(newSelection));
+    onFeaturesSelected?.(Array.from(selectedFeatures));
+  };
 
-    // Update feature state
-    if (map.current) {
-      map.current.setFeatureState(
-        { source: 'preview', id: featureId },
-        { selected: newSelection.has(featureId) }
-      );
-    }
-  }, [selectedFeatures, onFeaturesSelected]);
-
-  // Initialize map only once
   useEffect(() => {
-    if (!mapContainer.current || mapInitialized.current) return;
+    if (!mapContainer.current) return;
+
+    logger.debug('Initializing map', {
+      featureCount: features.length,
+      hasBounds: !!bounds
+    });
 
     try {
-      logger.debug('Initializing map');
       map.current = new mapboxgl.Map({
         container: mapContainer.current,
         style: 'mapbox://styles/mapbox/light-v11',
@@ -86,8 +76,12 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
       mapInitialized.current = true;
 
       // Add click handlers
-      ['preview-fill', 'preview-line', 'preview-point'].forEach(layerId => {
-        map.current?.on('click', layerId, handleFeatureClick);
+      ['preview-fill', 'preview-fill-issues', 'preview-line', 'preview-line-issues', 'preview-point', 'preview-point-issues'].forEach(layerId => {
+        map.current?.on('click', layerId, (e) => {
+          if (e.features?.[0]?.properties?.id) {
+            handleFeatureClick(e.features[0].properties.id);
+          }
+        });
         map.current?.on('mouseenter', layerId, () => {
           if (map.current) map.current.getCanvas().style.cursor = 'pointer';
         });
@@ -98,14 +92,15 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
 
       return () => {
         logger.debug('Cleaning up map');
-        map.current?.remove();
-        mapInitialized.current = false;
+        if (map.current) {
+          map.current.remove();
+          map.current = null;
+        }
       };
     } catch (error) {
-      logger.error('Failed to initialize map');
-      mapInitialized.current = false;
+      logger.error('Failed to initialize map', { error });
     }
-  }, []);
+  }, [mapContainer]);
 
   // Progressive loading of features
   useEffect(() => {
@@ -113,13 +108,22 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
 
     const CHUNK_SIZE = 50;
     let currentChunk = 0;
+    let totalWithIssues = 0;
 
     const loadNextChunk = () => {
       const start = currentChunk * CHUNK_SIZE;
       const end = Math.min(start + CHUNK_SIZE, features.length);
       const chunk = features.slice(start, end);
 
+      // Count features with issues in this chunk
+      const chunkWithIssues = chunk.filter(f => f.validation?.hasIssues).length;
+      totalWithIssues += chunkWithIssues;
+
       setLoadedFeatures(prev => [...prev, ...chunk]);
+      setValidationStats({
+        total: end,
+        withIssues: totalWithIssues
+      });
       
       const progress = Math.min(100, (end / features.length) * 100);
       onProgress?.(progress);
@@ -155,7 +159,13 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
             type: 'Feature',
             id: f.id,
             geometry: f.geometry,
-            properties: { ...f.properties, id: f.id }
+            properties: { 
+              ...f.properties,
+              id: f.id,
+              'geometry-type': f.geometry.type,
+              hasIssues: f.validation?.hasIssues || false,
+              issues: f.validation?.issues || []
+            }
           }))
         };
 
@@ -168,44 +178,131 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
             generateId: true // Let Mapbox handle IDs for better performance
           });
 
-          // Add layers
-          const layers = [
+          // Add layers for normal features
+          const normalLayers: LayerSpecification[] = [
             {
               id: 'preview-fill',
-              type: 'fill' as const,
-              filter: ['==', ['geometry-type'], 'Polygon'],
+              type: 'fill',
+              source: 'preview',
+              filter: ['all',
+                ['==', ['get', 'geometry-type'], 'Polygon'],
+                ['==', ['get', 'hasIssues'], false]
+              ] as unknown as any[],
               paint: {
-                'fill-color': ['case', ['boolean', ['feature-state', 'selected'], true], '#4CAF50', '#088'],
-                'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], true], 0.8, 0.4]
+                'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
+                'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
               }
             },
             {
               id: 'preview-line',
-              type: 'line' as const,
-              filter: ['==', ['geometry-type'], 'LineString'],
+              type: 'line',
+              source: 'preview',
+              filter: ['all',
+                ['==', ['get', 'geometry-type'], 'LineString'],
+                ['==', ['get', 'hasIssues'], false]
+              ] as unknown as any[],
               paint: {
-                'line-color': ['case', ['boolean', ['feature-state', 'selected'], true], '#4CAF50', '#088'],
-                'line-width': ['case', ['boolean', ['feature-state', 'selected'], true], 3, 2]
+                'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
+                'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2]
               }
             },
             {
               id: 'preview-point',
-              type: 'circle' as const,
-              filter: ['==', ['geometry-type'], 'Point'],
+              type: 'circle',
+              source: 'preview',
+              filter: ['all',
+                ['==', ['get', 'geometry-type'], 'Point'],
+                ['==', ['get', 'hasIssues'], false]
+              ] as unknown as any[],
               paint: {
-                'circle-color': ['case', ['boolean', ['feature-state', 'selected'], true], '#4CAF50', '#088'],
-                'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], true], 7, 5]
+                'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
+                'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5]
               }
             }
           ];
 
-          layers.forEach(layer => {
-            if (!mapInstance.getLayer(layer.id)) {
-              mapInstance.addLayer({
-                ...layer,
-                source: 'preview'
-              });
+          // Add layers for features with issues
+          const issueLayers: LayerSpecification[] = [
+            {
+              id: 'preview-fill-issues',
+              type: 'fill',
+              source: 'preview',
+              filter: ['all',
+                ['==', ['get', 'geometry-type'], 'Polygon'],
+                ['==', ['get', 'hasIssues'], true]
+              ] as unknown as any[],
+              paint: {
+                'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
+                'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
+              }
+            },
+            {
+              id: 'preview-line-issues',
+              type: 'line',
+              source: 'preview',
+              filter: ['all',
+                ['==', ['get', 'geometry-type'], 'LineString'],
+                ['==', ['get', 'hasIssues'], true]
+              ] as unknown as any[],
+              paint: {
+                'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
+                'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2],
+                'line-dasharray': [2, 1]
+              }
+            },
+            {
+              id: 'preview-point-issues',
+              type: 'circle',
+              source: 'preview',
+              filter: ['all',
+                ['==', ['get', 'geometry-type'], 'Point'],
+                ['==', ['get', 'hasIssues'], true]
+              ] as unknown as any[],
+              paint: {
+                'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
+                'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5],
+                'circle-stroke-width': 2,
+                'circle-stroke-color': '#000'
+              }
             }
+          ];
+
+          // Add all layers
+          [...normalLayers, ...issueLayers].forEach(layer => {
+            if (!mapInstance.getLayer(layer.id)) {
+              mapInstance.addLayer(layer);
+            }
+          });
+
+          // Add popups for features with issues
+          const popup = new mapboxgl.Popup({
+            closeButton: false,
+            closeOnClick: false
+          });
+
+          issueLayers.forEach(layer => {
+            mapInstance.on('mouseenter', layer.id, (e) => {
+              if (e.features?.[0]) {
+                const feature = e.features[0];
+                const issues = feature.properties?.issues;
+                if (issues) {
+                  popup.setLngLat(e.lngLat)
+                    .setHTML(`
+                      <div class="p-2">
+                        <strong>Geometry Issues:</strong>
+                        <ul class="list-disc pl-4">
+                          ${issues.map((issue: string) => `<li>${issue}</li>`).join('')}
+                        </ul>
+                      </div>
+                    `)
+                    .addTo(mapInstance);
+                }
+              }
+            });
+
+            mapInstance.on('mouseleave', layer.id, () => {
+              popup.remove();
+            });
           });
         }
 
@@ -225,7 +322,10 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
           );
         }
       } catch (error) {
-        logger.error('Failed to update map data', error);
+        logger.error('Failed to update map data', {
+          error,
+          featureCount: features.length
+        });
       }
     };
 
@@ -243,9 +343,20 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
         ref={mapContainer} 
         className="h-[300px] w-full rounded-md overflow-hidden"
       />
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>{isLoading ? `Loading... (${loadedFeatures.length}/${features.length})` : `${features.length} features available`}</span>
-        <span>{selectedFeatures.size} features selected</span>
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between text-sm text-muted-foreground">
+          <span>{isLoading ? `Loading... (${loadedFeatures.length}/${features.length})` : `${features.length} features available`}</span>
+          <span>{selectedFeatures.size} features selected</span>
+        </div>
+        {validationStats.withIssues > 0 && (
+          <Alert>
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>
+              {validationStats.withIssues} of {validationStats.total} features have geometry issues. 
+              These will be repaired during import using PostGIS.
+            </AlertDescription>
+          </Alert>
+        )}
       </div>
     </div>
   );

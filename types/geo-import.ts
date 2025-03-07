@@ -3,14 +3,16 @@
  */
 
 import { GeoJSON } from 'geojson';
+import type { Geometry } from 'geojson';
 
 /**
  * Represents a feature in the full dataset with complete geometry and properties
  */
 export interface GeoFeature {
   id: number;
-  geometry: GeoJSON.Geometry;
-  properties: Record<string, any>;
+  geometry: Geometry;
+  properties?: Record<string, any>;
+  validation?: ValidationResult;
   originalIndex?: number;
 }
 
@@ -18,9 +20,13 @@ export interface GeoFeature {
  * Represents a lightweight preview feature with simplified geometry
  */
 export interface PreviewFeature extends Omit<GeoFeature, 'geometry'> {
-  geometry: GeoJSON.Geometry;  // Simplified geometry
+  geometry: Geometry;  // Simplified geometry
   previewId: number;
   originalFeatureIndex: number;
+  properties: Record<string, any> & {
+    wasRepaired?: boolean;
+    wasCleaned?: boolean;
+  };
 }
 
 /**
@@ -31,13 +37,7 @@ export interface FullDataset {
   fileType: string;
   features: GeoFeature[];
   previewFeatures: GeoFeature[]; // Features with transformed coordinates for preview
-  metadata?: {
-    featureCount: number;
-    bounds?: [number, number, number, number];
-    geometryTypes: string[];
-    properties: string[];
-    srid?: number;  // Coordinate system EPSG code
-  };
+  metadata?: DatasetMetadata;
 }
 
 /**
@@ -46,7 +46,7 @@ export interface FullDataset {
 export interface PreviewDataset {
   sourceFile: string;
   features: PreviewFeature[];
-  metadata?: FullDataset['metadata'];
+  metadata?: DatasetMetadata;
 }
 
 /**
@@ -68,12 +68,15 @@ export type ImportStatus = 'idle' | 'parsing' | 'generating-preview' | 'ready' |
  * Import session state
  */
 export interface ImportSession {
+  id: string;
   fileId: string;
-  status: ImportStatus;
+  status: 'created' | 'processing' | 'completed' | 'failed';
+  error?: string;
   fullDataset: FullDataset | null;
   previewDataset: PreviewDataset | null;
-  selectedFeatureIndices: number[];
-  error?: string;
+  selectedFeatures: number[];
+  createdAt: string;
+  updatedAt: string;
 }
 
 /**
@@ -85,4 +88,32 @@ export interface CreateImportSessionParams {
   fileType: string;
   fullDataset?: FullDataset;
   previewDataset?: PreviewDataset;
+  selectedFeatures?: number[];
+}
+
+export interface UpdateImportSessionParams {
+  status?: ImportSession['status'];
+  error?: string;
+  fullDataset?: FullDataset;
+  previewDataset?: PreviewDataset;
+  selectedFeatures?: number[];
+}
+
+export interface ValidationResult {
+  hasIssues: boolean;
+  issues: string[];
+}
+
+export interface ValidationSummary {
+  featuresWithIssues: number;
+  totalFeatures: number;
+}
+
+export interface DatasetMetadata {
+  featureCount: number;
+  bounds?: [number, number, number, number];
+  geometryTypes: string[];
+  properties: string[];
+  srid?: number;
+  validationSummary?: ValidationSummary;
 } 

@@ -21,10 +21,12 @@ DECLARE
   v_imported_count INTEGER := 0;
   v_failed_count INTEGER := 0;
   v_repaired_count INTEGER := 0;
+  v_cleaned_count INTEGER := 0;
   v_skipped_count INTEGER := 0;
   v_feature JSONB;
   v_geometry GEOMETRY;
   v_raw_geometry GEOMETRY;
+  v_cleaned_geometry GEOMETRY;
   v_debug JSONB;
   v_last_error TEXT;
   v_last_state TEXT;
@@ -55,6 +57,13 @@ BEGIN
       -- Use ST_GeomFromGeoJSON for initial parsing
       BEGIN
         v_raw_geometry := ST_GeomFromGeoJSON(v_feature->'geometry');
+        
+        -- First clean duplicate vertices
+        v_cleaned_geometry := ST_RemoveRepeatedPoints(v_raw_geometry);
+        IF NOT ST_Equals(v_cleaned_geometry, v_raw_geometry) THEN
+          v_cleaned_count := v_cleaned_count + 1;
+          v_raw_geometry := v_cleaned_geometry;
+        END IF;
         
         -- Check if geometry is valid
         IF NOT ST_IsValid(v_raw_geometry) THEN
@@ -378,13 +387,14 @@ BEGIN
     'last_error_state', v_last_state,
     'index_name', v_index_name,
     'repaired_count', v_repaired_count,
+    'cleaned_count', v_cleaned_count,
     'skipped_count', v_skipped_count,
     'repair_summary', CASE 
-      WHEN v_repaired_count > 0 
-      THEN format('%s of %s geometries were automatically repaired', 
+      WHEN v_repaired_count > 0 OR v_cleaned_count > 0
+      THEN format('%s geometries were repaired and %s had duplicate vertices removed', 
                  v_repaired_count, 
-                 jsonb_array_length(p_features))
-      ELSE 'No geometries needed repair'
+                 v_cleaned_count)
+      ELSE 'No geometries needed repair or cleaning'
     END,
     'skipped_summary', CASE
       WHEN v_skipped_count > 0

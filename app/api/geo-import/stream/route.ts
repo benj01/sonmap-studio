@@ -14,10 +14,10 @@ const logger = {
   }
 };
 
-export async function POST(request: Request) {
+export async function POST(req: Request) {
   try {
     const supabase = await createClient();
-    const body = await request.json();
+    const body = await req.json();
     
     const { 
       fileId, 
@@ -28,10 +28,11 @@ export async function POST(request: Request) {
       totalBatches 
     } = body;
     
-    logger.info('Processing batch', { 
-      batchIndex, 
-      totalBatches, 
-      featureCount: features.length 
+    logger.info('Processing batch', {
+      fileId,
+      batchIndex,
+      totalBatches,
+      featureCount: features.length
     });
     
     // First batch - create collection and layer
@@ -95,20 +96,31 @@ export async function POST(request: Request) {
       }
     }
     
-    return NextResponse.json({
-      success: true,
-      batchIndex,
-      totalBatches,
-      importedCount,
-      failedCount,
-      collectionId,
-      layerId
-    });
-    
+    // Import features
+    try {
+      return NextResponse.json({
+        success: true,
+        batchIndex,
+        totalBatches,
+        importedCount,
+        failedCount,
+        collectionId,
+        layerId
+      });
+    } catch (error) {
+      logger.error('Batch import error', {
+        fileId,
+        batchIndex,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
+      throw error;
+    }
   } catch (error) {
-    logger.error('Batch import error', error);
+    logger.error('Request error', {
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
     return NextResponse.json(
-      { error: 'Import batch failed', details: (error as Error).message || 'Unknown error' },
+      { error: 'Import failed', details: (error as Error).message || 'Unknown error' },
       { status: 500 }
     );
   }

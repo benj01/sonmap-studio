@@ -153,7 +153,14 @@ export function GeoImportDialog({
   }, [projectId, open, memoizedFileInfo]);
 
   const handleImportSessionCreated = async (session: ImportSession) => {
-    logger.debug('Import session created', session);
+    logger.debug('Import session created', {
+      fileId: session.fileId,
+      status: session.status,
+      featureCount: session.fullDataset?.features.length || 0,
+      geometryTypes: session.fullDataset?.metadata?.geometryTypes || [],
+      sourceSrid: session.fullDataset?.metadata?.srid,
+      bounds: session.fullDataset?.metadata?.bounds
+    });
     setImportSession(session);
     // Initially select all features from the full dataset, not just preview
     if (session.fullDataset?.features) {
@@ -215,10 +222,8 @@ export function GeoImportDialog({
 
       logger.debug('Selected features prepared', {
         count: selectedFeatures.length,
-        firstFeature: JSON.stringify(selectedFeatures[0], null, 2),
-        srid: importSession.fullDataset.metadata?.srid || 2056,
-        geometryType: selectedFeatures[0]?.geometry?.type,
-        sampleCoordinates: selectedFeatures[0]?.geometry?.['coordinates']
+        geometryTypes: [...new Set(selectedFeatures.map(f => f.geometry.type))],
+        srid: importSession.fullDataset.metadata?.srid || 2056
       });
 
       // Call our PostGIS import function with timeout handling
@@ -260,7 +265,8 @@ export function GeoImportDialog({
             fileId: importSession.fileId,
             featureCount: selectedFeatures.length,
             sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
-            firstFeature: JSON.stringify(selectedFeatures[0], null, 2)
+            // Only include problematic feature data on error
+            failedFeature: selectedFeatures[0]
           }
         });
         throw new Error(`Import failed: ${error.message}${error.details ? ` (${error.details})` : ''}`);

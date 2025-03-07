@@ -37,7 +37,11 @@ export function useGeoImport() {
    * Creates a new import session for a file
    */
   const createImportSession = useCallback(async (params: CreateImportSessionParams): Promise<ImportSession> => {
-    logger.info('Creating import session', params);
+    logger.info('Creating import session', {
+      fileId: params.fileId,
+      hasFullDataset: !!params.fullDataset,
+      hasPreviewDataset: !!params.previewDataset
+    });
     
     const session: ImportSession = {
       fileId: params.fileId,
@@ -47,7 +51,13 @@ export function useGeoImport() {
       selectedFeatureIndices: [],
     };
 
-    logger.info('Import session created', session);
+    logger.info('Import session created', {
+      fileId: session.fileId,
+      status: session.status,
+      featureCount: session.fullDataset?.features.length || 0,
+      geometryTypes: session.fullDataset?.metadata?.geometryTypes || [],
+      sourceSrid: session.fullDataset?.metadata?.srid
+    });
     setCurrentSession(session);
     return session;
   }, []);
