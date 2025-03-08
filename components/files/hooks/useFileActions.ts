@@ -19,15 +19,12 @@ const logManager = LogManager.getInstance();
 
 const logger = {
   info: (message: string, data?: any) => {
-    console.info(`[${SOURCE}] ${message}`, data);
     logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
-    console.warn(`[${SOURCE}] ${message}`, error);
     logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
-    console.error(`[${SOURCE}] ${message}`, error);
     logManager.error(SOURCE, message, error);
   }
 };

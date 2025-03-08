@@ -93,21 +93,15 @@ logManager.addFilter(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
-    // Remove filtering to ensure all logs are captured
-    console.info(`[${SOURCE}] ${message}`, data);
     logManager.info(SOURCE, message, data);
   },
   warn: (message: string, error?: any) => {
-    console.warn(`[${SOURCE}] ${message}`, error);
     logManager.warn(SOURCE, message, error);
   },
   error: (message: string, error?: any) => {
-    console.error(`[${SOURCE}] ${message}`, error);
     logManager.error(SOURCE, message, error);
   },
   debug: (message: string, data?: any) => {
-    // Remove filtering to ensure all debug logs are captured
-    console.debug(`[${SOURCE}] ${message}`, data);
     logManager.debug(SOURCE, message, data);
   }
 };
@@ -211,180 +205,382 @@ export function GeoImportDialog({
       return;
     }
 
+    // Initialize results outside try block for wider scope
+    let importResults = {
+      totalImported: 0,
+      totalFailed: 0,
+      collectionId: '',
+      layerId: ''
+    };
+
+    const startTime = Date.now();
+    let importCompleted = false;
+
     try {
       setIsProcessing(true);
-      logger.info('Starting import process', { 
-        selectedCount: selectedFeatureIds.length,
+      
+      logger.info('DIAGNOSTIC: Import starting - Initial selection state', { 
+        selectedFeatureIds: selectedFeatureIds,
+        selectedFeatureIdsCount: selectedFeatureIds.length,
+        totalFeaturesInDataset: importSession.fullDataset.features.length,
         fileId: importSession.fileId,
         fileName: fileInfo?.name,
-        metadata: importSession.fullDataset.metadata
+        metadata: importSession.fullDataset.metadata,
+        timestamp: new Date().toISOString(),
+        startTime
       });
       
-      // Show starting toast with more detail
       toast({
         title: 'Starting Import',
         description: `Processing ${selectedFeatureIds.length} features. This may take a while for complex geometries...`,
         duration: 5000,
       });
       
-      // Filter the full dataset based on selected feature IDs
       const selectedFeatures = importSession.fullDataset.features.filter(f => 
         selectedFeatureIds.includes(f.originalIndex || f.id)
       );
 
-      logger.debug('Selected features prepared', {
-        count: selectedFeatures.length,
+      logger.info('DIAGNOSTIC: Features after filtering', {
+        filteredFeaturesCount: selectedFeatures.length,
+        originalSelectedIdsCount: selectedFeatureIds.length,
+        mismatchCount: selectedFeatureIds.length - selectedFeatures.length,
         geometryTypes: [...new Set(selectedFeatures.map(f => f.geometry.type))],
         srid: importSession.fullDataset.metadata?.srid || 2056
       });
 
-      // Call our PostGIS import function with timeout handling
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Import timeout')), 300000); // 5 minute timeout
-      });
-
-      // Log the features being sent to PostGIS
-      logger.info('Starting PostGIS import', {
-        featureCount: selectedFeatures.length,
-        sampleFeature: {
-          id: selectedFeatures[0].id,
-          type: selectedFeatures[0].geometry.type,
-          geometry: selectedFeatures[0].geometry,
-          properties: selectedFeatures[0].properties
-        },
-        srid: importSession.fullDataset.metadata?.srid || 2056,
-        geometryTypes: [...new Set(selectedFeatures.map(f => f.geometry.type))],
-        totalFeatures: selectedFeatures.length
-      });
-
-      // Test log to verify logging system
-      logger.info('TEST LOG - About to start streaming import');
-
-      let importResults = {
-        totalImported: 0,
-        totalFailed: 0,
-        collectionId: '',
-        layerId: ''
+      const requestPayload = {
+        fileId: importSession.fileId,
+        collectionName: fileInfo?.name || 'Imported Features',
+        features: selectedFeatures.map(f => ({
+          type: 'Feature' as const,
+          geometry: f.geometry,
+          properties: f.properties || {}
+        })),
+        sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
+        batchSize: 600
       };
 
-      const response = await fetch('/api/geo-import/stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          fileId: importSession.fileId,
-          collectionName: fileInfo?.name || 'Imported Features',
-          features: selectedFeatures.map(f => ({
-            type: 'Feature' as const,
-            geometry: f.geometry,
-            properties: f.properties || {}
-          })),
-          sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
-          batchSize: 600
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
-
-      if (!reader) {
-        throw new Error('No reader available');
-      }
+      // Create an AbortController for the timeout
+      const controller = new AbortController();
+      const timeout = setTimeout(() => {
+        controller.abort();
+        logger.error('DIAGNOSTIC: Fetch timeout after 120 seconds');
+      }, 120000);
 
       try {
-        while (true) {
-          const { value, done } = await reader.read();
-          
-          if (done) {
-            logger.info('Stream complete', { importResults });
-            break;
+        logger.info('DIAGNOSTIC: Starting fetch request', {
+          url: '/api/geo-import/stream',
+          payloadSize: JSON.stringify(requestPayload).length,
+          featureCount: selectedFeatures.length
+        });
+
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session?.access_token) {
+          throw new Error('No authentication token available');
+        }
+
+        const response = await fetch('/api/geo-import/stream', {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify(requestPayload),
+          signal: controller.signal
+        });
+
+        // Clear the timeout since we got a response
+        clearTimeout(timeout);
+
+        // Log EVERYTHING about the response
+        logger.info('DIAGNOSTIC: Raw response details', {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries([...response.headers.entries()]),
+          ok: response.ok,
+          bodyUsed: response.bodyUsed,
+          type: response.type,
+          url: response.url
+        });
+
+        // Try to get response text if not OK
+        if (!response.ok) {
+          let errorText = '';
+          try {
+            errorText = await response.text();
+            logger.error('DIAGNOSTIC: Error response body', { errorText });
+            throw new Error(`HTTP error! status: ${response.status}, body: ${errorText}`);
+          } catch (e) {
+            logger.error('DIAGNOSTIC: Failed to read error response', e);
+            throw new Error(`HTTP error! status: ${response.status}`);
           }
-          
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              const eventData = JSON.parse(line.slice(6));
+        }
+
+        // Verify we have a readable stream
+        if (!response.body) {
+          logger.error('DIAGNOSTIC: Response has no body stream');
+          throw new Error('Response has no body stream');
+        }
+
+        logger.info('DIAGNOSTIC: Setting up stream reader');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        const allEvents = [];
+
+        try {
+          logger.info('DIAGNOSTIC: Starting stream read loop');
+          while (true) {
+            // Log loop iteration
+            logger.debug('DIAGNOSTIC: Stream read loop iteration', {
+              importCompleted,
+              eventsReceived: allEvents.length,
+              lastEventType: allEvents.length > 0 ? allEvents[allEvents.length - 1].type : 'none'
+            });
+
+            // Check importCompleted flag first
+            if (importCompleted) {
+              logger.info('DIAGNOSTIC: Breaking loop because importCompleted is true');
+              break;
+            }
+
+            const { value, done } = await reader.read();
+            
+            // Log read operation result
+            logger.debug('DIAGNOSTIC: Stream read operation', {
+              done,
+              hasValue: !!value,
+              valueSize: value ? value.length : 0,
+              importCompleted
+            });
+            
+            if (done) {
+              logger.info('DIAGNOSTIC: Stream complete signal received', { 
+                importResults,
+                totalEventsReceived: allEvents.length,
+                eventTypes: allEvents.map(e => e.type),
+                importCompleted
+              });
+              break;
+            }
+            
+            const chunk = decoder.decode(value);
+            // Split by double newlines for server-sent events format
+            const lines = chunk.split('\n\n');
+            
+            // Log chunk details
+            logger.debug('DIAGNOSTIC: Processing chunk', {
+              chunkSize: chunk.length,
+              lineCount: lines.length,
+              firstLine: lines[0]?.substring(0, 100)
+            });
+            
+            for (const line of lines) {
+              if (!line.trim()) continue; // Skip empty lines
               
-              switch (eventData.type) {
-                case 'batch_complete':
-                  logger.info('Batch complete', eventData);
-                  importResults.totalImported += eventData.importedCount;
-                  importResults.totalFailed += eventData.failedCount;
-                  importResults.collectionId = eventData.collectionId;
-                  importResults.layerId = eventData.layerId;
-                  
-                  // Update progress
-                  setProgress(Math.round((eventData.batchIndex + 1) * 100 / eventData.totalBatches));
-                  break;
-                  
-                case 'notice':
-                  logger.info(`Import ${eventData.level}:`, eventData.message);
-                  break;
-                  
-                case 'feature_errors':
-                  logger.warn('Feature errors:', eventData.errors);
-                  break;
-                  
-                case 'error':
-                  throw new Error(eventData.message);
+              const eventLine = line.split('\n').find(l => l.startsWith('data: '));
+              if (!eventLine) continue;
+              
+              try {
+                const eventData = JSON.parse(eventLine.slice(6));
+                allEvents.push(eventData);
+                
+                // Log each event
+                logger.debug('DIAGNOSTIC: Processing event', {
+                  type: eventData.type,
+                  importCompleted
+                });
+                
+                switch (eventData.type) {
+                  case 'batch_complete':
+                    importResults.totalImported += eventData.importedCount;
+                    importResults.totalFailed += eventData.failedCount;
+                    importResults.collectionId = eventData.collectionId;
+                    importResults.layerId = eventData.layerId;
+                    
+                    setProgress(Math.round((eventData.batchIndex + 1) * 100 / eventData.totalBatches));
+                    setProgressMessage(`Imported ${importResults.totalImported} features (${Math.round((eventData.batchIndex + 1) / eventData.totalBatches * 100)}%)`);
+                    break;
+                    
+                  case 'import_complete':
+                    logger.info('DIAGNOSTIC: Received import_complete event', {
+                      eventData,
+                      currentImportResults: { ...importResults },
+                      timestamp: new Date().toISOString(),
+                      elapsedMs: Date.now() - startTime
+                    });
+                    
+                    if (eventData.finalStats) {
+                      if (eventData.finalStats.totalImported !== undefined) {
+                        importResults.totalImported = eventData.finalStats.totalImported;
+                      }
+                      if (eventData.finalStats.totalFailed !== undefined) {
+                        importResults.totalFailed = eventData.finalStats.totalFailed;
+                      }
+                    }
+
+                    importCompleted = true;
+                    break;
+                    
+                  case 'notice':
+                    logger.info(`Import ${eventData.level}:`, eventData.message);
+                    break;
+                    
+                  case 'feature_errors':
+                    logger.warn('Feature import failures:', {
+                      errors: eventData.errors,
+                      batchInfo: {
+                        currentImported: importResults.totalImported,
+                        currentFailed: importResults.totalFailed
+                      }
+                    });
+                    break;
+                    
+                  case 'error':
+                    throw new Error(eventData.message);
+                }
+              } catch (parseError) {
+                logger.error('DIAGNOSTIC: Error parsing event data', {
+                  error: parseError instanceof Error ? parseError.message : String(parseError),
+                  line: eventLine.substring(0, 100), // Log first 100 chars of problematic line
+                  fullLineLength: eventLine.length
+                });
+                throw parseError;
               }
             }
           }
+        } catch (streamError) {
+          logger.error('DIAGNOSTIC: Error in stream reading process', {
+            error: streamError instanceof Error ? {
+              message: streamError.message,
+              stack: streamError.stack,
+              name: streamError.name
+            } : String(streamError),
+            eventsReceived: allEvents.length,
+            lastEventType: allEvents.length > 0 ? allEvents[allEvents.length - 1].type : 'none'
+          });
+          throw streamError;
+        } finally {
+          reader.releaseLock();
+          logger.info('DIAGNOSTIC: Stream reader released', {
+            totalEvents: allEvents.length,
+            importCompleted,
+            lastEventType: allEvents.length > 0 ? allEvents[allEvents.length - 1].type : 'none'
+          });
         }
-      } finally {
-        reader.releaseLock();
+
+        // Only proceed with completion if we got the import_complete event
+        if (!importCompleted) {
+          throw new Error('Import did not complete successfully - no completion event received');
+        }
+
+        // Update project_files record
+        try {
+          const importMetadata = {
+            collection_id: importResults.collectionId,
+            layer_id: importResults.layerId,
+            imported_count: importResults.totalImported,
+            failed_count: importResults.totalFailed,
+            imported_at: new Date().toISOString()
+          };
+
+          const { error: updateError } = await supabase
+            .from('project_files')
+            .update({
+              is_imported: true,
+              import_metadata: importMetadata
+            })
+            .eq('id', importSession.fileId);
+
+          if (updateError) {
+            throw updateError;
+          }
+        } catch (updateError) {
+          logger.error('Failed to update file import status', { 
+            error: updateError instanceof Error ? updateError.message : String(updateError),
+            fileId: importSession.fileId
+          });
+          // Continue with completion - file status update is not critical
+        }
+
+        // Show success toast
+        toast({
+          title: 'Import Complete',
+          description: `Successfully imported ${importResults.totalImported} features${importResults.totalFailed > 0 ? ` (${importResults.totalFailed} failed)` : ''}.`,
+          duration: 5000,
+        });
+
+        // Complete the import process
+        setIsProcessing(false);
+        
+        try {
+          await onImportComplete({
+            features: [],
+            bounds: {
+              minX: importSession?.fullDataset.metadata?.bounds?.[0] || 0,
+              minY: importSession?.fullDataset.metadata?.bounds?.[1] || 0,
+              maxX: importSession?.fullDataset.metadata?.bounds?.[2] || 0,
+              maxY: importSession?.fullDataset.metadata?.bounds?.[3] || 0
+            },
+            layers: [],
+            statistics: {
+              pointCount: importResults.totalImported,
+              layerCount: 1,
+              featureTypes: {}
+            },
+            collectionId: importResults.collectionId,
+            layerId: importResults.layerId,
+            totalImported: importResults.totalImported,
+            totalFailed: importResults.totalFailed
+          });
+        } catch (completeError) {
+          logger.error('Error in onImportComplete', {
+            error: completeError instanceof Error ? completeError.message : String(completeError)
+          });
+          // Continue with dialog close even if onImportComplete fails
+        }
+
+        // Always try to close the dialog
+        onOpenChange(false);
+
+      } catch (error) {
+        logger.error('Import failed', {
+          error: error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          } : String(error)
+        });
+        
+        toast({
+          title: 'Import Failed',
+          description: error instanceof Error ? error.message : 'An unknown error occurred during import',
+          variant: 'destructive',
+          duration: 5000,
+        });
+
+        // Ensure we clean up state and close dialog even on error
+        setIsProcessing(false);
+        
+        try {
+          await onImportComplete({
+            features: [],
+            bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+            layers: [],
+            statistics: { pointCount: 0, layerCount: 0, featureTypes: {} },
+            collectionId: undefined,
+            layerId: undefined,
+            totalImported: undefined,
+            totalFailed: undefined
+          });
+        } catch (completeError) {
+          logger.error('Error in onImportComplete during error handling', {
+            error: completeError instanceof Error ? completeError.message : String(completeError)
+          });
+        }
+
+        // Always try to close the dialog
+        onOpenChange(false);
       }
-
-      if (importResults.totalImported === 0) {
-        throw new Error('No features were imported');
-      }
-
-      logger.info('Import completed successfully', { 
-        importResults,
-        selectedCount: selectedFeatures.length
-      });
-
-      // Show success toast
-      toast({
-        title: 'Import Complete',
-        description: `Successfully imported ${importResults.totalImported} features${importResults.totalFailed > 0 ? ` (${importResults.totalFailed} failed)` : ''}.${
-          importResults.totalImported !== selectedFeatures.length 
-            ? ` Note: ${selectedFeatures.length - importResults.totalImported} features were skipped.`
-            : ''
-        }`,
-        duration: 5000,
-      });
-
-      // Call onImportComplete with the results
-      await onImportComplete({
-        features: [],
-        bounds: {
-          minX: importSession?.fullDataset.metadata?.bounds?.[0] || 0,
-          minY: importSession?.fullDataset.metadata?.bounds?.[1] || 0,
-          maxX: importSession?.fullDataset.metadata?.bounds?.[2] || 0,
-          maxY: importSession?.fullDataset.metadata?.bounds?.[3] || 0
-        },
-        layers: [],
-        statistics: {
-          pointCount: importResults.totalImported,
-          layerCount: 1,
-          featureTypes: {}
-        },
-        collectionId: importResults.collectionId,
-        layerId: importResults.layerId,
-        totalImported: importResults.totalImported,
-        totalFailed: importResults.totalFailed
-      });
-
-      setIsProcessing(false);
-      onOpenChange(false);
 
     } catch (error) {
       logger.error('Import failed', {
@@ -392,16 +588,9 @@ export function GeoImportDialog({
           message: error.message,
           stack: error.stack,
           name: error.name
-        } : error,
-        importSession: {
-          fileId: importSession.fileId,
-          fileName: fileInfo?.name,
-          featureCount: selectedFeatureIds.length,
-          metadata: importSession.fullDataset.metadata
-        }
+        } : String(error)
       });
       
-      // Show error toast with more details
       toast({
         title: 'Import Failed',
         description: error instanceof Error ? error.message : 'An unknown error occurred during import',
@@ -409,21 +598,28 @@ export function GeoImportDialog({
         duration: 5000,
       });
 
-      // In case of error, create a minimal valid LoaderResult
-      await onImportComplete({
-        features: [],
-        bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
-        layers: [],
-        statistics: {
-          pointCount: 0,
-          layerCount: 0,
-          featureTypes: {}
-        },
-        collectionId: undefined,
-        layerId: undefined,
-        totalImported: undefined,
-        totalFailed: undefined
-      });
+      // Ensure we clean up state and close dialog even on error
+      setIsProcessing(false);
+      
+      try {
+        await onImportComplete({
+          features: [],
+          bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+          layers: [],
+          statistics: { pointCount: 0, layerCount: 0, featureTypes: {} },
+          collectionId: undefined,
+          layerId: undefined,
+          totalImported: undefined,
+          totalFailed: undefined
+        });
+      } catch (completeError) {
+        logger.error('Error in onImportComplete during error handling', {
+          error: completeError instanceof Error ? completeError.message : String(completeError)
+        });
+      }
+
+      // Always try to close the dialog
+      onOpenChange(false);
     }
   };
 
@@ -433,37 +629,35 @@ export function GeoImportDialog({
       return;
     }
 
+    // Initialize results outside try block for wider scope
+    let importResults = {
+      totalImported: 0,
+      totalFailed: 0,
+      collectionId: '',
+      layerId: ''
+    };
+
+    const startTime = Date.now();
+    let importCompleted = false;
+
     try {
       setIsProcessing(true);
       
-      // Filter the full dataset based on selected feature IDs
       const selectedFeatures = importSession.fullDataset.features.filter(f => 
         selectedFeatureIds.includes(f.originalIndex || f.id)
       );
       
-      let importResults = {
-        totalImported: 0,
-        totalFailed: 0,
-        collectionId: '',
-        layerId: ''
-      };
-      
       logger.info('Starting batch import process', {
         totalFeatures: selectedFeatures.length,
         fileId: importSession.fileId,
-        fileName: fileInfo?.name,
-        geometryTypes: [...new Set(selectedFeatures.map(f => f.geometry.type))]
+        fileName: fileInfo?.name
       });
       
-      // Show starting toast
       toast({
         title: 'Starting Import',
-        description: `Processing ${selectedFeatures.length} features in batches of 100...`,
+        description: `Processing ${selectedFeatures.length} features in batches...`,
         duration: 5000,
       });
-      
-      // Test log to verify logging system
-      logger.info('TEST LOG - About to start streaming import');
 
       const response = await fetch('/api/geo-import/stream', {
         method: 'POST',
@@ -482,16 +676,9 @@ export function GeoImportDialog({
       });
 
       if (!response.ok || !response.body) {
-        const errorData = await response.json();
-        logger.error(`Batch import failed`, {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorData
-        });
-        throw new Error(`Batch import failed: ${errorData.error}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      // Process the stream
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -511,33 +698,16 @@ export function GeoImportDialog({
 
       try {
         while (true) {
+          // Check importCompleted flag first
+          if (importCompleted) {
+            logger.info('Breaking loop because importCompleted is true');
+            break;
+          }
+
           const { done, value } = await reader.read();
           
           if (done) {
-            logger.info(`Batch import completed`, { importResults });
-            
-            // Send completion notification
-            setIsProcessing(false);
-            onImportComplete({
-              features: [],
-              bounds: {
-                minX: importSession?.fullDataset.metadata?.bounds?.[0] || 0,
-                minY: importSession?.fullDataset.metadata?.bounds?.[1] || 0,
-                maxX: importSession?.fullDataset.metadata?.bounds?.[2] || 0,
-                maxY: importSession?.fullDataset.metadata?.bounds?.[3] || 0
-              },
-              layers: [],
-              statistics: {
-                pointCount: importResults.totalImported,
-                layerCount: 1,
-                featureTypes: {}
-              },
-              collectionId: importResults.collectionId,
-              layerId: importResults.layerId,
-              totalImported: importResults.totalImported,
-              totalFailed: importResults.totalFailed
-            });
-            onOpenChange(false);
+            logger.info(`Stream complete signal received`);
             break;
           }
 
@@ -549,107 +719,86 @@ export function GeoImportDialog({
           lastMessageTime = Date.now();
           
           try {
-            // Append new data to buffer and split by double newlines
             buffer += decoder.decode(value, { stream: true });
             const lines = buffer.split('\n\n');
-            buffer = lines.pop() || ''; // Keep last incomplete chunk in buffer
+            buffer = lines.pop() || '';
 
-            // Process complete messages
             for (const line of lines) {
               if (!line.trim() || !line.startsWith('data: ')) {
-                logger.debug('Skipping invalid line', { line });
                 continue;
               }
               
               try {
                 const data = JSON.parse(line.slice(6));
-                logger.debug(`Received stream message`, { type: data.type });
                 
                 switch (data.type) {
                   case 'notice':
                     logger.info(`[${data.level.toUpperCase()}] ${data.message}`);
                     break;
+
                   case 'error':
                     throw new Error(data.message);
+
                   case 'feature_errors':
-                    logger.warn('Feature errors:', data.errors);
+                    logger.warn('Feature import failures:', {
+                      errors: data.errors,
+                      batchInfo: {
+                        currentImported: importResults.totalImported,
+                        currentFailed: importResults.totalFailed
+                      }
+                    });
                     break;
+
                   case 'batch_complete':
                     importResults.totalImported += data.importedCount;
                     importResults.totalFailed += data.failedCount;
                     importResults.collectionId = data.collectionId;
                     importResults.layerId = data.layerId;
+
+                    setProgress(Math.round((data.batchIndex + 1) * 100 / data.totalBatches));
+                    setProgressMessage(`Imported ${importResults.totalImported} features (${Math.round((data.batchIndex + 1) / data.totalBatches * 100)}%)`);
                     break;
+
                   case 'import_complete':
                     logger.info('Import completed successfully', {
                       totalImported: importResults.totalImported,
                       totalFailed: importResults.totalFailed,
                       collectionId: importResults.collectionId,
-                      layerId: importResults.layerId,
-                      actualFeatureCount: data.finalStats.actualFeatureCount,
-                      expectedFeatureCount: selectedFeatures.length
+                      layerId: importResults.layerId
                     });
                     
-                    // Show completion toast with actual counts
-                    toast({
-                      title: 'Import Complete',
-                      description: `Successfully imported ${importResults.totalImported} features${importResults.totalFailed > 0 ? ` (${importResults.totalFailed} failed)` : ''}.${
-                        importResults.totalImported !== selectedFeatures.length 
-                          ? ` Note: ${selectedFeatures.length - importResults.totalImported} features were skipped.`
-                          : ''
-                      }`,
-                      duration: 5000,
-                    });
+                    if (data.finalStats) {
+                      if (data.finalStats.totalImported !== undefined) {
+                        importResults.totalImported = data.finalStats.totalImported;
+                      }
+                      if (data.finalStats.totalFailed !== undefined) {
+                        importResults.totalFailed = data.finalStats.totalFailed;
+                      }
+                    }
                     
-                    // Close the dialog and notify parent
-                    setIsProcessing(false);
-                    await onImportComplete({
-                      features: [],
-                      bounds: {
-                        minX: importSession?.fullDataset.metadata?.bounds?.[0] || 0,
-                        minY: importSession?.fullDataset.metadata?.bounds?.[1] || 0,
-                        maxX: importSession?.fullDataset.metadata?.bounds?.[2] || 0,
-                        maxY: importSession?.fullDataset.metadata?.bounds?.[3] || 0
-                      },
-                      layers: [],
-                      statistics: {
-                        pointCount: importResults.totalImported,
-                        layerCount: 1,
-                        featureTypes: {}
-                      },
-                      collectionId: importResults.collectionId,
-                      layerId: importResults.layerId,
-                      totalImported: importResults.totalImported,
-                      totalFailed: importResults.totalFailed
-                    });
-                    onOpenChange(false);
+                    importCompleted = true;
                     break;
-                  default:
-                    logger.warn('Unknown message type:', data.type);
                 }
-              } catch (e) {
+              } catch (parseError) {
                 logger.error('Error processing message', {
-                  error: e instanceof Error ? e.message : 'Unknown error',
+                  error: parseError instanceof Error ? parseError.message : String(parseError),
                   line
                 });
+                throw parseError; // Re-throw to be caught by outer catch
               }
             }
-          } catch (e) {
+          } catch (decodeError) {
             logger.error('Error decoding stream chunk', {
-              error: e instanceof Error ? e.message : 'Unknown error',
-              bufferLength: buffer.length
+              error: decodeError instanceof Error ? decodeError.message : String(decodeError)
             });
+            throw decodeError;
           }
         }
-      } catch (e) {
+      } catch (streamError) {
         logger.error('Stream reading error', {
-          error: e instanceof Error ? {
-            message: e.message,
-            stack: e.stack,
-            name: e.name
-          } : 'Unknown error'
+          error: streamError instanceof Error ? streamError.message : String(streamError)
         });
-        throw e;
+        throw streamError;
       } finally {
         clearInterval(watchdogTimer);
         try {
@@ -660,132 +809,85 @@ export function GeoImportDialog({
         reader.releaseLock();
       }
 
-      // Final update
-      setProgress(100);
-      setProgressMessage('Import complete');
-
-      logger.info('Batch import completed', {
-        totalImported: importResults.totalImported,
-        totalFailed: importResults.totalFailed,
-        collectionId: importResults.collectionId,
-        layerId: importResults.layerId
-      });
-
-      // Show repair notification if any geometries were repaired
-      if (importResults.totalFailed > 0) {
-        toast({
-          title: 'Geometries Repaired',
-          description: `${importResults.totalFailed} geometries were automatically repaired during import`,
-          duration: 5000,
-        });
+      // Only proceed with completion if we got the import_complete event
+      if (!importCompleted) {
+        throw new Error('Import did not complete successfully - no completion event received');
       }
-      
-      // Update the project_files record
-      const importMetadata = {
-        collection_id: importResults.collectionId,
-        layer_id: importResults.layerId,
-        imported_count: importResults.totalImported,
-        failed_count: importResults.totalFailed,
-        imported_at: new Date().toISOString()
-      };
-      
-      logger.debug('Updating project_files record', { 
-        fileId: importSession.fileId, 
-        metadata: importMetadata
-      });
 
-      // Update main file record
-      const { error: updateError, data: updateData } = await supabase
-        .from('project_files')
-        .update({
-          is_imported: true,
-          import_metadata: importMetadata
-        })
-        .eq('id', importSession.fileId)
-        .select();
+      // Update project_files record
+      try {
+        const importMetadata = {
+          collection_id: importResults.collectionId,
+          layer_id: importResults.layerId,
+          imported_count: importResults.totalImported,
+          failed_count: importResults.totalFailed,
+          imported_at: new Date().toISOString()
+        };
 
-      if (updateError) {
-        logger.error('Failed to update file import status', { 
-          error: updateError,
-          code: updateError.code,
-          details: updateError.details,
-          message: updateError.message,
+        const { error: updateError } = await supabase
+          .from('project_files')
+          .update({
+            is_imported: true,
+            import_metadata: importMetadata
+          })
+          .eq('id', importSession.fileId);
+
+        if (updateError) {
+          throw updateError;
+        }
+      } catch (updateError) {
+        logger.error('Failed to update file import status', {
+          error: updateError instanceof Error ? updateError.message : String(updateError),
           fileId: importSession.fileId
         });
-
-        // Check if file exists
-        const { data: existingFile, error: checkError } = await supabase
-          .from('project_files')
-          .select('id, is_imported')
-          .eq('id', importSession.fileId)
-          .single();
-
-        if (checkError) {
-          logger.error('Failed to check if file exists', {
-            error: checkError,
-            fileId: importSession.fileId
-          });
-        } else {
-          logger.info('File check result', {
-            exists: !!existingFile,
-            isImported: existingFile?.is_imported,
-            fileId: importSession.fileId
-          });
-        }
-
-        throw updateError;
+        // Continue with completion - file status update is not critical
       }
 
-      // Log the update result for debugging
-      logger.info('Project file updated successfully', { 
-        fileId: importSession.fileId,
-        metadata: importMetadata,
-        response: updateData
+      // Show success toast
+      toast({
+        title: 'Import Complete',
+        description: `Successfully imported ${importResults.totalImported} features${importResults.totalFailed > 0 ? ` (${importResults.totalFailed} failed)` : ''}.`,
+        duration: 5000,
       });
-      
-      // Create a LoaderResult for compatibility with existing code
-      const result: ImportLoaderResult = {
-        features: [],
-        bounds: {
-          minX: importSession?.fullDataset.metadata?.bounds?.[0] || 0,
-          minY: importSession?.fullDataset.metadata?.bounds?.[1] || 0,
-          maxX: importSession?.fullDataset.metadata?.bounds?.[2] || 0,
-          maxY: importSession?.fullDataset.metadata?.bounds?.[3] || 0
-        },
-        layers: [],
-        statistics: {
-          pointCount: importResults.totalImported,
-          layerCount: 1,
-          featureTypes: {}
-        },
-        collectionId: importResults.collectionId,
-        layerId: importResults.layerId,
-        totalImported: importResults.totalImported,
-        totalFailed: importResults.totalFailed
-      };
 
-      await onImportComplete(result);
-      logger.info('Import completed successfully', { result });
+      // Complete the import process
+      setIsProcessing(false);
       
-      // Close dialog
+      try {
+        await onImportComplete({
+          features: [],
+          bounds: {
+            minX: importSession?.fullDataset.metadata?.bounds?.[0] || 0,
+            minY: importSession?.fullDataset.metadata?.bounds?.[1] || 0,
+            maxX: importSession?.fullDataset.metadata?.bounds?.[2] || 0,
+            maxY: importSession?.fullDataset.metadata?.bounds?.[3] || 0
+          },
+          layers: [],
+          statistics: {
+            pointCount: importResults.totalImported,
+            layerCount: 1,
+            featureTypes: {}
+          },
+          collectionId: importResults.collectionId,
+          layerId: importResults.layerId,
+          totalImported: importResults.totalImported,
+          totalFailed: importResults.totalFailed
+        });
+      } catch (completeError) {
+        logger.error('Error in onImportComplete', {
+          error: completeError instanceof Error ? completeError.message : String(completeError)
+        });
+        // Continue with dialog close even if onImportComplete fails
+      }
+
+      // Always try to close the dialog
       onOpenChange(false);
 
     } catch (error) {
       logger.error('Import failed', {
-        error: error instanceof Error ? {
-          message: error.message,
-          stack: error.stack,
-          name: error.name
-        } : error,
-        importSession: {
-          fileId: importSession.fileId,
-          fileName: fileInfo?.name,
-          featureCount: selectedFeatureIds.length,
-          metadata: importSession.fullDataset.metadata
-        }
+        error: error instanceof Error ? error.message : String(error)
       });
       
-      // Show error toast with more details
       toast({
         title: 'Import Failed',
         description: error instanceof Error ? error.message : 'An unknown error occurred during import',
@@ -793,21 +895,28 @@ export function GeoImportDialog({
         duration: 5000,
       });
 
-      // In case of error, create a minimal valid LoaderResult
-      await onImportComplete({
-        features: [],
-        bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
-        layers: [],
-        statistics: {
-          pointCount: 0,
-          layerCount: 0,
-          featureTypes: {}
-        },
-        collectionId: undefined,
-        layerId: undefined,
-        totalImported: undefined,
-        totalFailed: undefined
-      });
+      // Ensure we clean up state and close dialog even on error
+      setIsProcessing(false);
+      
+      try {
+        await onImportComplete({
+          features: [],
+          bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
+          layers: [],
+          statistics: { pointCount: 0, layerCount: 0, featureTypes: {} },
+          collectionId: undefined,
+          layerId: undefined,
+          totalImported: undefined,
+          totalFailed: undefined
+        });
+      } catch (completeError) {
+        logger.error('Error in onImportComplete during error handling', {
+          error: completeError instanceof Error ? completeError.message : String(completeError)
+        });
+      }
+
+      // Always try to close the dialog
+      onOpenChange(false);
     }
   };
 
@@ -825,7 +934,7 @@ export function GeoImportDialog({
       (f.geometry.type === 'Polygon' && JSON.stringify(f.geometry).length > 10000)
     );
     
-    if (featureCount > 1000 || (featureCount > 500 && isComplex)) {
+    if (featureCount > 1000 || (featureCount > 800 && isComplex)) {
       // Use chunked approach for large datasets
       await handleImportLargeFile();
     } else {

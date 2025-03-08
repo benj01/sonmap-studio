@@ -1,5 +1,15 @@
 import { FileTypeUtil } from './file-types';
 import type { FileGroup, CompanionFileConfig } from '../types';
+import { LogManager } from '@/core/logging/log-manager';
+
+const SOURCE = 'FileValidator';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  debug: (message: string, data?: any) => {
+    logManager.debug(SOURCE, message, data);
+  }
+};
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -131,7 +141,7 @@ export class FileValidator {
     const matches = companionBase.toLowerCase() === mainBase.toLowerCase() && 
            companionExt.toLowerCase() === companionExtension.toLowerCase();
            
-    console.log('Matching companion check:', {
+    logger.debug('Matching companion check', {
       mainFile: mainFileName,
       companion: companionFile.name,
       mainBase: mainBase.toLowerCase(),

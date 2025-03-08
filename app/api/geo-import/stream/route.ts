@@ -84,6 +84,15 @@ export async function POST(req: Request) {
 
   try {
     const supabase = await createClient();
+    
+    // Check authentication
+    const { data: { session }, error: authError } = await supabase.auth.getSession();
+    if (authError || !session) {
+      logger.error('Authentication failed', { error: authError });
+      await writeToStream({ type: 'error', message: 'Authentication required' });
+      return closeStreamAndReturn();
+    }
+
     const body = await req.json();
     
     const { 
@@ -118,13 +127,7 @@ export async function POST(req: Request) {
       logger.info(`Processing batch ${batchIndex + 1}/${totalBatches}`, {
         start,
         end,
-        featureCount: batchFeatures.length,
-        sampleFeature: {
-          type: batchFeatures[0].type,
-          geometry: {
-            type: batchFeatures[0].geometry.type
-          }
-        }
+        featureCount: batchFeatures.length
       });
 
       // Call our batch import function
@@ -139,13 +142,7 @@ export async function POST(req: Request) {
         }
       );
 
-      logger.info(`Batch ${batchIndex + 1} response:`, {
-        hasError: !!batchError,
-        errorMessage: batchError?.message,
-        hasResults: !!batchResults,
-        resultsLength: Array.isArray(batchResults) ? batchResults.length : 0
-      });
-
+      // Immediately write any error to the stream
       if (batchError) {
         logger.error('Batch import error', {
           error: batchError,
@@ -163,6 +160,7 @@ export async function POST(req: Request) {
         return await closeStreamAndReturn();
       }
 
+      // Verify we have results
       if (!batchResults || !Array.isArray(batchResults) || batchResults.length === 0) {
         logger.error('No batch results returned', {
           batchIndex,
@@ -170,67 +168,56 @@ export async function POST(req: Request) {
           end,
           resultsReceived: batchResults
         });
+
         await writeToStream({
           type: 'error',
           message: 'No results returned from import function'
         });
+
         return await closeStreamAndReturn();
       }
 
-      const batchResult = batchResults[0];
-      logger.info(`Batch ${batchIndex + 1} result:`, {
-        importedCount: batchResult.imported_count,
-        failedCount: batchResult.failed_count,
-        hasDebugInfo: !!batchResult.debug_info
-      });
+      // Process each result row from the batch
+      for (const result of batchResults) {
+        // Stream notices if any
+        if (result.debug_info?.notices) {
+          for (const notice of result.debug_info.notices) {
+            await writeToStream({
+              type: 'notice',
+              level: notice.level,
+              message: notice.message
+            });
+          }
+        }
 
-      // Store collection and layer IDs from first batch
-      if (batchIndex === 0) {
-        collectionId = batchResult.collection_id;
-        layerId = batchResult.layer_id;
-      }
-
-      totalImported += batchResult.imported_count;
-      totalFailed += batchResult.failed_count;
-
-      // Stream notices and debug info
-      if (batchResult.debug_info?.notices) {
-        for (const notice of batchResult.debug_info.notices) {
+        // Stream feature errors if any
+        if (result.debug_info?.feature_errors?.length > 0) {
           await writeToStream({
-            type: 'notice',
-            level: notice.level,
-            message: notice.message
+            type: 'feature_errors',
+            errors: result.debug_info.feature_errors
           });
         }
-      }
 
-      // Stream feature errors if any
-      if (batchResult.debug_info?.feature_errors?.length > 0) {
+        // Stream batch progress
         await writeToStream({
-          type: 'feature_errors',
-          errors: batchResult.debug_info.feature_errors
+          type: 'batch_complete',
+          batchIndex,
+          totalBatches,
+          importedCount: result.imported_count,
+          failedCount: result.failed_count,
+          collectionId: result.collection_id,
+          layerId: result.layer_id,
+          debug_info: {
+            repaired_count: result.debug_info?.repaired_count || 0,
+            cleaned_count: result.debug_info?.cleaned_count || 0,
+            skipped_count: result.debug_info?.skipped_count || 0,
+            repair_summary: result.debug_info?.repair_summary,
+            skipped_summary: result.debug_info?.skipped_summary
+          }
         });
       }
 
-      // Stream batch completion
-      await writeToStream({
-        type: 'batch_complete',
-        batchIndex,
-        totalBatches,
-        importedCount: batchResult.imported_count,
-        failedCount: batchResult.failed_count,
-        collectionId: batchResult.collection_id,
-        layerId: batchResult.layer_id,
-        debug_info: {
-          repaired_count: batchResult.debug_info?.repaired_count || 0,
-          cleaned_count: batchResult.debug_info?.cleaned_count || 0,
-          skipped_count: batchResult.debug_info?.skipped_count || 0,
-          repair_summary: batchResult.debug_info?.repair_summary,
-          skipped_summary: batchResult.debug_info?.skipped_summary
-        }
-      });
-
-      // Add a small delay between batches to prevent overwhelming the connection
+      // Add a small delay between batches to allow for stream processing
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 

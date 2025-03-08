@@ -116,19 +116,39 @@ export class LogManager {
   }
 
   private shouldRateLimit(key: string): boolean {
-    // Only rate limit DEBUG level logs and specific noisy patterns
-    if (!key.includes('debug') && 
-        !key.includes('cleanup') && 
-        !key.includes('lifecycle')) {
+    // Rate limit only specific noisy patterns
+    const noisyPatterns = [
+      'Matching companion check',
+      'Processing files',
+      'Files processed',
+      'Loading files',
+      'cleanup',
+      'lifecycle'
+    ];
+
+    // Never rate limit these important messages
+    const importantPatterns = [
+      'Import starting',
+      'Import complete',
+      'Batch complete',
+      'Feature errors',
+      'Upload progress',
+      'Stream complete'
+    ];
+
+    if (importantPatterns.some(pattern => key.includes(pattern))) {
       return false;
     }
 
-    const now = Date.now();
-    const lastLog = this.rateLimits.get(key);
-    if (lastLog && now - lastLog < this.RATE_LIMIT_MS) {
-      return true;
+    if (noisyPatterns.some(pattern => key.includes(pattern))) {
+      const now = Date.now();
+      const lastLog = this.rateLimits.get(key);
+      if (lastLog && now - lastLog < this.RATE_LIMIT_MS) {
+        return true;
+      }
+      this.rateLimits.set(key, now);
     }
-    this.rateLimits.set(key, now);
+
     return false;
   }
 
@@ -293,15 +313,29 @@ export class LogManager {
     }
 
     this.logs.push(entry);
-    // Also output to console for immediate feedback
-    const consoleMethod = entry.level === 'error' ? 'error' : 
-                         entry.level === 'warn' ? 'warn' : 
-                         entry.level === 'info' ? 'info' : 'debug';
     
-    if (entry.data) {
-      console[consoleMethod](`[${entry.source}] ${entry.message}`, entry.data);
-    } else {
-      console[consoleMethod](`[${entry.source}] ${entry.message}`);
+    // Show important logs in console
+    const isImportant = entry.level === 'error' || 
+                       entry.level === 'warn' ||
+                       entry.message.includes('Import') ||
+                       entry.message.includes('Batch') ||
+                       entry.message.includes('Upload');
+
+    if (isImportant) {
+      const consoleMethod = entry.level === 'error' ? 'error' : 
+                          entry.level === 'warn' ? 'warn' : 'info';
+      
+      if (entry.data) {
+        // For feature arrays, only show count
+        const data = { ...entry.data };
+        if (data.features && Array.isArray(data.features)) {
+          data.featureCount = data.features.length;
+          delete data.features;
+        }
+        console[consoleMethod](`[${entry.source}] ${entry.message}`, data);
+      } else {
+        console[consoleMethod](`[${entry.source}] ${entry.message}`);
+      }
     }
 
     // Trim old logs if we exceed MAX_LOGS
