@@ -26,6 +26,22 @@ export function createClient() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      db: {
+        schema: 'public',
+      },
+      global: {
+        // Enable notice capturing
+        fetch: (url, options) => {
+          return fetch(url, {
+            ...options,
+            headers: {
+              ...options?.headers,
+              'X-Client-Info': 'sonmap-studio',
+              'Prefer': 'return=representation,count=exact,headers=notice'
+            }
+          })
+        }
+      },
       cookies: {
         get(name: string) {
           try {
