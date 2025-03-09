@@ -35,144 +35,146 @@ The geodata import pipeline has been implemented with a focus on Shapefiles and 
 
 ## Technical Implementation
 
-### File Upload Flow
+### Component Architecture
 
 ```typescript
 // Component hierarchy
-FileManager (components/files/components/manager/index.tsx)
-  → Toolbar (File Selection)
-  → FileList (Grid Display)
-    → FileItem (Individual File Card)
-      → Actions (Import, Download, Delete)
-      → ImportStatus (Badge)
+GeoImportDialog (components/geo-import/components/geo-import-dialog.tsx)
+  → FileInfoCard (Display file metadata)
+  → GeoFileUpload (File processing and preview)
+  → MapPreview (Feature visualization)
+  → ImportDetailsCard (Import metadata display)
 ```
 
-### File Processing Pipeline
+### Import Processing Pipeline
 
-1. **File Selection**
+1. **File Selection & Preview**
    ```typescript
-   interface FileGroup {
-     mainFile: File;
-     companions: File[];  // Related files for shapefiles
-   }
-   ```
-
-2. **Validation & Processing**
-   ```typescript
-   interface ProcessedFiles {
-     main: {
-       file: File;
-       isValid: boolean;
-       error?: string;
+   interface ImportSession {
+     fileId: string;
+     status: 'processing' | 'ready' | 'error';
+     fullDataset: {
+       features: ImportGeoFeature[];
+       metadata: {
+         featureCount: number;
+         geometryTypes: string[];
+         srid?: number;
+         bounds?: number[];
+         properties: string[];
+       };
      };
-     companions: ProcessedFile[];
-   }
-   ```
-
-3. **Upload Process**
-   ```typescript
-   interface UploadingFile {
-     group: FileGroup;
-     progress: number;  // Real-time upload progress
-   }
-   ```
-
-4. **Import Status**
-   ```typescript
-   interface ProjectFile {
-     id: string;
-     name: string;
-     size: number;
-     is_imported: boolean;  // Tracks import status
-     import_metadata?: {
-       imported_count: number;
-       failed_count: number;
-       imported_at: string;
+     previewDataset?: {
+       features: LoaderGeoFeature[];
      };
+   }
+   ```
+
+2. **Stream Processing**
+   ```typescript
+   interface StreamProcessingOptions {
+     onProgress?: (progress: number, message: string) => void;
+     onComplete?: (results: ImportResult) => void;
+   }
+
+   interface ImportResult {
+     collectionId: string;
+     layerId: string;
+     totalImported: number;
+     totalFailed: number;
+   }
+   ```
+
+3. **Import Status**
+   ```typescript
+   interface ImportMetadata {
+     collection_id: string;
+     layer_id: string;
+     imported_count: number;
+     failed_count: number;
+     imported_at: string;
    }
    ```
 
 ### UI Components
 
-#### File Upload
-- Clear "Select Files for Upload" button
-- Drag-and-drop zone with visual feedback
-- Support for multiple file selection
-- Progress tracking during upload
-- Immediate visual feedback after upload completion
-
-#### File Display
+#### File Information Display
 ```typescript
-// File card structure
-interface FileCard {
-  mainInfo: {
-    name: string;
-    size: string;
-    type: string;
-    isImported: boolean;  // Controls badge visibility
-  };
-  companions?: {
-    count: number;
-    files: CompanionFile[];
-  };
-  actions: {
-    primary: 'import' | null;  // Null when imported
-    secondary: ['download', 'delete'];
-  };
+interface FileInfoCardProps {
+  name: string;
+  size: number;
+  type: string;
 }
 ```
 
-#### Import Action
-- Prominent "Import" button for each file
-- Button disappears after successful import
-- "Imported" badge appears after successful import
-- Clear visual hierarchy:
-  1. File information and import status
-  2. Primary action (Import) if not imported
-  3. Utility actions (Download, Delete)
-- Companion file management with expandable view
-
-## File Type Support
-
-### 1. Shapefiles
-- Automatic companion file grouping (.shp, .dbf, .shx, .prj)
-- Validation of required companions
-- Group upload with progress tracking
-- Metadata extraction from .dbf
-- Import status tracking per file
-
-### 2. GeoJSON
-- Direct validation of GeoJSON structure
-- Feature collection support
-- Property preservation
-- Coordinate validation
-- Support for QGIS metadata companion files (.qmd)
-  - Automatic coordinate system detection
-  - Optional companion file
-  - XML content validation
-- Import status tracking per file
-
-## Error Handling
-
-### Upload Validation
+#### Import Details Display
 ```typescript
-interface ValidationError {
-  code: string;        // e.g., 'INVALID_TYPE'
-  message: string;     // User-friendly message
-  details?: string;    // Technical details
-  file?: string;       // Affected file
+interface ImportDetailsCardProps {
+  importSession: ImportSession;
+  selectedFeatureIds: number[];
 }
 ```
 
-### Progress Tracking
-```typescript
-interface ProgressEvent {
-  stage: 'upload' | 'processing' | 'import';
-  progress: number;    // 0-100
-  file: string;
-  details?: string;
-}
-```
+### Stream Processing
+
+The import process now uses a streaming approach for better performance and memory management:
+
+1. **Batch Processing**
+   - Features are processed in configurable batch sizes
+   - Each batch is transformed and imported separately
+   - Progress is tracked and reported in real-time
+
+2. **Error Handling**
+   - Detailed error logging for each feature
+   - Batch-level error recovery
+   - Stream timeout handling
+   - Comprehensive error reporting
+
+3. **Progress Tracking**
+   ```typescript
+   interface BatchProgress {
+     batchIndex: number;
+     totalBatches: number;
+     importedCount: number;
+     failedCount: number;
+   }
+   ```
+
+4. **Event Types**
+   ```typescript
+   type ImportEvent =
+     | { type: 'batch_complete'; batchIndex: number; /* ... */ }
+     | { type: 'import_complete'; finalStats: ImportResult }
+     | { type: 'notice'; level: string; message: string }
+     | { type: 'feature_errors'; errors: string[] }
+     | { type: 'error'; message: string };
+   ```
+
+### Logging System
+
+Enhanced logging capabilities for better debugging and monitoring:
+
+1. **Log Management**
+   - Centralized log collection
+   - Log level filtering
+   - Source-specific logging
+   - Export functionality
+
+2. **Log Types**
+   ```typescript
+   interface LogEntry {
+     timestamp: string;
+     source: string;
+     level: LogLevel;
+     message: string;
+     data?: any;
+   }
+   ```
+
+3. **Debug Tools**
+   - Log download functionality
+   - Clear logs option
+   - Real-time log viewing
+   - Structured log format
 
 ## Best Practices
 
@@ -198,19 +200,26 @@ interface ProgressEvent {
 
 ## Next Steps
 
-1. **Enhanced Preview** (Q2 2024)
-   - Map preview integration
-   - Feature selection interface
-   - Property inspection
-   - Coordinate system handling
+1. **Enhanced Preview** (Completed)
+   - ✓ Map preview integration
+   - ✓ Feature selection interface
+   - ✓ Property inspection
+   - ✓ Basic coordinate system handling
 
-2. **Additional File Types** (Q3 2024)
-   - DXF/DWG support
-   - CSV with coordinate parsing
-   - KML/KMZ handling
+2. **Stream Processing** (Completed)
+   - ✓ Batch processing implementation
+   - ✓ Real-time progress tracking
+   - ✓ Error handling and recovery
+   - ✓ Memory optimization
 
-3. **Advanced Features** (Q4 2024)
-   - Batch import capabilities
-   - Advanced filtering options
-   - Custom coordinate system support
-   - Server-side processing for large files 
+3. **UI Improvements** (Completed)
+   - ✓ Modular component architecture
+   - ✓ Enhanced error feedback
+   - ✓ Progress visualization
+   - ✓ Debug tools integration
+
+4. **Future Enhancements** (Q3-Q4 2024)
+   - Advanced coordinate system handling
+   - Custom projection support
+   - Additional file format support
+   - Performance optimizations for large datasets 

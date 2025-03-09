@@ -34,9 +34,11 @@ sonmap-studio/
 │   │
 │   └── geo-import/         # Geodata import components
 │       ├── components/
-│       │   ├── geo-import-dialog.tsx
-│       │   ├── geo-file-upload.tsx
-│       │   ├── map-preview/         # Map preview components
+│       │   ├── geo-import-dialog.tsx    # Main import dialog
+│       │   ├── geo-file-upload.tsx      # File upload handling
+│       │   ├── file-info-card.tsx       # File information display
+│       │   ├── import-details-card.tsx  # Import metadata display
+│       │   ├── map-preview/             # Map preview components
 │       │   │   ├── index.tsx
 │       │   │   ├── map-container.tsx
 │       │   │   └── layer-controls.tsx
@@ -47,12 +49,12 @@ sonmap-studio/
 │       │   └── property-mapper/     # Property mapping UI (planned)
 │       │       ├── index.tsx
 │       │       └── field-mapper.tsx
-│       ├── hooks/
-│       │   ├── use-geo-import.ts
-│       │   ├── use-preview.ts
-│       │   └── use-selection.ts
+│       ├── services/
+│       │   └── import-stream.ts         # Stream processing service
+│       ├── types/
+│       │   └── index.ts                 # Type definitions
 │       └── utils/
-│           └── preview-utils.ts
+│           └── index.ts                 # Utility functions
 │
 ├── core/                   # Core business logic
 │   ├── processors/         # File format parsers
@@ -111,12 +113,14 @@ Handles basic file operations and UI:
 - Real-time status updates
 
 ### Geodata Import (`components/geo-import/`)
-Manages the import workflow:
-- Import dialog with file preview
-- Map preview with feature selection
-- Feature count and metadata display
-- Progress tracking and error handling
-- Logging system integration
+Manages the import workflow with modular components:
+- Main import dialog with modular UI components
+- Separate components for file info and import details
+- Dedicated stream processing service
+- Centralized type definitions and utilities
+- Enhanced logging and error handling
+- Real-time progress tracking
+- Modular map preview with feature selection
 
 ## Core Modules
 
@@ -186,13 +190,14 @@ Import session management:
 
 ### Implemented
 - File management components
-- Import dialog with preview
-- Shapefile and GeoJSON support
-- File upload with progress
-- Import status tracking
-- Logging system
-- Basic map preview
-- Feature selection UI
+- Modular import dialog components
+- Stream-based import processing
+- Enhanced logging system
+- File information display
+- Import details visualization
+- Map preview with feature selection
+- Real-time progress tracking
+- Error handling and recovery
 
 ### In Progress
 - Enhanced map preview features
