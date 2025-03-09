@@ -124,7 +124,9 @@ export async function POST(req: Request) {
       const end = Math.min(start + batchSize, totalFeatures);
       const batchFeatures = features.slice(start, end);
 
-      logger.info(`Processing batch ${batchIndex + 1}/${totalBatches}`, {
+      logger.info('Processing batch', {
+        batchIndex: batchIndex + 1,
+        totalBatches,
         start,
         end,
         featureCount: batchFeatures.length
@@ -179,13 +181,41 @@ export async function POST(req: Request) {
 
       // Process each result row from the batch
       for (const result of batchResults) {
+        // Store collection and layer IDs from first successful result if not already set
+        if (!collectionId && result.collection_id) {
+          collectionId = result.collection_id;
+        }
+        if (!layerId && result.layer_id) {
+          layerId = result.layer_id;
+        }
+
+        // Update running totals
+        totalImported += result.imported_count;
+        totalFailed += result.failed_count;
+
         // Stream notices if any
         if (result.debug_info?.notices) {
           for (const notice of result.debug_info.notices) {
+            // Log to server logs
+            logger.info(notice.message, {
+              level: notice.level,
+              batchIndex,
+              totalBatches,
+              currentImported: totalImported,
+              currentFailed: totalFailed
+            });
+            
+            // Forward to client
             await writeToStream({
               type: 'notice',
               level: notice.level,
-              message: notice.message
+              message: notice.message,
+              details: {
+                batchIndex,
+                totalBatches,
+                currentImported: totalImported,
+                currentFailed: totalFailed
+              }
             });
           }
         }
@@ -215,32 +245,53 @@ export async function POST(req: Request) {
             skipped_summary: result.debug_info?.skipped_summary
           }
         });
+
+        // If this is the final batch, send the import_complete event
+        if (batchIndex === totalBatches - 1) {
+          // Log completion details
+          logger.info('Import process completed', {
+            totalFeatures,
+            totalImported,
+            totalFailed,
+            expectedFeatureCount: features.length
+          });
+
+          // Send final completion message with all stats
+          await writeToStream({
+            type: 'import_complete',
+            totalBatches,
+            finalStats: {
+              totalImported,
+              totalFailed,
+              collectionId,
+              layerId,
+              actualFeatureCount: totalImported + totalFailed,
+              repaired_count: result.debug_info?.repaired_count || 0,
+              cleaned_count: result.debug_info?.cleaned_count || 0,
+              skipped_count: result.debug_info?.skipped_count || 0,
+              repair_summary: result.debug_info?.repair_summary,
+              skipped_summary: result.debug_info?.skipped_summary
+            }
+          });
+
+          // Add a small delay to ensure the client receives the completion event
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
+
+      // Log batch completion with running totals
+      logger.info('Batch completed', {
+        batchNumber: batchIndex + 1,
+        totalBatches,
+        currentTotalImported: totalImported,
+        currentTotalFailed: totalFailed,
+        collectionId,
+        layerId
+      });
 
       // Add a small delay between batches to allow for stream processing
       await new Promise(resolve => setTimeout(resolve, 100));
     }
-
-    // Send final completion message with actual counts
-    await writeToStream({
-      type: 'import_complete',
-      totalBatches,
-      finalStats: {
-        totalImported,
-        totalFailed,
-        collectionId,
-        layerId,
-        actualFeatureCount: totalImported + totalFailed
-      }
-    });
-
-    logger.info('Import completed', {
-      totalFeatures,
-      totalImported,
-      totalFailed,
-      actualFeatureCount: totalImported + totalFailed,
-      expectedFeatureCount: features.length
-    });
 
     return await closeStreamAndReturn();
 

@@ -195,7 +195,14 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleImportComplete = async (result: any) => {
     try {
-      console.info('Import completed', result);
+      // Add detailed console logging
+      console.log('🎉 Import completed successfully!', {
+        totalImported: result.totalImported,
+        totalFailed: result.totalFailed,
+        collectionId: result.collectionId,
+        layerId: result.layerId,
+        timestamp: new Date().toISOString()
+      });
       
       // Don't close the dialog until we've updated everything
       const supabase = createClient();
@@ -213,6 +220,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
+      console.error('❌ Import completion error:', errorMessage);
       onError?.(errorMessage);
     }
   };

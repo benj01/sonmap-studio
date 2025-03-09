@@ -41,11 +41,6 @@ export async function processImportStream(
   try {
     logger.info('Starting stream processing');
     while (true) {
-      if (importCompleted) {
-        logger.info('Breaking loop because importCompleted is true');
-        break;
-      }
-
       let readResult;
       try {
         readResult = await reader.read();
@@ -106,15 +101,28 @@ export async function processImportStream(
                   }
                 }
 
+                // Add browser console logging for import completion
+                console.log('✨ Import stream processing complete:', {
+                  totalImported: importResults.totalImported,
+                  totalFailed: importResults.totalFailed,
+                  collectionId: importResults.collectionId,
+                  layerId: importResults.layerId,
+                  timestamp: new Date().toISOString()
+                });
+
                 importCompleted = true;
                 if (options.onComplete) {
                   options.onComplete(importResults);
                 }
-                reader.cancel();
                 break;
                 
               case 'notice':
                 logger.info(`Import ${eventData.level}:`, eventData.message);
+                // Also log to browser console with appropriate icon
+                const icon = eventData.level === 'info' ? 'ℹ️' : 
+                           eventData.level === 'warning' ? '⚠️' : 
+                           eventData.level === 'error' ? '❌' : '📝';
+                console.log(`${icon} ${eventData.message}`, eventData.details);
                 break;
                 
               case 'feature_errors':

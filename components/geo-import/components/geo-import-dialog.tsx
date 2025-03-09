@@ -15,6 +15,7 @@ import { createClient } from '@/utils/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
 import { processImportStream } from '../services/import-stream';
 import { GeoImportDialogProps, ImportSession } from '../types';
+import { TestImport } from './test-import';
 
 const SOURCE = 'GeoImportDialog';
 const logManager = LogManager.getInstance();
@@ -314,6 +315,10 @@ export function GeoImportDialog({
         </DialogHeader>
         
         <div className="grid gap-4 py-4">
+          <div className="flex justify-end">
+            <TestImport projectId={projectId} />
+          </div>
+
           {fileInfo ? (
             <>
               <FileInfoCard
