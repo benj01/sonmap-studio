@@ -13,18 +13,21 @@ export const createClient = () => {
     {
       cookies: {
         get(name: string) {
+          if (typeof window === 'undefined') return undefined
           return document.cookie
             .split('; ')
             .find((row) => row.startsWith(`${name}=`))
             ?.split('=')[1]
         },
         set(name: string, value: string, options: { path?: string; maxAge?: number; domain?: string; secure?: boolean }) {
+          if (typeof window === 'undefined') return
           const encodedValue = encodeURIComponent(value)
           document.cookie = `${name}=${encodedValue}${options?.path ? `; path=${options.path}` : '; path=/'}${
             options?.maxAge ? `; max-age=${options.maxAge}` : ''
           }${options?.domain ? `; domain=${options.domain}` : ''}; secure; samesite=lax`
         },
         remove(name: string, options: { path?: string }) {
+          if (typeof window === 'undefined') return
           document.cookie = `${name}=; max-age=0${options?.path ? `; path=${options.path}` : '; path=/'}`
         },
       },

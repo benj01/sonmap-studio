@@ -36,12 +36,14 @@ DECLARE
   v_timeout_seconds INTEGER := 60;
   v_feature_errors JSONB := '[]'::JSONB;
   v_total_features INTEGER;
-  v_batch_features JSONB[];
+  v_batch_start INTEGER;
+  v_batch_end INTEGER;
   v_batch_size INTEGER;
   v_batch_count INTEGER;
   v_current_batch INTEGER;
   v_notices JSONB := '[]'::JSONB;
   v_debug_info JSONB;
+  v_target_dims INTEGER;
 BEGIN
   -- Get total feature count and log start
   v_total_features := jsonb_array_length(p_features);
@@ -49,8 +51,13 @@ BEGIN
   v_batch_count := CEIL(v_total_features::float / v_batch_size);
   v_current_batch := 0;
   
-  RAISE NOTICE 'Starting import of % features with SRID % in % batches', 
+  RAISE WARNING 'Starting import of % features with SRID % in % batches', 
     v_total_features, p_source_srid, v_batch_count;
+
+  -- Debug: Log the first feature to see its structure
+  IF v_total_features > 0 THEN
+    RAISE WARNING 'First feature structure: %', p_features->0;
+  END IF;
   
   -- Create collection and layer
   INSERT INTO feature_collections (name, project_file_id)
@@ -61,7 +68,18 @@ BEGIN
   VALUES (p_collection_name, v_collection_id, 'vector')
   RETURNING id INTO v_layer_id;
 
-  RAISE NOTICE 'Created collection % and layer %', v_collection_id, v_layer_id;
+  -- Get target dimension from geo_features table
+  SELECT ST_NDims(geometry) INTO v_target_dims 
+  FROM geo_features 
+  LIMIT 1;
+
+  IF v_target_dims IS NULL THEN
+    -- If table is empty, assume 3D
+    v_target_dims := 3;
+  END IF;
+
+  RAISE WARNING 'Created collection % and layer %. Target geometry dimensions: %', 
+    v_collection_id, v_layer_id, v_target_dims;
 
   -- Add initial notice
   v_notices := v_notices || jsonb_build_object(
@@ -71,38 +89,49 @@ BEGIN
 
   -- Process features in batches
   FOR v_current_batch IN 0..v_batch_count-1 LOOP
-    -- Extract current batch of features
-    v_batch_features := ARRAY(
-      SELECT value 
-      FROM jsonb_array_elements(p_features) WITH ORDINALITY AS t(value, idx)
-      WHERE idx > v_current_batch * v_batch_size 
-        AND idx <= (v_current_batch + 1) * v_batch_size
-    );
+    v_batch_start := v_current_batch * v_batch_size;
+    v_batch_end := LEAST(v_batch_start + v_batch_size, v_total_features);
+
+    RAISE WARNING 'Processing batch % of % (features % to %)', 
+      v_current_batch + 1, v_batch_count, v_batch_start, v_batch_end - 1;
 
     -- Process each feature in the current batch
-    FOR v_feature IN SELECT jsonb_array_elements(jsonb_build_array(v_batch_features))
-    LOOP
+    FOR i IN v_batch_start..v_batch_end-1 LOOP
       v_start_time := clock_timestamp();
+      v_feature := p_features->i;
       
-      -- Get geometry type
-      v_geom_type := v_feature->'geometry'->>'type';
-      RAISE NOTICE 'Processing feature with type %', v_geom_type;
+      -- Get geometry type and debug the geometry object
+      RAISE WARNING 'Processing feature % - Full feature: %', i + 1, v_feature;
       
       -- Use ST_GeomFromGeoJSON for initial parsing
       BEGIN
+        -- Debug: Check if we have valid GeoJSON geometry
+        IF v_feature->'geometry' IS NULL THEN
+          RAISE WARNING 'Feature % has no geometry object', i + 1;
+          CONTINUE;
+        END IF;
+
         v_raw_geometry := ST_GeomFromGeoJSON(v_feature->'geometry');
         
+        IF v_raw_geometry IS NULL THEN
+          RAISE WARNING 'ST_GeomFromGeoJSON returned NULL for feature %', i + 1;
+          CONTINUE;
+        END IF;
+
+        RAISE WARNING 'Successfully parsed geometry for feature %: %', i + 1, ST_AsText(v_raw_geometry);
+
         -- First clean duplicate vertices
         v_cleaned_geometry := ST_RemoveRepeatedPoints(v_raw_geometry);
         IF NOT ST_Equals(v_cleaned_geometry, v_raw_geometry) THEN
           v_cleaned_count := v_cleaned_count + 1;
           v_raw_geometry := v_cleaned_geometry;
-          RAISE NOTICE 'Cleaned duplicate vertices';
+          RAISE WARNING 'Cleaned duplicate vertices for feature %', i + 1;
         END IF;
         
         -- Check if geometry is valid
         IF NOT ST_IsValid(v_raw_geometry) THEN
-          RAISE NOTICE 'Invalid geometry detected: %', ST_IsValidReason(v_raw_geometry);
+          RAISE WARNING 'Invalid geometry detected for feature %: %', 
+            i + 1, ST_IsValidReason(v_raw_geometry);
           
           BEGIN
             -- First try a zero buffer to fix minor self-intersections
@@ -110,9 +139,9 @@ BEGIN
             IF NOT ST_IsValid(v_geometry) THEN
               -- If still invalid, use ST_MakeValid
               v_geometry := ST_MakeValid(v_raw_geometry);
-              RAISE NOTICE 'Used ST_MakeValid to repair geometry';
+              RAISE WARNING 'Used ST_MakeValid to repair geometry for feature %', i + 1;
             ELSE
-              RAISE NOTICE 'Used ST_Buffer(0) to repair geometry';
+              RAISE WARNING 'Used ST_Buffer(0) to repair geometry for feature %', i + 1;
             END IF;
             
             v_geometry := ST_Transform(
@@ -120,17 +149,17 @@ BEGIN
               4326
             );
             v_repaired_count := v_repaired_count + 1;
-            RAISE NOTICE 'Transformed geometry to SRID 4326';
+            RAISE WARNING 'Transformed geometry to SRID 4326 for feature %', i + 1;
           EXCEPTION WHEN OTHERS THEN
             -- Log detailed error including self-intersection reason
             v_skipped_count := v_skipped_count + 1;
             v_feature_errors := v_feature_errors || jsonb_build_object(
-              'feature_index', v_imported_count + v_failed_count,
+              'feature_index', i,
               'error', SQLERRM,
               'error_state', SQLSTATE,
               'invalid_reason', ST_IsValidReason(v_raw_geometry)
             );
-            RAISE NOTICE 'Failed to repair geometry: %', SQLERRM;
+            RAISE WARNING 'Failed to repair geometry for feature %: %', i + 1, SQLERRM;
             CONTINUE;
           END;
         ELSE
@@ -139,8 +168,23 @@ BEGIN
             ST_SetSRID(v_raw_geometry, p_source_srid),
             4326
           );
-          RAISE NOTICE 'Geometry is valid, transformed to SRID 4326';
+          RAISE WARNING 'Geometry is valid, transformed to SRID 4326 for feature %', i + 1;
         END IF;
+
+        -- Debug: Check final geometry before insert
+        IF v_geometry IS NULL THEN
+          RAISE WARNING 'Final geometry is NULL for feature % before insert', i + 1;
+          CONTINUE;
+        END IF;
+
+        -- Ensure geometry has correct dimensions
+        IF ST_NDims(v_geometry) < v_target_dims THEN
+          RAISE WARNING 'Adding Z coordinate (0) to geometry for feature %', i + 1;
+          v_geometry := ST_Force3D(v_geometry);
+        END IF;
+
+        RAISE WARNING 'Final geometry for feature % (dims: %): %', 
+          i + 1, ST_NDims(v_geometry), ST_AsText(v_geometry);
 
         -- Insert the feature
         INSERT INTO geo_features (
@@ -157,7 +201,7 @@ BEGIN
         );
         
         v_imported_count := v_imported_count + 1;
-        RAISE NOTICE 'Successfully imported feature % of %', v_imported_count, v_total_features;
+        RAISE WARNING 'Successfully imported feature % of %', v_imported_count, v_total_features;
 
       EXCEPTION WHEN OTHERS THEN
         v_failed_count := v_failed_count + 1;
@@ -166,11 +210,11 @@ BEGIN
         
         -- Record specific feature errors
         v_feature_errors := v_feature_errors || jsonb_build_object(
-          'feature_index', v_imported_count + v_failed_count,
+          'feature_index', i,
           'error', v_last_error,
           'error_state', v_last_state
         );
-        RAISE NOTICE 'Failed to process feature: %', v_last_error;
+        RAISE WARNING 'Failed to process feature %: % (State: %)', i + 1, v_last_error, v_last_state;
       END;
     END LOOP;
 
@@ -208,7 +252,7 @@ BEGIN
     v_layer_id
   );
 
-  RAISE NOTICE 'Import complete. Imported: %, Failed: %, Repaired: %, Cleaned: %, Skipped: %',
+  RAISE WARNING 'Import complete. Imported: %, Failed: %, Repaired: %, Cleaned: %, Skipped: %',
     v_imported_count, v_failed_count, v_repaired_count, v_cleaned_count, v_skipped_count;
 
   -- Add final completion notice

@@ -159,7 +159,7 @@ export function GeoImportDialog({
   }, [projectId, open, memoizedFileInfo]);
 
   const handleImportSessionCreated = async (session: ImportSession) => {
-    logger.debug('Import session created', {
+    logger.debug('Import session received by dialog', {
       fileId: session.fileId,
       status: session.status,
       featureCount: session.fullDataset?.features.length || 0,
