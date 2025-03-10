@@ -31,7 +31,7 @@ export class LogManager {
   private logLevel: LogLevel = LogLevel.INFO; // Default to INFO level
   private sourceFilters: Map<string, LogLevel> = new Map(); // Source-specific log levels
   private rateLimits: Map<string, number> = new Map(); // Track last log time for rate limiting
-  private readonly RATE_LIMIT_MS = 1000; // Minimum ms between similar logs
+  private readonly RATE_LIMIT_MS = process.env.NODE_ENV === 'development' ? 100 : 1000; // Shorter rate limit in development
 
   private constructor() {}
 
@@ -39,15 +39,26 @@ export class LogManager {
    * Configure specific components to use debug logging
    */
   public configureDefaultSources() {
-    // Keep important components at INFO level for debugging
-    this.sourceFilters.set('MapView', LogLevel.INFO);
-    this.sourceFilters.set('useLayerData', LogLevel.INFO);
-    this.sourceFilters.set('LayerItem', LogLevel.INFO);
-    this.sourceFilters.set('MapContext', LogLevel.INFO);
+    // Core functionality - keep at INFO for important events
+    this.sourceFilters.set('Auth', LogLevel.INFO);
+    this.sourceFilters.set('FileManager', LogLevel.INFO);
+    this.sourceFilters.set('ImportManager', LogLevel.INFO);
     
-    // Less critical components can stay at WARN
+    // UI components - set to WARN to reduce noise
+    this.sourceFilters.set('MapView', LogLevel.WARN);
     this.sourceFilters.set('LayerList', LogLevel.WARN);
-    this.sourceFilters.set('FileManager', LogLevel.WARN);
+    this.sourceFilters.set('LayerItem', LogLevel.WARN);
+    this.sourceFilters.set('MapContext', LogLevel.WARN);
+    this.sourceFilters.set('Toolbar', LogLevel.WARN);
+    
+    // Development components - set to DEBUG only in development
+    if (process.env.NODE_ENV === 'development') {
+      this.sourceFilters.set('useLayerData', LogLevel.DEBUG);
+      this.sourceFilters.set('useMapbox', LogLevel.DEBUG);
+    } else {
+      this.sourceFilters.set('useLayerData', LogLevel.WARN);
+      this.sourceFilters.set('useMapbox', LogLevel.WARN);
+    }
   }
 
   /**
@@ -116,14 +127,30 @@ export class LogManager {
   }
 
   private shouldRateLimit(key: string): boolean {
-    // Rate limit only specific noisy patterns
+    // Rate limit these noisy patterns
     const noisyPatterns = [
+      'Loading existing files',
+      'Files loaded',
+      'Loading files',
+      'No files returned',
+      'No project ID provided',
       'Matching companion check',
       'Processing files',
       'Files processed',
-      'Loading files',
       'cleanup',
-      'lifecycle'
+      'lifecycle',
+      'Map initialization',
+      'Map style loaded',
+      'Map fully loaded',
+      'Auth state change',
+      'Initial session check',
+      'Layer loaded',
+      'Layer setup',
+      'Downloading file',
+      'Geometry cleaned',
+      'Geometry repaired',
+      'Found self-intersections',
+      'Preview coordinate transformation'
     ];
 
     // Never rate limit these important messages
@@ -133,9 +160,27 @@ export class LogManager {
       'Batch complete',
       'Feature errors',
       'Upload progress',
-      'Stream complete'
+      'Stream complete',
+      'Import failed',
+      'Upload failed',
+      'Error processing',
+      'Error importing',
+      'Error transforming',
+      'Error loading files'
     ];
 
+    // In development, treat all logs as potentially duplicated due to strict mode
+    if (process.env.NODE_ENV === 'development') {
+      const now = Date.now();
+      const lastLog = this.rateLimits.get(key);
+      if (lastLog && now - lastLog < this.RATE_LIMIT_MS) {
+        return true;
+      }
+      this.rateLimits.set(key, now);
+      return false;
+    }
+
+    // In production, only rate limit noisy patterns
     if (importantPatterns.some(pattern => key.includes(pattern))) {
       return false;
     }
@@ -306,101 +351,171 @@ export class LogManager {
   }
 
   private addLog(entry: LogEntry) {
-    // Rate limit similar logs
-    const rateKey = `${entry.source}:${entry.level}:${entry.message}`;
-    if (this.shouldRateLimit(rateKey)) {
-      return;
-    }
-
-    this.logs.push(entry);
-    
-    // Show important logs in console
-    const isImportant = entry.level === 'error' || 
-                       entry.level === 'warn' ||
-                       entry.message.includes('Import') ||
-                       entry.message.includes('Batch') ||
-                       entry.message.includes('Upload');
-
-    if (isImportant) {
-      const consoleMethod = entry.level === 'error' ? 'error' : 
-                          entry.level === 'warn' ? 'warn' : 'info';
-      
-      if (entry.data) {
-        // For feature arrays, only show count
-        const data = { ...entry.data };
-        if (data.features && Array.isArray(data.features)) {
-          data.featureCount = data.features.length;
-          delete data.features;
-        }
-        console[consoleMethod](`[${entry.source}] ${entry.message}`, data);
-      } else {
-        console[consoleMethod](`[${entry.source}] ${entry.message}`);
+    try {
+      // Validate entry
+      if (!entry || typeof entry !== 'object') {
+        console.warn('Invalid log entry:', entry);
+        return;
       }
-    }
 
-    // Trim old logs if we exceed MAX_LOGS
-    if (this.logs.length > this.MAX_LOGS) {
-      this.logs = this.logs.slice(-this.MAX_LOGS);
+      // Validate and sanitize message
+      if (!entry.message || typeof entry.message !== 'string') {
+        console.warn('Invalid message in log entry:', entry);
+        return;
+      }
+
+      // Validate source
+      if (!entry.source || typeof entry.source !== 'string') {
+        console.warn('Invalid source in log entry:', entry);
+        return;
+      }
+
+      // Rate limit similar logs
+      const rateKey = `${entry.source}:${entry.level}:${entry.message}`;
+      if (this.shouldRateLimit(rateKey)) {
+        return;
+      }
+
+      // Add to logs array
+      this.logs.push(entry);
+      
+      // Show important logs in console
+      const isImportant = entry.level === 'error' || 
+                       entry.level === 'warn' ||
+                       (typeof entry.message === 'string' && (
+                         entry.message.includes('Import') ||
+                         entry.message.includes('Batch') ||
+                         entry.message.includes('Upload')
+                       ));
+
+      if (isImportant) {
+        const consoleMethod = entry.level === 'error' ? 'error' : 
+                          entry.level === 'warn' ? 'warn' : 'info';
+        
+        let logData = undefined;
+        if (entry.data) {
+          try {
+            // For feature arrays, only show count
+            const data = { ...entry.data };
+            if (data?.features && Array.isArray(data.features)) {
+              data.featureCount = data.features.length;
+              delete data.features;
+            }
+            logData = data;
+          } catch (err) {
+            console.warn('Error processing log data:', err);
+          }
+        }
+
+        if (logData) {
+          console[consoleMethod](`[${entry.source}] ${entry.message}`, logData);
+        } else {
+          console[consoleMethod](`[${entry.source}] ${entry.message}`);
+        }
+      }
+
+      // Trim old logs if we exceed MAX_LOGS
+      if (this.logs.length > this.MAX_LOGS) {
+        this.logs = this.logs.slice(-this.MAX_LOGS);
+      }
+    } catch (error) {
+      console.error('Error adding log entry:', { error, entry });
     }
   }
 
   /**
    * Log a debug message
    */
-  public debug(source: string, message: string, data?: any): void {
-    if (this.shouldLog(LogLevel.DEBUG, source)) {
-      this.addLog({
-        timestamp: new Date().toISOString(),
-        level: 'debug',
-        source,
-        message,
-        data
-      });
+  public debug(source: string | undefined, message: string | undefined, data?: any): void {
+    try {
+      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
+        console.warn('Invalid log parameters:', { source, message });
+        return;
+      }
+
+      if (this.shouldLog(LogLevel.DEBUG, source)) {
+        this.addLog({
+          timestamp: new Date().toISOString(),
+          level: 'debug',
+          source: source.trim(),
+          message: message.trim(),
+          data: data === undefined ? undefined : data
+        });
+      }
+    } catch (error) {
+      console.error('Error in debug log:', { error, source, message, data });
     }
   }
 
   /**
    * Log an info message
    */
-  public info(source: string, message: string, data?: any): void {
-    if (this.shouldLog(LogLevel.INFO, source)) {
-      this.addLog({
-        timestamp: new Date().toISOString(),
-        level: 'info',
-        source,
-        message,
-        data
-      });
+  public info(source: string | undefined, message: string | undefined, data?: any): void {
+    try {
+      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
+        console.warn('Invalid log parameters:', { source, message });
+        return;
+      }
+
+      if (this.shouldLog(LogLevel.INFO, source)) {
+        this.addLog({
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          source: source.trim(),
+          message: message.trim(),
+          data: data === undefined ? undefined : data
+        });
+      }
+    } catch (error) {
+      console.error('Error in info log:', { error, source, message, data });
     }
   }
 
   /**
    * Log a warning message
    */
-  public warn(source: string, message: string, data?: any): void {
-    if (this.shouldLog(LogLevel.WARN, source)) {
-      this.addLog({
-        timestamp: new Date().toISOString(),
-        level: 'warn',
-        source,
-        message,
-        data
-      });
+  public warn(source: string | undefined, message: string | undefined, data?: any): void {
+    try {
+      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
+        console.warn('Invalid log parameters:', { source, message });
+        return;
+      }
+
+      if (this.shouldLog(LogLevel.WARN, source)) {
+        this.addLog({
+          timestamp: new Date().toISOString(),
+          level: 'warn',
+          source: source.trim(),
+          message: message.trim(),
+          data: data === undefined ? undefined : data
+        });
+      }
+    } catch (error) {
+      console.error('Error in warn log:', { error, source, message, data });
     }
   }
 
   /**
    * Log an error message
    */
-  public error(source: string, message: string, data?: any): void {
-    if (this.shouldLog(LogLevel.ERROR, source)) {
-      this.addLog({
-        timestamp: new Date().toISOString(),
-        level: 'error',
-        source,
-        message,
-        data
-      });
+  public error(source: string | undefined, message: string | undefined, data?: any): void {
+    try {
+      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
+        console.warn('Invalid log parameters:', { source, message });
+        return;
+      }
+
+      if (this.shouldLog(LogLevel.ERROR, source)) {
+        this.addLog({
+          timestamp: new Date().toISOString(),
+          level: 'error',
+          source: source.trim(),
+          message: message.trim(),
+          data: data === undefined ? undefined : data
+        });
+      }
+    } catch (error) {
+      console.error('Error in error log:', { error, source, message, data });
     }
   }
 

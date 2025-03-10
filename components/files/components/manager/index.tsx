@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { FileList } from './file-list';
 import { EmptyState } from './empty-state';
 import { Toolbar } from './toolbar';
@@ -11,10 +11,11 @@ import { GeoImportDialog } from '../../../geo-import/components/geo-import-dialo
 import { FileTypeUtil } from '../../utils/file-types';
 import { Upload } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
-import { createClient } from '../../../../utils/supabase/client';
+import { createClient } from '@/utils/supabase/client';
 import { ImportedFilesList } from '../imported-files-list';
 import { DeleteConfirmationDialog } from '../delete-confirmation-dialog';
 import { ImportFileInfo } from '@/types/files';
+import { logger } from '@/utils/logger';
 
 interface FileManagerProps {
   projectId: string;
@@ -53,69 +54,77 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const [fileToDelete, setFileToDelete] = useState<ProjectFile | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
-  // Load files on component mount
-  React.useEffect(() => {
-    loadExistingFiles();
-  }, [projectId]);
-
-  const loadExistingFiles = async () => {
-    try {
-      console.info('[FileManager] Loading existing files');
-      const loadedFiles = await loadFiles();
-      console.info('[FileManager] Files loaded', {
-        count: loadedFiles.length,
-        files: loadedFiles.map((file: ProjectFile) => file.name)
-      });
-      setFiles(loadedFiles);
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Failed to load files';
-      onError?.(errorMessage);
-    }
-  };
-
-  const handleFileSelect = async (files: FileList) => {
-    // Skip if already processing
-    if (isProcessing) {
-      console.info('[FileManager] Skipping file selection - already processing');
+  const loadExistingFiles = useCallback(async () => {
+    if (!projectId) {
+      logger.warn(SOURCE, 'No project ID provided');
       return;
     }
 
     try {
-      console.info('[FileManager] File selection started', {
-        fileCount: files.length,
-        fileNames: Array.from(files).map(f => f.name)
+      logger.debug(SOURCE, 'Loading existing files', { projectId });
+      const loadedFiles = await loadFiles();
+      
+      if (!loadedFiles) {
+        logger.warn(SOURCE, 'No files returned from loadFiles', { projectId });
+        setFiles([]);
+        return;
+      }
+
+      logger.debug(SOURCE, 'Files loaded', {
+        projectId,
+        totalFiles: loadedFiles.length,
+        mainFiles: loadedFiles.filter(f => !f.companions).length,
+        companionFiles: loadedFiles.filter(f => f.companions).length
+      });
+      setFiles(loadedFiles);
+    } catch (error) {
+      logger.error(SOURCE, 'Error loading files', { projectId, error });
+      setFiles([]);
+    }
+  }, [projectId, loadFiles]);
+
+  // Load files on component mount
+  useEffect(() => {
+    if (projectId) {
+      loadExistingFiles();
+    }
+  }, [projectId, loadExistingFiles]);
+
+  const handleFileSelect = async (files: FileList) => {
+    if (isProcessing) {
+      logger.debug(SOURCE, 'Skipping file selection - already processing');
+      return;
+    }
+
+    try {
+      logger.debug(SOURCE, 'File selection started', {
+        count: files.length
       });
 
       const fileArray = Array.from(files) as File[];
       
-      // Check if any of these files are already being uploaded
       const duplicateFiles = fileArray.filter(file => 
         uploadingFiles.some(uf => uf.group.mainFile.name === file.name)
       );
 
       if (duplicateFiles.length > 0) {
-        console.warn('[FileManager] Skipping duplicate files', {
+        logger.warn(SOURCE, 'Skipping duplicate files', {
           files: duplicateFiles.map(f => f.name)
         });
         onError?.('Some files are already being uploaded. Please wait for them to complete.');
         return;
       }
 
-      console.info('[FileManager] Processing files', {
-        files: fileArray.map(f => ({
-          name: f.name,
-          size: f.size,
-          type: f.type
-        }))
+      logger.debug(SOURCE, 'Processing files', {
+        count: fileArray.length
       });
 
       const groups = await processFiles(fileArray);
-      console.info('[FileManager] Files processed into groups', {
+      logger.debug(SOURCE, 'Files processed into groups', {
         groupCount: groups.length,
-        groups: groups.map(g => ({
-          mainFile: g.mainFile.name,
-          companionCount: g.companions.length,
-          companions: g.companions.map(c => c.name)
+        groups: groups.map(group => ({
+          mainFile: group.mainFile.name,
+          companions: group.companions.map((companion: File) => companion.name)
         }))
       });
       
@@ -131,7 +140,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         // Process and upload each group sequentially
         for (const group of groups) {
-          console.info('[FileManager] Processing group', {
+          logger.debug(SOURCE, 'Processing group', {
             mainFile: group.mainFile.name,
             companions: group.companions.map(c => c.name)
           });
@@ -140,12 +149,12 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           onFilesProcessed?.(processed);
 
           if (processed.main.isValid !== false) {
-            console.info('[FileManager] Starting upload for valid group', {
+            logger.info(SOURCE, 'Starting upload for valid group', {
               mainFile: group.mainFile.name
             });
             await handleUpload(group);
           } else {
-            console.warn('[FileManager] Skipping upload - file validation failed', {
+            logger.warn(SOURCE, 'Skipping upload - file validation failed', {
               mainFile: group.mainFile.name,
               error: processed.main.error
             });
@@ -154,15 +163,11 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           }
         }
       } else {
-        console.warn('[FileManager] No valid file groups found after processing');
+        logger.warn(SOURCE, 'No valid file groups found after processing');
       }
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Failed to process files';
-      console.error('[FileManager] File selection failed', {
-        error: errorMessage,
-        stack: e instanceof Error ? e.stack : undefined
-      });
-      onError?.(errorMessage);
+    } catch (error) {
+      logger.error(SOURCE, 'File selection failed', { error });
+      onError?.(error instanceof Error ? error.message : 'Failed to process files');
     }
   };
 
@@ -196,7 +201,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const handleImportComplete = async (result: any) => {
     try {
       // Add detailed console logging
-      console.log('🎉 Import completed successfully!', {
+      logger.log('🎉 Import completed successfully!', {
         totalImported: result.totalImported,
         totalFailed: result.totalFailed,
         collectionId: result.collectionId,
@@ -220,7 +225,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
-      console.error('❌ Import completion error:', errorMessage);
+      logger.error('❌ Import completion error:', errorMessage);
       onError?.(errorMessage);
     }
   };
@@ -234,7 +239,6 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   };
 
   const uploadFile = async (file: File, onProgress: (progress: number) => void) => {
-    const logContext = `[${file.name}]`;
     try {
       const extension = file.name.toLowerCase();
       const contentType = extension.endsWith('.geojson') 
@@ -243,20 +247,21 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         ? 'application/xml'
         : file.type || 'application/octet-stream';
 
-      console.info(`[FileManager] ${logContext} Starting upload`, { 
+      logger.debug(SOURCE, 'Starting file upload', { 
+        fileName: file.name,
         size: file.size,
         type: contentType,
         extension
       });
       
       // Get signed URL
-      console.info(`[FileManager] ${logContext} Requesting signed URL...`);
+      logger.debug(SOURCE, 'Requesting signed URL', { fileName: file.name });
       const supabase = createClient();
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError || !session) {
         const error = new Error('Authentication required');
-        console.error(`[FileManager] ${logContext} No valid session`, { 
+        logger.error(SOURCE, 'No valid session', { 
           error: sessionError,
           errorMessage: error.message 
         });
@@ -281,7 +286,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       try {
         responseData = JSON.parse(responseText);
       } catch (e) {
-        console.error(`[FileManager] ${logContext} Failed to parse response`, {
+        logger.error(SOURCE, 'Failed to parse response', {
           text: responseText,
           error: e
         });
@@ -293,7 +298,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             responseData?.error || responseText
           }`
         );
-        console.error(`[FileManager] ${logContext} Failed to get signed URL`, {
+        logger.error(SOURCE, 'Failed to get signed URL', {
           status: response.status,
           statusText: response.statusText,
           response: responseData || responseText,
@@ -306,7 +311,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         const error = new Error(
           'Invalid signed URL response from server: ' + JSON.stringify(responseData)
         );
-        console.error(`[FileManager] ${logContext} Invalid signed URL response`, { 
+        logger.error(SOURCE, 'Invalid signed URL response', { 
           data: responseData,
           error: error.message
         });
@@ -314,7 +319,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
 
       const { signedUrl } = responseData.data;
-      console.info(`[FileManager] ${logContext} Got signed URL, starting upload to storage...`);
+      logger.debug(SOURCE, 'Got signed URL, starting upload to storage', { fileName: file.name });
       
       // Upload the file
       const xhr = new XMLHttpRequest();
@@ -328,20 +333,24 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             const currentQuarter = Math.floor(percentComplete / 25);
             if (currentQuarter > lastProgressLog) {
               lastProgressLog = currentQuarter;
-              console.info(`[FileManager] ${logContext} Upload progress: ${Math.round(percentComplete)}%`);
+              logger.info(SOURCE, 'Upload progress', { 
+                fileName: file.name,
+                progress: Math.round(percentComplete)
+              });
             }
           }
         });
 
         xhr.addEventListener('load', () => {
           if (xhr.status >= 200 && xhr.status < 300) {
-            console.info(`[FileManager] ${logContext} Upload completed successfully`);
+            logger.info(SOURCE, 'Upload completed successfully', { fileName: file.name });
             resolve(undefined);
           } else {
             const error = new Error(
               `Upload failed with status ${xhr.status}: ${xhr.statusText} - ${xhr.responseText}`
             );
-            console.error(`[FileManager] ${logContext} Upload failed`, {
+            logger.error(SOURCE, 'Upload failed', {
+              fileName: file.name,
               status: xhr.status,
               statusText: xhr.statusText,
               response: xhr.responseText,
@@ -353,7 +362,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         xhr.addEventListener('error', () => {
           const error = new Error(`Upload failed: Network error - ${xhr.statusText}`);
-          console.error(`[FileManager] ${logContext} Network error during upload`, {
+          logger.error(SOURCE, 'Network error during upload', {
+            fileName: file.name,
             status: xhr.status,
             statusText: xhr.statusText,
             response: xhr.responseText,
@@ -364,7 +374,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         xhr.addEventListener('abort', () => {
           const error = new Error('Upload aborted');
-          console.error(`[FileManager] ${logContext} Upload aborted`, {
+          logger.error(SOURCE, 'Upload aborted', {
+            fileName: file.name,
             error: error.message
           });
           reject(error);
@@ -375,14 +386,12 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         xhr.send(file);
       });
     } catch (error) {
-      console.error(`[FileManager] ${logContext} Upload failed`, {
+      logger.error(SOURCE, 'Upload failed', {
+        fileName: file.name,
         error: error instanceof Error ? {
           message: error.message,
           stack: error.stack
-        } : 'Unknown error',
-        fileName: file.name,
-        fileSize: file.size,
-        fileType: file.type
+        } : 'Unknown error'
       });
       throw error;
     }
@@ -390,24 +399,15 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleUpload = async (group: FileGroup) => {
     const mainFileName = group.mainFile.name;
-    const logContext = `[${mainFileName}]`;
     
     try {
-      console.info(`[FileManager] ${logContext} Starting upload process`, {
-        mainFile: {
-          name: group.mainFile.name,
-          type: group.mainFile.type,
-          size: group.mainFile.size
-        },
-        companions: group.companions.map((companion: File) => ({
-          name: companion.name,
-          type: companion.type,
-          size: companion.size
-        }))
+      logger.info(SOURCE, 'Starting upload for group', {
+        mainFile: mainFileName,
+        companions: group.companions.map(f => f.name)
       });
 
       // Upload main file first
-      console.info(`[FileManager] ${logContext} Uploading main file`);
+      logger.info(SOURCE, 'Uploading main file', { fileName: mainFileName });
       await uploadFile(group.mainFile, (progress) => {
         updateUploadProgress(mainFileName, progress);
       });
@@ -417,8 +417,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       if (group.companions.length > 0) {
         for (const companion of group.companions) {
           const ext = FileTypeUtil.getExtension(companion.name);
-          console.info(`[FileManager] ${logContext} Uploading companion file`, {
-            name: companion.name,
+          logger.info(SOURCE, 'Uploading companion file', {
+            fileName: companion.name,
             extension: ext,
             type: companion.type,
             size: companion.size
@@ -434,13 +434,13 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
 
       // Create database record
-      console.info(`[FileManager] ${logContext} Creating database record`, {
-        mainFile: group.mainFile.name,
+      logger.info(SOURCE, 'Creating database record', {
+        mainFile: mainFileName,
         relatedFiles
       });
       await handleUploadComplete({
         id: '',
-        name: group.mainFile.name,
+        name: mainFileName,
         size: group.mainFile.size,
         type: group.mainFile.type,
         relatedFiles: Object.fromEntries(
@@ -455,19 +455,16 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       setUploadingFiles(prev => prev.filter(uf => uf.group.mainFile.name !== mainFileName));
       await loadExistingFiles();
       
-      console.info(`[FileManager] ${logContext} Upload process completed`);
-    } catch (e) {
-      const errorMessage = e instanceof Error ? e.message : 'Failed to upload files';
-      console.error(`[FileManager] ${logContext} Upload process failed`, {
-        error: e instanceof Error ? {
-          message: e.message,
-          stack: e.stack
-        } : 'Unknown error',
+      logger.info(SOURCE, 'Upload process completed', { fileName: mainFileName });
+    } catch (error) {
+      logger.error(SOURCE, 'Upload process failed', {
         fileName: mainFileName,
-        fileType: group.mainFile.type,
-        fileSize: group.mainFile.size
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack
+        } : 'Unknown error'
       });
-      onError?.(errorMessage);
+      onError?.(error instanceof Error ? error.message : 'Failed to upload files');
       
       setUploadingFiles(prev => prev.filter(uf => uf.group.mainFile.name !== mainFileName));
       await loadExistingFiles();
@@ -503,7 +500,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleViewLayer = (layerId: string) => {
     // TODO: Implement layer viewing functionality
-    console.info('View layer requested', { layerId });
+    logger.info('View layer requested', { layerId });
   };
 
   const handleDeleteImported = async (fileId: string) => {
