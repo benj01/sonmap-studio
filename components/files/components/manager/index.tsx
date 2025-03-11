@@ -201,7 +201,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const handleImportComplete = async (result: any) => {
     try {
       // Add detailed console logging
-      logger.log('🎉 Import completed successfully!', {
+      logger.info(SOURCE, '🎉 Import completed successfully!', {
         totalImported: result.totalImported,
         totalFailed: result.totalFailed,
         collectionId: result.collectionId,
@@ -225,7 +225,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
-      logger.error('❌ Import completion error:', errorMessage);
+      logger.error(SOURCE, '❌ Import completion error:', errorMessage);
       onError?.(errorMessage);
     }
   };
@@ -500,7 +500,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleViewLayer = (layerId: string) => {
     // TODO: Implement layer viewing functionality
-    logger.info('View layer requested', { layerId });
+    logger.info(SOURCE, 'View layer requested', { layerId });
   };
 
   const handleDeleteImported = async (fileId: string) => {

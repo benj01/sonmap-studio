@@ -9,34 +9,54 @@ import { GeoFileUpload } from './geo-file-upload';
 import { MapPreview } from './map-preview';
 import { FileInfoCard } from './file-info-card';
 import { ImportDetailsCard } from './import-details-card';
-import { LogManager } from '@/core/logging/log-manager';
-import { LogLevel } from '@/core/logging/log-manager';
+import { LogLevel, LogManager } from '@/core/logging/log-manager';
 import { createClient } from '@/utils/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
 import { processImportStream } from '../services/import-stream';
 import { GeoImportDialogProps, ImportSession } from '../types';
 import { TestImport } from './test-import';
 import { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
+import { logger } from '@/utils/logger';
 
 const SOURCE = 'GeoImportDialog';
-const logManager = LogManager.getInstance();
 const supabase = createClient();
 
 // Configure logger to output to console and set debug level
-logManager.addFilter(SOURCE, LogLevel.DEBUG);
+logger.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
-const logger = {
+// Create safe logging wrapper
+const safeLogger = {
   info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
+    try {
+      const safeData = data ? JSON.parse(JSON.stringify(data)) : undefined;
+      logger.info(SOURCE, message, safeData);
+    } catch (err) {
+      logger.info(SOURCE, message, { error: 'Data contained circular references' });
+    }
   },
   warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
+    try {
+      const safeError = error ? JSON.parse(JSON.stringify(error)) : undefined;
+      logger.warn(SOURCE, message, safeError);
+    } catch (err) {
+      logger.warn(SOURCE, message, { error: 'Error object contained circular references' });
+    }
   },
   error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
+    try {
+      const safeError = error ? JSON.parse(JSON.stringify(error)) : undefined;
+      logger.error(SOURCE, message, safeError);
+    } catch (err) {
+      logger.error(SOURCE, message, { error: 'Error object contained circular references' });
+    }
   },
   debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
+    try {
+      const safeData = data ? JSON.parse(JSON.stringify(data)) : undefined;
+      logger.debug(SOURCE, message, safeData);
+    } catch (err) {
+      logger.debug(SOURCE, message, { error: 'Data contained circular references' });
+    }
   }
 };
 
@@ -73,7 +93,7 @@ export function GeoImportDialog({
   , [fileInfo?.id, fileInfo?.name, fileInfo?.size, fileInfo?.type]);
 
   const handleImportUpdate = useCallback((payload: any) => {
-    logger.debug('Processing import update', { payload });
+    safeLogger.debug('Processing import update', { payload });
     
     const { imported_count, failed_count, total_features, status, collection_id, layer_id, metadata } = payload;
     
@@ -104,7 +124,7 @@ export function GeoImportDialog({
   }, [toast]);
 
   const handleImportCompletion = useCallback((status: string, data: any) => {
-    logger.debug(`Import ${status}`, data);
+    safeLogger.debug(`Import ${status}`, data);
     
     setIsProcessing(false);
     
@@ -157,7 +177,7 @@ export function GeoImportDialog({
       .single();
 
     if (error) {
-      logger.error('Failed to check import status', { error });
+      safeLogger.error('Failed to check import status', { error });
       return;
     }
 
@@ -182,7 +202,7 @@ export function GeoImportDialog({
     const timeoutDuration = 5 * 60 * 1000; // 5 minutes
     const timeoutId = setTimeout(() => {
       if (isProcessing) {
-        logger.error('Import timeout reached', { importLogId: currentImportLogId });
+        safeLogger.error('Import timeout reached', { importLogId: currentImportLogId });
         toast({
           title: 'Import Timeout',
           description: 'The import is taking longer than expected. Please check the import logs for status.',
@@ -221,7 +241,7 @@ export function GeoImportDialog({
 
         if (!isActive) return; // Don't proceed if cleanup has started
 
-        logger.debug('Setting up new channel', { 
+        safeLogger.debug('Setting up new channel', { 
           importLogId: currentImportLogId,
           retryCount,
           connectionState: supabase.realtime.connectionState()
@@ -229,22 +249,34 @@ export function GeoImportDialog({
 
         // Create and store channel reference
         const channel = supabase
-          .channel(`import-progress-${currentImportLogId}-${Date.now()}`)
-          .on(
-            'postgres_changes',
-            {
-              event: 'UPDATE',
-              schema: 'public',
-              table: 'realtime_import_logs',
-              filter: `id=eq.${currentImportLogId}`
-            },
-            (payload: RealtimePostgresChangesPayload<any>) => {
-              if (!isActive) return; // Don't process updates if cleanup has started
-              logger.debug('Received real-time update', { payload });
-              if (!payload.new) return;
-              handleImportUpdate(payload.new);
-            }
-          );
+          .channel(`import-progress-${currentImportLogId}-${Date.now()}`);
+
+        // Log channel creation without the channel object
+        safeLogger.debug('Created channel', { 
+          channelName: `import-progress-${currentImportLogId}-${Date.now()}`,
+          importLogId: currentImportLogId
+        });
+
+        channel.on(
+          'postgres_changes',
+          {
+            event: 'UPDATE',
+            schema: 'public',
+            table: 'realtime_import_logs',
+            filter: `id=eq.${currentImportLogId}`
+          },
+          (payload: RealtimePostgresChangesPayload<any>) => {
+            if (!isActive) return;
+            safeLogger.debug('Received real-time update', { 
+              payloadId: payload.new?.id,
+              status: payload.new?.status,
+              importedCount: payload.new?.imported_count,
+              totalFeatures: payload.new?.total_features
+            });
+            if (!payload.new) return;
+            handleImportUpdate(payload.new);
+          }
+        );
 
         channelRef.current = channel;
 
@@ -255,20 +287,23 @@ export function GeoImportDialog({
           return;
         }
 
-        logger.debug('Channel subscription status', { status });
+        safeLogger.debug('Channel subscription status', { 
+          status,
+          channelName: `import-progress-${currentImportLogId}-${Date.now()}`
+        });
 
         if (status === 'SUBSCRIBED') {
-          logger.debug('Channel subscribed successfully');
+          safeLogger.debug('Channel subscribed successfully');
           setSubscriptionStatus('connected');
           setRetryCount(0);
           await checkImportStatus(); // Initial status check
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          logger.error('Channel subscription error', { status });
+          safeLogger.error('Channel subscription error', { status });
           setSubscriptionStatus('disconnected');
 
           if (retryCount < MAX_RETRIES && isActive) {
             const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
-            logger.debug(`Retrying in ${delay}ms`, { retryCount });
+            safeLogger.debug(`Retrying in ${delay}ms`, { retryCount });
             
             setTimeout(() => {
               if (isActive && isProcessing) {
@@ -277,7 +312,7 @@ export function GeoImportDialog({
               }
             }, delay);
           } else if (isActive) {
-            logger.error('Max retry attempts reached', { retryCount });
+            safeLogger.error('Max retry attempts reached', { retryCount });
             toast({
               title: 'Connection Error',
               description: 'Failed to maintain real-time connection. Falling back to polling.',
@@ -288,7 +323,7 @@ export function GeoImportDialog({
         }
       } catch (error) {
         if (!isActive) return;
-        logger.error('Error setting up channel', { error });
+        safeLogger.error('Error setting up channel', { error });
         setSubscriptionStatus('error');
       }
     };
@@ -300,7 +335,7 @@ export function GeoImportDialog({
     return () => {
       isActive = false;
       const cleanup = async () => {
-        logger.debug('Cleaning up subscription', { importLogId: currentImportLogId });
+        safeLogger.debug('Cleaning up subscription', { importLogId: currentImportLogId });
         if (channelRef.current) {
           await channelRef.current.unsubscribe();
           channelRef.current = null;
@@ -322,7 +357,7 @@ export function GeoImportDialog({
   }, [currentImportLogId, isProcessing, subscriptionStatus, checkImportStatus]);
 
   const handleImportSessionCreated = async (session: ImportSession) => {
-    logger.debug('Import session received by dialog', {
+    safeLogger.debug('Import session received by dialog', {
       fileId: session.fileId,
       status: session.status,
       featureCount: session.fullDataset?.features.length || 0,
@@ -338,7 +373,7 @@ export function GeoImportDialog({
       if (memoizedFileInfo?.name) {
         processedFiles.add(memoizedFileInfo.name);
       }
-      logger.info('Selected all features', { count: allFeatureIds.length });
+      safeLogger.info('Selected all features', { count: allFeatureIds.length });
     }
   };
 
@@ -353,7 +388,7 @@ export function GeoImportDialog({
       .filter(f => selectedOriginalIds?.includes(f.originalIndex || f.id))
       .map(f => f.originalIndex || f.id);
 
-    logger.debug('Features selection updated', { 
+    safeLogger.debug('Features selection updated', { 
       selectedCount: fullDatasetSelectedIds.length,
       totalFeatures: importSession.fullDataset.features.length
     });
@@ -362,7 +397,7 @@ export function GeoImportDialog({
 
   const handleImport = async () => {
     if (!importSession?.fullDataset) {
-      logger.error('No import session or dataset available');
+      safeLogger.error('No import session or dataset available');
       return;
     }
 
@@ -386,7 +421,7 @@ export function GeoImportDialog({
 
       if (createError) throw createError;
       
-      logger.debug('Created import log', { importLogId: importLog.id });
+      safeLogger.debug('Created import log', { importLogId: importLog.id });
       setCurrentImportLogId(importLog.id);
 
       const requestPayload = {
@@ -420,7 +455,7 @@ export function GeoImportDialog({
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      logger.debug('Import started', { importLogId: importLog.id });
+      safeLogger.debug('Import started', { importLogId: importLog.id });
 
     } catch (error) {
       handleImportError(error);
@@ -432,7 +467,7 @@ export function GeoImportDialog({
       ? { message: error.message, stack: error.stack, name: error.name }
       : { message: String(error) };
       
-    logger.error('Import failed', errorData);
+    safeLogger.error('Import failed', errorData);
     
     toast({
       title: 'Import Failed',
@@ -459,7 +494,7 @@ export function GeoImportDialog({
         ? { message: completeError.message }
         : { message: String(completeError) };
         
-      logger.error('Error in onImportComplete during error handling', completeErrorData);
+      safeLogger.error('Error in onImportComplete during error handling', completeErrorData);
     }
 
     onOpenChange(false);
@@ -472,7 +507,7 @@ export function GeoImportDialog({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `geo-import-logs-${new Date().toISOString()}.json`;
+    a.download = 'import-logs.json';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -483,9 +518,8 @@ export function GeoImportDialog({
     const logManager = LogManager.getInstance();
     logManager.clearLogs();
     toast({
-      title: 'Logs Cleared',
-      description: 'All debug logs have been cleared.',
-      duration: 3000,
+      title: 'Logs cleared',
+      description: 'All logs have been cleared from memory.',
     });
   };
 
