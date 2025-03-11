@@ -153,6 +153,18 @@ export function GeoImportDialog({
       }
     });
     
+    // Add detailed logging of current state
+    safeLogger.debug('Current state at import completion', {
+      hasImportSession: !!importSession,
+      importSessionFileId: importSession?.fileId,
+      hasFileInfo: !!fileInfo,
+      fileInfoId: fileInfo?.id,
+      fileInfoName: fileInfo?.name,
+      dataCollectionId: data.collection_id,
+      dataLayerId: data.layer_id,
+      currentImportLogId
+    });
+    
     setIsProcessing(false);
     
     if (status === 'completed') {
@@ -161,6 +173,209 @@ export function GeoImportDialog({
         description: `Successfully imported ${data.imported_count} features${data.failed_count > 0 ? `, ${data.failed_count} failed` : ''}`,
         duration: 5000,
       });
+      
+      // Capture values before they're reset
+      const capturedImportSession = importSession;
+      const capturedFileInfo = fileInfo;
+      const capturedImportLogId = currentImportLogId;
+      
+      // Update file relationships in the database
+      (async () => {
+        try {
+          // Check if we have the necessary file IDs
+          let sourceFileId = capturedFileInfo?.id;
+          let importedFileId = capturedImportSession?.fileId;
+          
+          // If either ID is missing, try to get them from the import log
+          if (!sourceFileId || !importedFileId) {
+            safeLogger.debug('Missing file IDs, attempting to retrieve from import log', {
+              importLogId: capturedImportLogId,
+              hasSourceFileId: !!sourceFileId,
+              hasImportedFileId: !!importedFileId
+            });
+            
+            if (capturedImportLogId) {
+              // Try to get the project_file_id from the import log
+              const { data: importLog, error: importLogError } = await supabase
+                .from('realtime_import_logs')
+                .select('project_file_id')
+                .eq('id', capturedImportLogId)
+                .single();
+                
+              if (importLogError) {
+                safeLogger.warn('Failed to retrieve import log', {
+                  error: importLogError,
+                  importLogId: capturedImportLogId
+                });
+              } else if (importLog?.project_file_id) {
+                importedFileId = importLog.project_file_id;
+                safeLogger.debug('Retrieved imported file ID from import log', {
+                  importedFileId,
+                  importLogId: capturedImportLogId
+                });
+                
+                // If we have the imported file ID but not the source file ID,
+                // try to get it from the file name
+                if (!sourceFileId && capturedFileInfo?.name) {
+                  // Try to find the source file by name
+                  const { data: sourceFiles, error: sourceFilesError } = await supabase
+                    .from('project_files')
+                    .select('id')
+                    .eq('name', capturedFileInfo.name)
+                    .eq('project_id', projectId)
+                    .neq('id', importedFileId) // Exclude the imported file itself
+                    .order('uploaded_at', { ascending: false })
+                    .limit(1);
+                    
+                  if (sourceFilesError) {
+                    safeLogger.warn('Failed to find source file by name', {
+                      error: sourceFilesError,
+                      fileName: capturedFileInfo.name
+                    });
+                  } else if (sourceFiles?.length > 0) {
+                    sourceFileId = sourceFiles[0].id;
+                    safeLogger.debug('Found source file by name', {
+                      sourceFileId,
+                      fileName: capturedFileInfo.name
+                    });
+                  }
+                }
+              }
+            }
+          }
+          
+          // If we still don't have both IDs, we can't proceed
+          if (!sourceFileId || !importedFileId) {
+            safeLogger.warn('Missing file IDs for relationship update, even after fallback attempts', {
+              importSessionFileId: importedFileId,
+              sourceFileId: sourceFileId,
+              importLogId: capturedImportLogId
+            });
+            return;
+          }
+          
+          // Now proceed with the updates using the IDs we have
+          safeLogger.debug('Proceeding with file relationship updates', {
+            importedFileId,
+            sourceFileId
+          });
+
+          // Create the import metadata
+          const importMetadata = {
+            sourceFile: {
+              id: sourceFileId,
+              name: capturedFileInfo?.name || 'Unknown File'
+            },
+            importedLayers: [{
+              name: capturedFileInfo?.name || 'Unknown Layer',
+              featureCount: data.imported_count,
+              featureTypes: {}
+            }],
+            statistics: {
+              totalFeatures: data.imported_count + data.failed_count,
+              failedTransformations: data.failed_count,
+              errors: data.metadata?.errorCount || 0
+            },
+            imported_count: data.imported_count,
+            failed_count: data.failed_count,
+            collection_id: data.collection_id,
+            layer_id: data.layer_id,
+            importedAt: new Date().toISOString()
+          };
+
+          safeLogger.debug('Prepared import metadata', { 
+            importMetadata,
+            importedFileId,
+            sourceFileId
+          });
+
+          // First update the imported file with metadata and source_file_id
+          const { error: updateImportedError } = await supabase
+            .from('project_files')
+            .update({ 
+              source_file_id: sourceFileId,
+              import_metadata: importMetadata
+            })
+            .eq('id', importedFileId);
+
+          if (updateImportedError) {
+            safeLogger.warn('Failed to update imported file with metadata', {
+              error: updateImportedError,
+              importedFileId,
+              sourceFileId
+            });
+            // Don't proceed if this update fails
+            return;
+          } else {
+            safeLogger.debug('Successfully updated imported file with metadata', { 
+              importedFileId,
+              sourceFileId
+            });
+          }
+
+          // Then update the source file to mark it as imported
+          const { error: updateSourceError } = await supabase
+            .from('project_files')
+            .update({ is_imported: true })
+            .eq('id', sourceFileId);
+
+          if (updateSourceError) {
+            safeLogger.warn('Failed to update source file import status', {
+              error: updateSourceError,
+              sourceFileId
+            });
+          } else {
+            safeLogger.debug('Successfully updated source file import status', { 
+              sourceFileId
+            });
+          }
+
+          // Verify the updates were successful
+          const { data: verifyImported, error: verifyImportedError } = await supabase
+            .from('project_files')
+            .select('id, source_file_id, import_metadata')
+            .eq('id', importedFileId)
+            .single();
+
+          if (verifyImportedError) {
+            safeLogger.warn('Failed to verify imported file update', {
+              error: verifyImportedError,
+              importedFileId
+            });
+          } else {
+            safeLogger.debug('Verification of imported file update', {
+              importedFileId,
+              hasSourceFileId: !!verifyImported.source_file_id,
+              hasImportMetadata: !!verifyImported.import_metadata,
+              sourceFileId: verifyImported.source_file_id,
+              importMetadataKeys: verifyImported.import_metadata ? Object.keys(verifyImported.import_metadata) : []
+            });
+          }
+
+          const { data: verifySource, error: verifySourceError } = await supabase
+            .from('project_files')
+            .select('id, is_imported')
+            .eq('id', sourceFileId)
+            .single();
+
+          if (verifySourceError) {
+            safeLogger.warn('Failed to verify source file update', {
+              error: verifySourceError,
+              sourceFileId
+            });
+          } else {
+            safeLogger.debug('Verification of source file update', {
+              sourceFileId,
+              isImported: verifySource.is_imported
+            });
+          }
+        } catch (error) {
+          safeLogger.error('Error updating file relationships', error);
+        } finally {
+          // Only close the dialog after the database updates are complete
+          onOpenChange(false);
+        }
+      })();
       
       const bounds = importSession?.fullDataset?.metadata?.bounds || [0, 0, 0, 0];
       onImportComplete({
@@ -189,10 +404,11 @@ export function GeoImportDialog({
         variant: 'destructive',
         duration: 5000,
       });
+      
+      // Close the dialog for failed imports
+      onOpenChange(false);
     }
-    
-    onOpenChange(false);
-  }, [importSession, onImportComplete, onOpenChange, toast]);
+  }, [importSession, onImportComplete, onOpenChange, toast, fileInfo, currentImportLogId, projectId]);
 
   const checkImportStatus = useCallback(async () => {
     if (!currentImportLogId) return;

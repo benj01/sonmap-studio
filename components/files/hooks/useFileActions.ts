@@ -244,7 +244,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     }
   }, [projectId, onSuccess, onError, refreshProjectStorage]);
 
-  const handleImport = useCallback(async (result: any, sourceFile: ProjectFile) => {
+  /**
+   * @deprecated This function is deprecated and should not be used. 
+   * Use the streaming import flow in GeoImportDialog instead.
+   * This remains only for reference on how to update file relationships after import.
+   */
+  const legacyHandleImport = useCallback(async (result: any, sourceFile: ProjectFile) => {
     setIsLoading(true);
     try {
       // Get current user
@@ -655,9 +660,10 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     isLoading,
     loadFiles,
     handleUploadComplete,
-    handleImport,
+    handleImport: legacyHandleImport,
     handleDelete,
     handleDownload,
-    refreshProjectStorage
+    refreshProjectStorage,
+    legacyHandleImport,
   };
 } 
