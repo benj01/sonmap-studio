@@ -16,6 +16,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { processImportStream } from '../services/import-stream';
 import { GeoImportDialogProps, ImportSession } from '../types';
 import { TestImport } from './test-import';
+import { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 
 const SOURCE = 'GeoImportDialog';
 const logManager = LogManager.getInstance();
@@ -53,6 +54,7 @@ export function GeoImportDialog({
   const [processedFiles] = useState(() => new Set<string>());
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
+  const [currentImportLogId, setCurrentImportLogId] = useState<string | null>(null);
 
   const memoizedFileInfo = useMemo(() => 
     fileInfo ? {
@@ -68,8 +70,133 @@ export function GeoImportDialog({
     if (!open) {
       setImportSession(null);
       setSelectedFeatureIds([]);
+      setCurrentImportLogId(null);
     }
   }, [open]);
+
+  // Subscribe to real-time updates when import starts
+  useEffect(() => {
+    if (!currentImportLogId) return;
+
+    logger.debug('Setting up real-time subscription', { importLogId: currentImportLogId });
+
+    interface ImportLogRecord {
+      id: string;
+      project_file_id: string;
+      status: 'started' | 'processing' | 'completed' | 'failed';
+      total_features: number;
+      imported_count: number;
+      failed_count: number;
+      collection_id?: string;
+      layer_id?: string;
+      metadata?: any;
+      created_at: string;
+      updated_at: string;
+    }
+
+    const channel = supabase
+      .channel(`import-progress-${currentImportLogId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'realtime_import_logs',
+          filter: `id=eq.${currentImportLogId}`
+        },
+        (payload) => {
+          logger.debug('Received real-time update', { payload });
+          
+          if (!payload.new) return;
+          
+          const { imported_count, failed_count, total_features, status, collection_id, layer_id, metadata } = payload.new;
+          
+          // Update progress
+          const progressPercent = Math.round((imported_count / total_features) * 100);
+          setProgress(progressPercent);
+          setProgressMessage(`Imported ${imported_count} of ${total_features} features`);
+
+          // Show progress toast (only for significant changes)
+          if (progressPercent % 20 === 0 || status === 'completed' || status === 'failed') {
+            toast({
+              title: 'Import Progress',
+              description: `Imported ${imported_count} of ${total_features} features (${progressPercent}%)`,
+              duration: 3000,
+            });
+          }
+
+          // Handle completion
+          if (status === 'completed') {
+            logger.debug('Import completed', { 
+              imported_count, 
+              failed_count,
+              collection_id,
+              layer_id
+            });
+            
+            setIsProcessing(false);
+            
+            toast({
+              title: 'Import Complete',
+              description: `Successfully imported ${imported_count} features${failed_count > 0 ? `, ${failed_count} failed` : ''}`,
+              duration: 5000,
+            });
+            
+            const bounds = importSession?.fullDataset?.metadata?.bounds || [0, 0, 0, 0];
+            onImportComplete({
+              features: [],
+              bounds: {
+                minX: bounds[0],
+                minY: bounds[1],
+                maxX: bounds[2],
+                maxY: bounds[3]
+              },
+              layers: [],
+              statistics: {
+                pointCount: imported_count,
+                layerCount: 1,
+                featureTypes: {}
+              },
+              collectionId: collection_id,
+              layerId: layer_id,
+              totalImported: imported_count,
+              totalFailed: failed_count
+            });
+            onOpenChange(false);
+          } else if (status === 'failed') {
+            logger.debug('Import failed', { metadata });
+            
+            setIsProcessing(false);
+            
+            toast({
+              title: 'Import Failed',
+              description: metadata?.error || 'Failed to import features',
+              variant: 'destructive',
+              duration: 5000,
+            });
+          }
+        }
+      )
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+          logger.debug('Channel subscribed successfully');
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          logger.error('Channel subscription error', { status });
+          toast({
+            title: 'Connection Error',
+            description: 'Failed to connect to real-time updates',
+            variant: 'destructive',
+            duration: 5000,
+          });
+          setIsProcessing(false);
+        }
+      });
+
+    return () => {
+      logger.debug('Cleaning up subscription', { importLogId: currentImportLogId });
+      channel.unsubscribe();
+    };
+  }, [currentImportLogId, importSession?.fullDataset?.metadata?.bounds, onImportComplete, toast, onOpenChange]);
 
   const handleImportSessionCreated = async (session: ImportSession) => {
     logger.debug('Import session received by dialog', {
@@ -123,8 +250,25 @@ export function GeoImportDialog({
         selectedFeatureIds.includes(f.originalIndex || f.id)
       );
 
+      // Create initial import log
+      const { data: importLog, error: createError } = await supabase
+        .from('realtime_import_logs')
+        .insert({
+          project_file_id: importSession.fileId,
+          status: 'started',
+          total_features: selectedFeatures.length
+        })
+        .select()
+        .single();
+
+      if (createError) throw createError;
+      
+      logger.debug('Created import log', { importLogId: importLog.id });
+      setCurrentImportLogId(importLog.id);
+
       const requestPayload = {
         fileId: importSession.fileId,
+        importLogId: importLog.id,
         collectionName: fileInfo?.name || 'Imported Features',
         features: selectedFeatures.map(f => ({
           type: 'Feature' as const,
@@ -135,153 +279,37 @@ export function GeoImportDialog({
         batchSize: 600
       };
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => {
-        controller.abort();
-        logger.error('DIAGNOSTIC: Fetch timeout after 300 seconds');
-      }, 300000); // Increased to 5 minutes
-
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (!session?.access_token) {
-          throw new Error('No authentication token available');
-        }
-
-        // Set up a keepalive interval to prevent connection timeouts
-        let currentProgress = 0;
-        let currentMessage = 'Starting import...';
-        const keepaliveInterval = setInterval(() => {
-          setProgress(currentProgress);
-          setProgressMessage(`Still importing... ${currentMessage}`);
-        }, 30000); // Send progress update every 30 seconds
-
-        const response = await fetch('/api/geo-import/stream', {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          body: JSON.stringify(requestPayload),
-          signal: controller.signal
-        });
-
-        clearTimeout(timeout);
-        clearInterval(keepaliveInterval);
-
-        if (!response.ok || !response.body) {
-          throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const reader = response.body.getReader();
-        const importResults = await processImportStream(reader, {
-          onProgress: (progress, message) => {
-            currentProgress = progress;
-            currentMessage = message;
-            setProgress(progress);
-            setProgressMessage(message);
-          },
-          onNotice: (level, message, details) => {
-            // Log notices to the UI using toast
-            toast({
-              title: level.charAt(0).toUpperCase() + level.slice(1),
-              description: message,
-              variant: level === 'error' ? 'destructive' : 'default'
-            });
-            
-            // Log to console for debugging
-            logger.debug('Import notice', { level, message, details });
-          }
-        });
-
-        // Show final import summary
-        toast({
-          title: 'Import Complete',
-          description: `Successfully imported ${importResults.totalImported} features. ${
-            importResults.totalFailed > 0 ? `Failed to import ${importResults.totalFailed} features.` : ''
-          }`,
-          variant: importResults.totalFailed > 0 ? 'destructive' : 'default'
-        });
-
-        // If there were feature errors, show them
-        if (importResults.featureErrors?.length) {
-          toast({
-            title: 'Import Warnings',
-            description: `${importResults.featureErrors.length} features had issues during import. Check the console for details.`,
-            variant: 'destructive'
-          });
-          logger.warn('Feature import issues:', importResults.featureErrors);
-        }
-
-        // Update project_files record
-        try {
-          const importMetadata = {
-            collection_id: importResults.collectionId,
-            layer_id: importResults.layerId,
-            imported_count: importResults.totalImported,
-            failed_count: importResults.totalFailed,
-            imported_at: new Date().toISOString(),
-            notices: importResults.notices,
-            feature_errors: importResults.featureErrors
-          };
-
-          const { error: updateError } = await supabase
-            .from('project_files')
-            .update({
-              is_imported: true,
-              import_metadata: importMetadata
-            })
-            .eq('id', importSession.fileId);
-
-          if (updateError) {
-            throw updateError;
-          }
-        } catch (updateError) {
-          logger.error('Failed to update file import status', { 
-            error: updateError instanceof Error ? updateError.message : String(updateError),
-            fileId: importSession.fileId
-          });
-        }
-
-        setIsProcessing(false);
-        
-        await onImportComplete({
-          features: [],
-          bounds: {
-            minX: importSession?.fullDataset.metadata?.bounds?.[0] || 0,
-            minY: importSession?.fullDataset.metadata?.bounds?.[1] || 0,
-            maxX: importSession?.fullDataset.metadata?.bounds?.[2] || 0,
-            maxY: importSession?.fullDataset.metadata?.bounds?.[3] || 0
-          },
-          layers: [],
-          statistics: {
-            pointCount: importResults.totalImported,
-            layerCount: 1,
-            featureTypes: {}
-          },
-          collectionId: importResults.collectionId,
-          layerId: importResults.layerId,
-          totalImported: importResults.totalImported,
-          totalFailed: importResults.totalFailed
-        });
-
-        onOpenChange(false);
-
-      } catch (error) {
-        handleImportError(error);
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('No authentication token available');
       }
+
+      const response = await fetch('/api/geo-import/stream', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify(requestPayload)
+      });
+
+      if (!response.ok || !response.body) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      logger.debug('Import started', { importLogId: importLog.id });
+
     } catch (error) {
       handleImportError(error);
     }
   };
 
   const handleImportError = async (error: unknown) => {
-    logger.error('Import failed', {
-      error: error instanceof Error ? {
-        message: error.message,
-        stack: error.stack,
-        name: error.name
-      } : String(error)
-    });
+    const errorData = error instanceof Error 
+      ? { message: error.message, stack: error.stack, name: error.name }
+      : { message: String(error) };
+      
+    logger.error('Import failed', errorData);
     
     toast({
       title: 'Import Failed',
@@ -304,9 +332,11 @@ export function GeoImportDialog({
         totalFailed: undefined
       });
     } catch (completeError) {
-      logger.error('Error in onImportComplete during error handling', {
-        error: completeError instanceof Error ? completeError.message : String(completeError)
-      });
+      const completeErrorData = completeError instanceof Error 
+        ? { message: completeError.message }
+        : { message: String(completeError) };
+        
+      logger.error('Error in onImportComplete during error handling', completeErrorData);
     }
 
     onOpenChange(false);
