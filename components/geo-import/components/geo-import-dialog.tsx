@@ -135,7 +135,8 @@ export function GeoImportDialog({
           debug_info: metadata?.debug_info,
           error: metadata?.error,
           errorCount: metadata?.featureErrors?.length || 0
-        }
+        },
+        import_log_id: payload.id
       });
     }
   }, [toast]);
@@ -149,7 +150,8 @@ export function GeoImportDialog({
         collection: data.collection_id,
         layer: data.layer_id,
         debug_info: data.metadata?.debug_info,
-        errors: data.metadata?.errorCount || 0
+        errors: data.metadata?.errorCount || 0,
+        import_log_id: data.import_log_id
       }
     });
     
@@ -162,7 +164,8 @@ export function GeoImportDialog({
       fileInfoName: fileInfo?.name,
       dataCollectionId: data.collection_id,
       dataLayerId: data.layer_id,
-      currentImportLogId
+      currentImportLogId,
+      dataImportLogId: data.import_log_id
     });
     
     setIsProcessing(false);
@@ -177,7 +180,7 @@ export function GeoImportDialog({
       // Capture values before they're reset
       const capturedImportSession = importSession;
       const capturedFileInfo = fileInfo;
-      const capturedImportLogId = currentImportLogId;
+      const capturedImportLogId = data.import_log_id || currentImportLogId;
       
       // Update file relationships in the database
       (async () => {
@@ -244,9 +247,94 @@ export function GeoImportDialog({
             }
           }
           
+          // If we still don't have both IDs, try one more approach - get the imported file directly from the collection ID
+          if (!importedFileId && data.collection_id) {
+            safeLogger.debug('Attempting to find imported file by collection ID', {
+              collectionId: data.collection_id
+            });
+            
+            // Try to find the file that has this collection ID in its feature_collections
+            const { data: featureCollections, error: featureCollectionsError } = await supabase
+              .from('feature_collections')
+              .select('project_file_id')
+              .eq('id', data.collection_id)
+              .single();
+              
+            if (featureCollectionsError) {
+              safeLogger.warn('Failed to find feature collection', {
+                error: featureCollectionsError,
+                collectionId: data.collection_id
+              });
+            } else if (featureCollections?.project_file_id) {
+              importedFileId = featureCollections.project_file_id;
+              safeLogger.debug('Found imported file ID from feature collection', {
+                importedFileId,
+                collectionId: data.collection_id
+              });
+              
+              // Check if this is a shapefile by looking at the file extension
+              const { data: importedFile, error: importedFileError } = await supabase
+                .from('project_files')
+                .select('name, is_shapefile_component, main_file_id')
+                .eq('id', importedFileId)
+                .single();
+                
+              if (importedFileError) {
+                safeLogger.warn('Failed to get imported file details', {
+                  error: importedFileError,
+                  importedFileId
+                });
+              } else if (importedFile) {
+                // For shapefiles, the source file is the same as the imported file
+                // This is because shapefiles are directly imported without creating a new file
+                if (importedFile.name.toLowerCase().endsWith('.shp')) {
+                  safeLogger.debug('Detected shapefile import - using same file as source', {
+                    importedFileId
+                  });
+                  sourceFileId = importedFileId;
+                } else if (importedFile.is_shapefile_component && importedFile.main_file_id) {
+                  // If this is a shapefile component, use the main file as both source and imported
+                  safeLogger.debug('Detected shapefile component - using main file as source', {
+                    componentId: importedFileId,
+                    mainFileId: importedFile.main_file_id
+                  });
+                  sourceFileId = importedFile.main_file_id;
+                  importedFileId = importedFile.main_file_id;
+                } else {
+                  // If we have the imported file ID but not the source file ID,
+                  // try to find a file with the same name but without the .geojson extension
+                  const baseName = importedFile.name.replace(/\.geojson$/i, '');
+                  
+                  // Try to find the source file by base name
+                  const { data: sourceFiles, error: sourceFilesError } = await supabase
+                    .from('project_files')
+                    .select('id')
+                    .eq('name', baseName)
+                    .eq('project_id', projectId)
+                    .neq('id', importedFileId) // Exclude the imported file itself
+                    .order('uploaded_at', { ascending: false })
+                    .limit(1);
+                    
+                  if (sourceFilesError) {
+                    safeLogger.warn('Failed to find source file by base name', {
+                      error: sourceFilesError,
+                      baseName
+                    });
+                  } else if (sourceFiles?.length > 0) {
+                    sourceFileId = sourceFiles[0].id;
+                    safeLogger.debug('Found source file by base name', {
+                      sourceFileId,
+                      baseName
+                    });
+                  }
+                }
+              }
+            }
+          }
+          
           // If we still don't have both IDs, we can't proceed
-          if (!sourceFileId || !importedFileId) {
-            safeLogger.warn('Missing file IDs for relationship update, even after fallback attempts', {
+          if (!importedFileId) {
+            safeLogger.warn('Missing imported file ID for relationship update, even after fallback attempts', {
               importSessionFileId: importedFileId,
               sourceFileId: sourceFileId,
               importLogId: capturedImportLogId
@@ -254,18 +342,42 @@ export function GeoImportDialog({
             return;
           }
           
+          // For shapefiles, if we have the imported file ID but no source file ID, use the imported file as the source
+          if (!sourceFileId && importedFileId) {
+            // Check if this is a shapefile
+            const { data: fileInfo, error: fileInfoError } = await supabase
+              .from('project_files')
+              .select('name')
+              .eq('id', importedFileId)
+              .single();
+              
+            if (!fileInfoError && fileInfo?.name?.toLowerCase().endsWith('.shp')) {
+              safeLogger.debug('Using shapefile as its own source file', {
+                importedFileId
+              });
+              sourceFileId = importedFileId;
+            } else {
+              safeLogger.warn('Missing source file ID for relationship update', {
+                importedFileId,
+                importLogId: capturedImportLogId
+              });
+              // We can still proceed with just the imported file ID
+            }
+          }
+          
           // Now proceed with the updates using the IDs we have
           safeLogger.debug('Proceeding with file relationship updates', {
             importedFileId,
-            sourceFileId
+            sourceFileId,
+            isSourceSameAsImported: sourceFileId === importedFileId
           });
 
           // Create the import metadata
           const importMetadata = {
-            sourceFile: {
+            sourceFile: sourceFileId ? {
               id: sourceFileId,
               name: capturedFileInfo?.name || 'Unknown File'
-            },
+            } : undefined,
             importedLayers: [{
               name: capturedFileInfo?.name || 'Unknown Layer',
               featureCount: data.imported_count,
@@ -290,12 +402,23 @@ export function GeoImportDialog({
           });
 
           // First update the imported file with metadata and source_file_id
+          const updateData: any = { import_metadata: importMetadata };
+          if (sourceFileId) {
+            updateData.source_file_id = sourceFileId;
+          }
+          
+          // If the source and imported files are the same (as with shapefiles),
+          // also set is_imported to true
+          if (sourceFileId && sourceFileId === importedFileId) {
+            updateData.is_imported = true;
+            safeLogger.debug('Setting is_imported=true for shapefile', { 
+              importedFileId
+            });
+          }
+          
           const { error: updateImportedError } = await supabase
             .from('project_files')
-            .update({ 
-              source_file_id: sourceFileId,
-              import_metadata: importMetadata
-            })
+            .update(updateData)
             .eq('id', importedFileId);
 
           if (updateImportedError) {
@@ -313,21 +436,23 @@ export function GeoImportDialog({
             });
           }
 
-          // Then update the source file to mark it as imported
-          const { error: updateSourceError } = await supabase
-            .from('project_files')
-            .update({ is_imported: true })
-            .eq('id', sourceFileId);
+          // Then update the source file to mark it as imported (if it's different from the imported file)
+          if (sourceFileId && sourceFileId !== importedFileId) {
+            const { error: updateSourceError } = await supabase
+              .from('project_files')
+              .update({ is_imported: true })
+              .eq('id', sourceFileId);
 
-          if (updateSourceError) {
-            safeLogger.warn('Failed to update source file import status', {
-              error: updateSourceError,
-              sourceFileId
-            });
-          } else {
-            safeLogger.debug('Successfully updated source file import status', { 
-              sourceFileId
-            });
+            if (updateSourceError) {
+              safeLogger.warn('Failed to update source file import status', {
+                error: updateSourceError,
+                sourceFileId
+              });
+            } else {
+              safeLogger.debug('Successfully updated source file import status', { 
+                sourceFileId
+              });
+            }
           }
 
           // Verify the updates were successful
@@ -352,22 +477,24 @@ export function GeoImportDialog({
             });
           }
 
-          const { data: verifySource, error: verifySourceError } = await supabase
-            .from('project_files')
-            .select('id, is_imported')
-            .eq('id', sourceFileId)
-            .single();
+          if (sourceFileId && sourceFileId !== importedFileId) {
+            const { data: verifySource, error: verifySourceError } = await supabase
+              .from('project_files')
+              .select('id, is_imported')
+              .eq('id', sourceFileId)
+              .single();
 
-          if (verifySourceError) {
-            safeLogger.warn('Failed to verify source file update', {
-              error: verifySourceError,
-              sourceFileId
-            });
-          } else {
-            safeLogger.debug('Verification of source file update', {
-              sourceFileId,
-              isImported: verifySource.is_imported
-            });
+            if (verifySourceError) {
+              safeLogger.warn('Failed to verify source file update', {
+                error: verifySourceError,
+                sourceFileId
+              });
+            } else {
+              safeLogger.debug('Verification of source file update', {
+                sourceFileId,
+                isImported: verifySource.is_imported
+              });
+            }
           }
         } catch (error) {
           safeLogger.error('Error updating file relationships', error);

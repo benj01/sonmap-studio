@@ -12,7 +12,7 @@ import { FileTypeUtil } from '../../utils/file-types';
 import { Upload } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
 import { createClient } from '@/utils/supabase/client';
-import { ImportedFilesList } from '../imported-files-list';
+import { ImportedFilesList, ImportedFilesListRef } from '../imported-files-list';
 import { DeleteConfirmationDialog } from '../delete-confirmation-dialog';
 import { ImportFileInfo } from '@/types/files';
 import { logger } from '@/utils/logger';
@@ -53,6 +53,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const dragCountRef = React.useRef(0);
   const [fileToDelete, setFileToDelete] = useState<ProjectFile | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const importedFilesRef = React.useRef<ImportedFilesListRef>(null);
 
   const loadExistingFiles = useCallback(async () => {
     if (!projectId) {
@@ -209,19 +210,33 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         timestamp: new Date().toISOString()
       });
       
-      // Don't close the dialog until we've updated everything
-      const supabase = createClient();
-      
-      // Refresh both lists to ensure we have the latest data
-      await Promise.all([
-        loadExistingFiles(),
-        // Force the ImportedFilesList to refresh by changing its key
-        setImportedFilesKey(prev => prev + 1)
-      ]);
-
-      // Now close the dialog and reset selected file
+      // Close the dialog first
       setImportDialogOpen(false);
       setSelectedFile(undefined);
+      
+      // Add a small delay to ensure database updates have completed
+      // This is important because the import process updates the database asynchronously
+      setTimeout(async () => {
+        try {
+          logger.debug(SOURCE, 'Refreshing file lists after import');
+          // Refresh both lists to ensure we have the latest data
+          await loadExistingFiles();
+          
+          // Refresh the imported files list directly using the ref
+          if (importedFilesRef.current) {
+            await importedFilesRef.current.refreshFiles();
+            logger.debug(SOURCE, 'Imported files list refreshed via ref');
+          } else {
+            // Fallback to key refresh if ref is not available
+            setImportedFilesKey(prev => prev + 1);
+            logger.debug(SOURCE, 'Imported files list refreshed via key update');
+          }
+          
+          logger.debug(SOURCE, 'File lists refreshed successfully');
+        } catch (refreshError) {
+          logger.error(SOURCE, 'Error refreshing file lists', refreshError);
+        }
+      }, 1000); // 1 second delay
       
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
@@ -544,6 +559,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         {/* Imported Files */}
         <ImportedFilesList
+          ref={importedFilesRef}
           key={importedFilesKey}
           projectId={projectId}
           onViewLayer={handleViewLayer}
