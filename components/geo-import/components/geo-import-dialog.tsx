@@ -93,7 +93,20 @@ export function GeoImportDialog({
   , [fileInfo?.id, fileInfo?.name, fileInfo?.size, fileInfo?.type]);
 
   const handleImportUpdate = useCallback((payload: any) => {
-    safeLogger.debug('Processing import update', { payload });
+    // Log only summary information
+    safeLogger.debug('Processing import update', {
+      status: payload.status,
+      progress: {
+        imported: payload.imported_count,
+        failed: payload.failed_count,
+        total: payload.total_features
+      },
+      collection: payload.collection_id,
+      layer: payload.layer_id,
+      // Include only non-geometry metadata
+      summary: payload.metadata?.debug_info || {},
+      errors: payload.metadata?.featureErrors?.length || 0
+    });
     
     const { imported_count, failed_count, total_features, status, collection_id, layer_id, metadata } = payload;
     
@@ -118,13 +131,27 @@ export function GeoImportDialog({
         failed_count,
         collection_id,
         layer_id,
-        metadata
+        metadata: {
+          debug_info: metadata?.debug_info,
+          error: metadata?.error,
+          errorCount: metadata?.featureErrors?.length || 0
+        }
       });
     }
   }, [toast]);
 
   const handleImportCompletion = useCallback((status: string, data: any) => {
-    safeLogger.debug(`Import ${status}`, data);
+    safeLogger.debug(`Import ${status}`, {
+      status,
+      summary: {
+        imported: data.imported_count,
+        failed: data.failed_count,
+        collection: data.collection_id,
+        layer: data.layer_id,
+        debug_info: data.metadata?.debug_info,
+        errors: data.metadata?.errorCount || 0
+      }
+    });
     
     setIsProcessing(false);
     
