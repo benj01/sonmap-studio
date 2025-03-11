@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -40,6 +40,9 @@ const logger = {
   }
 };
 
+// Add type for channel status
+type ChannelStatus = 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT';
+
 export function GeoImportDialog({
   projectId,
   open,
@@ -55,6 +58,10 @@ export function GeoImportDialog({
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
   const [currentImportLogId, setCurrentImportLogId] = useState<string | null>(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<'connected' | 'disconnected' | 'error'>('disconnected');
+  const [channelRef] = useState<{ current: RealtimeChannel | null }>({ current: null });
+  const [retryCount, setRetryCount] = useState(0);
+  const MAX_RETRIES = 5;
 
   const memoizedFileInfo = useMemo(() => 
     fileInfo ? {
@@ -65,6 +72,100 @@ export function GeoImportDialog({
     } : undefined
   , [fileInfo?.id, fileInfo?.name, fileInfo?.size, fileInfo?.type]);
 
+  const handleImportUpdate = useCallback((payload: any) => {
+    logger.debug('Processing import update', { payload });
+    
+    const { imported_count, failed_count, total_features, status, collection_id, layer_id, metadata } = payload;
+    
+    // Update progress
+    const progressPercent = Math.round((imported_count / total_features) * 100);
+    setProgress(progressPercent);
+    setProgressMessage(`Imported ${imported_count} of ${total_features} features`);
+
+    // Show progress toast (only for significant changes)
+    if (progressPercent % 20 === 0 || status === 'completed' || status === 'failed') {
+      toast({
+        title: 'Import Progress',
+        description: `Imported ${imported_count} of ${total_features} features (${progressPercent}%)`,
+        duration: 3000,
+      });
+    }
+
+    // Handle completion
+    if (status === 'completed' || status === 'failed') {
+      handleImportCompletion(status, {
+        imported_count,
+        failed_count,
+        collection_id,
+        layer_id,
+        metadata
+      });
+    }
+  }, [toast]);
+
+  const handleImportCompletion = useCallback((status: string, data: any) => {
+    logger.debug(`Import ${status}`, data);
+    
+    setIsProcessing(false);
+    
+    if (status === 'completed') {
+      toast({
+        title: 'Import Complete',
+        description: `Successfully imported ${data.imported_count} features${data.failed_count > 0 ? `, ${data.failed_count} failed` : ''}`,
+        duration: 5000,
+      });
+      
+      const bounds = importSession?.fullDataset?.metadata?.bounds || [0, 0, 0, 0];
+      onImportComplete({
+        features: [],
+        bounds: {
+          minX: bounds[0],
+          minY: bounds[1],
+          maxX: bounds[2],
+          maxY: bounds[3]
+        },
+        layers: [],
+        statistics: {
+          pointCount: data.imported_count,
+          layerCount: 1,
+          featureTypes: {}
+        },
+        collectionId: data.collection_id,
+        layerId: data.layer_id,
+        totalImported: data.imported_count,
+        totalFailed: data.failed_count
+      });
+    } else {
+      toast({
+        title: 'Import Failed',
+        description: data.metadata?.error || 'Failed to import features',
+        variant: 'destructive',
+        duration: 5000,
+      });
+    }
+    
+    onOpenChange(false);
+  }, [importSession, onImportComplete, onOpenChange, toast]);
+
+  const checkImportStatus = useCallback(async () => {
+    if (!currentImportLogId) return;
+    
+    const { data, error } = await supabase
+      .from('realtime_import_logs')
+      .select('*')
+      .eq('id', currentImportLogId)
+      .single();
+
+    if (error) {
+      logger.error('Failed to check import status', { error });
+      return;
+    }
+
+    if (data) {
+      handleImportUpdate(data);
+    }
+  }, [currentImportLogId, handleImportUpdate]);
+
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
@@ -74,129 +175,151 @@ export function GeoImportDialog({
     }
   }, [open]);
 
-  // Subscribe to real-time updates when import starts
+  // Add timeout handling
   useEffect(() => {
-    if (!currentImportLogId) return;
+    if (!isProcessing) return;
 
-    logger.debug('Setting up real-time subscription', { importLogId: currentImportLogId });
+    const timeoutDuration = 5 * 60 * 1000; // 5 minutes
+    const timeoutId = setTimeout(() => {
+      if (isProcessing) {
+        logger.error('Import timeout reached', { importLogId: currentImportLogId });
+        toast({
+          title: 'Import Timeout',
+          description: 'The import is taking longer than expected. Please check the import logs for status.',
+          variant: 'destructive',
+          duration: 5000,
+        });
+        setIsProcessing(false);
+        onOpenChange(false);
+      }
+    }, timeoutDuration);
 
-    interface ImportLogRecord {
-      id: string;
-      project_file_id: string;
-      status: 'started' | 'processing' | 'completed' | 'failed';
-      total_features: number;
-      imported_count: number;
-      failed_count: number;
-      collection_id?: string;
-      layer_id?: string;
-      metadata?: any;
-      created_at: string;
-      updated_at: string;
-    }
+    return () => clearTimeout(timeoutId);
+  }, [isProcessing, currentImportLogId, toast, onOpenChange]);
 
-    const channel = supabase
-      .channel(`import-progress-${currentImportLogId}`)
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'realtime_import_logs',
-          filter: `id=eq.${currentImportLogId}`
-        },
-        (payload) => {
-          logger.debug('Received real-time update', { payload });
-          
-          if (!payload.new) return;
-          
-          const { imported_count, failed_count, total_features, status, collection_id, layer_id, metadata } = payload.new;
-          
-          // Update progress
-          const progressPercent = Math.round((imported_count / total_features) * 100);
-          setProgress(progressPercent);
-          setProgressMessage(`Imported ${imported_count} of ${total_features} features`);
+  // Monitor WebSocket connection
+  useEffect(() => {
+    if (!currentImportLogId || !isProcessing) return;
 
-          // Show progress toast (only for significant changes)
-          if (progressPercent % 20 === 0 || status === 'completed' || status === 'failed') {
+    let isActive = true; // For cleanup handling
+
+    const setupChannel = async () => {
+      try {
+        // Clean up existing channel if any
+        if (channelRef.current) {
+          await channelRef.current.unsubscribe();
+          channelRef.current = null;
+        }
+
+        if (!isActive) return; // Don't proceed if cleanup has started
+
+        // Ensure we have a valid session
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.access_token) {
+          await supabase.realtime.setAuth(session.access_token);
+        }
+
+        if (!isActive) return; // Don't proceed if cleanup has started
+
+        logger.debug('Setting up new channel', { 
+          importLogId: currentImportLogId,
+          retryCount,
+          connectionState: supabase.realtime.connectionState()
+        });
+
+        // Create and store channel reference
+        const channel = supabase
+          .channel(`import-progress-${currentImportLogId}-${Date.now()}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'realtime_import_logs',
+              filter: `id=eq.${currentImportLogId}`
+            },
+            (payload: RealtimePostgresChangesPayload<any>) => {
+              if (!isActive) return; // Don't process updates if cleanup has started
+              logger.debug('Received real-time update', { payload });
+              if (!payload.new) return;
+              handleImportUpdate(payload.new);
+            }
+          );
+
+        channelRef.current = channel;
+
+        const status = (await channel.subscribe()) as unknown as ChannelStatus;
+        if (!isActive) {
+          // If cleanup started during subscribe, clean up the channel
+          channel.unsubscribe();
+          return;
+        }
+
+        logger.debug('Channel subscription status', { status });
+
+        if (status === 'SUBSCRIBED') {
+          logger.debug('Channel subscribed successfully');
+          setSubscriptionStatus('connected');
+          setRetryCount(0);
+          await checkImportStatus(); // Initial status check
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          logger.error('Channel subscription error', { status });
+          setSubscriptionStatus('disconnected');
+
+          if (retryCount < MAX_RETRIES && isActive) {
+            const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
+            logger.debug(`Retrying in ${delay}ms`, { retryCount });
+            
+            setTimeout(() => {
+              if (isActive && isProcessing) {
+                setRetryCount(prev => prev + 1);
+                setupChannel();
+              }
+            }, delay);
+          } else if (isActive) {
+            logger.error('Max retry attempts reached', { retryCount });
             toast({
-              title: 'Import Progress',
-              description: `Imported ${imported_count} of ${total_features} features (${progressPercent}%)`,
-              duration: 3000,
-            });
-          }
-
-          // Handle completion
-          if (status === 'completed') {
-            logger.debug('Import completed', { 
-              imported_count, 
-              failed_count,
-              collection_id,
-              layer_id
-            });
-            
-            setIsProcessing(false);
-            
-            toast({
-              title: 'Import Complete',
-              description: `Successfully imported ${imported_count} features${failed_count > 0 ? `, ${failed_count} failed` : ''}`,
-              duration: 5000,
-            });
-            
-            const bounds = importSession?.fullDataset?.metadata?.bounds || [0, 0, 0, 0];
-            onImportComplete({
-              features: [],
-              bounds: {
-                minX: bounds[0],
-                minY: bounds[1],
-                maxX: bounds[2],
-                maxY: bounds[3]
-              },
-              layers: [],
-              statistics: {
-                pointCount: imported_count,
-                layerCount: 1,
-                featureTypes: {}
-              },
-              collectionId: collection_id,
-              layerId: layer_id,
-              totalImported: imported_count,
-              totalFailed: failed_count
-            });
-            onOpenChange(false);
-          } else if (status === 'failed') {
-            logger.debug('Import failed', { metadata });
-            
-            setIsProcessing(false);
-            
-            toast({
-              title: 'Import Failed',
-              description: metadata?.error || 'Failed to import features',
+              title: 'Connection Error',
+              description: 'Failed to maintain real-time connection. Falling back to polling.',
               variant: 'destructive',
               duration: 5000,
             });
           }
         }
-      )
-      .subscribe((status) => {
-        if (status === 'SUBSCRIBED') {
-          logger.debug('Channel subscribed successfully');
-        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          logger.error('Channel subscription error', { status });
-          toast({
-            title: 'Connection Error',
-            description: 'Failed to connect to real-time updates',
-            variant: 'destructive',
-            duration: 5000,
-          });
-          setIsProcessing(false);
-        }
-      });
-
-    return () => {
-      logger.debug('Cleaning up subscription', { importLogId: currentImportLogId });
-      channel.unsubscribe();
+      } catch (error) {
+        if (!isActive) return;
+        logger.error('Error setting up channel', { error });
+        setSubscriptionStatus('error');
+      }
     };
-  }, [currentImportLogId, importSession?.fullDataset?.metadata?.bounds, onImportComplete, toast, onOpenChange]);
+
+    // Set up initial channel
+    setupChannel();
+
+    // Clean up function
+    return () => {
+      isActive = false;
+      const cleanup = async () => {
+        logger.debug('Cleaning up subscription', { importLogId: currentImportLogId });
+        if (channelRef.current) {
+          await channelRef.current.unsubscribe();
+          channelRef.current = null;
+        }
+      };
+      cleanup();
+    };
+  }, [currentImportLogId, retryCount, isProcessing, toast, checkImportStatus, handleImportUpdate]);
+
+  // Set up periodic status check as fallback
+  useEffect(() => {
+    if (!currentImportLogId || !isProcessing) return;
+
+    // Check more frequently if disconnected, less if connected
+    const interval = subscriptionStatus === 'connected' ? 30000 : 5000;
+    const statusCheckInterval = setInterval(checkImportStatus, interval);
+
+    return () => clearInterval(statusCheckInterval);
+  }, [currentImportLogId, isProcessing, subscriptionStatus, checkImportStatus]);
 
   const handleImportSessionCreated = async (session: ImportSession) => {
     logger.debug('Import session received by dialog', {
