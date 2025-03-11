@@ -245,38 +245,48 @@ export async function POST(req: Request) {
             skipped_summary: result.debug_info?.skipped_summary
           }
         });
+      }
 
-        // If this is the final batch, send the import_complete event
-        if (batchIndex === totalBatches - 1) {
-          // Log completion details
-          logger.info('Import process completed', {
-            totalFeatures,
+      // If this is the final batch, send the import_complete event
+      if (batchIndex === totalBatches - 1) {
+        // Log completion details
+        logger.info('Import process completed', {
+          totalFeatures,
+          totalImported,
+          totalFailed,
+          expectedFeatureCount: features.length,
+          collectionId,
+          layerId,
+          batchIndex,
+          totalBatches
+        });
+
+        // Send final completion message with all stats
+        const completionEvent = {
+          type: 'import_complete',
+          totalBatches,
+          finalStats: {
             totalImported,
             totalFailed,
-            expectedFeatureCount: features.length
-          });
+            collectionId,
+            layerId,
+            actualFeatureCount: totalImported + totalFailed,
+            repaired_count: batchResults[0]?.debug_info?.repaired_count || 0,
+            cleaned_count: batchResults[0]?.debug_info?.cleaned_count || 0,
+            skipped_count: batchResults[0]?.debug_info?.skipped_count || 0,
+            repair_summary: batchResults[0]?.debug_info?.repair_summary,
+            skipped_summary: batchResults[0]?.debug_info?.skipped_summary
+          }
+        };
 
-          // Send final completion message with all stats
-          await writeToStream({
-            type: 'import_complete',
-            totalBatches,
-            finalStats: {
-              totalImported,
-              totalFailed,
-              collectionId,
-              layerId,
-              actualFeatureCount: totalImported + totalFailed,
-              repaired_count: result.debug_info?.repaired_count || 0,
-              cleaned_count: result.debug_info?.cleaned_count || 0,
-              skipped_count: result.debug_info?.skipped_count || 0,
-              repair_summary: result.debug_info?.repair_summary,
-              skipped_summary: result.debug_info?.skipped_summary
-            }
-          });
+        logger.info('Sending import_complete event', { event: completionEvent });
+        await writeToStream(completionEvent);
+        logger.info('Import_complete event sent');
 
-          // Add a small delay to ensure the client receives the completion event
-          await new Promise(resolve => setTimeout(resolve, 500));
-        }
+        // Add a small delay to ensure the client receives the completion event
+        logger.info('Waiting for event propagation...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        logger.info('Event propagation delay complete');
       }
 
       // Log batch completion with running totals

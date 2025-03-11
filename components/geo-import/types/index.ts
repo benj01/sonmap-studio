@@ -35,10 +35,22 @@ export interface GeoImportDialogProps {
 }
 
 export interface ImportResult {
-  collectionId: string;
-  layerId: string;
   totalImported: number;
   totalFailed: number;
+  collectionId: string;
+  layerId: string;
+  notices: Array<{
+    level: string;
+    message: string;
+    details?: any;
+  }>;
+  featureErrors: Array<{
+    feature_index: number;
+    error: string;
+    error_state: string;
+    invalid_reason?: string;
+    geometry_type_after_repair?: string;
+  }>;
 }
 
 export type { LoaderGeoFeature, ImportSession, ImportGeoFeature }; 

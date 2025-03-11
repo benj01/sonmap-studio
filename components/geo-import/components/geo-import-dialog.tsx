@@ -138,14 +138,22 @@ export function GeoImportDialog({
       const controller = new AbortController();
       const timeout = setTimeout(() => {
         controller.abort();
-        logger.error('DIAGNOSTIC: Fetch timeout after 120 seconds');
-      }, 120000);
+        logger.error('DIAGNOSTIC: Fetch timeout after 300 seconds');
+      }, 300000); // Increased to 5 minutes
 
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (!session?.access_token) {
           throw new Error('No authentication token available');
         }
+
+        // Set up a keepalive interval to prevent connection timeouts
+        let currentProgress = 0;
+        let currentMessage = 'Starting import...';
+        const keepaliveInterval = setInterval(() => {
+          setProgress(currentProgress);
+          setProgressMessage(`Still importing... ${currentMessage}`);
+        }, 30000); // Send progress update every 30 seconds
 
         const response = await fetch('/api/geo-import/stream', {
           method: 'POST',
@@ -158,6 +166,7 @@ export function GeoImportDialog({
         });
 
         clearTimeout(timeout);
+        clearInterval(keepaliveInterval);
 
         if (!response.ok || !response.body) {
           throw new Error(`HTTP error! status: ${response.status}`);
@@ -166,10 +175,42 @@ export function GeoImportDialog({
         const reader = response.body.getReader();
         const importResults = await processImportStream(reader, {
           onProgress: (progress, message) => {
+            currentProgress = progress;
+            currentMessage = message;
             setProgress(progress);
             setProgressMessage(message);
+          },
+          onNotice: (level, message, details) => {
+            // Log notices to the UI using toast
+            toast({
+              title: level.charAt(0).toUpperCase() + level.slice(1),
+              description: message,
+              variant: level === 'error' ? 'destructive' : 'default'
+            });
+            
+            // Log to console for debugging
+            logger.debug('Import notice', { level, message, details });
           }
         });
+
+        // Show final import summary
+        toast({
+          title: 'Import Complete',
+          description: `Successfully imported ${importResults.totalImported} features. ${
+            importResults.totalFailed > 0 ? `Failed to import ${importResults.totalFailed} features.` : ''
+          }`,
+          variant: importResults.totalFailed > 0 ? 'destructive' : 'default'
+        });
+
+        // If there were feature errors, show them
+        if (importResults.featureErrors?.length) {
+          toast({
+            title: 'Import Warnings',
+            description: `${importResults.featureErrors.length} features had issues during import. Check the console for details.`,
+            variant: 'destructive'
+          });
+          logger.warn('Feature import issues:', importResults.featureErrors);
+        }
 
         // Update project_files record
         try {
@@ -178,7 +219,9 @@ export function GeoImportDialog({
             layer_id: importResults.layerId,
             imported_count: importResults.totalImported,
             failed_count: importResults.totalFailed,
-            imported_at: new Date().toISOString()
+            imported_at: new Date().toISOString(),
+            notices: importResults.notices,
+            feature_errors: importResults.featureErrors
           };
 
           const { error: updateError } = await supabase
@@ -198,12 +241,6 @@ export function GeoImportDialog({
             fileId: importSession.fileId
           });
         }
-
-        toast({
-          title: 'Import Complete',
-          description: `Successfully imported ${importResults.totalImported} features${importResults.totalFailed > 0 ? ` (${importResults.totalFailed} failed)` : ''}.`,
-          duration: 5000,
-        });
 
         setIsProcessing(false);
         
