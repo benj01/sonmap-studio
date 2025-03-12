@@ -105,7 +105,8 @@ export function GeoImportDialog({
       layer: payload.layer_id,
       // Include only non-geometry metadata
       summary: payload.metadata?.debug_info || {},
-      errors: payload.metadata?.featureErrors?.length || 0
+      errors: payload.metadata?.featureErrors?.length || 0,
+      updateTimestamp: new Date().toISOString()
     });
     
     const { imported_count, failed_count, total_features, status, collection_id, layer_id, metadata } = payload;
@@ -126,6 +127,14 @@ export function GeoImportDialog({
 
     // Handle completion
     if (status === 'completed' || status === 'failed') {
+      safeLogger.debug('Import status is completed or failed, calling handleImportCompletion', {
+        status,
+        imported_count,
+        failed_count,
+        hasCollectionId: !!collection_id,
+        hasLayerId: !!layer_id
+      });
+      
       handleImportCompletion(status, {
         imported_count,
         failed_count,
@@ -540,6 +549,8 @@ export function GeoImportDialog({
   const checkImportStatus = useCallback(async () => {
     if (!currentImportLogId) return;
     
+    safeLogger.debug('Checking import status', { importLogId: currentImportLogId });
+    
     const { data, error } = await supabase
       .from('realtime_import_logs')
       .select('*')
@@ -552,7 +563,17 @@ export function GeoImportDialog({
     }
 
     if (data) {
+      safeLogger.debug('Retrieved import status', { 
+        status: data.status,
+        imported: data.imported_count,
+        failed: data.failed_count,
+        total: data.total_features,
+        hasCollectionId: !!data.collection_id,
+        hasLayerId: !!data.layer_id
+      });
       handleImportUpdate(data);
+    } else {
+      safeLogger.warn('No import log found', { importLogId: currentImportLogId });
     }
   }, [currentImportLogId, handleImportUpdate]);
 
@@ -594,107 +615,101 @@ export function GeoImportDialog({
     let isActive = true; // For cleanup handling
 
     const setupChannel = async () => {
+      if (!currentImportLogId) {
+        safeLogger.warn('No import log ID available for subscription');
+        return;
+      }
+
       try {
-        // Clean up existing channel if any
+        // Clean up existing subscription if any
         if (channelRef.current) {
+          safeLogger.debug('Cleaning up existing channel subscription');
           await channelRef.current.unsubscribe();
-          channelRef.current = null;
         }
 
-        if (!isActive) return; // Don't proceed if cleanup has started
-
-        // Ensure we have a valid session
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          await supabase.realtime.setAuth(session.access_token);
-        }
-
-        if (!isActive) return; // Don't proceed if cleanup has started
-
-        safeLogger.debug('Setting up new channel', { 
+        safeLogger.debug('Setting up new realtime subscription', {
           importLogId: currentImportLogId,
-          retryCount,
-          connectionState: supabase.realtime.connectionState()
+          retryCount
         });
 
-        // Create and store channel reference
-        const channel = supabase
-          .channel(`import-progress-${currentImportLogId}-${Date.now()}`);
-
-        // Log channel creation without the channel object
-        safeLogger.debug('Created channel', { 
-          channelName: `import-progress-${currentImportLogId}-${Date.now()}`,
-          importLogId: currentImportLogId
-        });
-
-        channel.on(
-          'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'realtime_import_logs',
-            filter: `id=eq.${currentImportLogId}`
-          },
-          (payload: RealtimePostgresChangesPayload<any>) => {
-            if (!isActive) return;
-            safeLogger.debug('Received real-time update', { 
-              payloadId: payload.new?.id,
-              status: payload.new?.status,
-              importedCount: payload.new?.imported_count,
-              totalFeatures: payload.new?.total_features
-            });
-            if (!payload.new) return;
-            handleImportUpdate(payload.new);
-          }
-        );
-
-        channelRef.current = channel;
-
-        const status = (await channel.subscribe()) as unknown as ChannelStatus;
-        if (!isActive) {
-          // If cleanup started during subscribe, clean up the channel
-          channel.unsubscribe();
-          return;
-        }
-
-        safeLogger.debug('Channel subscription status', { 
-          status,
-          channelName: `import-progress-${currentImportLogId}-${Date.now()}`
-        });
-
-        if (status === 'SUBSCRIBED') {
-          safeLogger.debug('Channel subscribed successfully');
-          setSubscriptionStatus('connected');
-          setRetryCount(0);
-          await checkImportStatus(); // Initial status check
-        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          safeLogger.error('Channel subscription error', { status });
-          setSubscriptionStatus('disconnected');
-
-          if (retryCount < MAX_RETRIES && isActive) {
-            const delay = Math.min(1000 * Math.pow(2, retryCount), 10000);
-            safeLogger.debug(`Retrying in ${delay}ms`, { retryCount });
-            
-            setTimeout(() => {
-              if (isActive && isProcessing) {
+        // Create new channel subscription
+        const channel = supabase.channel(`import_progress_${currentImportLogId}`)
+          .on(
+            'postgres_changes',
+            {
+              event: 'UPDATE',
+              schema: 'public',
+              table: 'realtime_import_logs',
+              filter: `id=eq.${currentImportLogId}`
+            },
+            (payload: RealtimePostgresChangesPayload<any>) => {
+              safeLogger.debug('Received realtime update', {
+                importLogId: currentImportLogId,
+                status: payload.new.status,
+                progress: {
+                  imported: payload.new.imported_count,
+                  failed: payload.new.failed_count
+                }
+              });
+              handleImportUpdate(payload.new);
+            }
+          )
+          .subscribe(async (status: string) => {
+            if (status === 'SUBSCRIBED') {
+              safeLogger.debug('Successfully subscribed to realtime updates', {
+                importLogId: currentImportLogId
+              });
+              setSubscriptionStatus('connected');
+              setRetryCount(0); // Reset retry count on successful connection
+            } else if (status === 'CHANNEL_ERROR') {
+              safeLogger.error('Channel subscription error', {
+                importLogId: currentImportLogId,
+                status,
+                retryCount
+              });
+              setSubscriptionStatus('error');
+              
+              // Implement exponential backoff for retries
+              if (retryCount < MAX_RETRIES) {
+                const delay = Math.min(1000 * Math.pow(2, retryCount), 30000); // Max 30 second delay
+                setTimeout(() => {
+                  setRetryCount(prev => prev + 1);
+                  setupChannel(); // Retry subscription
+                }, delay);
+              }
+            } else if (status === 'CLOSED') {
+              safeLogger.warn('Channel closed', {
+                importLogId: currentImportLogId,
+                wasConnected: subscriptionStatus === 'connected'
+              });
+              setSubscriptionStatus('disconnected');
+              
+              // If this was an unexpected closure, attempt to reconnect
+              if (subscriptionStatus === 'connected' && retryCount < MAX_RETRIES) {
                 setRetryCount(prev => prev + 1);
                 setupChannel();
               }
-            }, delay);
-          } else if (isActive) {
-            safeLogger.error('Max retry attempts reached', { retryCount });
-            toast({
-              title: 'Connection Error',
-              description: 'Failed to maintain real-time connection. Falling back to polling.',
-              variant: 'destructive',
-              duration: 5000,
-            });
-          }
-        }
+            }
+          });
+
+        channelRef.current = channel;
+
       } catch (error) {
-        if (!isActive) return;
-        safeLogger.error('Error setting up channel', { error });
+        safeLogger.error('Error setting up realtime subscription', {
+          error,
+          importLogId: currentImportLogId,
+          retryCount
+        });
         setSubscriptionStatus('error');
+        
+        // Attempt to retry on error
+        if (retryCount < MAX_RETRIES) {
+          const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+          setTimeout(() => {
+            setRetryCount(prev => prev + 1);
+            setupChannel();
+          }, delay);
+        }
       }
     };
 
@@ -804,7 +819,7 @@ export function GeoImportDialog({
           properties: f.properties || {}
         })),
         sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
-        batchSize: 600
+        batchSize: 50
       };
 
       const { data: { session } } = await supabase.auth.getSession();

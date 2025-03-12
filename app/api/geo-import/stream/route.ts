@@ -1,4 +1,3 @@
-import { PostgrestError } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { LogManager } from '@/core/logging/log-manager';
 import { createClient } from '@/utils/supabase/server';
@@ -22,6 +21,8 @@ const logger = {
 };
 
 export async function POST(req: Request) {
+  console.log("==== ROUTE.TS HANDLER EXECUTING ====");
+  
   const encoder = new TextEncoder();
   const stream = new TransformStream();
   const writer = stream.writable.getWriter();
@@ -35,22 +36,6 @@ export async function POST(req: Request) {
     }
   };
 
-  // Helper function to close stream and return response
-  const closeStreamAndReturn = async () => {
-    try {
-      await writer.close();
-    } catch (e) {
-      logger.error('Error closing stream', e);
-    }
-    return new Response(stream.readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      }
-    });
-  };
-
   try {
     const supabase = await createClient();
     
@@ -59,7 +44,14 @@ export async function POST(req: Request) {
     if (authError || !session) {
       logger.error('Authentication failed', { error: authError });
       await writeToStream({ type: 'error', message: 'Authentication required' });
-      return closeStreamAndReturn();
+      writer.close();
+      return new Response(stream.readable, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          'Connection': 'keep-alive'
+        }
+      });
     }
 
     const body = await req.json();
@@ -70,26 +62,65 @@ export async function POST(req: Request) {
       collectionName, 
       features, 
       sourceSrid,
-      batchSize = 600
+      batchSize = 50
     } = body;
+
+    logger.info('Starting import stream', {
+      fileId,
+      importLogId,
+      collectionName,
+      totalFeatures: features.length,
+      sourceSrid,
+      batchSize
+    });
+
+    // Get or create import log
+    let importLog;
+    if (importLogId) {
+      const { data, error } = await supabase
+        .from('realtime_import_logs')
+        .select()
+        .eq('id', importLogId)
+        .single();
+        
+      if (error) {
+        throw new Error(`Failed to get import log: ${error.message}`);
+      }
+      importLog = data;
+    } else {
+      const { data, error } = await supabase
+        .from('realtime_import_logs')
+        .insert({
+          project_file_id: fileId,
+          status: 'processing',
+          total_features: features.length,
+          imported_count: 0,
+          failed_count: 0
+        })
+        .select()
+        .single();
+        
+      if (error) {
+        throw new Error(`Failed to create import log: ${error.message}`);
+      }
+      importLog = data;
+    }
 
     // Calculate batches
     const totalFeatures = features.length;
     const totalBatches = Math.ceil(totalFeatures / batchSize);
-    
-    logger.info('Starting batch processing', {
-      totalFeatures,
-      totalBatches,
-      batchSize,
-      importLogId
-    });
-
-    let collectionId: string | undefined;
-    let layerId: string | undefined;
     let totalImported = 0;
     let totalFailed = 0;
-    let notices: any[] = [];
-    let featureErrors: any[] = [];
+    let collectionId;
+    let layerId;
+    let allNotices = [];
+    let allDebugInfo = {
+      repaired_count: 0,
+      cleaned_count: 0,
+      skipped_count: 0,
+      repair_summary: {},
+      skipped_summary: {}
+    };
 
     // Process each batch
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
@@ -97,16 +128,15 @@ export async function POST(req: Request) {
       const end = Math.min(start + batchSize, totalFeatures);
       const batchFeatures = features.slice(start, end);
 
-      logger.info('Processing batch', {
-        batchIndex: batchIndex + 1,
-        totalBatches,
+      logger.info(`Processing batch ${batchIndex + 1} of ${totalBatches}`, {
+        batchIndex,
         start,
         end,
         featureCount: batchFeatures.length
       });
 
-      // Call our batch import function
-      const { data: batchResults, error: batchError } = await supabase.rpc(
+      // Call the import function
+      const { data: result, error } = await supabase.rpc(
         'import_geo_features_with_transform',
         {
           p_project_file_id: fileId,
@@ -117,209 +147,219 @@ export async function POST(req: Request) {
         }
       );
 
-      // Handle batch error
-      if (batchError) {
-        logger.error('Batch import error', {
-          error: batchError,
+      if (error) {
+        logger.error('Batch import failed', {
+          error,
           batchIndex,
           start,
           end
         });
 
         // Update import log with error
-        await supabase.from('realtime_import_logs')
+        await supabase
+          .from('realtime_import_logs')
           .update({
             status: 'failed',
             metadata: {
-              error: batchError.message,
-              details: {
-                batchIndex,
-                start,
-                end
-              }
+              error: error.message,
+              details: error.details,
+              batchIndex,
+              start,
+              end
             }
           })
-          .eq('id', importLogId);
+          .eq('id', importLog.id);
 
         await writeToStream({
           type: 'error',
-          message: batchError.message,
-          error: batchError
+          message: error.message,
+          details: error.details
         });
-
-        return await closeStreamAndReturn();
+        
+        writer.close();
+        return new Response(stream.readable, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
+          }
+        });
       }
 
-      // Verify we have results
-      if (!batchResults || !Array.isArray(batchResults) || batchResults.length === 0) {
-        const error = 'No batch results returned';
-        logger.error(error, {
+      if (!result || !Array.isArray(result) || result.length === 0) {
+        const errorMsg = 'No results returned from import function';
+        logger.error(errorMsg, {
           batchIndex,
           start,
-          end,
-          resultsReceived: batchResults
+          end
         });
 
-        // Update import log with error
-        await supabase.from('realtime_import_logs')
+        await supabase
+          .from('realtime_import_logs')
           .update({
             status: 'failed',
             metadata: {
-              error,
-              details: {
-                batchIndex,
-                start,
-                end,
-                resultsReceived: batchResults
-              }
+              error: errorMsg,
+              batchIndex,
+              start,
+              end
             }
           })
-          .eq('id', importLogId);
+          .eq('id', importLog.id);
 
         await writeToStream({
           type: 'error',
-          message: error
+          message: errorMsg
         });
-
-        return await closeStreamAndReturn();
-      }
-
-      // Process each result row from the batch
-      for (const result of batchResults) {
-        // Store collection and layer IDs from first successful result if not already set
-        if (!collectionId && result.collection_id) {
-          collectionId = result.collection_id;
-        }
-        if (!layerId && result.layer_id) {
-          layerId = result.layer_id;
-        }
-
-        // Update running totals
-        totalImported += result.imported_count;
-        totalFailed += result.failed_count;
-
-        // Collect notices if any
-        if (result.debug_info?.notices) {
-          notices = notices.concat(result.debug_info.notices);
-        }
-
-        // Collect feature errors if any
-        if (result.debug_info?.feature_errors?.length > 0) {
-          featureErrors = featureErrors.concat(result.debug_info.feature_errors);
-        }
-
-        // Update import log with progress
-        await supabase.rpc('update_import_progress', {
-          p_import_log_id: importLogId,
-          p_imported_count: totalImported,
-          p_failed_count: totalFailed,
-          p_collection_id: collectionId,
-          p_layer_id: layerId,
-          p_metadata: {
-            notices,
-            featureErrors,
-            debug_info: {
-              repaired_count: result.debug_info?.repaired_count || 0,
-              cleaned_count: result.debug_info?.cleaned_count || 0,
-              skipped_count: result.debug_info?.skipped_count || 0,
-              repair_summary: result.debug_info?.repair_summary,
-              skipped_summary: result.debug_info?.skipped_summary
-            }
+        
+        writer.close();
+        return new Response(stream.readable, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive'
           }
         });
-
-        // Stream progress event
-        await writeToStream({
-          type: 'progress',
-          importedCount: totalImported,
-          failedCount: totalFailed,
-          collectionId,
-          layerId,
-          notices,
-          featureErrors
-        });
       }
 
-      // If this is the final batch, send the completion event
-      if (batchIndex === totalBatches - 1) {
-        logger.info('Import process completed', {
-          totalFeatures,
-          totalImported,
-          totalFailed,
-          expectedFeatureCount: features.length,
-          collectionId,
-          layerId
-        });
+      // Process batch results
+      for (const batchResult of result) {
+        const {
+          imported_count,
+          failed_count,
+          collection_id,
+          layer_id,
+          debug_info
+        } = batchResult;
 
-        // Update import log with completion status
-        await supabase.rpc('update_import_progress', {
-          p_import_log_id: importLogId,
-          p_imported_count: totalImported,
-          p_failed_count: totalFailed,
-          p_collection_id: collectionId,
-          p_layer_id: layerId,
-          p_metadata: {
-            notices,
-            featureErrors,
-            completedAt: new Date().toISOString(),
-            debug_info: {
-              repaired_count: batchResults[0]?.debug_info?.repaired_count || 0,
-              cleaned_count: batchResults[0]?.debug_info?.cleaned_count || 0,
-              skipped_count: batchResults[0]?.debug_info?.skipped_count || 0,
-              repair_summary: batchResults[0]?.debug_info?.repair_summary,
-              skipped_summary: batchResults[0]?.debug_info?.skipped_summary
+        // Update totals
+        totalImported += imported_count;
+        totalFailed += failed_count;
+
+        // Store IDs from first successful result
+        if (!collectionId && collection_id) {
+          collectionId = collection_id;
+        }
+        if (!layerId && layer_id) {
+          layerId = layer_id;
+        }
+
+        // Aggregate debug info
+        if (debug_info) {
+          allDebugInfo.repaired_count += debug_info.repaired_count || 0;
+          allDebugInfo.cleaned_count += debug_info.cleaned_count || 0;
+          allDebugInfo.skipped_count += debug_info.skipped_count || 0;
+
+          // Handle summaries
+          if (debug_info.repair_summary) {
+            if (typeof debug_info.repair_summary === 'string') {
+              allDebugInfo.repair_summary = debug_info.repair_summary;
+            } else if (typeof debug_info.repair_summary === 'object') {
+              allDebugInfo.repair_summary = {
+                ...allDebugInfo.repair_summary,
+                ...debug_info.repair_summary
+              };
             }
           }
-        });
 
-        // Send completion event
-        await writeToStream({
-          type: 'complete',
-          finalStats: {
-            totalImported,
-            totalFailed,
-            collectionId,
-            layerId
-          },
-          notices,
-          featureErrors
-        });
+          if (debug_info.skipped_summary) {
+            if (typeof debug_info.skipped_summary === 'string') {
+              allDebugInfo.skipped_summary = debug_info.skipped_summary;
+            } else if (typeof debug_info.skipped_summary === 'object') {
+              allDebugInfo.skipped_summary = {
+                ...allDebugInfo.skipped_summary,
+                ...debug_info.skipped_summary
+              };
+            }
+          }
+
+          // Collect notices
+          if (debug_info.notices) {
+            allNotices = allNotices.concat(debug_info.notices);
+          }
+        }
       }
 
-      // Add a small delay between batches to allow for stream processing
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-
-    return await closeStreamAndReturn();
-
-  } catch (error) {
-    const supabase = await createClient();
-    const requestBody = await req.clone().json().catch(() => ({}));
-    
-    const errorData = error instanceof Error 
-      ? { message: error.message, stack: error.stack, name: error.name }
-      : { message: String(error) };
-    
-    logger.error('Request error', errorData);
-
-    // Update import log with error
-    if (requestBody?.importLogId) {
-      await supabase.from('realtime_import_logs')
+      // Update import log
+      await supabase
+        .from('realtime_import_logs')
         .update({
-          status: 'failed',
+          imported_count: totalImported,
+          failed_count: totalFailed,
+          collection_id: collectionId,
+          layer_id: layerId,
           metadata: {
-            error: errorData.message,
-            stack: errorData.stack
-          }
+            progress: {
+              current_batch: batchIndex + 1,
+              total_batches: totalBatches,
+              features_processed: end,
+              total_features: totalFeatures
+            },
+            notices: allNotices,
+            debug_info: allDebugInfo
+          },
+          status: batchIndex === totalBatches - 1 ? 'completed' : 'processing'
         })
-        .eq('id', requestBody.importLogId);
+        .eq('id', importLog.id);
+
+      // Send progress event
+      await writeToStream({
+        type: 'progress',
+        importedCount: totalImported,
+        failedCount: totalFailed,
+        collectionId,
+        layerId,
+        progress: {
+          currentBatch: batchIndex + 1,
+          totalBatches,
+          featuresProcessed: end,
+          totalFeatures
+        },
+        debug_info: allDebugInfo
+      });
+
+      // Small delay between batches
+      if (batchIndex < totalBatches - 1) {
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
     }
+
+    // Send completion event
+    await writeToStream({
+      type: 'complete',
+      finalStats: {
+        totalImported,
+        totalFailed,
+        collectionId,
+        layerId
+      }
+    });
+
+    writer.close();
+    return new Response(stream.readable, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      }
+    });
+  } catch (error) {
+    logger.error('Import stream error', {
+      error
+    });
 
     await writeToStream({
       type: 'error',
-      message: errorData.message || 'Import failed'
+      message: error instanceof Error ? error.message : 'Import failed'
     });
 
-    return await closeStreamAndReturn();
+    writer.close();
+    return new Response(stream.readable, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      }
+    });
   }
-} 
+}
