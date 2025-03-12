@@ -4,7 +4,7 @@ CREATE OR REPLACE FUNCTION import_geo_features_with_transform(
   p_collection_name TEXT,
   p_features JSONB,
   p_source_srid INTEGER DEFAULT 2056,
-  p_batch_size INTEGER DEFAULT 100
+  p_batch_size INTEGER DEFAULT 600
 )
 RETURNS TABLE(
   collection_id UUID,
@@ -48,7 +48,7 @@ DECLARE
 BEGIN
   -- Get total feature count and log start
   v_total_features := jsonb_array_length(p_features);
-  v_batch_size := LEAST(p_batch_size, 100); -- Ensure reasonable batch size
+  v_batch_size := p_batch_size; -- Use the provided batch size without capping
   v_batch_count := CEIL(v_total_features::float / v_batch_size);
   v_current_batch := 0;
   

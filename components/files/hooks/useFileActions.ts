@@ -477,6 +477,17 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       if (fileToDelete.is_imported && fileToDelete.feature_collections) {
         for (const collection of fileToDelete.feature_collections) {
           if (collection.layers) {
+            // First, delete any import logs that reference these layers or collections
+            logger.info('Deleting import logs for collection', { collectionId: collection.id });
+            const { error: importLogsError } = await supabase
+              .from('realtime_import_logs')
+              .delete()
+              .or(`collection_id.eq.${collection.id},layer_id.in.(${collection.layers.map((l: { id: string }) => l.id).join(',')})`);
+
+            if (importLogsError) {
+              logger.warn('Failed to delete import logs', importLogsError);
+            }
+
             // Delete geo_features for each layer
             for (const layer of collection.layers) {
               logger.info('Deleting geo_features for layer', { layerId: layer.id });
@@ -567,7 +578,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
   
       logger.info('File deletion completed successfully', {
         deletedFiles: fileIds,
-        deletedPaths: filesToDelete.map(f => f.storage_path)
+        deletedPaths: filesToDelete.map((f: { storage_path: string }) => f.storage_path)
       });
   
       // Refresh storage usage after successful deletion
