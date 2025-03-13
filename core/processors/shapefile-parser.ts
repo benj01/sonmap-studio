@@ -3,27 +3,15 @@ import { FullDataset, GeoFeature } from '@/types/geo-import';
 import { read } from 'shapefile';
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position } from 'geojson';
 import proj4 from 'proj4';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
+import { createLogger } from '@/utils/logger';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 import * as turf from '@turf/turf';
 import { detectSRIDFromCoordinates, detectSRIDFromWKT } from '@/core/coordinates/coordinate-detection';
 
 const SOURCE = 'ShapefileParser';
-const logManager = LogManager.getInstance();
+const logger = createLogger(SOURCE);
 const DEFAULT_SRID = 2056; // Swiss LV95
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
 
 /**
  * Gets coordinates from a GeoJSON geometry
@@ -69,7 +57,7 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
     // Add Z coordinate back if it existed
     return hasZ && z !== null ? [result[0], result[1], z] : result;
   } catch (error) {
-    logger.warn('Failed to transform coordinates:', error);
+    logger.warn('Failed to transform coordinates', { error, coords, fromSrid });
     return coords;
   }
 }
@@ -117,7 +105,7 @@ async function transformGeometry(geometry: Geometry, srid: number): Promise<Geom
         return geometry;
     }
   } catch (error) {
-    logger.warn('Failed to transform geometry:', { error, geometryType: geometry.type });
+    logger.warn('Failed to transform geometry', { error, geometryType: geometry.type, srid });
     return geometry;
   }
 }
@@ -171,20 +159,21 @@ export class ShapefileParser extends BaseGeoDataParser {
     try {
       logger.info('Starting parse operation', {
         mainFileSize: mainFile.byteLength,
-        companionFiles: companionFiles ? Object.keys(companionFiles) : []
+        companionFiles: companionFiles ? Object.keys(companionFiles) : [],
+        options
       });
 
       // Validate companion files
       if (!companionFiles || !companionFiles['.dbf']) {
         const error = 'Missing required .dbf file';
-        logger.error(error);
+        logger.error('Invalid shapefile format', { error });
         throw new InvalidFileFormatError('shapefile', error);
       }
 
       // First check if SRID is provided in options
       if (options?.srid) {
         this.srid = options.srid;
-        logger.info(`Using provided coordinate system: EPSG:${this.srid}`);
+        logger.info('Using provided coordinate system', { srid: this.srid });
       }
       
       // If no SRID in options, try to detect from .prj file
@@ -194,21 +183,22 @@ export class ShapefileParser extends BaseGeoDataParser {
           const detectedSrid = this.parsePrjFile(prjContent);
           if (detectedSrid !== null) {
             this.srid = detectedSrid;
-            logger.info(`Detected coordinate system from PRJ: EPSG:${this.srid}`, {
+            logger.info('Detected coordinate system from PRJ', {
+              srid: this.srid,
               prjContent
             });
           }
         } catch (error) {
-          logger.warn('Failed to parse .prj file', error);
+          logger.warn('Failed to parse .prj file', { error });
         }
       }
 
       // Parse shapefile
-      logger.info('Reading shapefile data...');
+      logger.info('Reading shapefile data');
       const result = await read(mainFile, companionFiles['.dbf']);
       const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
 
-      logger.info('Shapefile parsed', {
+      logger.info('Shapefile parsed successfully', {
         featureCount: geojson.features.length
       });
 
@@ -221,11 +211,18 @@ export class ShapefileParser extends BaseGeoDataParser {
           const detected = detectSRIDFromCoordinates(x, y);
           if (detected) {
             this.srid = detected.srid;
-            logger.info(`Detected coordinate system from coordinates: ${detected.name} (EPSG:${detected.srid})`);
+            logger.info('Detected coordinate system from coordinates', {
+              name: detected.name,
+              srid: detected.srid,
+              coordinates: [x, y]
+            });
           } else {
             // If no SRID detected, use default Swiss LV95
             this.srid = DEFAULT_SRID;
-            logger.info(`No coordinate system detected, using default: EPSG:${DEFAULT_SRID} (Swiss LV95)`);
+            logger.info('Using default coordinate system', {
+              srid: DEFAULT_SRID,
+              system: 'Swiss LV95'
+            });
           }
         }
       }
@@ -238,14 +235,17 @@ export class ShapefileParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
-      // Skip coordinate transformation for main features array
-      logger.info('Skipping coordinate transformation for main features array - will be handled server-side');
+      logger.info('Skipping coordinate transformation for main features array');
 
       // For preview, transform a subset of features (first 50 features)
       let previewFeatures = features.slice(0, 50);
       if (this.srid !== undefined && this.srid !== 4326) {
         try {
-          logger.info(`Transforming coordinates for preview features from EPSG:${this.srid} to WGS84...`);
+          logger.info('Transforming coordinates for preview features', {
+            fromSrid: this.srid,
+            toSrid: 4326,
+            featureCount: previewFeatures.length
+          });
           previewFeatures = await Promise.all(previewFeatures.map(async feature => ({
             ...feature,
             geometry: await transformGeometry(feature.geometry, this.srid!)
@@ -298,10 +298,8 @@ export class ShapefileParser extends BaseGeoDataParser {
       };
 
     } catch (error) {
-      logger.error('Parse failed', error);
-      throw new InvalidFileFormatError('shapefile', 
-        error instanceof Error ? error.message : 'Unknown error'
-      );
+      logger.error('Failed to parse shapefile', { error });
+      throw error;
     }
   }
 

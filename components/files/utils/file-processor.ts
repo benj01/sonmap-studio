@@ -1,22 +1,10 @@
 import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
 import { FileTypeUtil } from './file-types';
-import { LogManager } from '../../../core/logging/log-manager';
+import { createLogger } from '../../../utils/logger';
 import { FileValidator } from './validation';
 
 const SOURCE = 'FileProcessor';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
+const logger = createLogger(SOURCE);
 
 /**
  * Custom error for file processing

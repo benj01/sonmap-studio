@@ -1,16 +1,10 @@
 // utils/supabase/server.ts
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { LogManager } from '@/core/logging/log-manager'
+import { createLogger } from '@/utils/logger'
 
 const SOURCE = 'SupabaseServer';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
+const logger = createLogger(SOURCE);
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -28,14 +22,14 @@ export async function createClient() {
           try {
             cookieStore.set({ name, value, ...options })
           } catch (error) {
-            logger.error('Error setting cookie', error)
+            logger.error('Error setting cookie', { error, name, options })
           }
         },
         remove(name: string, options: any) {
           try {
             cookieStore.delete({ name, ...options })
           } catch (error) {
-            logger.error('Error removing cookie', error)
+            logger.error('Error removing cookie', { error, name, options })
           }
         },
       },

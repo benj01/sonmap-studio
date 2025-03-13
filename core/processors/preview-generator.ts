@@ -5,7 +5,7 @@ import unkink from '@turf/unkink-polygon';
 import area from '@turf/area';
 import cleanCoords from '@turf/clean-coords';
 import type { Feature, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from 'geojson';
-import { LogManager } from '@/core/logging/log-manager';
+import { createLogger } from '@/utils/logger';
 import buffer from '@turf/buffer';
 import explode from '@turf/explode';
 
@@ -17,22 +17,7 @@ const DEFAULT_CONFIG: Required<PreviewConfig> = {
 };
 
 const SOURCE = 'PreviewGenerator';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+const logger = createLogger(SOURCE);
 
 interface ValidationResult {
   hasIssues: boolean;

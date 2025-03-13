@@ -1,7 +1,7 @@
 import { BaseGeoDataParser, ParserOptions, ParserProgressEvent, InvalidFileFormatError } from './base-parser';
 import { FullDataset, GeoFeature } from '@/types/geo-import';
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position } from 'geojson';
-import { LogManager } from '@/core/logging/log-manager';
+import { createLogger } from '@/utils/logger';
 import * as turf from '@turf/turf';
 import proj4 from 'proj4';
 import { XMLParser } from 'fast-xml-parser';
@@ -9,19 +9,7 @@ import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 
 const SOURCE = 'GeoJsonParser';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
+const logger = createLogger(SOURCE);
 
 /**
  * Extract coordinate system information from QGIS metadata file
@@ -250,7 +238,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
       const bbox = turf.bbox(geojson);
       const bounds: [number, number, number, number] = [bbox[0], bbox[1], bbox[2], bbox[3]];
       const geometryTypes = new Set(features.map(f => f.geometry.type));
-      const properties = features[0] ? Object.keys(features[0].properties) : [];
+      const properties = features[0]?.properties ? Object.keys(features[0].properties) : [];
 
       const dataset: FullDataset = {
         sourceFile: options?.filename || 'unknown.geojson',

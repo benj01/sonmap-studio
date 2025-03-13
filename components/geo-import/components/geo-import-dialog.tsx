@@ -63,6 +63,116 @@ const safeLogger = {
 // Add type for channel status
 type ChannelStatus = 'SUBSCRIBED' | 'CLOSED' | 'CHANNEL_ERROR' | 'TIMED_OUT';
 
+// Add a safe JSON stringify utility
+const safeStringify = (obj: any): string => {
+  try {
+    return JSON.stringify(obj);
+  } catch (e) {
+    return '[Unserializable Object]';
+  }
+};
+
+// Add a utility function to safely extract error messages
+const extractErrorMessage = (event: any): string => {
+  try {
+    if (!event || typeof event !== 'object') {
+      return 'Unknown error occurred';
+    }
+
+    if (event.type !== 'error' || !event.error) {
+      return 'Import process failed with an unspecified error';
+    }
+
+    const errorObj = event.error;
+
+    // Get the primary message
+    let mainMessage = 'Unknown error occurred';
+    if (typeof errorObj.message === 'string') {
+      mainMessage = errorObj.message;
+    } else if (errorObj.message && typeof errorObj.message === 'object') {
+      try {
+        mainMessage = JSON.stringify(errorObj.message);
+      } catch {
+        mainMessage = '[Complex Error Object]';
+      }
+    }
+
+    // Check if the mainMessage itself contains "[object Object]"
+    if (mainMessage === '[object Object]' && errorObj.details) {
+      // Try to use details instead
+      if (typeof errorObj.details === 'object' && errorObj.details.phase) {
+        mainMessage = `Error occurred during ${errorObj.details.phase} phase`;
+      }
+    }
+
+    // Collect additional details
+    const detailParts: string[] = [];
+
+    // Handle error details
+    if (errorObj.details) {
+      const details = errorObj.details;
+      
+      // If details is a string, use it directly
+      if (typeof details === 'string') {
+        if (details && details !== mainMessage) {
+          detailParts.push(details);
+        }
+      } 
+      // If details is an object, extract useful properties
+      else if (typeof details === 'object' && details !== null) {
+        // Extract nested error message if present
+        if (details.error && details.error.message) {
+          const errorMessage = details.error.message;
+          if (typeof errorMessage === 'string' && errorMessage !== mainMessage && errorMessage !== '[object Object]') {
+            detailParts.push(`Error: ${errorMessage}`);
+          }
+        }
+        
+        // Extract hint
+        if (details.hint && typeof details.hint === 'string') {
+          detailParts.push(`Hint: ${details.hint}`);
+        }
+        
+        // Extract details property if it's a string and not duplicate
+        if (details.details && typeof details.details === 'string' && details.details !== mainMessage) {
+          detailParts.push(`Details: ${details.details}`);
+        }
+        
+        // Extract message if it's different from main message
+        if (details.message && typeof details.message === 'string' && details.message !== mainMessage) {
+          detailParts.push(`Note: ${details.message}`);
+        }
+        
+        // Extract phase if present
+        if (details.phase && typeof details.phase === 'string') {
+          detailParts.push(`Phase: ${details.phase}`);
+        }
+      }
+    }
+
+    // Add error code if it's not the default
+    if (errorObj.code && 
+        typeof errorObj.code === 'string' && 
+        errorObj.code !== 'STREAM_FEATURES_ERROR') {
+      detailParts.push(`Code: ${errorObj.code}`);
+    }
+
+    // If we still have [object Object] as the only message and no details, provide a fallback
+    if (mainMessage === '[object Object]' && detailParts.length === 0) {
+      return 'An error occurred during the import process. Please check the logs for more details.';
+    }
+
+    // Combine everything into a user-friendly message
+    if (detailParts.length > 0) {
+      return `${mainMessage}\n\n${detailParts.join('\n')}`;
+    }
+    
+    return mainMessage;
+  } catch (e) {
+    return `Error processing server response: ${e instanceof Error ? e.message : String(e)}`;
+  }
+};
+
 export function GeoImportDialog({
   projectId,
   open,
@@ -92,27 +202,103 @@ export function GeoImportDialog({
     } : undefined
   , [fileInfo?.id, fileInfo?.name, fileInfo?.size, fileInfo?.type]);
 
+  const handleImportCompletion = useCallback((status: string, data: any) => {
+    try {
+      if (status === 'completed') {
+        // Handle successful completion
+        onImportComplete({
+          features: [],
+          bounds: {
+            minX: 0,
+            minY: 0,
+            maxX: 0,
+            maxY: 0
+          },
+          layers: [],
+          statistics: {
+            pointCount: 0,
+            layerCount: 0,
+            featureTypes: {}
+          },
+          collectionId: data.collection_id,
+          layerId: data.layer_id,
+          totalImported: data.imported_count,
+          totalFailed: data.failed_count
+        });
+
+        toast({
+          title: 'Import Complete',
+          description: `Successfully imported ${data.imported_count} features`,
+          duration: 5000,
+        });
+      } else {
+        // Handle failure
+        const errorMessage = data.metadata?.error || 'Import failed with unknown error';
+        toast({
+          title: 'Import Failed',
+          description: errorMessage,
+          variant: 'destructive',
+          duration: 5000,
+        });
+      }
+
+      // Clean up
+      setIsProcessing(false);
+      setProgress(0);
+      setProgressMessage('');
+      
+    } catch (error) {
+      safeLogger.error('Error in import completion handler', {
+        error: error instanceof Error ? error.message : String(error),
+        status,
+        data: safeStringify(data)
+      });
+      
+      toast({
+        title: 'Import Error',
+        description: 'Failed to process import completion',
+        variant: 'destructive',
+        duration: 5000,
+      });
+    }
+  }, [onImportComplete, toast]);
+
   const handleImportUpdate = useCallback((payload: any) => {
+    // Guard against non-object payloads
+    if (!payload || typeof payload !== 'object') {
+      safeLogger.warn('Received invalid payload in import update', {
+        payloadType: typeof payload
+      });
+      return;
+    }
+    
+    // Safely extract values with defaults to prevent errors
+    const status = payload.status || 'unknown';
+    const imported_count = Number(payload.imported_count) || 0;
+    const failed_count = Number(payload.failed_count) || 0;
+    const total_features = Number(payload.total_features) || 0;
+    const collection_id = payload.collection_id;
+    const layer_id = payload.layer_id;
+    const metadata = payload.metadata || {};
+    
     // Log only summary information
     safeLogger.debug('Processing import update', {
-      status: payload.status,
+      status,
       progress: {
-        imported: payload.imported_count,
-        failed: payload.failed_count,
-        total: payload.total_features
+        imported: imported_count,
+        failed: failed_count,
+        total: total_features
       },
-      collection: payload.collection_id,
-      layer: payload.layer_id,
+      collection: collection_id,
+      layer: layer_id,
       // Include only non-geometry metadata
-      summary: payload.metadata?.debug_info || {},
-      errors: payload.metadata?.featureErrors?.length || 0,
+      summary: metadata?.debug_info || {},
+      errors: metadata?.featureErrors?.length || 0,
       updateTimestamp: new Date().toISOString()
     });
     
-    const { imported_count, failed_count, total_features, status, collection_id, layer_id, metadata } = payload;
-    
-    // Update progress
-    const progressPercent = Math.round((imported_count / total_features) * 100);
+    // Update progress - guard against division by zero
+    const progressPercent = total_features > 0 ? Math.round((imported_count / total_features) * 100) : 0;
     setProgress(progressPercent);
     setProgressMessage(`Imported ${imported_count} of ${total_features} features`);
 
@@ -148,403 +334,7 @@ export function GeoImportDialog({
         import_log_id: payload.id
       });
     }
-  }, [toast]);
-
-  const handleImportCompletion = useCallback((status: string, data: any) => {
-    safeLogger.debug(`Import ${status}`, {
-      status,
-      summary: {
-        imported: data.imported_count,
-        failed: data.failed_count,
-        collection: data.collection_id,
-        layer: data.layer_id,
-        debug_info: data.metadata?.debug_info,
-        errors: data.metadata?.errorCount || 0,
-        import_log_id: data.import_log_id
-      }
-    });
-    
-    // Add detailed logging of current state
-    safeLogger.debug('Current state at import completion', {
-      hasImportSession: !!importSession,
-      importSessionFileId: importSession?.fileId,
-      hasFileInfo: !!fileInfo,
-      fileInfoId: fileInfo?.id,
-      fileInfoName: fileInfo?.name,
-      dataCollectionId: data.collection_id,
-      dataLayerId: data.layer_id,
-      currentImportLogId,
-      dataImportLogId: data.import_log_id
-    });
-    
-    setIsProcessing(false);
-    
-    if (status === 'completed') {
-      toast({
-        title: 'Import Complete',
-        description: `Successfully imported ${data.imported_count} features${data.failed_count > 0 ? `, ${data.failed_count} failed` : ''}`,
-        duration: 5000,
-      });
-      
-      // Capture values before they're reset
-      const capturedImportSession = importSession;
-      const capturedFileInfo = fileInfo;
-      const capturedImportLogId = data.import_log_id || currentImportLogId;
-      
-      // Update file relationships in the database
-      (async () => {
-        try {
-          // Check if we have the necessary file IDs
-          let sourceFileId = capturedFileInfo?.id;
-          let importedFileId = capturedImportSession?.fileId;
-          
-          // If either ID is missing, try to get them from the import log
-          if (!sourceFileId || !importedFileId) {
-            safeLogger.debug('Missing file IDs, attempting to retrieve from import log', {
-              importLogId: capturedImportLogId,
-              hasSourceFileId: !!sourceFileId,
-              hasImportedFileId: !!importedFileId
-            });
-            
-            if (capturedImportLogId) {
-              // Try to get the project_file_id from the import log
-              const { data: importLog, error: importLogError } = await supabase
-                .from('realtime_import_logs')
-                .select('project_file_id')
-                .eq('id', capturedImportLogId)
-                .single();
-                
-              if (importLogError) {
-                safeLogger.warn('Failed to retrieve import log', {
-                  error: importLogError,
-                  importLogId: capturedImportLogId
-                });
-              } else if (importLog?.project_file_id) {
-                importedFileId = importLog.project_file_id;
-                safeLogger.debug('Retrieved imported file ID from import log', {
-                  importedFileId,
-                  importLogId: capturedImportLogId
-                });
-                
-                // If we have the imported file ID but not the source file ID,
-                // try to get it from the file name
-                if (!sourceFileId && capturedFileInfo?.name) {
-                  // Try to find the source file by name
-                  const { data: sourceFiles, error: sourceFilesError } = await supabase
-                    .from('project_files')
-                    .select('id')
-                    .eq('name', capturedFileInfo.name)
-                    .eq('project_id', projectId)
-                    .neq('id', importedFileId) // Exclude the imported file itself
-                    .order('uploaded_at', { ascending: false })
-                    .limit(1);
-                    
-                  if (sourceFilesError) {
-                    safeLogger.warn('Failed to find source file by name', {
-                      error: sourceFilesError,
-                      fileName: capturedFileInfo.name
-                    });
-                  } else if (sourceFiles?.length > 0) {
-                    sourceFileId = sourceFiles[0].id;
-                    safeLogger.debug('Found source file by name', {
-                      sourceFileId,
-                      fileName: capturedFileInfo.name
-                    });
-                  }
-                }
-              }
-            }
-          }
-          
-          // If we still don't have both IDs, try one more approach - get the imported file directly from the collection ID
-          if (!importedFileId && data.collection_id) {
-            safeLogger.debug('Attempting to find imported file by collection ID', {
-              collectionId: data.collection_id
-            });
-            
-            // Try to find the file that has this collection ID in its feature_collections
-            const { data: featureCollections, error: featureCollectionsError } = await supabase
-              .from('feature_collections')
-              .select('project_file_id')
-              .eq('id', data.collection_id)
-              .single();
-              
-            if (featureCollectionsError) {
-              safeLogger.warn('Failed to find feature collection', {
-                error: featureCollectionsError,
-                collectionId: data.collection_id
-              });
-            } else if (featureCollections?.project_file_id) {
-              importedFileId = featureCollections.project_file_id;
-              safeLogger.debug('Found imported file ID from feature collection', {
-                importedFileId,
-                collectionId: data.collection_id
-              });
-              
-              // Check if this is a shapefile by looking at the file extension
-              const { data: importedFile, error: importedFileError } = await supabase
-                .from('project_files')
-                .select('name, is_shapefile_component, main_file_id')
-                .eq('id', importedFileId)
-                .single();
-                
-              if (importedFileError) {
-                safeLogger.warn('Failed to get imported file details', {
-                  error: importedFileError,
-                  importedFileId
-                });
-              } else if (importedFile) {
-                // For shapefiles, the source file is the same as the imported file
-                // This is because shapefiles are directly imported without creating a new file
-                if (importedFile.name.toLowerCase().endsWith('.shp')) {
-                  safeLogger.debug('Detected shapefile import - using same file as source', {
-                    importedFileId
-                  });
-                  sourceFileId = importedFileId;
-                } else if (importedFile.is_shapefile_component && importedFile.main_file_id) {
-                  // If this is a shapefile component, use the main file as both source and imported
-                  safeLogger.debug('Detected shapefile component - using main file as source', {
-                    componentId: importedFileId,
-                    mainFileId: importedFile.main_file_id
-                  });
-                  sourceFileId = importedFile.main_file_id;
-                  importedFileId = importedFile.main_file_id;
-                } else {
-                  // If we have the imported file ID but not the source file ID,
-                  // try to find a file with the same name but without the .geojson extension
-                  const baseName = importedFile.name.replace(/\.geojson$/i, '');
-                  
-                  // Try to find the source file by base name
-                  const { data: sourceFiles, error: sourceFilesError } = await supabase
-                    .from('project_files')
-                    .select('id')
-                    .eq('name', baseName)
-                    .eq('project_id', projectId)
-                    .neq('id', importedFileId) // Exclude the imported file itself
-                    .order('uploaded_at', { ascending: false })
-                    .limit(1);
-                    
-                  if (sourceFilesError) {
-                    safeLogger.warn('Failed to find source file by base name', {
-                      error: sourceFilesError,
-                      baseName
-                    });
-                  } else if (sourceFiles?.length > 0) {
-                    sourceFileId = sourceFiles[0].id;
-                    safeLogger.debug('Found source file by base name', {
-                      sourceFileId,
-                      baseName
-                    });
-                  }
-                }
-              }
-            }
-          }
-          
-          // If we still don't have both IDs, we can't proceed
-          if (!importedFileId) {
-            safeLogger.warn('Missing imported file ID for relationship update, even after fallback attempts', {
-              importSessionFileId: importedFileId,
-              sourceFileId: sourceFileId,
-              importLogId: capturedImportLogId
-            });
-            return;
-          }
-          
-          // For shapefiles, if we have the imported file ID but no source file ID, use the imported file as the source
-          if (!sourceFileId && importedFileId) {
-            // Check if this is a shapefile
-            const { data: fileInfo, error: fileInfoError } = await supabase
-              .from('project_files')
-              .select('name')
-              .eq('id', importedFileId)
-              .single();
-              
-            if (!fileInfoError && fileInfo?.name?.toLowerCase().endsWith('.shp')) {
-              safeLogger.debug('Using shapefile as its own source file', {
-                importedFileId
-              });
-              sourceFileId = importedFileId;
-            } else {
-              safeLogger.warn('Missing source file ID for relationship update', {
-                importedFileId,
-                importLogId: capturedImportLogId
-              });
-              // We can still proceed with just the imported file ID
-            }
-          }
-          
-          // Now proceed with the updates using the IDs we have
-          safeLogger.debug('Proceeding with file relationship updates', {
-            importedFileId,
-            sourceFileId,
-            isSourceSameAsImported: sourceFileId === importedFileId
-          });
-
-          // Create the import metadata
-          const importMetadata = {
-            sourceFile: sourceFileId ? {
-              id: sourceFileId,
-              name: capturedFileInfo?.name || 'Unknown File'
-            } : undefined,
-            importedLayers: [{
-              name: capturedFileInfo?.name || 'Unknown Layer',
-              featureCount: data.imported_count,
-              featureTypes: {}
-            }],
-            statistics: {
-              totalFeatures: data.imported_count + data.failed_count,
-              failedTransformations: data.failed_count,
-              errors: data.metadata?.errorCount || 0
-            },
-            imported_count: data.imported_count,
-            failed_count: data.failed_count,
-            collection_id: data.collection_id,
-            layer_id: data.layer_id,
-            importedAt: new Date().toISOString()
-          };
-
-          safeLogger.debug('Prepared import metadata', { 
-            importMetadata,
-            importedFileId,
-            sourceFileId
-          });
-
-          // First update the imported file with metadata and source_file_id
-          const updateData: any = { import_metadata: importMetadata };
-          if (sourceFileId) {
-            updateData.source_file_id = sourceFileId;
-          }
-          
-          // If the source and imported files are the same (as with shapefiles),
-          // also set is_imported to true
-          if (sourceFileId && sourceFileId === importedFileId) {
-            updateData.is_imported = true;
-            safeLogger.debug('Setting is_imported=true for shapefile', { 
-              importedFileId
-            });
-          }
-          
-          const { error: updateImportedError } = await supabase
-            .from('project_files')
-            .update(updateData)
-            .eq('id', importedFileId);
-
-          if (updateImportedError) {
-            safeLogger.warn('Failed to update imported file with metadata', {
-              error: updateImportedError,
-              importedFileId,
-              sourceFileId
-            });
-            // Don't proceed if this update fails
-            return;
-          } else {
-            safeLogger.debug('Successfully updated imported file with metadata', { 
-              importedFileId,
-              sourceFileId
-            });
-          }
-
-          // Then update the source file to mark it as imported (if it's different from the imported file)
-          if (sourceFileId && sourceFileId !== importedFileId) {
-            const { error: updateSourceError } = await supabase
-              .from('project_files')
-              .update({ is_imported: true })
-              .eq('id', sourceFileId);
-
-            if (updateSourceError) {
-              safeLogger.warn('Failed to update source file import status', {
-                error: updateSourceError,
-                sourceFileId
-              });
-            } else {
-              safeLogger.debug('Successfully updated source file import status', { 
-                sourceFileId
-              });
-            }
-          }
-
-          // Verify the updates were successful
-          const { data: verifyImported, error: verifyImportedError } = await supabase
-            .from('project_files')
-            .select('id, source_file_id, import_metadata')
-            .eq('id', importedFileId)
-            .single();
-
-          if (verifyImportedError) {
-            safeLogger.warn('Failed to verify imported file update', {
-              error: verifyImportedError,
-              importedFileId
-            });
-          } else {
-            safeLogger.debug('Verification of imported file update', {
-              importedFileId,
-              hasSourceFileId: !!verifyImported.source_file_id,
-              hasImportMetadata: !!verifyImported.import_metadata,
-              sourceFileId: verifyImported.source_file_id,
-              importMetadataKeys: verifyImported.import_metadata ? Object.keys(verifyImported.import_metadata) : []
-            });
-          }
-
-          if (sourceFileId && sourceFileId !== importedFileId) {
-            const { data: verifySource, error: verifySourceError } = await supabase
-              .from('project_files')
-              .select('id, is_imported')
-              .eq('id', sourceFileId)
-              .single();
-
-            if (verifySourceError) {
-              safeLogger.warn('Failed to verify source file update', {
-                error: verifySourceError,
-                sourceFileId
-              });
-            } else {
-              safeLogger.debug('Verification of source file update', {
-                sourceFileId,
-                isImported: verifySource.is_imported
-              });
-            }
-          }
-        } catch (error) {
-          safeLogger.error('Error updating file relationships', error);
-        } finally {
-          // Only close the dialog after the database updates are complete
-          onOpenChange(false);
-        }
-      })();
-      
-      const bounds = importSession?.fullDataset?.metadata?.bounds || [0, 0, 0, 0];
-      onImportComplete({
-        features: [],
-        bounds: {
-          minX: bounds[0],
-          minY: bounds[1],
-          maxX: bounds[2],
-          maxY: bounds[3]
-        },
-        layers: [],
-        statistics: {
-          pointCount: data.imported_count,
-          layerCount: 1,
-          featureTypes: {}
-        },
-        collectionId: data.collection_id,
-        layerId: data.layer_id,
-        totalImported: data.imported_count,
-        totalFailed: data.failed_count
-      });
-    } else {
-      toast({
-        title: 'Import Failed',
-        description: data.metadata?.error || 'Failed to import features',
-        variant: 'destructive',
-        duration: 5000,
-      });
-      
-      // Close the dialog for failed imports
-      onOpenChange(false);
-    }
-  }, [importSession, onImportComplete, onOpenChange, toast, fileInfo, currentImportLogId, projectId]);
+  }, [toast, handleImportCompletion]);
 
   const checkImportStatus = useCallback(async () => {
     if (!currentImportLogId) return;
@@ -610,21 +400,32 @@ export function GeoImportDialog({
 
   // Monitor WebSocket connection
   useEffect(() => {
-    if (!currentImportLogId || !isProcessing) return;
+    if (!currentImportLogId || !isProcessing) {
+      // Clean up any existing subscription when processing stops or import log changes
+      if (channelRef.current) {
+        safeLogger.debug('Cleaning up subscription due to state change', {
+          importLogId: currentImportLogId,
+          isProcessing
+        });
+        channelRef.current.unsubscribe();
+        channelRef.current = null;
+      }
+      return;
+    }
 
-    let isActive = true; // For cleanup handling
+    let isActive = true;
 
     const setupChannel = async () => {
-      if (!currentImportLogId) {
-        safeLogger.warn('No import log ID available for subscription');
+      if (!currentImportLogId || !isActive) {
         return;
       }
 
       try {
         // Clean up existing subscription if any
         if (channelRef.current) {
-          safeLogger.debug('Cleaning up existing channel subscription');
+          safeLogger.debug('Cleaning up existing channel before new setup');
           await channelRef.current.unsubscribe();
+          channelRef.current = null;
         }
 
         safeLogger.debug('Setting up new realtime subscription', {
@@ -643,6 +444,8 @@ export function GeoImportDialog({
               filter: `id=eq.${currentImportLogId}`
             },
             (payload: RealtimePostgresChangesPayload<any>) => {
+              if (!isActive) return;
+              
               safeLogger.debug('Received realtime update', {
                 importLogId: currentImportLogId,
                 status: payload.new.status,
@@ -655,12 +458,14 @@ export function GeoImportDialog({
             }
           )
           .subscribe(async (status: string) => {
+            if (!isActive) return;
+
             if (status === 'SUBSCRIBED') {
               safeLogger.debug('Successfully subscribed to realtime updates', {
                 importLogId: currentImportLogId
               });
               setSubscriptionStatus('connected');
-              setRetryCount(0); // Reset retry count on successful connection
+              setRetryCount(0);
             } else if (status === 'CHANNEL_ERROR') {
               safeLogger.error('Channel subscription error', {
                 importLogId: currentImportLogId,
@@ -669,23 +474,25 @@ export function GeoImportDialog({
               });
               setSubscriptionStatus('error');
               
-              // Implement exponential backoff for retries
-              if (retryCount < MAX_RETRIES) {
-                const delay = Math.min(1000 * Math.pow(2, retryCount), 30000); // Max 30 second delay
+              // Only retry if we're still processing and haven't exceeded retries
+              if (isProcessing && retryCount < MAX_RETRIES) {
+                const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
                 setTimeout(() => {
-                  setRetryCount(prev => prev + 1);
-                  setupChannel(); // Retry subscription
+                  if (isActive && isProcessing) {
+                    setRetryCount(prev => prev + 1);
+                    setupChannel();
+                  }
                 }, delay);
               }
             } else if (status === 'CLOSED') {
-              safeLogger.warn('Channel closed', {
+              safeLogger.debug('Channel closed', {
                 importLogId: currentImportLogId,
                 wasConnected: subscriptionStatus === 'connected'
               });
               setSubscriptionStatus('disconnected');
               
-              // If this was an unexpected closure, attempt to reconnect
-              if (subscriptionStatus === 'connected' && retryCount < MAX_RETRIES) {
+              // Only attempt reconnect if we were previously connected and still processing
+              if (subscriptionStatus === 'connected' && isProcessing && retryCount < MAX_RETRIES && isActive) {
                 setRetryCount(prev => prev + 1);
                 setupChannel();
               }
@@ -695,6 +502,8 @@ export function GeoImportDialog({
         channelRef.current = channel;
 
       } catch (error) {
+        if (!isActive) return;
+        
         safeLogger.error('Error setting up realtime subscription', {
           error,
           importLogId: currentImportLogId,
@@ -702,33 +511,32 @@ export function GeoImportDialog({
         });
         setSubscriptionStatus('error');
         
-        // Attempt to retry on error
-        if (retryCount < MAX_RETRIES) {
+        // Only retry if we're still processing and haven't exceeded retries
+        if (isProcessing && retryCount < MAX_RETRIES) {
           const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
           setTimeout(() => {
-            setRetryCount(prev => prev + 1);
-            setupChannel();
+            if (isActive && isProcessing) {
+              setRetryCount(prev => prev + 1);
+              setupChannel();
+            }
           }, delay);
         }
       }
     };
 
-    // Set up initial channel
     setupChannel();
 
-    // Clean up function
     return () => {
       isActive = false;
-      const cleanup = async () => {
-        safeLogger.debug('Cleaning up subscription', { importLogId: currentImportLogId });
-        if (channelRef.current) {
-          await channelRef.current.unsubscribe();
-          channelRef.current = null;
-        }
-      };
-      cleanup();
+      if (channelRef.current) {
+        safeLogger.debug('Cleaning up subscription in cleanup function', {
+          importLogId: currentImportLogId
+        });
+        channelRef.current.unsubscribe();
+        channelRef.current = null;
+      }
     };
-  }, [currentImportLogId, retryCount, isProcessing, toast, checkImportStatus, handleImportUpdate]);
+  }, [currentImportLogId, retryCount, isProcessing, subscriptionStatus, handleImportUpdate]);
 
   // Set up periodic status check as fallback
   useEffect(() => {
@@ -799,7 +607,9 @@ export function GeoImportDialog({
         .insert({
           project_file_id: importSession.fileId,
           status: 'started',
-          total_features: selectedFeatures.length
+          total_features: selectedFeatures.length,
+          imported_count: 0,
+          failed_count: 0
         })
         .select()
         .single();
@@ -810,7 +620,7 @@ export function GeoImportDialog({
       setCurrentImportLogId(importLog.id);
 
       const requestPayload = {
-        fileId: importSession.fileId,
+        projectFileId: importSession.fileId,  // Changed from fileId to projectFileId
         importLogId: importLog.id,
         collectionName: fileInfo?.name || 'Imported Features',
         features: selectedFeatures.map(f => ({
@@ -819,7 +629,10 @@ export function GeoImportDialog({
           properties: f.properties || {}
         })),
         sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
-        batchSize: 50
+        targetSrid: 4326,
+        batchSize: 10,
+        retries: 3,
+        checkpointInterval: 500
       };
 
       const { data: { session } } = await supabase.auth.getSession();
@@ -833,55 +646,177 @@ export function GeoImportDialog({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
-        body: JSON.stringify(requestPayload)
+        body: JSON.stringify({
+          ...requestPayload,
+          features: requestPayload.features
+        }),
+        signal: AbortSignal.timeout(300000) // 5 minute timeout
       });
 
       if (!response.ok || !response.body) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorData = await response.json().catch(() => null);
+        throw new Error(
+          errorData?.error || errorData?.details?.error || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let lastProgressTime = Date.now();
+      const PROGRESS_TIMEOUT = 30000; // 30 seconds
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          break;
+        }
+
+        // Check for progress timeout
+        const currentTime = Date.now();
+        if (currentTime - lastProgressTime > PROGRESS_TIMEOUT) {
+          throw new Error('Import timed out - no progress for 30 seconds');
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          try {
+            if (!line.trim()) continue;
+            
+            const event = JSON.parse(line);
+            lastProgressTime = currentTime; // Reset timeout on successful event
+
+            if (event.type === 'error') {
+              // Extract error details from the structured error response
+              const errorData = event.error || {};
+              const errorDetails = errorData.details || {};
+              
+              // Build a comprehensive error message
+              const messageParts = [];
+              
+              // Add main error message
+              if (errorData.message) {
+                messageParts.push(errorData.message);
+              }
+              
+              // Add hint if available
+              if (errorDetails.hint) {
+                messageParts.push(`Hint: ${errorDetails.hint}`);
+              }
+              
+              // Add additional details if available
+              if (errorDetails.details) {
+                messageParts.push(`Details: ${errorDetails.details}`);
+              }
+              
+              // Add phase information
+              if (errorDetails.phase) {
+                messageParts.push(`Phase: ${errorDetails.phase}`);
+              }
+              
+              // Log the complete error context
+              safeLogger.error('Import stream error', {
+                code: errorData.code,
+                message: errorData.message,
+                details: errorDetails,
+                timestamp: errorDetails.timestamp,
+                phase: errorDetails.phase,
+                errorType: errorDetails.errorType
+              });
+              
+              // Throw error with user-friendly message
+              throw new Error(messageParts.filter(Boolean).join('\n'));
+            }
+
+            if (event.type === 'progress') {
+              safeLogger.debug('Processing import progress', {
+                imported: event.imported,
+                total: event.total,
+                percent: Math.round((event.imported / event.total) * 100)
+              });
+              
+              // Handle progress update
+              setProgress(Math.round((event.imported / event.total) * 100));
+              setProgressMessage(`Imported ${event.imported} of ${event.total} features`);
+            }
+
+            if (event.type === 'complete') {
+              safeLogger.info('Completed import process', {
+                timestamp: new Date().toISOString(),
+                result: {
+                  features: event.features?.length || 0,
+                  collection: event.collection_id,
+                  layer: event.layer_id
+                }
+              });
+            }
+          } catch (parseError) {
+            safeLogger.error('Failed to parse stream data', {
+              line,
+              error: parseError instanceof Error ? parseError.message : String(parseError)
+            });
+          }
+        }
       }
 
       safeLogger.debug('Import started', { importLogId: importLog.id });
 
     } catch (error) {
+      const currentImportId = currentImportLogId;
+      safeLogger.error('Import failed', {
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : String(error),
+        importLogId: currentImportId
+      });
       handleImportError(error);
     }
   };
 
   const handleImportError = async (error: unknown) => {
-    const errorData = error instanceof Error 
-      ? { message: error.message, stack: error.stack, name: error.name }
-      : { message: String(error) };
-      
-    safeLogger.error('Import failed', errorData);
+    // Simple error message extraction
+    let errorMessage = "An unknown error occurred during import";
     
+    if (error instanceof Error) {
+      errorMessage = error.message;
+    } else if (typeof error === 'string') {
+      errorMessage = error;
+    }
+    
+    console.error('Import error:', error);
+    
+    // Update import log if available
+    if (currentImportLogId) {
+      try {
+        await supabase
+          .from('realtime_import_logs')
+          .update({
+            status: 'failed',
+            metadata: {
+              error: errorMessage,
+              timestamp: new Date().toISOString()
+            }
+          })
+          .eq('id', currentImportLogId);
+      } catch (updateError) {
+        console.error('Failed to update import log:', updateError);
+      }
+    }
+    
+    // Simple toast with the error message
     toast({
       title: 'Import Failed',
-      description: error instanceof Error ? error.message : 'An unknown error occurred during import',
-      variant: 'destructive',
-      duration: 5000,
+      description: errorMessage,
+      variant: 'destructive'
     });
 
     setIsProcessing(false);
-    
-    try {
-      await onImportComplete({
-        features: [],
-        bounds: { minX: 0, minY: 0, maxX: 0, maxY: 0 },
-        layers: [],
-        statistics: { pointCount: 0, layerCount: 0, featureTypes: {} },
-        collectionId: undefined,
-        layerId: undefined,
-        totalImported: undefined,
-        totalFailed: undefined
-      });
-    } catch (completeError) {
-      const completeErrorData = completeError instanceof Error 
-        ? { message: completeError.message }
-        : { message: String(completeError) };
-        
-      safeLogger.error('Error in onImportComplete during error handling', completeErrorData);
-    }
-
     onOpenChange(false);
   };
 

@@ -1,5 +1,8 @@
 import { create } from 'zustand'
 import type { CacheItem } from '@/types'
+import { createLogger } from '@/utils/logger'
+
+const logger = createLogger('DataStore')
 
 export interface DataState {
   cache: Record<string, CacheItem<any>>
@@ -64,7 +67,7 @@ export const useDataStore = create<DataState>()((set, get) => ({
     try {
       await get().fetchData(key, query, ttl)
     } catch (error) {
-      console.error(`Prefetch failed for key ${key}:`, error)
+      logger.error('Prefetch failed', { key, error })
     }
   },
 

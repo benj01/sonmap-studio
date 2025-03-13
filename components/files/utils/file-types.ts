@@ -1,4 +1,8 @@
 import type { FileTypeConfig, CompanionFileConfig } from '../types';
+import { createLogger } from '../../../utils/logger';
+
+const SOURCE = 'FileTypeUtil';
+const logger = createLogger(SOURCE);
 
 /**
  * Utility class for handling file types and MIME types
@@ -50,7 +54,7 @@ export class FileTypeUtil {
               const content = await file.text();
               return content.includes('<!DOCTYPE qgis') || content.includes('<qgis');
             } catch (error) {
-              console.error('[FileTypeUtil] QMD validation error', error);
+              logger.error('QMD validation error', { error });
               return false;
             }
           }
@@ -63,7 +67,7 @@ export class FileTypeUtil {
           try {
             json = JSON.parse(content);
           } catch (e) {
-            console.warn('[FileTypeUtil] Failed to parse GeoJSON', e);
+            logger.warn('Failed to parse GeoJSON', { error: e });
             return false;
           }
 
@@ -72,23 +76,23 @@ export class FileTypeUtil {
                             ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'].includes(json.type);
 
           if (!isValidType) {
-            console.warn('[FileTypeUtil] Invalid GeoJSON type', { type: json.type });
+            logger.warn('Invalid GeoJSON type', { type: json.type });
             return false;
           }
 
           if (json.type === 'FeatureCollection' && !Array.isArray(json.features)) {
-            console.warn('[FileTypeUtil] FeatureCollection missing features array');
+            logger.warn('FeatureCollection missing features array');
             return false;
           }
 
           if (json.type === 'Feature' && !json.geometry) {
-            console.warn('[FileTypeUtil] Feature missing geometry');
+            logger.warn('Feature missing geometry');
             return false;
           }
 
           return true;
         } catch (error) {
-          console.error('[FileTypeUtil] GeoJSON validation error', error);
+          logger.error('GeoJSON validation error', { error });
           return false;
         }
       }
@@ -131,7 +135,7 @@ export class FileTypeUtil {
           const header = lines[0].toLowerCase();
           return /\b(lat|latitude|lon|longitude|x|y|z|easting|northing|elevation)\b/.test(header);
         } catch (error) {
-          console.error('[FileTypeUtil] CSV validation error', error);
+          logger.error('CSV validation error', { error });
           return false;
         }
       }
@@ -158,7 +162,7 @@ export class FileTypeUtil {
           const firstLine = lines[0].trim();
           return /^-?\d+(\.\d+)?\s+-?\d+(\.\d+)?\s+-?\d+(\.\d+)?(\s+.*)?$/.test(firstLine);
         } catch (error) {
-          console.error('[FileTypeUtil] XYZ validation error', error);
+          logger.error('XYZ validation error', { error });
           return false;
         }
       }

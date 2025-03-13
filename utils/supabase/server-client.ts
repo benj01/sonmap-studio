@@ -1,23 +1,11 @@
 // utils/supabase/server-client.ts
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { LogManager } from '@/core/logging/log-manager'
+import { createLogger } from '@/utils/logger'
 import { ResponseCookie } from 'next/dist/compiled/@edge-runtime/cookies'
 
 const SOURCE = 'SupabaseServerClient'
-const logManager = LogManager.getInstance()
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data)
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error)
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error)
-  }
-}
+const logger = createLogger(SOURCE)
 
 export function createClient() {
   const cookieStore = cookies()
@@ -61,7 +49,7 @@ export function createClient() {
               sameSite: 'lax'
             })
           } catch (error) {
-            logger.error('Error setting cookie', { name, error })
+            logger.error('Error setting cookie', { name, error, options })
           }
         },
         remove(name: string, options: Partial<ResponseCookie>) {
@@ -71,7 +59,7 @@ export function createClient() {
               path: options.path ?? '/'
             })
           } catch (error) {
-            logger.error('Error removing cookie', { name, error })
+            logger.error('Error removing cookie', { name, error, options })
           }
         }
       }

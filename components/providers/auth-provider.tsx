@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import type { User } from '@supabase/supabase-js'
-import { LogManager } from '@/core/logging/log-manager'
+import { createLogger } from '@/utils/logger'
 
 interface AuthContextType {
   user: User | null
@@ -16,19 +16,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 const SOURCE = 'AuthProvider'
-const logManager = LogManager.getInstance()
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
+const logger = createLogger(SOURCE)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()

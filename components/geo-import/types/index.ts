@@ -1,5 +1,6 @@
 import { GeoFeature as LoaderGeoFeature } from '@/types/geo';
 import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-import';
+import { ImportResult as ServiceImportResult, FeatureError } from '@/core/services/geo-import/types/index';
 
 export interface ImportLoaderResult {
   features: any[];
@@ -53,4 +54,5 @@ export interface ImportResult {
   }>;
 }
 
-export type { LoaderGeoFeature, ImportSession, ImportGeoFeature }; 
+// Re-export types from core services
+export type { LoaderGeoFeature, ImportSession, ImportGeoFeature, ServiceImportResult, FeatureError }; 

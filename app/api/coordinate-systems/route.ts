@@ -1,44 +1,35 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
-import { LogManager } from '@/core/logging/log-manager';
+import { createLogger } from '@/utils/logger';
 
 const SOURCE = 'CoordinateSystemsEndpoint';
-const logManager = LogManager.getInstance();
+const logger = createLogger(SOURCE);
 
 // Add rate limiting for coordinate system requests
 const requestCache = new Map<string, number>();
-const RATE_LIMIT_MS = 5000; // Only log once every 5 seconds per SRID
-
-const logger = {
-  info: (message: string, data?: any) => {
-    const key = `${message}:${JSON.stringify(data)}`;
-    const now = Date.now();
-    const lastLog = requestCache.get(key);
-    
-    // Only log if we haven't logged this exact message recently
-    if (!lastLog || now - lastLog > RATE_LIMIT_MS) {
-      logManager.info(SOURCE, message, data);
-      requestCache.set(key, now);
-    }
-  },
-  error: (message: string, error?: any) => {
-    console.error(`[${SOURCE}] ${message}`, error);
-    logManager.error(SOURCE, message, error);
-  }
-};
+const RATE_LIMIT_MS = 60000; // Only log once per minute per SRID
+const DEBUG_MODE = process.env.NODE_ENV === 'development';
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const srid = searchParams.get('srid');
-
-  // Only log coordinate system requests in debug mode
-  logger.info('Coordinate system request', { srid });
 
   if (!srid) {
     return NextResponse.json(
       { error: 'SRID parameter is required' },
       { status: 400 }
     );
+  }
+
+  // Only log in debug mode and respect rate limiting
+  if (DEBUG_MODE) {
+    const now = Date.now();
+    const lastLog = requestCache.get(srid);
+    
+    if (!lastLog || now - lastLog > RATE_LIMIT_MS) {
+      logger.debug('Coordinate system request', { srid });
+      requestCache.set(srid, now);
+    }
   }
 
   try {
@@ -51,7 +42,7 @@ export async function GET(request: Request) {
       .single();
 
     if (error) {
-      logger.error('Database error', error);
+      logger.error('Failed to fetch coordinate system', { error, srid });
       return NextResponse.json(
         { error: 'Failed to fetch coordinate system' },
         { status: 500 }
@@ -72,8 +63,8 @@ export async function GET(request: Request) {
       wkt: data.srtext,
       proj4: data.proj4text
     });
-  } catch (error: any) {
-    logger.error('Unexpected error', error);
+  } catch (error) {
+    logger.error('Unexpected error fetching coordinate system', { error, srid });
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

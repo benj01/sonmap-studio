@@ -1,15 +1,9 @@
 import { FileTypeUtil } from './file-types';
 import type { FileGroup, CompanionFileConfig } from '../types';
-import { LogManager } from '@/core/logging/log-manager';
+import { createLogger } from '../../../utils/logger';
 
 const SOURCE = 'FileValidator';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+const logger = createLogger(SOURCE);
 
 export class ValidationError extends Error {
   constructor(message: string) {

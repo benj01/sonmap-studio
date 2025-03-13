@@ -7,24 +7,10 @@ import type {
   PreviewConfig,
   CreateImportSessionParams
 } from '@/types/geo-import';
-import { LogManager } from '@/core/logging/log-manager';
+import { createLogger } from '@/utils/logger';
 
 const supabase = createClient();
-
-const SOURCE = 'GeoImport';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
+const logger = createLogger('GeoImport');
 
 /**
  * Hook for managing geodata import sessions
@@ -43,12 +29,16 @@ export function useGeoImport() {
       hasPreviewDataset: !!params.previewDataset
     });
     
+    const now = new Date().toISOString();
     const session: ImportSession = {
+      id: crypto.randomUUID(),
       fileId: params.fileId,
-      status: params.fullDataset ? 'ready' : 'idle',
+      status: params.fullDataset ? 'completed' : 'created',
       fullDataset: params.fullDataset || null,
       previewDataset: params.previewDataset || null,
-      selectedFeatureIndices: [],
+      selectedFeatures: [],
+      createdAt: now,
+      updatedAt: now
     };
 
     logger.info('Import session created', {
@@ -90,10 +80,12 @@ export function useGeoImport() {
       .download(fileId);
 
     if (error) {
+      logger.error('Failed to download file', { error, fileId });
       throw new Error(`Failed to download file: ${error.message}`);
     }
 
     if (!data) {
+      logger.error('No data received from storage', { fileId });
       throw new Error('No data received from storage');
     }
 
@@ -104,7 +96,15 @@ export function useGeoImport() {
    * Updates the current session state
    */
   const updateSession = useCallback((updates: Partial<ImportSession>) => {
-    setCurrentSession(prev => prev ? { ...prev, ...updates } : null);
+    setCurrentSession(prev => {
+      if (!prev) return null;
+      const now = new Date().toISOString();
+      return { 
+        ...prev, 
+        ...updates, 
+        updatedAt: now 
+      };
+    });
   }, []);
 
   return {
