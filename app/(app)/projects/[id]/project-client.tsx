@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/use-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Settings, Users, Files, Map } from 'lucide-react'
+import { ArrowLeft, Settings, Users, Files, Map, Beaker } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
 import { FileManager } from '@/components/files/components/manager'
 import { useEffect, useState } from 'react'
@@ -14,6 +14,7 @@ import { MapView } from '@/components/map/components/MapView'
 import { LayerPanel } from '@/components/map/components/LayerPanel'
 import { LayerList } from '@/components/map/components/LayerList'
 import { MapProvider } from '@/components/map/hooks/useMapContext'
+import Link from 'next/link'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -117,13 +118,21 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
             )}
           </div>
         </div>
-        <Button
-          variant="outline"
-          onClick={() => router.push(`/projects/${projectId}/settings`)}
-        >
-          <Settings className="mr-2 h-4 w-4" />
-          Settings
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link href={`/projects/${projectId}/test-import`} passHref>
+            <Button variant="outline" size="sm">
+              <Beaker className="mr-2 h-4 w-4" />
+              Test Import
+            </Button>
+          </Link>
+          <Button
+            variant="outline"
+            onClick={() => router.push(`/projects/${projectId}/settings`)}
+          >
+            <Settings className="mr-2 h-4 w-4" />
+            Settings
+          </Button>
+        </div>
       </div>
 
       <Tabs defaultValue="map" className="space-y-4">
