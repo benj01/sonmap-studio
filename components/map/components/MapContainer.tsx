@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { MapView } from './MapView';
 import { CesiumView } from './cesium/CesiumView';
 import { ViewToggle } from './ViewToggle';
@@ -14,15 +14,19 @@ const logManager = LogManager.getInstance();
 const logger = {
   info: (message: string, data?: any) => {
     logManager.info(SOURCE, message, data);
+    console.log(`[${SOURCE}] ${message}`, data);
   },
   warn: (message: string, error?: any) => {
     logManager.warn(SOURCE, message, error);
+    console.warn(`[${SOURCE}] ${message}`, error);
   },
   error: (message: string, error?: any) => {
     logManager.error(SOURCE, message, error);
+    console.error(`[${SOURCE}] ${message}`, error);
   },
   debug: (message: string, data?: any) => {
     logManager.debug(SOURCE, message, data);
+    console.debug(`[${SOURCE}] ${message}`, data);
   }
 };
 
@@ -52,40 +56,49 @@ export function MapContainer({
   }
 }: MapContainerProps) {
   const [currentView, setCurrentView] = useState<'2d' | '3d'>('2d');
-
-  const handleViewChange = (view: '2d' | '3d') => {
-    logger.info(`Switching to ${view} view`);
-    setCurrentView(view);
-  };
-
+  const [was3dActive, setWas3dActive] = useState(false);
+  
+  // Update 3D active tracking
+  useEffect(() => {
+    if (currentView === '3d') {
+      setWas3dActive(true);
+    }
+  }, [currentView]);
+  
   return (
     <div className={`relative w-full h-full ${className}`}>
       {/* View Toggle Button */}
-      <div className="absolute top-4 right-4 z-10">
+      <div className="absolute top-4 right-4 z-50">
         <ViewToggle 
           currentView={currentView} 
-          onViewChange={handleViewChange} 
+          onViewChange={setCurrentView} 
         />
       </div>
 
       {/* Map Views */}
-      <div className="w-full h-full">
-        {currentView === '2d' ? (
-          <MapProvider>
-            <MapView 
-              initialViewState={initialViewState2D}
-              className={currentView === '2d' ? 'block' : 'hidden'}
-            />
-          </MapProvider>
-        ) : (
-          <CesiumProvider>
-            <CesiumView 
-              initialViewState={initialViewState3D}
-              className={currentView === '3d' ? 'block' : 'hidden'}
-            />
-          </CesiumProvider>
-        )}
-      </div>
+      <MapProvider>
+        {/* 2D Map View */}
+        <div 
+          className={`w-full h-full absolute inset-0 transition-opacity duration-300 ${
+            currentView === '2d' ? 'opacity-100 z-10' : 'opacity-0 z-0'
+          }`}
+        >
+          <MapView initialViewState={initialViewState2D} />
+        </div>
+        
+        {/* 3D View - only render if it's active or was previously active */}
+        <CesiumProvider>
+          {(currentView === '3d' || was3dActive) && (
+            <div 
+              className={`w-full h-full absolute inset-0 transition-opacity duration-300 ${
+                currentView === '3d' ? 'opacity-100 z-10' : 'opacity-0 z-0'
+              }`}
+            >
+              <CesiumView initialViewState={initialViewState3D} />
+            </div>
+          )}
+        </CesiumProvider>
+      </MapProvider>
     </div>
   );
 } 

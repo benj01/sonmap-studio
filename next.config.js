@@ -25,19 +25,31 @@ const nextConfig = {
         new CopyWebpackPlugin({
           patterns: [
             {
-              from: 'node_modules/cesium/Build/CesiumUnminified/Workers',
+              from: path.join(
+                path.dirname(require.resolve('cesium')),
+                'Build/CesiumUnminified/Workers'
+              ),
               to: 'static/cesium/Workers',
             },
             {
-              from: 'node_modules/cesium/Build/CesiumUnminified/ThirdParty',
+              from: path.join(
+                path.dirname(require.resolve('cesium')),
+                'Build/CesiumUnminified/ThirdParty'
+              ),
               to: 'static/cesium/ThirdParty',
             },
             {
-              from: 'node_modules/cesium/Build/CesiumUnminified/Assets',
+              from: path.join(
+                path.dirname(require.resolve('cesium')),
+                'Build/CesiumUnminified/Assets'
+              ),
               to: 'static/cesium/Assets',
             },
             {
-              from: 'node_modules/cesium/Build/CesiumUnminified/Widgets',
+              from: path.join(
+                path.dirname(require.resolve('cesium')),
+                'Build/CesiumUnminified/Widgets'
+              ),
               to: 'static/cesium/Widgets',
             },
           ],
