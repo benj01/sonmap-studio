@@ -9,28 +9,28 @@ interface FileInfoCardProps {
 
 export function FileInfoCard({ name, size, type }: FileInfoCardProps) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>File Information</CardTitle>
-        <CardDescription>
+    <Card className="overflow-hidden">
+      <CardHeader className="p-4 pb-2">
+        <CardTitle className="text-base">File Information</CardTitle>
+        <CardDescription className="text-xs">
           Details about the file to be imported
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4">
+      <CardContent className="p-4 pt-2">
+        <div className="grid grid-cols-2 gap-3">
           <div>
-            <p className="text-sm font-medium">Name</p>
-            <p className="text-sm text-muted-foreground">{name}</p>
+            <p className="text-xs font-medium">Name</p>
+            <p className="text-xs text-muted-foreground">{name}</p>
           </div>
           <div>
-            <p className="text-sm font-medium">Size</p>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs font-medium">Size</p>
+            <p className="text-xs text-muted-foreground">
               {formatFileSize(size)}
             </p>
           </div>
           <div className="col-span-2">
-            <p className="text-sm font-medium">Type</p>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-xs font-medium">Type</p>
+            <p className="text-xs text-muted-foreground">
               {getFileTypeDescription(name)}
             </p>
           </div>

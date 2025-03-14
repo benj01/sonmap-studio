@@ -359,7 +359,8 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
     <div className="space-y-2">
       <div 
         ref={mapContainer} 
-        className="h-[300px] w-full rounded-md overflow-hidden"
+        className="h-[250px] w-full rounded-md overflow-hidden"
+        style={{ minHeight: '200px' }}
       />
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-sm text-muted-foreground">

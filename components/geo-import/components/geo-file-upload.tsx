@@ -281,21 +281,21 @@ export function GeoFileUpload({
   }, [memoizedFileInfo?.id]);
 
   return (
-    <div className="w-full space-y-4">
+    <div className="w-full space-y-2">
       {error && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>{error}</AlertDescription>
+        <Alert variant="destructive" className="py-2">
+          <AlertCircle className="h-3 w-3" />
+          <AlertDescription className="text-xs">{error}</AlertDescription>
         </Alert>
       )}
       
       {isProcessing && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" />
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="h-3 w-3 animate-spin" />
             <span>{progressMessage}</span>
           </div>
-          <Progress value={progress} className="h-2" />
+          <Progress value={progress} className="h-1" />
         </div>
       )}
     </div>

@@ -366,32 +366,36 @@ export function GeoImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[800px]">
-        <DialogHeader>
+      <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader className="pb-2">
           <DialogTitle>Import Geodata</DialogTitle>
           <DialogDescription>
             Import your geodata file into the project for visualization and analysis.
             {importSession?.previewDataset && (
-              <span className="block mt-1 text-sm">
+              <span className="block mt-1 text-xs">
                 Click features on the map to select/deselect them for import.
               </span>
             )}
           </DialogDescription>
         </DialogHeader>
         
-        <div className="grid gap-4 py-4">
+        <div className="grid gap-3 py-2 overflow-y-auto pr-2">
           {fileInfo ? (
             <>
-              <FileInfoCard
-                name={fileInfo.name}
-                size={fileInfo.size}
-                type={fileInfo.type}
-              />
-              <GeoFileUpload
-                projectId={projectId}
-                fileInfo={fileInfo}
-                onImportSessionCreated={handleImportSessionCreated}
-              />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <FileInfoCard
+                  name={fileInfo.name}
+                  size={fileInfo.size}
+                  type={fileInfo.type}
+                />
+                <div className="flex items-center">
+                  <GeoFileUpload
+                    projectId={projectId}
+                    fileInfo={fileInfo}
+                    onImportSessionCreated={handleImportSessionCreated}
+                  />
+                </div>
+              </div>
             </>
           ) : (
             <div className="text-sm text-muted-foreground text-center p-4">
@@ -400,13 +404,13 @@ export function GeoImportDialog({
           )}
 
           <Card>
-            <CardHeader>
-              <CardTitle>Preview</CardTitle>
-              <CardDescription>
+            <CardHeader className="p-4 pb-2">
+              <CardTitle className="text-base">Preview</CardTitle>
+              <CardDescription className="text-xs">
                 Preview of the geodata to be imported
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-4 pt-2">
               {importSession?.fullDataset ? (
                 <MapPreview
                   features={importSession.fullDataset.previewFeatures || []}
@@ -414,7 +418,7 @@ export function GeoImportDialog({
                   onFeaturesSelected={handleFeaturesSelected}
                 />
               ) : (
-                <div className="h-[300px] w-full bg-muted rounded-md flex items-center justify-center">
+                <div className="h-[200px] w-full bg-muted rounded-md flex items-center justify-center">
                   <p className="text-sm text-muted-foreground">
                     {isProcessing ? 'Loading preview...' : 'No data to preview'}
                   </p>
@@ -431,40 +435,46 @@ export function GeoImportDialog({
           )}
         </div>
 
-        <DialogFooter className="flex justify-between items-center">
+        <DialogFooter className="flex justify-between items-center mt-auto pt-3 border-t">
           <div className="flex gap-2">
             <Button
               variant="outline"
+              size="sm"
               onClick={handleDownloadLogs}
-              className="flex items-center gap-2"
+              className="flex items-center gap-1 text-xs h-8"
             >
-              <Download className="h-4 w-4" />
-              Download Logs
+              <Download className="h-3 w-3" />
+              Logs
             </Button>
             <Button
               variant="outline"
+              size="sm"
               onClick={handleClearLogs}
-              className="flex items-center gap-2"
+              className="flex items-center gap-1 text-xs h-8"
             >
-              <Trash className="h-4 w-4" />
-              Clear Logs
+              <Trash className="h-3 w-3" />
+              Clear
             </Button>
           </div>
           <div className="flex gap-2">
             <Button
               variant="outline"
+              size="sm"
               onClick={() => onOpenChange(false)}
               disabled={isProcessing}
+              className="h-8"
             >
               Cancel
             </Button>
             <Button
+              size="sm"
               onClick={handleImport}
               disabled={!importSession?.fullDataset || !selectedFeatureIds.length || isProcessing}
+              className="h-8"
             >
               {isProcessing ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                   {progressMessage || 'Importing...'}
                 </>
               ) : (
