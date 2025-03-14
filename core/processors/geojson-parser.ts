@@ -205,28 +205,16 @@ export class GeoJsonParser extends BaseGeoDataParser {
         }
       }
 
-      // Transform coordinates if we have CRS information
-      if (sourceCRS) {
-        logger.info(`Transforming coordinates from EPSG:${sourceCRS.srid} to WGS84...`);
-        const transformedFeatures = await Promise.all(geojson.features.map(async feature => ({
-          ...feature,
-          geometry: await transformGeometry(feature.geometry, sourceCRS.srid)
-        })));
-        geojson.features = transformedFeatures;
-        logger.info('Coordinate transformation complete');
-      } else {
+      // Determine source SRID
+      let sourceSRID = sourceCRS?.srid;
+      if (!sourceSRID) {
         // Fallback to CH1903+/LV95 if no CRS information is available
-        logger.info('No CRS information found, assuming CH1903+/LV95...');
-        const defaultSrid = 2056; // Swiss LV95
-        const transformedFeatures = await Promise.all(geojson.features.map(async feature => ({
-          ...feature,
-          geometry: await transformGeometry(feature.geometry, defaultSrid)
-        })));
-        geojson.features = transformedFeatures;
-        logger.info('Coordinate transformation complete (using default CRS)');
+        sourceSRID = 2056; // Swiss LV95
+        logger.info('No CRS information found, assuming CH1903+/LV95 (EPSG:2056)');
       }
 
-      // Process GeoJSON into FullDataset
+      // Process GeoJSON into FullDataset WITHOUT transforming coordinates
+      // This matches the behavior of ShapefileParser
       const features: GeoFeature[] = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
         id: index,
         geometry: feature.geometry,
@@ -234,8 +222,44 @@ export class GeoJsonParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
+      logger.info('Skipping coordinate transformation for main features array');
+
+      // For preview, create a copy and transform a subset of features
+      let previewFeatures = features.slice(0, 100);
+      if (sourceSRID !== 4326) {
+        try {
+          logger.info('Transforming coordinates for preview features', {
+            fromSrid: sourceSRID,
+            toSrid: 4326,
+            featureCount: previewFeatures.length
+          });
+          
+          previewFeatures = await Promise.all(previewFeatures.map(async feature => ({
+            ...feature,
+            geometry: await transformGeometry(feature.geometry, sourceSRID)
+          })));
+          
+          logger.info('Preview coordinate transformation complete');
+        } catch (error) {
+          logger.warn('Preview transformation failed', { 
+            error,
+            srid: sourceSRID,
+            featureCount: previewFeatures.length
+          });
+        }
+      }
+
       // Calculate metadata using Turf.js
-      const bbox = turf.bbox(geojson);
+      const previewFeatureCollection: FeatureCollection = {
+        type: 'FeatureCollection',
+        features: previewFeatures.map(f => ({
+          type: 'Feature' as const,
+          geometry: f.geometry,
+          properties: f.properties || {}
+        }))
+      };
+      
+      const bbox = turf.bbox(previewFeatureCollection);
       const bounds: [number, number, number, number] = [bbox[0], bbox[1], bbox[2], bbox[3]];
       const geometryTypes = new Set(features.map(f => f.geometry.type));
       const properties = features[0]?.properties ? Object.keys(features[0].properties) : [];
@@ -244,13 +268,13 @@ export class GeoJsonParser extends BaseGeoDataParser {
         sourceFile: options?.filename || 'unknown.geojson',
         fileType: 'geojson',
         features,
-        previewFeatures: features.slice(0, 100), // Add first 100 features as preview
+        previewFeatures,
         metadata: {
           featureCount: features.length,
           bounds,
           geometryTypes: Array.from(geometryTypes) as any[],
           properties,
-          srid: sourceCRS?.srid || 2056 // Use source SRID or default to Swiss LV95
+          srid: sourceSRID // Use source SRID
         }
       };
 

@@ -185,7 +185,10 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
               type: 'fill',
               source: 'preview',
               filter: ['all',
-                ['==', ['get', 'geometry-type'], 'Polygon'],
+                ['any',
+                  ['==', ['get', 'geometry-type'], 'Polygon'],
+                  ['==', ['get', 'geometry-type'], 'MultiPolygon']
+                ],
                 ['==', ['get', 'hasIssues'], false]
               ] as unknown as any[],
               paint: {
@@ -198,7 +201,10 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
               type: 'line',
               source: 'preview',
               filter: ['all',
-                ['==', ['get', 'geometry-type'], 'LineString'],
+                ['any',
+                  ['==', ['get', 'geometry-type'], 'LineString'],
+                  ['==', ['get', 'geometry-type'], 'MultiLineString']
+                ],
                 ['==', ['get', 'hasIssues'], false]
               ] as unknown as any[],
               paint: {
@@ -211,7 +217,10 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
               type: 'circle',
               source: 'preview',
               filter: ['all',
-                ['==', ['get', 'geometry-type'], 'Point'],
+                ['any',
+                  ['==', ['get', 'geometry-type'], 'Point'],
+                  ['==', ['get', 'geometry-type'], 'MultiPoint']
+                ],
                 ['==', ['get', 'hasIssues'], false]
               ] as unknown as any[],
               paint: {
@@ -228,7 +237,10 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
               type: 'fill',
               source: 'preview',
               filter: ['all',
-                ['==', ['get', 'geometry-type'], 'Polygon'],
+                ['any',
+                  ['==', ['get', 'geometry-type'], 'Polygon'],
+                  ['==', ['get', 'geometry-type'], 'MultiPolygon']
+                ],
                 ['==', ['get', 'hasIssues'], true]
               ] as unknown as any[],
               paint: {
@@ -241,7 +253,10 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
               type: 'line',
               source: 'preview',
               filter: ['all',
-                ['==', ['get', 'geometry-type'], 'LineString'],
+                ['any',
+                  ['==', ['get', 'geometry-type'], 'LineString'],
+                  ['==', ['get', 'geometry-type'], 'MultiLineString']
+                ],
                 ['==', ['get', 'hasIssues'], true]
               ] as unknown as any[],
               paint: {
@@ -255,7 +270,10 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
               type: 'circle',
               source: 'preview',
               filter: ['all',
-                ['==', ['get', 'geometry-type'], 'Point'],
+                ['any',
+                  ['==', ['get', 'geometry-type'], 'Point'],
+                  ['==', ['get', 'geometry-type'], 'MultiPoint']
+                ],
                 ['==', ['get', 'hasIssues'], true]
               ] as unknown as any[],
               paint: {
