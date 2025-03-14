@@ -133,7 +133,6 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
     return (
       <>
         <div className="space-y-4">
-          <h3 className="text-base font-medium">Imported Files</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {importedFiles.map((file) => (
               <Card key={file.id} className="flex flex-col">

@@ -50,7 +50,7 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
   if (!files?.length) {
     return (
       <div className="text-sm text-muted-foreground">
-        No files uploaded yet
+        No files uploaded yet. Click "Select Files" to upload.
       </div>
     );
   }

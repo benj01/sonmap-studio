@@ -541,30 +541,42 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     <div className={cn('relative min-h-[200px] rounded-lg border bg-card', {
       'border-primary': isDragging
     })}>
-      <div ref={dropZoneRef} className="p-4 space-y-4">
+      <div ref={dropZoneRef} className="p-4 space-y-6">
         <Toolbar onFileSelect={handleFileSelect} isProcessing={isProcessing} />
         
-        {/* Uploaded Files */}
-        <FileList
-          files={files.filter(f => !f.main_file_id)}
-          onDelete={handleFileDelete}
-          onImport={handleFileImport}
-          isLoading={isLoading}
-        />
+        {/* Uploaded Files Section */}
+        <div>
+          <h3 className="text-lg font-semibold mb-3">Uploaded Files</h3>
+          
+          {/* Upload Progress - Moved above the file list */}
+          {uploadingFiles.length > 0 && (
+            <div className="mb-4">
+              <UploadProgress files={uploadingFiles} />
+            </div>
+          )}
+          
+          <FileList
+            files={files.filter(f => !f.main_file_id)}
+            onDelete={handleFileDelete}
+            onImport={handleFileImport}
+            isLoading={isLoading}
+          />
+        </div>
 
-        {/* Upload Progress */}
-        {uploadingFiles.length > 0 && (
-          <UploadProgress files={uploadingFiles} />
-        )}
+        {/* Divider */}
+        <div className="border-t border-border my-2"></div>
 
-        {/* Imported Files */}
-        <ImportedFilesList
-          ref={importedFilesRef}
-          key={importedFilesKey}
-          projectId={projectId}
-          onViewLayer={handleViewLayer}
-          onDelete={handleFileDelete}
-        />
+        {/* Imported Files Section */}
+        <div className="bg-muted/30 p-4 rounded-lg border border-border">
+          <h3 className="text-lg font-semibold mb-3">Imported Files</h3>
+          <ImportedFilesList
+            ref={importedFilesRef}
+            key={importedFilesKey}
+            projectId={projectId}
+            onViewLayer={handleViewLayer}
+            onDelete={handleFileDelete}
+          />
+        </div>
 
         {/* Import Dialog */}
         <GeoImportDialog

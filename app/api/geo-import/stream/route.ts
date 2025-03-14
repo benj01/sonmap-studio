@@ -196,6 +196,37 @@ export async function POST(request: NextRequest) {
       })
       .eq('id', importLog.id);
     
+    // Update project_files table to mark the file as imported and add import metadata
+    const importMetadata = {
+      collection_id: result.collection_id,
+      layer_id: result.layer_id,
+      imported_count: result.imported_count,
+      failed_count: result.failed_count,
+      imported_at: new Date().toISOString()
+    };
+    
+    const { error: updateError } = await supabase
+      .from('project_files')
+      .update({
+        is_imported: true,
+        import_metadata: importMetadata
+      })
+      .eq('id', projectFileId);
+    
+    if (updateError) {
+      logger.warn('Failed to update project_files record', { 
+        error: updateError, 
+        projectFileId 
+      });
+      // Continue anyway as the import was successful
+    } else {
+      logger.info('Updated project_files record', { 
+        projectFileId,
+        is_imported: true,
+        import_metadata: importMetadata
+      });
+    }
+    
     return NextResponse.json({
       success: true,
       importLogId: importLog.id,
