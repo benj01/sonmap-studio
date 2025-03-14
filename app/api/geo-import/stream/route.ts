@@ -1,107 +1,224 @@
-import { NextResponse } from 'next/server';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
-import { ImportService } from '@/core/services/geo-import/import-service';
-import { SupabaseImportAdapter } from '@/core/services/geo-import/adapters/supabase-import-adapter';
-import { SupabaseStorageAdapter } from '@/core/services/geo-import/adapters/supabase-storage-adapter';
-import { SupabaseMetricsAdapter } from '@/core/services/geo-import/adapters/supabase-metrics-adapter';
-import { logImportError } from '@/utils/simple-error-logger';
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { createLogger } from '@/utils/logger';
 
-export async function POST(request: Request) {
-  const cookieStore = cookies();
-  const supabase = createRouteHandlerClient({ cookies: () => cookieStore });
-  
-  let requestBody;
+const logger = createLogger('GeoImportAPI');
+
+// Environment variables for Supabase
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+// Check if we have the required environment variables
+if (!supabaseUrl || !supabaseServiceKey) {
+  logger.error('Missing Supabase environment variables');
+}
+
+export async function POST(request: NextRequest) {
   try {
-    requestBody = await request.json();
-  } catch (jsonError) {
-    console.error('Invalid JSON in request body:', jsonError);
-    return NextResponse.json(
-      { error: 'Invalid JSON in request body' },
-      { status: 400 }
-    );
-  }
-  
-  const { projectFileId, importLogId, collectionName, features, sourceSrid, targetSrid, batchSize } = requestBody;
-  
-  // Basic validation
-  if (!projectFileId || !features || !Array.isArray(features) || !collectionName) {
-    return NextResponse.json(
-      { error: 'Missing required parameters' },
-      { status: 400 }
-    );
-  }
-  
-  try {
-    const importService = new ImportService(
-      new SupabaseImportAdapter(supabase),
-      new SupabaseStorageAdapter(supabase),
-      new SupabaseMetricsAdapter(supabase),
-      {
-        defaultBatchSize: batchSize || 100,
-        defaultTargetSrid: targetSrid || 4326,
-        maxRetries: 3,
-        retryDelay: 1000,
-        checkpointInterval: 5000
-      }
-    );
-
-    const encoder = new TextEncoder();
-    const stream = new TransformStream();
-    const writer = stream.writable.getWriter();
-
-    // Start the import process
-    importService.streamFeatures({
-      projectFileId,
-      collectionName,
-      features,
-      sourceSrid,
-      targetSrid,
-      batchSize,
-      onProgress: async (progress) => {
-        try {
-          await writer.write(
-            encoder.encode(
-              JSON.stringify({
-                type: 'progress',
-                ...progress
-              }) + '\n'
-            )
-          );
-        } catch (writeError) {
-          console.error('Failed to write progress:', writeError);
-        }
+    // Get the authorization header from the request for user verification
+    const authHeader = request.headers.get('Authorization');
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      logger.error('Missing or invalid Authorization header');
+      return NextResponse.json(
+        { error: 'Missing or invalid Authorization header' },
+        { status: 401 }
+      );
+    }
+    
+    const token = authHeader.replace('Bearer ', '');
+    
+    // Create a service role client for database operations
+    // This bypasses RLS but requires the service role key
+    if (!supabaseUrl || !supabaseServiceKey) {
+      return NextResponse.json(
+        { error: 'Server configuration error' },
+        { status: 500 }
+      );
+    }
+    
+    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+      auth: {
+        persistSession: false,
       },
-      onError: async (error) => {
-        try {
-          await logImportError(importLogId, error);
-          await writer.write(
-            encoder.encode(JSON.stringify({
-              type: 'error',
-              error: {
-                message: error.message || 'Unknown error occurred',
-                code: 'STREAM_ERROR'
-              }
-            }) + '\n')
-          );
-          await writer.close();
-        } catch (writeError) {
-          console.error('Failed to write error to stream:', writeError);
-        }
+    });
+    
+    // Verify the user token
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    
+    if (userError || !user) {
+      logger.error('Authentication error', { error: userError });
+      return NextResponse.json(
+        { error: 'Authentication error', details: userError },
+        { status: 401 }
+      );
+    }
+    
+    logger.info('Authenticated user', { userId: user.id });
+    
+    // Parse request body
+    let requestBody;
+    try {
+      requestBody = await request.json();
+    } catch (jsonError) {
+      logger.error('Invalid JSON in request body', { error: jsonError });
+      return NextResponse.json(
+        { error: 'Invalid JSON in request body' },
+        { status: 400 }
+      );
+    }
+    
+    const { 
+      projectFileId, 
+      collectionName, 
+      features, 
+      sourceSrid, 
+      targetSrid = 4326, 
+      batchSize = 100 
+    } = requestBody;
+    
+    // Basic validation
+    if (!projectFileId || !features || !Array.isArray(features) || !collectionName) {
+      logger.error('Missing required parameters', { 
+        hasProjectFileId: !!projectFileId,
+        hasFeatures: !!features,
+        isArray: Array.isArray(features),
+        hasCollectionName: !!collectionName
+      });
+      return NextResponse.json(
+        { error: 'Missing required parameters' },
+        { status: 400 }
+      );
+    }
+    
+    // Create import log
+    const { data: importLog, error: logError } = await supabase
+      .from('realtime_import_logs')
+      .insert({
+        project_file_id: projectFileId,
+        status: 'started',
+        total_features: features.length,
+        imported_count: 0,
+        failed_count: 0
+      })
+      .select()
+      .single();
+      
+    if (logError) {
+      logger.error('Failed to create import log', { error: logError });
+      return NextResponse.json(
+        { error: 'Failed to create import log', details: logError },
+        { status: 500 }
+      );
+    }
+    
+    logger.info('Starting import', { 
+      importLogId: importLog.id,
+      featureCount: features.length,
+      batchSize
+    });
+    
+    // Call the same RPC function used by test import
+    const { data, error } = await supabase.rpc(
+      'import_geo_features_with_transform',
+      {
+        p_project_file_id: projectFileId,
+        p_collection_name: collectionName,
+        p_features: features,
+        p_source_srid: sourceSrid,
+        p_target_srid: targetSrid,
+        p_batch_size: batchSize
+      }
+    );
+    
+    if (error) {
+      logger.error('Import failed', { error, importLogId: importLog.id });
+      
+      // Update import log with error
+      await supabase
+        .from('realtime_import_logs')
+        .update({
+          status: 'failed',
+          metadata: { 
+            error: error.message,
+            details: error.details,
+            timestamp: new Date().toISOString()
+          }
+        })
+        .eq('id', importLog.id);
+        
+      return NextResponse.json(
+        { error: 'Import failed', details: error },
+        { status: 500 }
+      );
+    }
+    
+    if (!data || !Array.isArray(data) || data.length === 0) {
+      logger.error('No results returned from import function', { importLogId: importLog.id });
+      
+      // Update import log with error
+      await supabase
+        .from('realtime_import_logs')
+        .update({
+          status: 'failed',
+          metadata: { 
+            error: 'No results returned from import function',
+            timestamp: new Date().toISOString()
+          }
+        })
+        .eq('id', importLog.id);
+        
+      return NextResponse.json(
+        { error: 'No results returned from import function' },
+        { status: 500 }
+      );
+    }
+    
+    const result = data[0];
+    logger.info('Import successful', { 
+      importLogId: importLog.id,
+      importedCount: result.imported_count,
+      failedCount: result.failed_count,
+      collectionId: result.collection_id,
+      layerId: result.layer_id
+    });
+    
+    // Update import log with success
+    await supabase
+      .from('realtime_import_logs')
+      .update({
+        status: 'completed',
+        imported_count: result.imported_count,
+        failed_count: result.failed_count,
+        collection_id: result.collection_id,
+        layer_id: result.layer_id,
+        metadata: { debug_info: result.debug_info }
+      })
+      .eq('id', importLog.id);
+    
+    return NextResponse.json({
+      success: true,
+      importLogId: importLog.id,
+      result: {
+        collection_id: result.collection_id,
+        layer_id: result.layer_id,
+        imported_count: result.imported_count,
+        failed_count: result.failed_count,
+        debug_info: result.debug_info
       }
     });
-
-    return new NextResponse(stream.readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      }
-    });
+    
   } catch (error) {
-    await logImportError(importLogId, error);
+    logger.error('Unhandled import error', { 
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
+    
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Unknown error' },
+      { 
+        error: 'Import process failed', 
+        message: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }
