@@ -5,7 +5,7 @@ import { AlertTriangle } from 'lucide-react';
 interface DeleteConfirmationDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onConfirm: (deleteRelated: boolean) => void;
+  onConfirm: () => void;
   fileName: string;
   type: 'uploaded' | 'imported';
   hasRelatedFile: boolean;
@@ -33,10 +33,15 @@ export function DeleteConfirmationDialog({
               {hasRelatedFile && (
                 <p>
                   {type === 'uploaded' ? (
-                    'This file has been imported. Would you like to delete the imported file as well?'
+                    'This file has been imported. The imported file will also be deleted.'
                   ) : (
-                    'This is an imported file. Would you like to delete the source file as well?'
+                    'This is an imported file. The source file will also be deleted.'
                   )}
+                </p>
+              )}
+              {!hasRelatedFile && type === 'uploaded' && (
+                <p>
+                  Any companion files (like .shx, .dbf, .prj for shapefiles) will also be deleted.
                 </p>
               )}
             </div>
@@ -50,29 +55,12 @@ export function DeleteConfirmationDialog({
           >
             Cancel
           </Button>
-          {hasRelatedFile ? (
-            <>
-              <Button
-                variant="secondary"
-                onClick={() => onConfirm(false)}
-              >
-                Delete {type === 'uploaded' ? 'Uploaded' : 'Imported'} File Only
-              </Button>
-              <Button
-                variant="destructive"
-                onClick={() => onConfirm(true)}
-              >
-                Delete Both Files
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="destructive"
-              onClick={() => onConfirm(false)}
-            >
-              Delete File
-            </Button>
-          )}
+          <Button
+            variant="destructive"
+            onClick={() => onConfirm()}
+          >
+            Delete File{hasRelatedFile ? 's' : ''}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

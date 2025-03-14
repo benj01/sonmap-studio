@@ -345,9 +345,11 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     }
   }, [projectId, supabase, onSuccess, onError]);
 
-  const handleDelete = useCallback(async (fileId: string, deleteRelated: boolean = false) => {
+  const handleDelete = useCallback(async (fileId: string, deleteRelated: boolean = true) => {
     try {
-      logger.info('Starting file deletion', { fileId, deleteRelated });
+      // Note: deleteRelated parameter is kept for backward compatibility but is ignored
+      // Database triggers and constraints will always delete related files
+      logger.info('Starting file deletion', { fileId });
       const supabase = createClient();
   
       // Get current user
@@ -407,69 +409,42 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         });
       }
 
-      // Handle relationships based on file type
-      if (fileToDelete.is_imported) {
-        // If this is an imported file and has a source file, fetch it
-        if (fileToDelete.source_file_id) {
-          const { data: sourceFile, error: sourceError } = await supabase
-            .from('project_files')
-            .select('id, storage_path, is_imported')
-            .eq('id', fileToDelete.source_file_id)
-            .single();
+      // Note: Due to database triggers and constraints, related files will be deleted automatically
+      // The code below is kept for logging purposes to show what will be deleted
 
-          if (sourceError) {
-            logger.warn('Failed to fetch source file', sourceError);
-          } else if (sourceFile) {
-            if (deleteRelated) {
-              // Add source file to deletion list
-              filesToDelete.push({
-                id: sourceFile.id,
-                storage_path: sourceFile.storage_path
-              });
-            } else {
-              // Update source file to remove imported flag
-              logger.info('Updating source file to remove imported flag', { sourceFileId: sourceFile.id });
-              const { error: updateError } = await supabase
-                .from('project_files')
-                .update({ is_imported: false })
-                .eq('id', sourceFile.id);
+      // If this is an imported file and has a source file, log that it will be deleted
+      if (fileToDelete.is_imported && fileToDelete.source_file_id) {
+        const { data: sourceFile, error: sourceError } = await supabase
+          .from('project_files')
+          .select('id, name, storage_path')
+          .eq('id', fileToDelete.source_file_id)
+          .single();
 
-              if (updateError) {
-                logger.warn('Failed to update source file', updateError);
-              }
-            }
-          }
+        if (sourceError) {
+          logger.warn('Failed to fetch source file', sourceError);
+        } else if (sourceFile) {
+          logger.info('Source file will be deleted due to database constraints', { 
+            sourceFileId: sourceFile.id,
+            sourceFileName: sourceFile.name
+          });
         }
-      } else {
-        // If this is a source file, fetch any imported files that reference it
+      }
+
+      // If this is a source file, log that imported files will be deleted
+      if (!fileToDelete.is_imported) {
         const { data: importedFiles, error: importedError } = await supabase
           .from('project_files')
-          .select('id, storage_path, is_imported')
+          .select('id, name, storage_path')
           .eq('source_file_id', fileToDelete.id)
           .eq('is_imported', true);
 
         if (importedError) {
           logger.warn('Failed to fetch imported files', importedError);
         } else if (importedFiles?.length > 0) {
-          logger.info('Found imported files', { count: importedFiles.length });
-          
-          if (deleteRelated) {
-            // Add imported files to deletion list
-            filesToDelete.push(...importedFiles.map(f => ({
-              id: f.id,
-              storage_path: f.storage_path
-            })));
-          } else {
-            // Update imported files to remove source reference
-            const { error: updateError } = await supabase
-              .from('project_files')
-              .update({ source_file_id: null })
-              .in('id', importedFiles.map(f => f.id));
-
-            if (updateError) {
-              logger.warn('Failed to update imported files', updateError);
-            }
-          }
+          logger.info('Imported files will be deleted due to database constraints', { 
+            count: importedFiles.length,
+            files: importedFiles.map(f => f.name)
+          });
         }
       }
 

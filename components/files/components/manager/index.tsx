@@ -16,6 +16,11 @@ import { ImportedFilesList, ImportedFilesListRef } from '../imported-files-list'
 import { DeleteConfirmationDialog } from '../delete-confirmation-dialog';
 import { ImportFileInfo } from '@/types/files';
 import { logger } from '@/utils/logger';
+import { FileProcessor, FileProcessingError } from '../../utils/file-processor';
+import { FileValidator } from '../../utils/validation';
+import { useUserSettings } from '@/hooks/useUserSettings';
+import { toast } from 'react-hot-toast';
+import { UploadErrorDialog } from '../upload-error-dialog';
 
 interface FileManagerProps {
   projectId: string;
@@ -54,6 +59,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const [fileToDelete, setFileToDelete] = useState<ProjectFile | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const importedFilesRef = React.useRef<ImportedFilesListRef>(null);
+  const { settings } = useUserSettings();
+  const [uploadError, setUploadError] = useState<{ message: string; fileName?: string; fileSize?: number } | null>(null);
 
   const loadExistingFiles = useCallback(async () => {
     if (!projectId) {
@@ -174,7 +181,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleFileDelete = useCallback(async (file: ProjectFile, deleteRelated: boolean) => {
     try {
-      await handleDelete(file.id, deleteRelated);
+      // Note: deleteRelated parameter is kept for backward compatibility but is ignored
+      await handleDelete(file.id, true);
       const updatedFiles = await loadFiles();
       setFiles(updatedFiles);
       // Force the ImportedFilesList to refresh by changing its key
@@ -269,6 +277,21 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         extension
       });
       
+      // Check file size against user settings or default limit
+      const maxFileSize = settings?.maxFileSize || 50 * 1024 * 1024; // Default to 50MB if not set
+      if (file.size > maxFileSize) {
+        const sizeMB = Math.round(file.size / (1024 * 1024));
+        const maxSizeMB = Math.round(maxFileSize / (1024 * 1024));
+        const error = new Error(`File size (${sizeMB}MB) exceeds the maximum allowed size (${maxSizeMB}MB)`);
+        logger.error(SOURCE, 'File size validation failed', { 
+          fileName: file.name,
+          fileSize: file.size,
+          maxSize: maxFileSize,
+          error: error.message 
+        });
+        throw error;
+      }
+      
       // Get signed URL
       logger.debug(SOURCE, 'Requesting signed URL', { fileName: file.name });
       const supabase = createClient();
@@ -361,9 +384,20 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             logger.info(SOURCE, 'Upload completed successfully', { fileName: file.name });
             resolve(undefined);
           } else {
-            const error = new Error(
-              `Upload failed with status ${xhr.status}: ${xhr.statusText} - ${xhr.responseText}`
-            );
+            let errorMessage = `Upload failed with status ${xhr.status}: ${xhr.statusText}`;
+            
+            // Handle specific error cases
+            try {
+              const response = JSON.parse(xhr.responseText);
+              if (response.statusCode === '413' || response.error === 'Payload too large') {
+                const sizeMB = Math.round(file.size / (1024 * 1024));
+                errorMessage = `File size (${sizeMB}MB) exceeds the storage provider's limit. Please try a smaller file or contact support to upgrade your plan.`;
+              }
+            } catch (e) {
+              // If we can't parse the response, use the default error message
+            }
+            
+            const error = new Error(errorMessage);
             logger.error(SOURCE, 'Upload failed', {
               fileName: file.name,
               status: xhr.status,
@@ -416,9 +450,21 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     const mainFileName = group.mainFile.name;
     
     try {
+      // Validate file size before uploading
+      const maxFileSize = settings?.maxFileSize || 50 * 1024 * 1024; // Default to 50MB if not set
+      const totalSize = group.mainFile.size + group.companions.reduce((sum: number, file: File) => sum + file.size, 0);
+      
+      if (totalSize > maxFileSize) {
+        const sizeMB = Math.round(totalSize / (1024 * 1024));
+        const maxSizeMB = Math.round(maxFileSize / (1024 * 1024));
+        throw new Error(`Total file size (${sizeMB}MB) exceeds the maximum allowed size (${maxSizeMB}MB)`);
+      }
+      
       logger.info(SOURCE, 'Starting upload for group', {
         mainFile: mainFileName,
-        companions: group.companions.map(f => f.name)
+        companions: group.companions.map(f => f.name),
+        totalSize,
+        maxAllowedSize: maxFileSize
       });
 
       // Upload main file first
@@ -479,7 +525,28 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           stack: error.stack
         } : 'Unknown error'
       });
-      onError?.(error instanceof Error ? error.message : 'Failed to upload files');
+      
+      // Show a more user-friendly error message
+      let errorMessage = error instanceof Error ? error.message : 'Failed to upload files';
+      
+      // Check if it's a size limit error
+      if (error instanceof Error && error.message.includes('exceeds')) {
+        // Already formatted nicely
+      } else if (error instanceof Error && error.message.includes('413')) {
+        // Format the 413 Payload Too Large error
+        const maxFileSize = settings?.maxFileSize || 50 * 1024 * 1024;
+        const maxSizeMB = Math.round(maxFileSize / (1024 * 1024));
+        errorMessage = `File upload failed: The file exceeds the maximum allowed size (${maxSizeMB}MB)`;
+      }
+      
+      // Set the error for the dialog
+      setUploadError({
+        message: errorMessage,
+        fileName: mainFileName,
+        fileSize: group.mainFile.size
+      });
+      
+      onError?.(errorMessage);
       
       setUploadingFiles(prev => prev.filter(uf => uf.group.mainFile.name !== mainFileName));
       await loadExistingFiles();
@@ -538,55 +605,66 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   }, []);
 
   return (
-    <div className={cn('relative min-h-[200px] rounded-lg border bg-card', {
-      'border-primary': isDragging
-    })}>
-      <div ref={dropZoneRef} className="p-4 space-y-6">
-        <Toolbar onFileSelect={handleFileSelect} isProcessing={isProcessing} />
-        
-        {/* Uploaded Files Section */}
-        <div>
-          <h3 className="text-lg font-semibold mb-3">Uploaded Files</h3>
+    <div className="flex flex-col h-full">
+      <div className={cn('relative min-h-[200px] rounded-lg border bg-card', {
+        'border-primary': isDragging
+      })}>
+        <div ref={dropZoneRef} className="p-4 space-y-6">
+          <Toolbar onFileSelect={handleFileSelect} isProcessing={isProcessing} />
           
-          {/* Upload Progress - Moved above the file list */}
-          {uploadingFiles.length > 0 && (
-            <div className="mb-4">
-              <UploadProgress files={uploadingFiles} />
-            </div>
-          )}
-          
-          <FileList
-            files={files.filter(f => !f.main_file_id)}
-            onDelete={handleFileDelete}
-            onImport={handleFileImport}
-            isLoading={isLoading}
-          />
-        </div>
+          {/* Uploaded Files Section */}
+          <div>
+            <h3 className="text-lg font-semibold mb-3">Uploaded Files</h3>
+            
+            {/* Upload Progress - Moved above the file list */}
+            {uploadingFiles.length > 0 && (
+              <div className="mb-4">
+                <UploadProgress files={uploadingFiles} />
+              </div>
+            )}
+            
+            <FileList
+              files={files.filter(f => !f.main_file_id)}
+              onDelete={handleFileDelete}
+              onImport={handleFileImport}
+              isLoading={isLoading}
+            />
+          </div>
 
-        {/* Divider */}
-        <div className="border-t border-border my-2"></div>
+          {/* Divider */}
+          <div className="border-t border-border my-2"></div>
 
-        {/* Imported Files Section */}
-        <div className="bg-muted/30 p-4 rounded-lg border border-border">
-          <h3 className="text-lg font-semibold mb-3">Imported Files</h3>
-          <ImportedFilesList
-            ref={importedFilesRef}
-            key={importedFilesKey}
+          {/* Imported Files Section */}
+          <div className="bg-muted/30 p-4 rounded-lg border border-border">
+            <h3 className="text-lg font-semibold mb-3">Imported Files</h3>
+            <ImportedFilesList
+              ref={importedFilesRef}
+              key={importedFilesKey}
+              projectId={projectId}
+              onViewLayer={handleViewLayer}
+              onDelete={handleFileDelete}
+            />
+          </div>
+
+          {/* Import Dialog */}
+          <GeoImportDialog
             projectId={projectId}
-            onViewLayer={handleViewLayer}
-            onDelete={handleFileDelete}
+            open={importDialogOpen}
+            onOpenChange={setImportDialogOpen}
+            onImportComplete={handleImportComplete}
+            fileInfo={selectedFile}
           />
         </div>
-
-        {/* Import Dialog */}
-        <GeoImportDialog
-          projectId={projectId}
-          open={importDialogOpen}
-          onOpenChange={setImportDialogOpen}
-          onImportComplete={handleImportComplete}
-          fileInfo={selectedFile}
-        />
       </div>
+
+      {/* Error Dialog */}
+      <UploadErrorDialog
+        isOpen={!!uploadError}
+        onClose={() => setUploadError(null)}
+        error={uploadError?.message || ''}
+        fileName={uploadError?.fileName}
+        fileSize={uploadError?.fileSize}
+      />
     </div>
   );
 }

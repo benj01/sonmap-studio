@@ -106,9 +106,9 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
       setShowDeleteDialog(true);
     };
 
-    const handleDeleteConfirm = async (deleteRelated: boolean) => {
+    const handleDeleteConfirm = async () => {
       if (fileToDelete && onDelete) {
-        await onDelete(fileToDelete as unknown as ProjectFile, deleteRelated);
+        await onDelete(fileToDelete as unknown as ProjectFile, true);
         setShowDeleteDialog(false);
         setFileToDelete(null);
       }
@@ -198,7 +198,7 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
           onConfirm={handleDeleteConfirm}
           fileName={fileToDelete?.name || ''}
           type="imported"
-          hasRelatedFile={true}
+          hasRelatedFile={!!fileToDelete?.source_file_id}
         />
       </>
     );

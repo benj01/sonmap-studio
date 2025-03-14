@@ -39,9 +39,10 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
     setShowDeleteDialog(true);
   };
 
-  const handleDeleteConfirm = async (deleteRelated: boolean) => {
+  const handleDeleteConfirm = async () => {
     if (fileToDelete) {
-      await onDelete(fileToDelete, deleteRelated);
+      // Always pass true for deleteRelated since the database will delete related files anyway
+      await onDelete(fileToDelete, true);
       setShowDeleteDialog(false);
       setFileToDelete(null);
     }
