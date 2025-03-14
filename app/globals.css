@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Import Cesium widget styles */
+@import url('/static/cesium/Widgets/widgets.css');
+
 @layer base {
   :root {
     --background: 0 0% 100%;
@@ -66,4 +69,27 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Cesium widget styles */
+.cesium-viewer {
+  font-family: inherit;
+}
+
+.cesium-viewer-bottom {
+  display: none;
+}
+
+.cesium-viewer-toolbar {
+  display: none;
+}
+
+/* Custom styles for Cesium widgets to match application theme */
+.cesium-widget {
+  @apply w-full h-full;
+}
+
+/* Override Cesium widget styles to match application theme */
+.cesium-viewer .cesium-widget-credits {
+  display: none;
 }
