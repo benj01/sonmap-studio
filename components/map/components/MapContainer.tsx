@@ -56,14 +56,6 @@ export function MapContainer({
   }
 }: MapContainerProps) {
   const [currentView, setCurrentView] = useState<'2d' | '3d'>('2d');
-  const [was3dActive, setWas3dActive] = useState(false);
-  
-  // Update 3D active tracking
-  useEffect(() => {
-    if (currentView === '3d') {
-      setWas3dActive(true);
-    }
-  }, [currentView]);
   
   return (
     <div className={`relative w-full h-full ${className}`}>
@@ -77,22 +69,22 @@ export function MapContainer({
 
       {/* Map Views */}
       <MapProvider>
-        {/* 2D Map View */}
-        <div 
-          className={`w-full h-full absolute inset-0 transition-opacity duration-300 ${
-            currentView === '2d' ? 'opacity-100 z-10' : 'opacity-0 z-0'
-          }`}
-        >
-          <MapView initialViewState={initialViewState2D} />
-        </div>
+        {/* 2D Map View - Only render when active */}
+        {currentView === '2d' && (
+          <div className="w-full h-full absolute inset-0 z-10">
+            <MapView initialViewState={initialViewState2D} />
+          </div>
+        )}
         
-        {/* 3D View - only render if it's active or was previously active */}
+        {/* 3D View - Use proper mounting/unmounting instead of opacity */}
         <CesiumProvider>
-          {(currentView === '3d' || was3dActive) && (
+          {currentView === '3d' && (
             <div 
-              className={`w-full h-full absolute inset-0 transition-opacity duration-300 ${
-                currentView === '3d' ? 'opacity-100 z-10' : 'opacity-0 z-0'
-              }`}
+              className="w-full h-full absolute inset-0 z-10"
+              style={{
+                backgroundColor: '#000'
+              }}
+              data-container="cesium-outer-container"
             >
               <CesiumView initialViewState={initialViewState3D} />
             </div>

@@ -2,6 +2,7 @@
 const CopyWebpackPlugin = require('copy-webpack-plugin');
 const path = require('path');
 const webpack = require('webpack');
+const fs = require('fs');
 
 const nextConfig = {
   webpack: (config, { isServer }) => {
@@ -20,39 +21,43 @@ const nextConfig = {
         })
       );
       
+      // Get the Cesium path
+      const cesiumPath = path.dirname(require.resolve('cesium'));
+      
+      // Define patterns for copying Cesium assets
+      const patterns = [
+        {
+          from: path.join(cesiumPath, 'Build/Cesium/Workers'),
+          to: 'static/cesium/Workers',
+        },
+        {
+          from: path.join(cesiumPath, 'Build/Cesium/ThirdParty'),
+          to: 'static/cesium/ThirdParty',
+        },
+        {
+          from: path.join(cesiumPath, 'Build/Cesium/Assets'),
+          to: 'static/cesium/Assets',
+        },
+        {
+          from: path.join(cesiumPath, 'Build/Cesium/Widgets'),
+          to: 'static/cesium/Widgets',
+        }
+      ];
+      
+      // Only add Source/Assets if it exists
+      const sourceAssetsPath = path.join(cesiumPath, 'Source/Assets');
+      if (fs.existsSync(sourceAssetsPath)) {
+        patterns.push({
+          from: sourceAssetsPath,
+          to: 'static/cesium/Assets',
+          force: true,
+        });
+      }
+      
       // Copy Cesium assets to static directory
       config.plugins.push(
         new CopyWebpackPlugin({
-          patterns: [
-            {
-              from: path.join(
-                path.dirname(require.resolve('cesium')),
-                'Build/CesiumUnminified/Workers'
-              ),
-              to: 'static/cesium/Workers',
-            },
-            {
-              from: path.join(
-                path.dirname(require.resolve('cesium')),
-                'Build/CesiumUnminified/ThirdParty'
-              ),
-              to: 'static/cesium/ThirdParty',
-            },
-            {
-              from: path.join(
-                path.dirname(require.resolve('cesium')),
-                'Build/CesiumUnminified/Assets'
-              ),
-              to: 'static/cesium/Assets',
-            },
-            {
-              from: path.join(
-                path.dirname(require.resolve('cesium')),
-                'Build/CesiumUnminified/Widgets'
-              ),
-              to: 'static/cesium/Widgets',
-            },
-          ],
+          patterns: patterns
         })
       );
     }

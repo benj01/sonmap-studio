@@ -111,7 +111,28 @@ export function CesiumProvider({ children }: CesiumProviderProps) {
     if (newViewer && viewer && newViewer !== viewer) {
       try {
         logger.info('Replacing existing Cesium viewer');
-        viewer.destroy();
+        
+        // First stop any render loops
+        if (viewer.useDefaultRenderLoop) {
+          viewer.useDefaultRenderLoop = false;
+        }
+        
+        // Destroy the viewer without manipulating the DOM
+        try {
+          // Try to access the container before destroying
+          const container = viewer.container;
+          
+          // Destroy the viewer
+          viewer.destroy();
+          
+          // If we have a container reference, we need to make sure it's empty
+          // but we'll let React handle this in the component
+          if (container) {
+            logger.debug('Viewer destroyed, container will be managed by React');
+          }
+        } catch (destroyError) {
+          logger.error('Error during viewer destroy:', destroyError);
+        }
       } catch (error) {
         logger.error('Error destroying previous Cesium viewer', error);
       }
