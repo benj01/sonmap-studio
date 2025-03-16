@@ -10,10 +10,7 @@ import { ArrowLeft, Settings, Users, Files, Map, Beaker } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
 import { FileManager } from '@/components/files/components/manager'
 import { useEffect, useState } from 'react'
-import { MapView } from '@/components/map/components/MapView'
-import { LayerPanel } from '@/components/map/components/LayerPanel'
-import { LayerList } from '@/components/map/components/LayerList'
-import { MapProvider } from '@/components/map/hooks/useMapContext'
+import { MapContainer } from '@/components/map/components/MapContainer'
 import Link from 'next/link'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
@@ -155,17 +152,23 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
             <CardHeader>
               <CardTitle>Map View</CardTitle>
               <CardDescription>
-                Visualize your project data on the map.
+                Visualize your project data on the map. Toggle between 2D and 3D views using the control in the top right.
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="relative h-[500px] bg-muted rounded-lg overflow-hidden">
-                <MapProvider>
-                  <MapView />
-                  <LayerPanel>
-                    <LayerList projectId={projectId} />
-                  </LayerPanel>
-                </MapProvider>
+                <MapContainer 
+                  initialViewState2D={{
+                    center: [0, 0],
+                    zoom: 2
+                  }}
+                  initialViewState3D={{
+                    latitude: 0,
+                    longitude: 0,
+                    height: 10000000
+                  }}
+                  projectId={projectId}
+                />
               </div>
             </CardContent>
           </Card>

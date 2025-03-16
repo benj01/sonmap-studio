@@ -6,6 +6,9 @@ import { CesiumView } from './cesium/CesiumView';
 import { ViewToggle } from './ViewToggle';
 import { CesiumProvider } from '../context/CesiumContext';
 import { MapProvider } from '../hooks/useMapContext';
+import { LayerPanel } from './LayerPanel';
+import { LayerList } from './LayerList';
+import { CesiumLayerList } from './cesium/CesiumLayerList';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'MapContainer';
@@ -41,6 +44,7 @@ interface MapContainerProps {
     longitude: number;
     height: number;
   };
+  projectId?: string;
 }
 
 export function MapContainer({
@@ -53,9 +57,16 @@ export function MapContainer({
     latitude: 0,
     longitude: 0,
     height: 10000000
-  }
+  },
+  projectId
 }: MapContainerProps) {
   const [currentView, setCurrentView] = useState<'2d' | '3d'>('2d');
+  
+  // Handle view change
+  const handleViewChange = (view: '2d' | '3d') => {
+    logger.info(`Switching to ${view} view`);
+    setCurrentView(view);
+  };
   
   return (
     <div className={`relative w-full h-full ${className}`}>
@@ -63,7 +74,7 @@ export function MapContainer({
       <div className="absolute top-4 right-4 z-50">
         <ViewToggle 
           currentView={currentView} 
-          onViewChange={setCurrentView} 
+          onViewChange={handleViewChange} 
         />
       </div>
 
@@ -90,6 +101,15 @@ export function MapContainer({
             </div>
           )}
         </CesiumProvider>
+        
+        {/* Layer Panel - Always render but with different content based on view */}
+        {projectId && (
+          <LayerPanel 
+            currentView={currentView}
+            children2D={<LayerList projectId={projectId} />}
+            children3D={<CesiumLayerList projectId={projectId} />}
+          />
+        )}
       </MapProvider>
     </div>
   );

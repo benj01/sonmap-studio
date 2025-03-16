@@ -8,10 +8,31 @@ import { cn } from '@/lib/utils';
 interface LayerPanelProps {
   className?: string;
   children?: React.ReactNode;
+  currentView?: '2d' | '3d';
+  children2D?: React.ReactNode;
+  children3D?: React.ReactNode;
 }
 
-export function LayerPanel({ className = '', children }: LayerPanelProps) {
+export function LayerPanel({ 
+  className = '', 
+  children,
+  currentView = '2d',
+  children2D,
+  children3D
+}: LayerPanelProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Determine which children to render based on the current view
+  const renderChildren = () => {
+    // If specific view children are provided, use them based on currentView
+    if (currentView === '3d' && children3D) {
+      return children3D;
+    } else if (currentView === '2d' && children2D) {
+      return children2D;
+    }
+    // Otherwise fall back to the default children
+    return children;
+  };
 
   return (
     <div 
@@ -34,7 +55,7 @@ export function LayerPanel({ className = '', children }: LayerPanelProps) {
         {!isCollapsed && (
           <div className="flex items-center gap-2">
             <Layers className="w-5 h-5" />
-            <span className="font-medium">Layers</span>
+            <span className="font-medium">Layers {currentView === '3d' ? '(3D)' : ''}</span>
           </div>
         )}
       </div>
@@ -54,7 +75,7 @@ export function LayerPanel({ className = '', children }: LayerPanelProps) {
             <Layers className="w-5 h-5" />
           </Button>
         ) : (
-          children
+          renderChildren()
         )}
       </div>
     </div>

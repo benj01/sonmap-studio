@@ -130,7 +130,19 @@ export function MapProvider({ children }: { children: ReactNode }) {
     if (mapRef.current) {
       logger.info('Cleaning up old map instance');
       cleanupSourceDataListeners();
-      mapRef.current.remove();
+      try {
+        // Check if the map is still valid before removing it
+        if (!mapRef.current._removed) {
+          mapRef.current.remove();
+        } else {
+          logger.debug('Old map already removed, skipping cleanup');
+        }
+      } catch (error) {
+        // Safely handle any errors during map removal
+        logger.warn('Error during old map cleanup', error);
+      }
+      // Ensure we clear the reference even if removal fails
+      mapRef.current = null;
     }
     
     logger.info('Setting map in context', {
@@ -169,7 +181,20 @@ export function MapProvider({ children }: { children: ReactNode }) {
     return () => {
       cleanupSourceDataListeners();
       if (mapRef.current) {
-        mapRef.current.remove();
+        try {
+          // Check if the map is still valid before removing it
+          if (!mapRef.current._removed) {
+            logger.debug('Removing map instance during cleanup');
+            mapRef.current.remove();
+          } else {
+            logger.debug('Map already removed, skipping cleanup');
+          }
+        } catch (error) {
+          // Safely handle any errors during map removal
+          logger.warn('Error during map cleanup', error);
+          // Ensure we clear the reference even if removal fails
+          mapRef.current = null;
+        }
       }
     };
   }, [cleanupSourceDataListeners]);
