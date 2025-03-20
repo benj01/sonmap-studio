@@ -59,7 +59,7 @@ function MapContainerInner({
 }) {
   const { map } = useMapContext();
   const { viewer } = useCesium();
-  const { syncViews } = useViewSync();
+  const { syncViews, useCameraSync } = useViewSync();
 
   // Handle view state synchronization
   useEffect(() => {
@@ -69,7 +69,7 @@ function MapContainerInner({
       try {
         if (!map || !viewer) return;
 
-        // When switching to 3D, sync the 2D state to 3D
+        // When switching views, sync the current view state to the target view
         if (currentView === '3d') {
           const center = map.getCenter();
           const state = {
@@ -79,9 +79,12 @@ function MapContainerInner({
             bearing: map.getBearing()
           };
           
-          // Only proceed if component is still mounted
           if (isMounted) {
             await syncViews('2d', state, map, viewer);
+          }
+        } else if (currentView === '2d') {
+          if (isMounted) {
+            await syncViews('3d', viewer.camera, map, viewer);
           }
         }
       } catch (error) {
@@ -98,6 +101,9 @@ function MapContainerInner({
       isMounted = false;
     };
   }, [currentView, isTransitioning, map, viewer, syncViews]);
+
+  // Use camera sync hook to handle continuous camera movement
+  useCameraSync(currentView, map || undefined, viewer || undefined);
 
   return (
     <div className={`relative w-full h-full ${className}`}>
@@ -198,4 +204,4 @@ export function MapContainer(props: MapContainerProps) {
       </MapProvider>
     </SharedLayerProvider>
   );
-} 
+}
