@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import * as Cesium from 'cesium';
 import { useCesium } from '../../context/CesiumContext';
 import { LogManager } from '@/core/logging/log-manager';
-import { createOpenSourceImageryProviders, createDefaultImageryProvider } from '@/lib/cesium/init';
+import { createViewer } from '@/lib/cesium/init';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
+import { cn } from '@/lib/utils';
+import { verifyIonDisabled } from '@/lib/cesium/ion-disable';
 
 const SOURCE = 'CesiumView';
 const logManager = LogManager.getInstance();
@@ -370,268 +372,37 @@ export function CesiumView({
     try {
       logger.info('Creating Cesium viewer');
       
-      // Ensure CESIUM_BASE_URL is set properly and disable Ion
-      if (typeof window !== 'undefined') {
-        window.CESIUM_BASE_URL = '/cesium/';
-        Cesium.Ion.defaultAccessToken = '';
+      // Create viewer using centralized initialization
+      const viewer = createViewer(containerRef.current);
+      if (!viewer) {
+        throw new Error('Failed to create Cesium viewer');
       }
       
-      // Use OpenStreetMap as the base imagery provider
-      const imageryProvider = new Cesium.OpenStreetMapImageryProvider({
-        url: 'https://a.tile.openstreetmap.org/'
-      });
-      
-      // Basic viewer options
-      const viewerOptions = {
-        container: containerRef.current,
-        imageryProvider: imageryProvider,
-        baseLayerPicker: false,
-        geocoder: false,
-        homeButton: false,
-        sceneModePicker: false,
-        navigationHelpButton: true, // Enable this to help with navigation
-        animation: false,
-        timeline: false,
-        fullscreenButton: true, // Enable fullscreen option
-        infoBox: false,
-        selectionIndicator: false,
-        creditContainer: document.createElement('div'),
-        terrainProvider: new Cesium.EllipsoidTerrainProvider(),
-        skyBox: false as const,
-        skyAtmosphere: new Cesium.SkyAtmosphere(), // Create a SkyAtmosphere instance instead of using boolean
-        useDefaultRenderLoop: true,
-        requestRenderMode: false
-      };
-      
-      // Create the viewer
-      const newViewer = new Cesium.Viewer(containerRef.current, viewerOptions);
-      
-      // Add additional imagery layers
-      // Natural Earth II base layer (beautiful natural-looking map)
-      const naturalEarthLayer = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
-        credit: 'Tiles © Esri — Source: Esri, DeLorme, NAVTEQ, USGS, Intermap, iPC, NRCAN, Esri Japan, METI'
-      });
-      
-      // Add the layer (but don't set it as the base layer)
-      newViewer.imageryLayers.addImageryProvider(naturalEarthLayer);
-      
-      // Add world boundaries layer
-      const boundariesLayer = new Cesium.UrlTemplateImageryProvider({
-        url: 'https://basemap.nationalmap.gov/arcgis/rest/services/USGSTopo/MapServer/tile/{z}/{y}/{x}',
-        credit: 'USGS',
-        maximumLevel: 16
-      });
-      
-      // Add the boundaries layer with slight transparency
-      const boundariesLayerAdded = newViewer.imageryLayers.addImageryProvider(boundariesLayer);
-      boundariesLayerAdded.alpha = 0.5; // 50% opacity
-      
-      // Add satellite imagery layer
-      try {
-        const satelliteLayer = new Cesium.UrlTemplateImageryProvider({
-          url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-          credit: 'Tiles © Esri — Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
-          maximumLevel: 19
-        });
-        
-        // Add the satellite layer with very low opacity so it just adds some texture
-        const satelliteLayerAdded = newViewer.imageryLayers.addImageryProvider(satelliteLayer);
-        satelliteLayerAdded.alpha = 0.3; // 30% opacity
-        logger.debug('Added satellite imagery layer');
-      } catch (error) {
-        logger.warn('Failed to add satellite imagery layer:', error);
-      }
-      
-      // Add some major cities as points of interest
-      const cities = [
-        { name: 'New York', lon: -74.006, lat: 40.7128 },
-        { name: 'London', lon: -0.1278, lat: 51.5074 },
-        { name: 'Tokyo', lon: 139.6917, lat: 35.6895 },
-        { name: 'Sydney', lon: 151.2093, lat: -33.8688 },
-        { name: 'Rio de Janeiro', lon: -43.1729, lat: -22.9068 },
-        { name: 'Cairo', lon: 31.2357, lat: 30.0444 }
-      ];
-      
-      // Add city markers
-      cities.forEach(city => {
-        newViewer.entities.add({
-          position: Cesium.Cartesian3.fromDegrees(city.lon, city.lat),
-          point: {
-            pixelSize: 8,
-            color: Cesium.Color.YELLOW,
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 2
-          },
-          label: {
-            text: city.name,
-            font: '12pt sans-serif',
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            outlineWidth: 2,
-            verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-            pixelOffset: new Cesium.Cartesian2(0, -10),
-            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 10000000)
-          }
-        });
-      });
-      
-      // Store references
-      viewerRef.current = newViewer;
-      setViewer(newViewer);
-      
-      // Set initial camera position - focus on a more interesting part of the world
-      newViewer.camera.setView({
+      // Set initial camera position
+      viewer.camera.setView({
         destination: Cesium.Cartesian3.fromDegrees(
-          initialViewState.longitude || 0, // Use initialViewState longitude or default to 0
-          initialViewState.latitude || 20,  // Use initialViewState latitude or default to 20
-          initialViewState.height || 10000000 // Use initialViewState height or default to 10000000
+          initialViewState.longitude,
+          initialViewState.latitude,
+          initialViewState.height
         )
       });
       
-      // Add a simple entity to mark the center point
-      newViewer.entities.add({
-        position: Cesium.Cartesian3.fromDegrees(0, 0, 0),
-        point: {
-          pixelSize: 10,
-          color: Cesium.Color.RED
-        }
-      });
+      // Store references
+      viewerRef.current = viewer;
+      setViewer(viewer);
       
-      // Enable depth testing against terrain for better visuals
-      newViewer.scene.globe.depthTestAgainstTerrain = true;
-      
-      // Enhance visual appearance
-      if (newViewer.scene.globe) {
-        // Add some ambient lighting to make the globe look better
-        newViewer.scene.globe.enableLighting = true;
-        
-        // Adjust the globe's appearance
-        newViewer.scene.globe.baseColor = Cesium.Color.BLUE.withAlpha(0.1);
-        
-        // Improve the appearance of the atmosphere from space
-        if (newViewer.scene.skyAtmosphere) {
-          newViewer.scene.skyAtmosphere.hueShift = 0.0;
-          newViewer.scene.skyAtmosphere.saturationShift = 0.1;
-          newViewer.scene.skyAtmosphere.brightnessShift = 0.1;
-        }
-      }
-      
-      // Add mouse interaction for better user experience
-      newViewer.screenSpaceEventHandler.setInputAction(function(movement: Cesium.ScreenSpaceEventHandler.PositionedEvent) {
-        // Get the entity at the picked location
-        const pickedObject = newViewer.scene.pick(movement.position);
-        if (Cesium.defined(pickedObject) && pickedObject.id) {
-          logger.debug('Picked entity:', pickedObject.id.name || 'unnamed entity');
-        }
-      }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-      
-      // Add a compass for orientation (if not already added by navigationHelpButton)
-      if (!newViewer.navigationHelpButton) {
-        try {
-          // Create a custom compass element
-          const compassContainer = document.createElement('div');
-          compassContainer.className = 'compass-container';
-          compassContainer.style.position = 'absolute';
-          compassContainer.style.top = '10px';
-          compassContainer.style.left = '10px';
-          compassContainer.style.width = '50px';
-          compassContainer.style.height = '50px';
-          compassContainer.style.backgroundColor = 'rgba(255, 255, 255, 0.5)';
-          compassContainer.style.borderRadius = '25px';
-          compassContainer.style.display = 'flex';
-          compassContainer.style.alignItems = 'center';
-          compassContainer.style.justifyContent = 'center';
-          compassContainer.innerHTML = 'N';
-          
-          // Add the compass to the container
-          containerRef.current.appendChild(compassContainer);
-          
-          // Update the compass orientation based on camera heading
-          const compassUpdateCallback = () => {
-            if (newViewer && !newViewer.isDestroyed()) {
-              const heading = Cesium.Math.toDegrees(newViewer.camera.heading);
-              compassContainer.style.transform = `rotate(${-heading}deg)`;
-              requestAnimationFrame(compassUpdateCallback);
-            }
-          };
-          
-          // Start the compass update loop
-          requestAnimationFrame(compassUpdateCallback);
-        } catch (error) {
-          logger.warn('Failed to create compass:', error);
-        }
-      }
-      
-      // Force a render
-      newViewer.scene.requestRender();
-      
-      logger.info('Cesium viewer created successfully');
+      logger.info('Cesium viewer created successfully in offline mode');
       setStatus('ready');
-    } catch (error) {
-      logger.error('Failed to create Cesium viewer', error);
-      setError(`Failed to create Cesium viewer: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to initialize Cesium';
+      logger.error('Error initializing Cesium:', err);
+      setError(errorMessage);
       setStatus('error');
     }
   };
   
   // Initialization effect
   useEffect(() => {
-    // Set the base URL for Cesium's assets
-    if (typeof window !== 'undefined') {
-      // First, check if this is already defined
-      if (!window.CESIUM_BASE_URL) {
-        // Use the path where you copied the Cesium assets
-        window.CESIUM_BASE_URL = '/cesium/';  // Use the path where assets were copied
-        
-        // Disable Cesium Ion services
-        Cesium.Ion.defaultAccessToken = '';
-        
-        // Log that we've set the base URL
-        logger.debug('Set CESIUM_BASE_URL to', window.CESIUM_BASE_URL);
-        
-        // Simple test to check if assets are reachable
-        const testAssetUrl = `${window.CESIUM_BASE_URL}Widgets/Images/ImageryProviders/openStreetMap.png`;
-        fetch(testAssetUrl)
-          .then(response => {
-            if (response.ok) {
-              logger.debug('Cesium assets are accessible!');
-              setDebugInfo(prev => `${prev}\nCesium assets are accessible!`);
-            } else {
-              const errorMsg = `Cesium assets not found at ${window.CESIUM_BASE_URL}. Status: ${response.status}`;
-              logger.warn(errorMsg);
-              setDebugInfo(prev => `${prev}\nWARNING: ${errorMsg}`);
-              setDebugInfo(prev => `${prev}\n\nPOSSIBLE FIX: Run 'npm run copy-cesium-assets' to copy Cesium assets to the public directory.`);
-              
-              // Try an alternative path as fallback
-              const altPath = '/static/cesium/';
-              const altTestUrl = `${altPath}Widgets/Images/ImageryProviders/openStreetMap.png`;
-              logger.debug(`Trying alternative path: ${altPath}`);
-              setDebugInfo(prev => `${prev}\nTrying alternative path: ${altPath}`);
-              
-              // Update CESIUM_BASE_URL to the alternative path
-              window.CESIUM_BASE_URL = altPath;
-              
-              // Test the alternative path
-              return fetch(altTestUrl).then(altResponse => {
-                if (altResponse.ok) {
-                  logger.debug(`Cesium assets found at alternative path: ${altPath}`);
-                  setDebugInfo(prev => `${prev}\nCesium assets found at alternative path: ${altPath}`);
-                } else {
-                  logger.error(`Cesium assets not found at alternative path: ${altPath}`);
-                  setDebugInfo(prev => `${prev}\nERROR: Cesium assets not found at alternative path: ${altPath}`);
-                  setDebugInfo(prev => `${prev}\n\nIMPORTANT: Cesium assets are missing. Please ensure you've run 'npm run copy-cesium-assets' or check that the assets are copied to either '/static/cesium/' or '/cesium/' directories.`);
-                }
-              });
-            }
-          })
-          .catch(err => {
-            logger.error(`Failed to check Cesium assets: ${err.message}`);
-            setDebugInfo(prev => `${prev}\nERROR: Failed to check Cesium assets: ${err.message}`);
-            setDebugInfo(prev => `${prev}\n\nIMPORTANT: Error checking Cesium assets. This might be due to network issues or CORS restrictions.`);
-          });
-      }
-    }
-    
     logger.debug('CesiumView mounted, container ref:', containerRef.current);
     setDebugInfo(prev => `${prev}\nContainer ref: ${containerRef.current ? 'available' : 'not available'}`);
     

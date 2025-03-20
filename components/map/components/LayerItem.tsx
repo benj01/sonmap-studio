@@ -41,11 +41,11 @@ interface LayerItemProps {
 }
 
 export function LayerItem({ layer, className = '' }: LayerItemProps) {
-  const { map, layers, toggleLayer, addLayer } = useMapContext();
+  const { map, layers, toggleLayer, addLayer, getLayerVisibility } = useMapContext();
   const { data, loading, error } = useLayerData(layer.id);
   const setupCompleteRef = useRef(false);
   const registeredRef = useRef(false);
-  const layerId = `layer-${layer.id}`;  // Define layerId once to ensure consistency
+  const layerId = `layer-${layer.id}`;
 
   // Register with context on mount
   useEffect(() => {
@@ -327,65 +327,36 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
     }
   }, [map, layerId, layers]);
 
-  const isVisible = layers.get(layerId) ?? true;
-
-  if (loading) {
-    return (
-      <div className={cn('p-2', className)}>
-        <Skeleton className="h-12 w-full" />
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className={cn(
-        'flex items-center gap-2 p-2 text-destructive',
-        className
-      )}>
-        <AlertCircle className="h-4 w-4" />
-        <span className="text-sm">Failed to load layer</span>
-      </div>
-    );
-  }
-
   return (
-    <div 
-      className={cn(
-        'flex items-center justify-between p-2 rounded-md hover:bg-accent/50',
-        className
-      )}
-    >
+    <div className={cn('flex items-center justify-between p-2 hover:bg-accent/50 rounded-lg', className)}>
       <div className="flex items-center gap-2">
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => {
-            logger.debug('Toggle button clicked', { 
-              layerId,
-              currentVisibility: isVisible,
-              hasLayer: map?.getLayer(layerId) !== undefined
-            });
-            toggleLayer(layerId);
-          }}
           className="h-8 w-8"
+          onClick={() => toggleLayer(layerId)}
+          disabled={loading || !!error}
         >
-          {isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+          {getLayerVisibility(layerId) ? (
+            <Eye className="h-4 w-4" />
+          ) : (
+            <EyeOff className="h-4 w-4" />
+          )}
         </Button>
-        <div>
-          <div className="font-medium">{layer.name}</div>
-          <div className="text-xs text-muted-foreground">
-            {data?.features.length || 0} features
-          </div>
+        <div className="flex flex-col">
+          <span className="text-sm font-medium">{layer.name}</span>
+          <span className="text-xs text-muted-foreground">{layer.type}</span>
         </div>
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="h-8 w-8"
-      >
-        <Settings className="h-4 w-4" />
-      </Button>
+      <div className="flex items-center gap-2">
+        {loading && <Skeleton className="h-8 w-8" />}
+        {error && (
+          <AlertCircle className="h-4 w-4 text-destructive" />
+        )}
+        <Button variant="ghost" size="icon" className="h-8 w-8">
+          <Settings className="h-4 w-4" />
+        </Button>
+      </div>
     </div>
   );
 }

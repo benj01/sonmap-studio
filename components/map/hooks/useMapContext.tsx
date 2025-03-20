@@ -37,7 +37,8 @@ interface MapContextType {
   addLayer: (layerId: string, initialVisibility?: boolean, sourceId?: string) => void;
   removeLayer: (layerId: string) => void;
   isSourceLoaded: (sourceId: string) => boolean;
-  registerLayerAddition: (layerId: string) => void;  // New method to track successful layer addition
+  registerLayerAddition: (layerId: string) => void;
+  getLayerVisibility: (layerId: string) => boolean;
 }
 
 const MapContext = createContext<MapContextType | null>(null);
@@ -278,36 +279,31 @@ export function MapProvider({ children }: { children: ReactNode }) {
   }, [map, isSourceLoaded, applyLayerVisibility]);
 
   const toggleLayer = useCallback((layerId: string) => {
-    setLayers(prev => {
-      const newLayers = new Map(prev);
+    logger.debug('Toggling layer visibility', { layerId });
+    
+    setLayers(prevLayers => {
+      const newLayers = new Map(prevLayers);
       const currentVisibility = newLayers.get(layerId) ?? true;
-      const newVisibility = !currentVisibility;
-      newLayers.set(layerId, newVisibility);
-
+      newLayers.set(layerId, !currentVisibility);
+      
+      // Update layer visibility in map if it exists
+      if (mapRef.current?.getLayer(layerId)) {
+        applyLayerVisibility(mapRef.current, layerId, !currentVisibility);
+      }
+      
+      // Update registered layer state
       const layerState = registeredLayers.current.get(layerId);
       if (layerState) {
-        layerState.visible = newVisibility;
+        layerState.visible = !currentVisibility;
       }
-
-      if (map?.loaded()) {
-        if (!layerState?.sourceId || isSourceLoaded(layerState.sourceId)) {
-          applyLayerVisibility(map, layerId, newVisibility);
-        } else {
-          logger.debug('Layer toggle queued - waiting for source', {
-            layerId,
-            sourceId: layerState.sourceId
-          });
-          pendingLayers.current.set(layerId, {
-            ...layerState,
-            visible: newVisibility,
-            added: false
-          });
-        }
-      }
-
+      
       return newLayers;
     });
-  }, [map, isSourceLoaded, applyLayerVisibility]);
+  }, [applyLayerVisibility]);
+
+  const getLayerVisibility = useCallback((layerId: string) => {
+    return layers.get(layerId) ?? true;
+  }, [layers]);
 
   const removeLayer = useCallback((layerId: string) => {
     registeredLayers.current.delete(layerId);
@@ -327,14 +323,15 @@ export function MapProvider({ children }: { children: ReactNode }) {
   return (
     <MapContext.Provider
       value={{
-        map,
+        map: mapRef.current,
         setMap,
         layers,
         toggleLayer,
         addLayer,
         removeLayer,
         isSourceLoaded,
-        registerLayerAddition
+        registerLayerAddition,
+        getLayerVisibility
       }}
     >
       {children}

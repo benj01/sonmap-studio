@@ -2,8 +2,9 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
 import * as Cesium from 'cesium';
-import { initCesium } from '@/lib/cesium/init';
+import { initCesium, createViewer, verifyViewer } from '@/lib/cesium/init';
 import { LogManager } from '@/core/logging/log-manager';
+import { fullyDisableIon, verifyIonDisabled } from '@/lib/cesium/ion-disable';
 
 const SOURCE = 'CesiumContext';
 const logManager = LogManager.getInstance();
@@ -62,45 +63,19 @@ export function CesiumProvider({ children }: CesiumProviderProps) {
   const [initializationError, setInitializationError] = useState<string | null>(null);
   const isUnmountingRef = useRef(false);
 
-  // Initialize Cesium when the provider mounts
+  // Initialize Cesium configuration
   useEffect(() => {
-    logger.info('CesiumProvider mounted, initializing Cesium...');
+    logger.info('Initializing Cesium configuration');
     
-    // Use a timeout to ensure the DOM is fully rendered
-    const initTimeout = setTimeout(() => {
-      try {
-        // Check if Cesium is already loaded
-        if (typeof Cesium === 'undefined') {
-          const error = 'Cesium is not defined';
-          logger.error(error);
-          setInitializationError(error);
-          return;
-        }
-        
-        // Check if required Cesium components are available
-        if (!Cesium.Viewer) {
-          const error = 'Cesium.Viewer is not defined';
-          logger.error(error);
-          setInitializationError(error);
-          return;
-        }
-        
-        // Initialize Cesium
-        initCesium();
-        
-        // Set initialization flag
-        setIsInitialized(true);
-        logger.info('Cesium initialized successfully');
-      } catch (error: any) {
-        const errorMessage = error?.message || 'Unknown error initializing Cesium';
-        logger.error('Failed to initialize Cesium', error);
-        setInitializationError(errorMessage);
-      }
-    }, 500);
+    // Initialize Cesium
+    if (!initCesium()) {
+      const error = 'Failed to initialize Cesium';
+      logger.error(error);
+      setInitializationError(error);
+      return;
+    }
     
-    return () => {
-      clearTimeout(initTimeout);
-    };
+    logger.info('Cesium initialized successfully');
   }, []);
 
   // Set viewer
@@ -136,6 +111,12 @@ export function CesiumProvider({ children }: CesiumProviderProps) {
       } catch (error) {
         logger.error('Error destroying previous Cesium viewer', error);
       }
+    }
+    
+    // Verify the new viewer if it exists
+    if (newViewer && !verifyViewer(newViewer)) {
+      logger.error('New viewer failed verification');
+      return;
     }
     
     setViewerState(newViewer);
