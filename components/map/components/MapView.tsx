@@ -104,33 +104,57 @@ export function MapView({
           logger.error('Mapbox map error', e);
         });
 
-        // Wait for style to load before proceeding
-        await new Promise<void>((resolve, reject) => {
-          const styleTimeout = setTimeout(() => {
-            reject(new Error('Style load timeout'));
-          }, 10000); // 10 second timeout
+        // Wait for both style and map to load
+        await Promise.race([
+          new Promise<void>((resolve, reject) => {
+            const cleanup = () => {
+              clearTimeout(styleTimeout);
+              mapInstance.off('style.load', handleStyleLoad);
+              mapInstance.off('error', handleError);
+            };
 
-          mapInstance.once('style.load', () => {
-            clearTimeout(styleTimeout);
-            resolve();
-          });
+            const styleTimeout = setTimeout(() => {
+              cleanup();
+              // Don't reject - just log warning and continue
+              logger.warn('Style load timeout - continuing anyway');
+              resolve();
+            }, 5000);
 
-          mapInstance.once('error', (e) => {
-            clearTimeout(styleTimeout);
-            reject(e.error);
-          });
-        });
+            const handleStyleLoad = () => {
+              cleanup();
+              resolve();
+            };
+
+            const handleError = (e: any) => {
+              cleanup();
+              reject(e.error);
+            };
+
+            mapInstance.once('style.load', handleStyleLoad);
+            mapInstance.once('error', handleError);
+          }),
+          // Fallback promise that resolves after map is interactive
+          new Promise<void>((resolve) => {
+            if (mapInstance.loaded()) {
+              resolve();
+            } else {
+              mapInstance.once('load', () => resolve());
+            }
+          })
+        ]);
 
         if (!mounted) return;
 
-        // Now that style is loaded, set up other event handlers
+        // Now that map is ready, set up other event handlers
         mapInstance.on('load', () => {
           if (!mounted) return;
           
           logger.info('Mapbox map loaded successfully', {
             center: mapInstance.getCenter(),
             zoom: mapInstance.getZoom(),
-            style: mapInstance.getStyle()?.name
+            style: mapInstance.getStyle()?.name,
+            loaded: mapInstance.loaded(),
+            styleLoaded: mapInstance.isStyleLoaded()
           });
           setMap(mapInstance);
           onLoad?.();

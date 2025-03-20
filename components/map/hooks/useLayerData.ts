@@ -41,15 +41,16 @@ function validateCoordinates(coordinates: any[]): boolean {
   if (!Array.isArray(coordinates)) return false;
   
   // Handle different geometry types
-  if (coordinates.length === 2) {
-    // Single point coordinates [lng, lat]
+  if (coordinates.length >= 2) {
+    // Point coordinates [lng, lat] or [lng, lat, altitude]
+    const [lng, lat] = coordinates;
     return (
-      typeof coordinates[0] === 'number' &&
-      typeof coordinates[1] === 'number' &&
-      coordinates[0] >= -180 &&
-      coordinates[0] <= 180 &&
-      coordinates[1] >= -90 &&
-      coordinates[1] <= 90
+      typeof lng === 'number' &&
+      typeof lat === 'number' &&
+      lng >= -180 &&
+      lng <= 180 &&
+      lat >= -90 &&
+      lat <= 90
     );
   }
   
@@ -63,6 +64,14 @@ function validateGeometry(geometry: any): boolean {
   if (!geometry || !geometry.type || !geometry.coordinates) return false;
   
   try {
+    // For LineString, validate each coordinate pair
+    if (geometry.type === 'LineString') {
+      return Array.isArray(geometry.coordinates) && 
+        geometry.coordinates.length >= 2 &&
+        geometry.coordinates.every((coord: any[]) => validateCoordinates(coord));
+    }
+    
+    // For other types, use general validation
     return validateCoordinates(geometry.coordinates);
   } catch (error) {
     logger.warn('Invalid geometry', { error });
