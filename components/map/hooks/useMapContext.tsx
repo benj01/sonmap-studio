@@ -161,6 +161,7 @@ export function MapProvider({ children }: { children: ReactNode }) {
       }
       // Ensure we clear the reference even if removal fails
       mapRef.current = null;
+      setMapInstance(null);
     }
     
     logger.info('Setting map in context', {
@@ -170,28 +171,39 @@ export function MapProvider({ children }: { children: ReactNode }) {
       zoom: mapInstance.getZoom()
     });
 
-    // Set up source data monitoring
-    const handleSourceData = () => {
-      if (mapInstance.loaded()) {
-        handlePendingLayers(mapInstance);
+    // Wait for map to be ready before setting it in context
+    const waitForMap = async () => {
+      if (!mapInstance.loaded()) {
+        await new Promise<void>((resolve) => {
+          mapInstance.once('load', () => resolve());
+        });
       }
-    };
 
-    mapInstance.on('sourcedata', handleSourceData);
-    sourceDataListeners.current.set('global', handleSourceData);
+      // Set up source data monitoring
+      const handleSourceData = () => {
+        if (mapInstance.loaded()) {
+          handlePendingLayers(mapInstance);
+        }
+      };
 
-    // Initial sync of registered layers
-    if (mapInstance.loaded()) {
+      mapInstance.on('sourcedata', handleSourceData);
+      sourceDataListeners.current.set('global', handleSourceData);
+
+      // Initial sync of registered layers
       registeredLayers.current.forEach((layerState, layerId) => {
         if (layerState.added) {
           applyLayerVisibility(mapInstance, layerId, layerState.visible);
         }
       });
       handlePendingLayers(mapInstance);
-    }
 
-    mapRef.current = mapInstance;
-    setMapInstance(mapInstance);
+      mapRef.current = mapInstance;
+      setMapInstance(mapInstance);
+    };
+
+    waitForMap().catch(error => {
+      logger.error('Error waiting for map to be ready', error);
+    });
   }, [cleanupSourceDataListeners, handlePendingLayers, applyLayerVisibility]);
 
   // Cleanup on unmount

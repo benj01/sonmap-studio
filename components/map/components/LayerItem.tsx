@@ -58,9 +58,14 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
 
   // Register layer with context and add to map when data is loaded
   useEffect(() => {
-    if (!map || !data || loading) {
-      logger.debug('Skipping layer setup - prerequisites not met', {
-        hasMap: !!map,
+    // Skip if map is not ready or data is not loaded
+    if (!map?.loaded()) {
+      logger.debug('Map not ready yet', { layerId });
+      return;
+    }
+
+    if (!data || loading) {
+      logger.debug('Data not ready yet', {
         hasData: !!data,
         isLoading: loading,
         layerId
@@ -72,25 +77,25 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
     let mounted = true;
 
     const setupLayer = async () => {
-      if (!mounted || !map || !map.loaded()) {
-        logger.debug('Skipping layer setup - conditions not met', {
-          isMounted: mounted,
-          hasMap: !!map,
-          isMapLoaded: map?.loaded(),
-          layerId
-        });
-        return;
-      }
-
-      // If layer is already set up properly, just update visibility
-      if (setupCompleteRef.current && map.getLayer(layerId) && map.getSource(sourceId)) {
-        const isVisible = layers.get(layerId) ?? true;
-        logger.debug('Layer exists, updating visibility', { layerId, isVisible });
-        map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
-        return;
-      }
-
       try {
+        // Skip if component is unmounted or map is not ready
+        if (!mounted || !map?.loaded()) {
+          logger.debug('Skipping layer setup - conditions not met', {
+            isMounted: mounted,
+            mapLoaded: map?.loaded(),
+            layerId
+          });
+          return;
+        }
+
+        // If layer is already set up properly, just update visibility
+        if (setupCompleteRef.current && map.getLayer(layerId) && map.getSource(sourceId)) {
+          const isVisible = layers.get(layerId) ?? true;
+          logger.debug('Layer exists, updating visibility', { layerId, isVisible });
+          map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+          return;
+        }
+
         // Clean up any partial setup
         try {
           if (map.getLayer(layerId)) {
@@ -117,6 +122,21 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           type: 'FeatureCollection',
           features: data.features
         };
+
+        // Wait for map to be ready
+        if (!map.isStyleLoaded()) {
+          logger.debug('Waiting for style to load', { layerId });
+          await new Promise<void>((resolve) => {
+            const checkStyle = () => {
+              if (map.isStyleLoaded()) {
+                resolve();
+              } else {
+                requestAnimationFrame(checkStyle);
+              }
+            };
+            checkStyle();
+          });
+        }
 
         // Add source
         map.addSource(sourceId, {
@@ -285,11 +305,26 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
 
   // Handle visibility changes separately
   useEffect(() => {
-    if (!map || !map.getLayer(layerId)) return;
-    
-    const isVisible = layers.get(layerId) ?? true;
-    logger.debug('Updating layer visibility', { layerId, isVisible });
-    map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+    try {
+      // Skip if map is not initialized or layer doesn't exist
+      if (!map?.getLayer) {
+        logger.debug('Map not initialized yet', { layerId });
+        return;
+      }
+
+      // Check if the layer exists
+      const layerExists = map.getStyle()?.layers?.some(l => l.id === layerId);
+      if (!layerExists) {
+        logger.debug('Layer not found in map', { layerId });
+        return;
+      }
+      
+      const isVisible = layers.get(layerId) ?? true;
+      logger.debug('Updating layer visibility', { layerId, isVisible });
+      map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+    } catch (error) {
+      logger.warn('Error updating layer visibility', { layerId, error });
+    }
   }, [map, layerId, layers]);
 
   const isVisible = layers.get(layerId) ?? true;
