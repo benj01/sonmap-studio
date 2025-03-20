@@ -1,14 +1,23 @@
 # 2D-3D View Integration Plan
 
+## Overview
+
+This document outlines the implementation plan for transitioning from a toggle-based view system to a side-by-side view where:
+- The 3D map (Cesium) is the primary view (larger or equal size)
+- The 2D map (Mapbox) is the secondary view (smaller)
+- Synchronization is one-way (2D → 3D) and happens on-demand via a button click
+- Layer/feature selection happens in the 2D view and is synchronized to 3D
+
 ## Current Architecture
 
 ### Components
-1. **MapContainer**: Main container component that manages view state (2D/3D)
+1. **MapContainer**: Main container component that manages view state and layout
 2. **MapView**: 2D view using Mapbox GL
 3. **CesiumView**: 3D view using Cesium
 4. **LayerPanel**: Panel showing available layers
 5. **LayerList**: 2D layer management
 6. **CesiumLayerList**: 3D layer management
+7. **SyncTo3DButton**: New component for triggering 3D synchronization
 
 ### State Management
 1. **MapContext**: Manages 2D map state and layers
@@ -38,142 +47,163 @@
 
 ## Implementation Plan
 
-### Phase 1: Unified Layer State Management (Completed)
+### Phase 1: UI Layout Changes
 
-1. ✅ Create a new shared layer context:
+1. **Update MapContainer Layout**
 ```typescript
-// contexts/SharedLayerContext.tsx
-interface SharedLayer {
+function MapContainer() {
+  return (
+    <div className="flex h-full">
+      {/* 3D Map Section (Primary) */}
+      <div className="flex-1 relative">
+        <CesiumView />
+      </div>
+      
+      {/* 2D Map Section (Secondary) */}
+      <div className="w-1/3 relative">
+        <MapView />
+        <div className="absolute top-4 right-4">
+          <SyncTo3DButton />
+        </div>
+      </div>
+    </div>
+  );
+}
+```
+
+2. **Create SyncTo3DButton Component**
+```typescript
+function SyncTo3DButton() {
+  const { syncTo3D } = useSyncTo3D();
+  const [isSyncing, setIsSyncing] = useState(false);
+  
+  const handleSync = async () => {
+    setIsSyncing(true);
+    try {
+      await syncTo3D({
+        includeLayers: true,
+        includeView: true
+      });
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+  
+  return (
+    <Button 
+      onClick={handleSync}
+      disabled={isSyncing}
+    >
+      {isSyncing ? 'Syncing...' : 'Sync to 3D'}
+    </Button>
+  );
+}
+```
+
+### Phase 2: State Management Updates
+
+1. **Update Layer State Management**
+```typescript
+interface SelectedItems {
+  layers: string[];
+  features?: string[]; // For future feature selection
+}
+
+interface LayerState {
   id: string;
-  name: string;
-  type: string;
   visible: boolean;
+  selected: boolean;
   metadata: {
     sourceType: '2d' | '3d' | 'both';
     source2D?: any;
     source3D?: any;
     style?: any;
   };
-  selected: boolean;
 }
+```
 
-interface SharedLayerContextType {
-  layers: SharedLayer[];
-  addLayer: (layer: SharedLayer) => void;
+2. **Update Layer Context**
+```typescript
+interface LayerContextType {
+  layers: LayerState[];
+  selectedLayers: string[];
+  addLayer: (layer: LayerState) => void;
   removeLayer: (id: string) => void;
   toggleVisibility: (id: string) => void;
   toggleSelection: (id: string) => void;
-  updateLayer: (id: string, updates: Partial<SharedLayer>) => void;
+  updateLayer: (id: string, updates: Partial<LayerState>) => void;
+  getSelectedLayers: () => LayerState[];
 }
 ```
 
-2. ✅ Implement layer adapters:
+### Phase 3: Synchronization Logic
+
+1. **Create New Synchronization Hook**
 ```typescript
-// utils/layer-adapters.ts
-interface LayerAdapter {
-  to2D: (layer: SharedLayer) => MapboxLayer;
-  to3D: (layer: SharedLayer) => CesiumLayer;
-  from2D: (layer: MapboxLayer) => SharedLayer;
-  from3D: (layer: CesiumLayer) => SharedLayer;
-}
-```
-
-3. ✅ Fix view switching issues:
-   - Implemented proper cleanup in MapView component
-   - Added transition state management in MapContainer
-   - Improved map instance cleanup in MapContext
-   - Added proper error handling and logging
-
-4. ✅ Complete layer integration:
-   - Implemented unified layer state management
-   - Added layer synchronization between views
-   - Implemented proper layer cleanup during transitions
-   - Added error handling for layer operations
-
-### Phase 2: View Synchronization (In Progress)
-
-1. Implement view state synchronization:
-```typescript
-// hooks/useViewSync.ts
-interface ViewState {
-  center: [number, number];
-  zoom: number;
-  pitch?: number;
-  bearing?: number;
+interface SyncOptions {
+  includeLayers: boolean;
+  includeView: boolean;
+  includeFeatures?: boolean;
 }
 
-function useViewSync() {
-  const convert2DTo3D = (state: ViewState) => {
-    // Convert Mapbox coordinates to Cesium camera position
-  };
-
-  const convert3DTo2D = (camera: CesiumCamera) => {
-    // Convert Cesium camera to Mapbox coordinates
-  };
-
-  return {
-    convert2DTo3D,
-    convert3DTo2D,
-    syncViews: (from: '2d' | '3d', state: any) => {
-      // Synchronize view states
+function useSyncTo3D() {
+  const syncTo3D = async (options: SyncOptions) => {
+    // 1. Sync view state
+    if (options.includeView) {
+      await syncViewState();
+    }
+    
+    // 2. Sync selected layers
+    if (options.includeLayers) {
+      await syncSelectedLayers();
+    }
+    
+    // 3. Sync selected features (future)
+    if (options.includeFeatures) {
+      await syncSelectedFeatures();
     }
   };
+  
+  return { syncTo3D };
 }
 ```
 
-2. Update view toggle logic:
+2. **Update View Synchronization**
 ```typescript
-// components/ViewToggle.tsx
-const handleViewToggle = async () => {
-  // 1. Capture current view state
-  // 2. Convert coordinates/camera position
-  // 3. Apply smooth transition
-  // 4. Update layer visibility
-};
-```
-
-### Phase 3: Layer Data Integration (Pending)
-
-1. Create unified data sources:
-```typescript
-// utils/data-sources.ts
-interface UnifiedDataSource {
-  type: 'geojson' | 'vector' | '3d-tiles' | 'terrain';
-  source2D?: mapboxgl.AnySourceData;
-  source3D?: Cesium.AnyDataSource;
-  convert: () => Promise<{
-    mapbox: mapboxgl.AnySourceData;
-    cesium: Cesium.AnyDataSource;
-  }>;
+function useViewSync() {
+  const syncViewTo3D = async () => {
+    // Get current 2D view state
+    const center = map.getCenter();
+    const zoom = map.getZoom();
+    
+    // Convert to 3D camera position
+    const height = calculateHeightFromZoom(zoom);
+    
+    // Set 3D camera to top-down view
+    await viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(
+        center.lng,
+        center.lat,
+        height
+      ),
+      orientation: {
+        heading: 0,
+        pitch: -Math.PI/2, // Top-down view
+        roll: 0
+      }
+    });
+  };
+  
+  return { syncViewTo3D };
 }
 ```
 
-2. Implement data converters:
-```typescript
-// utils/data-converters.ts
-const converters = {
-  geojsonToMapbox: (data: any) => {
-    // Convert GeoJSON to Mapbox source
-  },
-  geojsonToCesium: (data: any) => {
-    // Convert GeoJSON to Cesium entities
-  },
-  vectorToMapbox: (data: any) => {
-    // Convert vector data to Mapbox source
-  },
-  vectorToCesium: (data: any) => {
-    // Convert vector data to Cesium source
-  }
-};
-```
+### Phase 4: Layer Selection Implementation
 
-### Phase 4: UI Updates (Pending)
-
-1. Update LayerPanel to use shared state:
+1. **Update Layer List Component**
 ```typescript
-// components/LayerPanel.tsx
-function LayerPanel() {
-  const { layers, toggleVisibility } = useSharedLayers();
+function LayerList() {
+  const { layers, selectedLayers, toggleSelection } = useLayerManagement();
   
   return (
     <div>
@@ -181,7 +211,8 @@ function LayerPanel() {
         <LayerItem
           key={layer.id}
           layer={layer}
-          onToggle={() => toggleVisibility(layer.id)}
+          selected={selectedLayers.includes(layer.id)}
+          onSelect={() => toggleSelection(layer.id)}
         />
       ))}
     </div>
@@ -189,81 +220,114 @@ function LayerPanel() {
 }
 ```
 
-2. Create unified layer controls:
+2. **Implement Layer Synchronization**
 ```typescript
-// components/LayerControls.tsx
-function LayerControls({ layer }: { layer: SharedLayer }) {
-  const { updateLayer } = useSharedLayers();
+function useLayerSync() {
+  const syncSelectedLayersTo3D = async () => {
+    const selectedLayers = getSelectedLayers();
+    
+    // Clear existing 3D layers
+    clear3DLayers();
+    
+    // Add selected layers to 3D view
+    for (const layer of selectedLayers) {
+      await addLayerTo3D(layer);
+    }
+  };
   
-  return (
-    <div>
-      {/* Common controls for both 2D and 3D */}
-      <VisibilityToggle />
-      <StyleControls />
-      <SelectionControls />
-      {/* View-specific controls */}
-      {currentView === '2d' && <Mapbox2DControls />}
-      {currentView === '3d' && <Cesium3DControls />}
-    </div>
-  );
+  return { syncSelectedLayersTo3D };
+}
+```
+
+### Phase 5: Feature Selection (Future)
+
+1. **Add Feature Selection Infrastructure**
+```typescript
+interface FeatureSelection {
+  layerId: string;
+  featureIds: string[];
+}
+
+function useFeatureSelection() {
+  const [selectedFeatures, setSelectedFeatures] = useState<FeatureSelection[]>([]);
+  
+  const selectFeature = (layerId: string, featureId: string) => {
+    // Implementation for feature selection
+  };
+  
+  const syncSelectedFeaturesTo3D = async () => {
+    // Implementation for feature synchronization
+  };
+  
+  return {
+    selectedFeatures,
+    selectFeature,
+    syncSelectedFeaturesTo3D
+  };
 }
 ```
 
 ## Implementation Steps
 
-1. **Setup (Week 1)**
-   - [x] Create SharedLayerContext
-   - [x] Implement basic layer adapters
-   - [x] Set up view state synchronization
-   - [x] Fix view switching issues
-   - [x] Complete layer integration
+1. **Week 1: UI and Layout**
+   - [ ] Update MapContainer layout
+   - [ ] Create SyncTo3DButton component
+   - [ ] Implement basic view synchronization
+   - [ ] Add layer selection UI
 
-2. **Core Integration (Week 2)**
-   - [ ] Implement view toggle with state preservation
-   - [ ] Create unified data sources
-   - [ ] Develop data converters
+2. **Week 2: State Management**
+   - [ ] Update layer state management
+   - [ ] Implement layer selection logic
+   - [ ] Create synchronization hooks
+   - [ ] Add view state conversion
 
-3. **UI Development (Week 3)**
-   - [ ] Update LayerPanel
-   - [ ] Create unified controls
-   - [ ] Implement view-specific controls
+3. **Week 3: Layer Synchronization**
+   - [ ] Implement layer synchronization
+   - [ ] Add layer cleanup
+   - [ ] Create layer adapters
+   - [ ] Add error handling
 
-4. **Testing & Refinement (Week 4)**
+4. **Week 4: Testing and Refinement**
    - [ ] Test all layer types
-   - [ ] Verify state preservation
+   - [ ] Verify synchronization
    - [ ] Performance optimization
    - [ ] Edge case handling
 
 ## Technical Considerations
 
 1. **Performance**
-   - Lazy loading of view-specific resources
-   - Efficient data conversion
-   - Memory management for unused views
+   - Efficient layer synchronization
+   - Optimized view state conversion
+   - Memory management for unused layers
+   - Smooth transitions
 
 2. **Error Handling**
-   - Graceful fallbacks for unsupported layer types
-   - Clear error messages for conversion failures
-   - Recovery mechanisms for state sync issues
+   - Graceful fallbacks for sync failures
+   - Clear error messages
+   - Recovery mechanisms
+   - State validation
 
 3. **Browser Support**
-   - WebGL compatibility checks
+   - WebGL compatibility
    - Memory constraints
    - Mobile device considerations
 
 ## Future Enhancements
 
 1. **Advanced Features**
-   - Synchronized animations
-   - Cross-view selections
-   - Shared analysis tools
+   - Feature-level selection
+   - Custom layer styles
+   - Advanced view transitions
+   - Analysis tools
 
 2. **Performance Optimizations**
-   - View-specific data loading
-   - Intelligent resource cleanup
-   - Progressive loading strategies
+   - Layer caching
+   - Progressive loading
+   - Resource cleanup
+   - View-specific optimizations
 
 3. **User Experience**
-   - Smoother view transitions
-   - Better feedback during data loading
-   - Enhanced layer management UI 
+   - Better sync feedback
+   - Layer preview
+   - Selection history
+   - Keyboard shortcuts 

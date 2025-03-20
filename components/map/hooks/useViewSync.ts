@@ -199,43 +199,79 @@ export function useViewSync() {
     cesiumViewer?: Cesium.Viewer
   ) => {
     try {
-      if (from === '2d' && cesiumViewer) {
+      // Validate viewer state before proceeding
+      if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
+        logger.warn('Cesium viewer or required components not ready', {
+          hasViewer: !!cesiumViewer,
+          hasScene: !!cesiumViewer?.scene,
+          hasGlobe: !!cesiumViewer?.scene?.globe,
+          hasCamera: !!cesiumViewer?.camera,
+          hasCameraPosition: !!cesiumViewer?.camera?.position
+        });
+        return;
+      }
+
+      // Add a small delay to ensure viewer is ready
+      await new Promise(resolve => setTimeout(resolve, 50));
+
+      if (from === '2d' && cesiumViewer?.scene?.globe && cesiumViewer?.camera) {
         // Convert 2D state to 3D
         const cesiumState = convert2DTo3D(state as ViewState);
         
         // Apply to Cesium with smooth transition
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
+          // Validate viewer state again before starting transition
+          if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
+            reject(new Error('Cesium viewer components not available during transition'));
+            return;
+          }
+
           // Set initial view orientation looking straight down
           const heading = cesiumState.heading || 0;
           const pitch = cesiumState.pitch || -90; // Look straight down by default
 
-          cesiumViewer.camera.flyTo({
-            destination: Cesium.Cartesian3.fromDegrees(
-              cesiumState.longitude,
-              cesiumState.latitude,
-              cesiumState.height
-            ),
-            orientation: {
-              heading: Cesium.Math.toRadians(heading),
-              pitch: Cesium.Math.toRadians(pitch),
-              roll: 0
-            },
-            complete: () => resolve(),
-            duration: 1.5,
-            easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT
-          });
+          try {
+            cesiumViewer.camera.flyTo({
+              destination: Cesium.Cartesian3.fromDegrees(
+                cesiumState.longitude,
+                cesiumState.latitude,
+                cesiumState.height
+              ),
+              orientation: {
+                heading: Cesium.Math.toRadians(heading),
+                pitch: Cesium.Math.toRadians(pitch),
+                roll: 0
+              },
+              complete: () => resolve(),
+              duration: 1.5,
+              easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT
+            });
+          } catch (error) {
+            reject(new Error(`Failed to execute camera flyTo: ${error instanceof Error ? error.message : 'Unknown error'}`));
+          }
         });
 
-      } else if (from === '3d' && mapboxMap && cesiumViewer) {
+      } else if (from === '3d' && mapboxMap && cesiumViewer?.scene?.globe && cesiumViewer?.camera) {
         // When switching from 3D to 2D, we need to:
         // 1. Wait for any ongoing camera movement to complete
         // 2. Ensure we have valid camera state
         // 3. Convert the position with fallbacks
 
-        await new Promise<void>((resolve) => {
+        await new Promise<void>((resolve, reject) => {
+          // Validate viewer state before starting transition
+          if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
+            reject(new Error('Cesium viewer components not available during transition'));
+            return;
+          }
+
           // First, try to use the current camera state
           const tryConversion = () => {
             try {
+              // Validate camera state before conversion
+              if (!cesiumViewer?.camera?.position || !cesiumViewer?.camera?.direction) {
+                throw new Error('Camera not fully initialized');
+              }
+
               // Use our robust convert3DTo2D function
               const mapboxState = convert3DTo2D(cesiumViewer.camera);
               
@@ -295,14 +331,46 @@ export function useViewSync() {
     cesiumViewer?: Cesium.Viewer
   ) => {
     useEffect(() => {
-      if (!mapboxMap || !cesiumViewer) return;
-
+      // Track component and viewer lifecycle states
+      let isComponentMounted = true;
+      let isUnmounting = false;
       let isMoving = false;
       let moveTimeout: NodeJS.Timeout;
       let isInitialized = false;
+      let cleanupTimeout: NodeJS.Timeout;
+
+      // Store initial viewer reference for comparison during cleanup
+      const initialViewerRef = cesiumViewer;
+
+      // Early return if required components are not available
+      if (!mapboxMap || !cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
+        logger.warn('Required components not available for camera sync', {
+          hasMapbox: !!mapboxMap,
+          hasViewer: !!cesiumViewer,
+          hasScene: !!cesiumViewer?.scene,
+          hasGlobe: !!cesiumViewer?.scene?.globe,
+          hasCamera: !!cesiumViewer?.camera,
+          hasCameraPosition: !!cesiumViewer?.camera?.position
+        });
+        return;
+      }
 
       // Initialize camera sync after a short delay to ensure camera is ready
       const initTimeout = setTimeout(() => {
+        if (!isComponentMounted || isUnmounting) return;
+        
+        // Validate viewer state before proceeding
+        if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
+          logger.warn('Cesium viewer components not available during initialization');
+          return;
+        }
+
+        // Ensure viewer hasn't been replaced
+        if (cesiumViewer !== initialViewerRef) {
+          logger.warn('Cesium viewer has been replaced during initialization');
+          return;
+        }
+
         isInitialized = true;
         // Sync initial view if needed
         if (currentView === '3d') {
@@ -315,17 +383,23 @@ export function useViewSync() {
           };
           syncViews('2d', state, mapboxMap, cesiumViewer);
         }
-      }, 500); // Wait for camera to be fully initialized
+      }, 500);
 
       // Handle Mapbox camera movement
       const handleMapboxMove = () => {
-        if (currentView !== '2d' || !isInitialized) return;
+        if (currentView !== '2d' || !isInitialized || isUnmounting || !isComponentMounted) return;
+        
+        // Ensure viewer hasn't been replaced
+        if (cesiumViewer !== initialViewerRef) {
+          logger.warn('Cesium viewer has been replaced during Mapbox movement');
+          return;
+        }
         
         isMoving = true;
         clearTimeout(moveTimeout);
         
         moveTimeout = setTimeout(() => {
-          if (!isMoving) return;
+          if (!isMoving || isUnmounting || !isComponentMounted) return;
           
           const center = mapboxMap.getCenter();
           const state = {
@@ -342,33 +416,109 @@ export function useViewSync() {
 
       // Handle Cesium camera movement
       const handleCesiumMove = () => {
-        if (currentView !== '3d' || !isInitialized) return;
+        if (currentView !== '3d' || !isInitialized || isUnmounting || !isComponentMounted) return;
+        
+        // Validate viewer state before handling movement
+        if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
+          logger.warn('Cesium viewer components not available during camera movement');
+          return;
+        }
+
+        // Ensure viewer hasn't been replaced
+        if (cesiumViewer !== initialViewerRef) {
+          logger.warn('Cesium viewer has been replaced during camera movement');
+          return;
+        }
         
         isMoving = true;
         clearTimeout(moveTimeout);
         
         moveTimeout = setTimeout(() => {
-          if (!isMoving) return;
+          if (!isMoving || isUnmounting || !isComponentMounted) return;
           
           syncViews('3d', cesiumViewer.camera, mapboxMap, cesiumViewer);
           isMoving = false;
         }, 150);
       };
 
-      // Add event listeners
-      mapboxMap.on('moveend', handleMapboxMove);
-      if (cesiumViewer.camera) {
+      // Add event listeners with safety checks
+      if (mapboxMap) {
+        mapboxMap.on('moveend', handleMapboxMove);
+      }
+      
+      if (cesiumViewer?.camera?.changed?.addEventListener) {
         cesiumViewer.camera.changed.addEventListener(handleCesiumMove);
       }
 
-      // Cleanup
+      // Cleanup function with proper sequencing
       return () => {
+        // Mark component as unmounting and stop all operations
+        isUnmounting = true;
+        isComponentMounted = false;
+        isMoving = false;
+
+        // Clear all timeouts first
         clearTimeout(initTimeout);
         clearTimeout(moveTimeout);
-        mapboxMap.off('moveend', handleMapboxMove);
-        if (cesiumViewer.camera) {
-          cesiumViewer.camera.changed.removeEventListener(handleCesiumMove);
-        }
+        clearTimeout(cleanupTimeout);
+
+        // Schedule cleanup operations
+        cleanupTimeout = setTimeout(() => {
+          // Check if viewer has been replaced
+          const viewerReplaced = cesiumViewer !== initialViewerRef;
+
+          try {
+            if (viewerReplaced) {
+              logger.debug('Skipping cleanup due to viewer replacement');
+              return;
+            }
+
+            // Safely remove Mapbox event listener
+            if (mapboxMap && typeof mapboxMap.off === 'function') {
+              try {
+                mapboxMap.off('moveend', handleMapboxMove);
+              } catch (error) {
+                logger.warn('Error removing Mapbox event listener', error);
+              }
+            }
+
+            // Only attempt to remove Cesium event listener if viewer hasn't been replaced
+            if (!viewerReplaced && cesiumViewer?.camera?.changed?.removeEventListener) {
+              try {
+                // Additional validation before removing event listener
+                if (cesiumViewer?.scene?.globe && cesiumViewer?.camera?.position) {
+                  cesiumViewer.camera.changed.removeEventListener(handleCesiumMove);
+                } else {
+                  logger.warn('Skipping Cesium event listener removal - viewer components not available');
+                }
+              } catch (error) {
+                logger.warn('Error removing Cesium event listener', error);
+              }
+            }
+
+            // Log cleanup completion with detailed state
+            logger.debug('Camera sync cleanup completed', {
+              hasMapbox: !!mapboxMap,
+              hasViewer: !!cesiumViewer,
+              hasScene: !!cesiumViewer?.scene,
+              hasGlobe: !!cesiumViewer?.scene?.globe,
+              hasCamera: !!cesiumViewer?.camera,
+              hasCameraPosition: !!cesiumViewer?.camera?.position,
+              hasCameraChanged: !!cesiumViewer?.camera?.changed,
+              viewerReplaced,
+              viewerMatches: initialViewerRef === cesiumViewer
+            });
+          } catch (error) {
+            logger.error('Error during camera sync cleanup', {
+              error: error instanceof Error ? {
+                message: error.message,
+                stack: error.stack
+              } : error,
+              viewerReplaced,
+              viewerMatches: initialViewerRef === cesiumViewer
+            });
+          }
+        }, 0);
       };
     }, [currentView, mapboxMap, cesiumViewer, syncViews]);
   }, [syncViews]);
