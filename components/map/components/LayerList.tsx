@@ -7,6 +7,7 @@ import { Database } from '@/types/supabase';
 import { LayerItem } from './LayerItem';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertCircle } from 'lucide-react';
+import { useSharedLayers } from '../context/SharedLayerContext';
 
 const SOURCE = 'LayerList';
 const logManager = LogManager.getInstance();
@@ -27,11 +28,11 @@ const logger = {
 };
 
 interface LayerListProps {
-  projectId: string;
+  projectId?: string;
 }
 
 export function LayerList({ projectId }: LayerListProps) {
-  const [layers, setLayers] = useState<any[]>([]);
+  const { layers, selectedLayers, getSelectedLayers, addLayer } = useSharedLayers();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const supabase = createClient();
@@ -69,7 +70,21 @@ export function LayerList({ projectId }: LayerListProps) {
 
         logger.info('Layers loaded', { count: data?.length || 0 });
         
-        setLayers(data || []);
+        // Add fetched layers to the shared context
+        data?.forEach(layer => {
+          addLayer({
+            id: layer.id,
+            name: layer.name,
+            type: layer.type,
+            visible: true,
+            selected: false,
+            metadata: {
+              sourceType: '2d',
+              source2D: layer.properties,
+              style: layer.properties?.style
+            }
+          });
+        });
       } catch (err) {
         const error = err as Error;
         logger.error('Failed to fetch layers', { error });
@@ -79,8 +94,21 @@ export function LayerList({ projectId }: LayerListProps) {
       }
     }
 
-    fetchLayers();
-  }, [projectId]);
+    if (projectId) {
+      fetchLayers();
+    } else {
+      setLoading(false);
+    }
+  }, [projectId, addLayer]);
+
+  // Log when selected layers change
+  useEffect(() => {
+    const selectedLayersList = getSelectedLayers();
+    logger.debug('Selected layers updated', {
+      count: selectedLayers.length,
+      layers: selectedLayersList.map(l => l.name)
+    });
+  }, [selectedLayers, getSelectedLayers]);
 
   if (loading) {
     return (
@@ -104,20 +132,28 @@ export function LayerList({ projectId }: LayerListProps) {
     );
   }
 
-  if (layers.length === 0) {
+  if (!layers.length) {
     return (
-      <div className="p-4 text-center text-muted-foreground">
+      <div className="p-4 text-sm text-muted-foreground">
         No layers available
       </div>
     );
   }
 
   return (
-    <div className="space-y-1 p-4">
-      {layers.map((layer) => (
+    <div className="space-y-2">
+      <div className="px-4 py-2 text-sm text-muted-foreground">
+        {selectedLayers.length} layer{selectedLayers.length !== 1 ? 's' : ''} selected
+      </div>
+      {layers.map(layer => (
         <LayerItem
           key={layer.id}
-          layer={layer}
+          layer={{
+            id: layer.id,
+            name: layer.name,
+            type: layer.type,
+            properties: layer.metadata
+          }}
         />
       ))}
     </div>

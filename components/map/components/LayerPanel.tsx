@@ -1,83 +1,59 @@
 'use client';
 
 import { useState } from 'react';
-import { ChevronLeft, ChevronRight, Layers } from 'lucide-react';
+import { Card } from '@/components/ui/card';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { LogManager } from '@/core/logging/log-manager';
+
+const SOURCE = 'LayerPanel';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  warn: (message: string, error?: any) => {
+    logManager.warn(SOURCE, message, error);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  },
+  debug: (message: string, data?: any) => {
+    logManager.debug(SOURCE, message, data);
+  }
+};
 
 interface LayerPanelProps {
-  className?: string;
-  children?: React.ReactNode;
-  currentView?: '2d' | '3d';
-  children2D?: React.ReactNode;
-  children3D?: React.ReactNode;
+  children: React.ReactNode;
 }
 
-export function LayerPanel({ 
-  className = '', 
-  children,
-  currentView = '2d',
-  children2D,
-  children3D
-}: LayerPanelProps) {
+export function LayerPanel({ children }: LayerPanelProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  // Determine which children to render based on the current view
-  const renderChildren = () => {
-    // If specific view children are provided, use them based on currentView
-    if (currentView === '3d' && children3D) {
-      return children3D;
-    } else if (currentView === '2d' && children2D) {
-      return children2D;
-    }
-    // Otherwise fall back to the default children
-    return children;
-  };
-
   return (
-    <div 
-      className={cn(
-        'absolute top-0 right-0 h-full bg-background/95 backdrop-blur-sm border-l transition-all duration-200 ease-in-out',
-        isCollapsed ? 'w-12' : 'w-80',
-        className
-      )}
-    >
-      <div className="flex items-center h-12 px-4 border-b">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setIsCollapsed(!isCollapsed)}
-          className="mr-2"
-          title={isCollapsed ? "Expand panel" : "Collapse panel"}
-        >
-          {isCollapsed ? <ChevronLeft /> : <ChevronRight />}
-        </Button>
-        {!isCollapsed && (
-          <div className="flex items-center gap-2">
-            <Layers className="w-5 h-5" />
-            <span className="font-medium">Layers {currentView === '3d' ? '(3D)' : ''}</span>
-          </div>
-        )}
-      </div>
-      
-      <div className={cn(
-        'h-[calc(100%-3rem)] overflow-y-auto',
-        isCollapsed ? 'px-2 py-4' : 'p-4'
-      )}>
-        {isCollapsed ? (
+    <div className="relative">
+      <Card className={`bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-all duration-300 ${isCollapsed ? 'w-12' : 'w-80'}`}>
+        <div className="flex items-center justify-between p-4 border-b">
+          {!isCollapsed && <h3 className="text-lg font-semibold">Layers</h3>}
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setIsCollapsed(false)}
-            className="w-full"
-            title="Expand panel"
+            onClick={() => setIsCollapsed(!isCollapsed)}
+            className="ml-auto"
           >
-            <Layers className="w-5 h-5" />
+            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </Button>
-        ) : (
-          renderChildren()
+        </div>
+        {!isCollapsed && (
+          <ScrollArea className="h-[calc(100vh-8rem)]">
+            <div className="p-4">
+              {children}
+            </div>
+          </ScrollArea>
         )}
-      </div>
+      </Card>
     </div>
   );
 } 

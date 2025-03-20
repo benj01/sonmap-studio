@@ -37,6 +37,39 @@ interface LayerFeature {
   geojson: string;
 }
 
+function validateCoordinates(coordinates: any[]): boolean {
+  if (!Array.isArray(coordinates)) return false;
+  
+  // Handle different geometry types
+  if (coordinates.length === 2) {
+    // Single point coordinates [lng, lat]
+    return (
+      typeof coordinates[0] === 'number' &&
+      typeof coordinates[1] === 'number' &&
+      coordinates[0] >= -180 &&
+      coordinates[0] <= 180 &&
+      coordinates[1] >= -90 &&
+      coordinates[1] <= 90
+    );
+  }
+  
+  // Handle nested coordinate arrays (LineString, Polygon, etc.)
+  return coordinates.every(coord => 
+    Array.isArray(coord) ? validateCoordinates(coord) : false
+  );
+}
+
+function validateGeometry(geometry: any): boolean {
+  if (!geometry || !geometry.type || !geometry.coordinates) return false;
+  
+  try {
+    return validateCoordinates(geometry.coordinates);
+  } catch (error) {
+    logger.warn('Invalid geometry', { error });
+    return false;
+  }
+}
+
 export function useLayerData(layerId: string) {
   const [data, setData] = useState<LayerData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -81,16 +114,35 @@ export function useLayerData(layerId: string) {
           featureCount: features?.length || 0
         });
 
-        // Convert features to GeoJSON
-        const geoJsonFeatures: GeoJSON.Feature[] = (features || []).map((feature: any) => {
-          const geometry = JSON.parse(feature.geojson);
-          return {
-            type: 'Feature',
-            id: feature.id,
-            geometry,
-            properties: feature.properties || {}
-          };
-        });
+        // Convert features to GeoJSON with validation
+        const geoJsonFeatures: GeoJSON.Feature[] = [];
+        
+        for (const feature of features || []) {
+          try {
+            const geometry = JSON.parse(feature.geojson);
+            
+            // Validate geometry and coordinates
+            if (!validateGeometry(geometry)) {
+              logger.warn('Invalid geometry in feature', { 
+                featureId: feature.id,
+                geometry 
+              });
+              continue;
+            }
+
+            geoJsonFeatures.push({
+              type: 'Feature',
+              id: feature.id,
+              geometry,
+              properties: feature.properties || {}
+            });
+          } catch (error) {
+            logger.warn('Error parsing feature geometry', { 
+              featureId: feature.id,
+              error 
+            });
+          }
+        }
 
         const preparedData = {
           id: layerData.id,
@@ -102,7 +154,8 @@ export function useLayerData(layerId: string) {
 
         logger.info('Layer loaded', { 
           name: preparedData.name,
-          featureCount: geoJsonFeatures.length
+          featureCount: geoJsonFeatures.length,
+          invalidFeatures: (features || []).length - geoJsonFeatures.length
         });
 
         setData(preparedData);

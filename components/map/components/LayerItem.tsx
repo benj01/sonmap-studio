@@ -9,6 +9,8 @@ import { useMapContext } from '../hooks/useMapContext';
 import { useLayerData } from '../hooks/useLayerData';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as mapboxgl from 'mapbox-gl';
+import { useSharedLayers } from '../context/SharedLayerContext';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const SOURCE = 'LayerItem';
 const logManager = LogManager.getInstance();
@@ -42,6 +44,7 @@ interface LayerItemProps {
 
 export function LayerItem({ layer, className = '' }: LayerItemProps) {
   const { map, layers, toggleLayer, addLayer, getLayerVisibility } = useMapContext();
+  const { toggleVisibility, toggleSelection, selectedLayers } = useSharedLayers();
   const { data, loading, error } = useLayerData(layer.id);
   const setupCompleteRef = useRef(false);
   const registeredRef = useRef(false);
@@ -327,36 +330,38 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
     }
   }, [map, layerId, layers]);
 
+  const isSelected = selectedLayers.includes(layer.id);
+
+  const handleVisibilityToggle = () => {
+    toggleVisibility(layer.id);
+    toggleLayer(layerId);
+  };
+
+  const handleSelectionToggle = () => {
+    toggleSelection(layer.id);
+  };
+
   return (
-    <div className={cn('flex items-center justify-between p-2 hover:bg-accent/50 rounded-lg', className)}>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={() => toggleLayer(layerId)}
-          disabled={loading || !!error}
-        >
-          {getLayerVisibility(layerId) ? (
-            <Eye className="h-4 w-4" />
-          ) : (
-            <EyeOff className="h-4 w-4" />
-          )}
-        </Button>
-        <div className="flex flex-col">
-          <span className="text-sm font-medium">{layer.name}</span>
-          <span className="text-xs text-muted-foreground">{layer.type}</span>
-        </div>
+    <div className={`flex items-center justify-between p-2 hover:bg-accent rounded-md ${className}`}>
+      <div className="flex items-center space-x-2">
+        <Checkbox
+          checked={isSelected}
+          onCheckedChange={handleSelectionToggle}
+          className="h-4 w-4"
+        />
+        <span className="text-sm">{layer.name}</span>
       </div>
-      <div className="flex items-center gap-2">
-        {loading && <Skeleton className="h-8 w-8" />}
-        {error && (
-          <AlertCircle className="h-4 w-4 text-destructive" />
+      <button
+        onClick={handleVisibilityToggle}
+        className="p-1 hover:bg-accent rounded"
+        title={layers.get(layerId) ?? true ? 'Hide layer' : 'Show layer'}
+      >
+        {layers.get(layerId) ?? true ? (
+          <Eye className="h-4 w-4" />
+        ) : (
+          <EyeOff className="h-4 w-4" />
         )}
-        <Button variant="ghost" size="icon" className="h-8 w-8">
-          <Settings className="h-4 w-4" />
-        </Button>
-      </div>
+      </button>
     </div>
   );
 }

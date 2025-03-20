@@ -8,6 +8,8 @@ import { createViewer } from '@/lib/cesium/init';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { cn } from '@/lib/utils';
 import { verifyIonDisabled } from '@/lib/cesium/ion-disable';
+import { DebugPanel } from '@/components/shared/debug-panel';
+import { CesiumViewState } from '../../hooks/useViewSync';
 
 const SOURCE = 'CesiumView';
 const logManager = LogManager.getInstance();
@@ -33,11 +35,8 @@ const logger = {
 
 interface CesiumViewProps {
   className?: string;
-  initialViewState?: {
-    latitude: number;
-    longitude: number;
-    height: number;
-  };
+  initialViewState?: CesiumViewState;
+  onLoad?: () => void;
 }
 
 // Use a static ID for the Cesium container
@@ -49,13 +48,14 @@ export function CesiumView({
     latitude: 0,
     longitude: 0,
     height: 10000000
-  }
+  },
+  onLoad
 }: CesiumViewProps) {
   const { setViewer, viewer } = useCesium();
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [debugInfo, setDebugInfo] = useState<string>('Initializing...');
-  const [showDebugPanel, setShowDebugPanel] = useState<boolean>(true); // Always show debug panel initially
+  const [showDebugPanel, setShowDebugPanel] = useState<boolean>(false); // Start with debug panel closed
   const [renderStatus, setRenderStatus] = useState<'unknown' | 'success' | 'failure'>('unknown');
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
@@ -488,6 +488,12 @@ export function CesiumView({
       }
     };
   }, [setViewer, initialViewState, viewer]);
+  
+  useEffect(() => {
+    if (status === 'ready' && !error) {
+      onLoad?.();
+    }
+  }, [status, error, onLoad]);
   
   // Render based on status
   if (status === 'error' && error) {

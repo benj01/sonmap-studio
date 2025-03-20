@@ -1,11 +1,14 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { LogManager } from '@/core/logging/log-manager';
 import { useMapContext } from '../hooks/useMapContext';
+import { useViewSync } from '../hooks/useViewSync';
+import { LogManager } from '@/core/logging/log-manager';
 import { DebugPanel } from '@/components/shared/debug-panel';
+import { ViewState } from '../hooks/useViewSync';
+import { env } from '@/env.mjs';
 
 const SOURCE = 'MapView';
 const logManager = LogManager.getInstance();
@@ -26,160 +29,166 @@ const logger = {
 };
 
 interface MapViewProps {
-  className?: string;
-  initialViewState?: {
-    center: [number, number];
-    zoom: number;
-  };
+  initialViewState?: ViewState;
+  onLoad?: () => void;
 }
 
 export function MapView({ 
-  className = '',
   initialViewState = {
     center: [0, 0],
-    zoom: 1
-  }
+    zoom: 1,
+    pitch: 0,
+    bearing: 0
+  },
+  onLoad
 }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const mapInstance = useRef<mapboxgl.Map | null>(null);
-  const { map: contextMap, setMap } = useMapContext();
+  const { setMap } = useMapContext();
+  const { syncViews } = useViewSync();
+  const [viewState, setViewState] = useState<ViewState>(initialViewState);
+  const mapInstanceRef = useRef<mapboxgl.Map | null>(null);
 
-  // Initialize map
   useEffect(() => {
-    // Skip if no container
-    if (!mapContainer.current) {
-      logger.debug('No map container available');
-      return;
-    }
+    if (!mapContainer.current) return;
 
-    // Clean up existing map instance if it exists
-    if (mapInstance.current) {
-      logger.debug('Cleaning up existing map instance');
+    let mounted = true;
+
+    const initializeMap = async () => {
       try {
-        if (!mapInstance.current._removed) {
-          mapInstance.current.remove();
+        // Set access token before initializing map
+        if (!env.NEXT_PUBLIC_MAPBOX_TOKEN) {
+          const error = new Error('Mapbox access token not found. Please set NEXT_PUBLIC_MAPBOX_TOKEN environment variable.');
+          logger.error('Missing Mapbox token', { error });
+          throw error;
         }
-      } catch (error) {
-        logger.warn('Error cleaning up existing map instance:', error);
-      }
-      mapInstance.current = null;
-    }
 
-    let map: mapboxgl.Map | null = null;
+        // Set the access token and log success
+        mapboxgl.accessToken = env.NEXT_PUBLIC_MAPBOX_TOKEN;
+        logger.debug('Mapbox token set successfully', { 
+          hasToken: !!mapboxgl.accessToken,
+          tokenLength: mapboxgl.accessToken?.length
+        });
 
-    try {
-      logger.info('Initializing map', {
-        container: !!mapContainer.current,
-        accessToken: !!process.env.NEXT_PUBLIC_MAPBOX_TOKEN,
-        initialCenter: initialViewState.center,
-        initialZoom: initialViewState.zoom
-      });
-
-      map = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/light-v11',
-        center: initialViewState.center,
-        zoom: initialViewState.zoom,
-        accessToken: process.env.NEXT_PUBLIC_MAPBOX_TOKEN
-      });
-
-      mapInstance.current = map;
-
-      // Add navigation controls with adjusted positioning
-      map.addControl(new mapboxgl.NavigationControl(), 'bottom-right');
-      
-      // Add scale control
-      map.addControl(new mapboxgl.ScaleControl(), 'bottom-left');
-
-      // Wait for style to load before setting map in context
-      const onStyleLoad = () => {
-        if (map && !contextMap) {
-          logger.info('Map style loaded', {
-            style: map.getStyle()?.name,
-            center: map.getCenter(),
-            zoom: map.getZoom()
-          });
-          setMap(map);
+        // Validate view state before creating map
+        if (!viewState?.center || !Array.isArray(viewState.center) || viewState.center.length !== 2) {
+          logger.error('Invalid view state', { viewState });
+          throw new Error('Invalid view state: center coordinates are invalid');
         }
-      };
 
-      const onLoad = () => {
-        if (map) {
-          logger.info('Map fully loaded', {
-            loaded: map.loaded(),
-            styleLoaded: map.isStyleLoaded(),
-            center: map.getCenter(),
-            zoom: map.getZoom()
-          });
-        }
-      };
+        // Create map instance with more detailed logging
+        logger.debug('Creating Mapbox instance', {
+          container: !!mapContainer.current,
+          viewState
+        });
 
-      const onError = (e: any) => {
-        logger.error('Mapbox error', e);
-      };
-
-      if (map) {
-        map.on('style.load', onStyleLoad);
-        map.on('load', onLoad);
-        map.on('error', onError);
-      }
-
-      logger.info('Map initialization complete');
-
-      return () => {
-        if (map && !map._removed) {
-          try {
-            logger.info('Cleaning up map');
-            if (map) {
-              map.off('style.load', onStyleLoad);
-              map.off('load', onLoad);
-              map.off('error', onError);
-            }
-            
-            // Only attempt to clean up style resources if the style is loaded
-            if (map && map.isStyleLoaded()) {
-              try {
-                const style = map.getStyle();
-                if (style && style.layers && map) {
-                  [...style.layers].reverse().forEach(layer => {
-                    if (layer.id && map && map.getLayer(layer.id)) {
-                      map.removeLayer(layer.id);
-                    }
-                  });
-                }
-                if (style && style.sources && map) {
-                  Object.keys(style.sources).forEach(sourceId => {
-                    if (map && map.getSource(sourceId)) {
-                      map.removeSource(sourceId);
-                    }
-                  });
-                }
-              } catch (styleError) {
-                logger.warn('Error cleaning up map style resources:', styleError);
-              }
-            }
-            
-            map.remove();
-          } catch (error) {
-            logger.error('Error during map cleanup:', error);
+        // Create map with validated view state
+        const mapInstance = new mapboxgl.Map({
+          container: mapContainer.current as HTMLElement,
+          style: 'mapbox://styles/mapbox/streets-v12',
+          center: viewState.center,
+          zoom: viewState.zoom || 1,
+          pitch: viewState.pitch || 0,
+          bearing: viewState.bearing || 0,
+          attributionControl: false,
+          logoPosition: 'bottom-right',
+          transformRequest: (url, resourceType) => {
+            logger.debug('Mapbox resource request', { url, resourceType });
+            return { url };
           }
-          mapInstance.current = null;
-        }
-      };
-    } catch (error) {
-      logger.error('Failed to initialize map', error);
-      if (map) {
-        map.remove();
+        });
+
+        mapInstanceRef.current = mapInstance;
+
+        // Add error event handler
+        mapInstance.on('error', (e) => {
+          logger.error('Mapbox map error', e);
+        });
+
+        // Wait for style to load before proceeding
+        await new Promise<void>((resolve, reject) => {
+          const styleTimeout = setTimeout(() => {
+            reject(new Error('Style load timeout'));
+          }, 10000); // 10 second timeout
+
+          mapInstance.once('style.load', () => {
+            clearTimeout(styleTimeout);
+            resolve();
+          });
+
+          mapInstance.once('error', (e) => {
+            clearTimeout(styleTimeout);
+            reject(e.error);
+          });
+        });
+
+        if (!mounted) return;
+
+        // Now that style is loaded, set up other event handlers
+        mapInstance.on('load', () => {
+          if (!mounted) return;
+          
+          logger.info('Mapbox map loaded successfully', {
+            center: mapInstance.getCenter(),
+            zoom: mapInstance.getZoom(),
+            style: mapInstance.getStyle()?.name
+          });
+          setMap(mapInstance);
+          onLoad?.();
+        });
+
+        mapInstance.on('move', () => {
+          if (!mounted || !mapInstance) return;
+          
+          const center = mapInstance.getCenter();
+          const zoom = mapInstance.getZoom();
+          const pitch = mapInstance.getPitch();
+          const bearing = mapInstance.getBearing();
+
+          if (!center) {
+            logger.warn('Invalid center in move event');
+            return;
+          }
+
+          setViewState({
+            center: [center.lng, center.lat],
+            zoom,
+            pitch,
+            bearing
+          });
+        });
+
+      } catch (error) {
+        logger.error('Error initializing Mapbox map', {
+          error: error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          } : error,
+          mapboxgl: {
+            hasAccessToken: !!mapboxgl.accessToken,
+            supported: mapboxgl.supported()
+          },
+          viewState
+        });
       }
-      mapInstance.current = null;
-    }
-  }, [initialViewState, contextMap, setMap]); // Add dependencies to ensure proper remounting
+    };
+
+    initializeMap();
+
+    return () => {
+      mounted = false;
+      if (mapInstanceRef.current) {
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <>
       <div 
         ref={mapContainer} 
-        className={`w-full h-full ${className}`}
+        className="w-full h-full"
       />
       <DebugPanel />
     </>
