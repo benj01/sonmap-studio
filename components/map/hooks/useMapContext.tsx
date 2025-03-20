@@ -133,6 +133,24 @@ export function MapProvider({ children }: { children: ReactNode }) {
       try {
         // Check if the map is still valid before removing it
         if (!mapRef.current._removed) {
+          // Clean up style resources first
+          if (mapRef.current.isStyleLoaded()) {
+            const style = mapRef.current.getStyle();
+            if (style && style.layers) {
+              [...style.layers].reverse().forEach(layer => {
+                if (layer.id && mapRef.current?.getLayer(layer.id)) {
+                  mapRef.current?.removeLayer(layer.id);
+                }
+              });
+            }
+            if (style && style.sources) {
+              Object.keys(style.sources).forEach(sourceId => {
+                if (mapRef.current?.getSource(sourceId)) {
+                  mapRef.current?.removeSource(sourceId);
+                }
+              });
+            }
+          }
           mapRef.current.remove();
         } else {
           logger.debug('Old map already removed, skipping cleanup');
@@ -185,6 +203,24 @@ export function MapProvider({ children }: { children: ReactNode }) {
           // Check if the map is still valid before removing it
           if (!mapRef.current._removed) {
             logger.debug('Removing map instance during cleanup');
+            // Clean up style resources first
+            if (mapRef.current.isStyleLoaded()) {
+              const style = mapRef.current.getStyle();
+              if (style && style.layers) {
+                [...style.layers].reverse().forEach(layer => {
+                  if (layer.id && mapRef.current?.getLayer(layer.id)) {
+                    mapRef.current?.removeLayer(layer.id);
+                  }
+                });
+              }
+              if (style && style.sources) {
+                Object.keys(style.sources).forEach(sourceId => {
+                  if (mapRef.current?.getSource(sourceId)) {
+                    mapRef.current?.removeSource(sourceId);
+                  }
+                });
+              }
+            }
             mapRef.current.remove();
           } else {
             logger.debug('Map already removed, skipping cleanup');

@@ -8,12 +8,14 @@ interface ViewToggleProps {
   onViewChange: (view: '2d' | '3d') => void;
   currentView: '2d' | '3d';
   className?: string;
+  disabled?: boolean;
 }
 
 export function ViewToggle({
   onViewChange,
   currentView,
-  className = ''
+  className = '',
+  disabled = false
 }: ViewToggleProps) {
   return (
     <div className={`flex items-center space-x-1 ${className}`}>
@@ -23,6 +25,7 @@ export function ViewToggle({
         onClick={() => onViewChange('2d')}
         title="2D Map View"
         className="flex items-center"
+        disabled={disabled}
       >
         <Map className="h-4 w-4 mr-1" />
         <span>2D</span>
@@ -33,6 +36,7 @@ export function ViewToggle({
         onClick={() => onViewChange('3d')}
         title="3D Map View"
         className="flex items-center"
+        disabled={disabled}
       >
         <Box className="h-4 w-4 mr-1" />
         <span>3D</span>

@@ -46,22 +46,23 @@ export function MapView({
 
   // Initialize map
   useEffect(() => {
-    // Skip if we already have a map in context
-    if (contextMap) {
-      logger.debug('Map already exists in context, skipping initialization');
-      return;
-    }
-
     // Skip if no container
     if (!mapContainer.current) {
       logger.debug('No map container available');
       return;
     }
 
-    // Skip if map is already initialized
+    // Clean up existing map instance if it exists
     if (mapInstance.current) {
-      logger.debug('Map instance already exists');
-      return;
+      logger.debug('Cleaning up existing map instance');
+      try {
+        if (!mapInstance.current._removed) {
+          mapInstance.current.remove();
+        }
+      } catch (error) {
+        logger.warn('Error cleaning up existing map instance:', error);
+      }
+      mapInstance.current = null;
     }
 
     let map: mapboxgl.Map | null = null;
@@ -117,9 +118,11 @@ export function MapView({
         logger.error('Mapbox error', e);
       };
 
-      map.on('style.load', onStyleLoad);
-      map.on('load', onLoad);
-      map.on('error', onError);
+      if (map) {
+        map.on('style.load', onStyleLoad);
+        map.on('load', onLoad);
+        map.on('error', onError);
+      }
 
       logger.info('Map initialization complete');
 
@@ -127,24 +130,26 @@ export function MapView({
         if (map && !map._removed) {
           try {
             logger.info('Cleaning up map');
-            map.off('style.load', onStyleLoad);
-            map.off('load', onLoad);
-            map.off('error', onError);
+            if (map) {
+              map.off('style.load', onStyleLoad);
+              map.off('load', onLoad);
+              map.off('error', onError);
+            }
             
             // Only attempt to clean up style resources if the style is loaded
-            if (map.isStyleLoaded()) {
+            if (map && map.isStyleLoaded()) {
               try {
                 const style = map.getStyle();
-                if (style && style.layers) {
+                if (style && style.layers && map) {
                   [...style.layers].reverse().forEach(layer => {
-                    if (layer.id && map.getLayer(layer.id)) {
+                    if (layer.id && map && map.getLayer(layer.id)) {
                       map.removeLayer(layer.id);
                     }
                   });
                 }
-                if (style && style.sources) {
+                if (style && style.sources && map) {
                   Object.keys(style.sources).forEach(sourceId => {
-                    if (map.getSource(sourceId)) {
+                    if (map && map.getSource(sourceId)) {
                       map.removeSource(sourceId);
                     }
                   });
@@ -168,8 +173,7 @@ export function MapView({
       }
       mapInstance.current = null;
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Empty dependency array since we handle all dependencies internally
+  }, [initialViewState, contextMap, setMap]); // Add dependencies to ensure proper remounting
 
   return (
     <>

@@ -6,6 +6,7 @@ import { CesiumView } from './cesium/CesiumView';
 import { ViewToggle } from './ViewToggle';
 import { CesiumProvider } from '../context/CesiumContext';
 import { MapProvider } from '../hooks/useMapContext';
+import { SharedLayerProvider } from '../context/SharedLayerContext';
 import { LayerPanel } from './LayerPanel';
 import { LayerList } from './LayerList';
 import { CesiumLayerList } from './cesium/CesiumLayerList';
@@ -61,11 +62,28 @@ export function MapContainer({
   projectId
 }: MapContainerProps) {
   const [currentView, setCurrentView] = useState<'2d' | '3d'>('2d');
+  const [isTransitioning, setIsTransitioning] = useState(false);
   
   // Handle view change
-  const handleViewChange = (view: '2d' | '3d') => {
-    logger.info(`Switching to ${view} view`);
-    setCurrentView(view);
+  const handleViewChange = async (view: '2d' | '3d') => {
+    if (isTransitioning) {
+      logger.warn('View transition already in progress, ignoring request');
+      return;
+    }
+
+    try {
+      setIsTransitioning(true);
+      logger.info(`Switching to ${view} view`);
+
+      // Add a small delay to ensure proper cleanup
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      setCurrentView(view);
+    } catch (error) {
+      logger.error('Error during view transition:', error);
+    } finally {
+      setIsTransitioning(false);
+    }
   };
   
   return (
@@ -74,43 +92,46 @@ export function MapContainer({
       <div className="absolute top-4 right-4 z-50">
         <ViewToggle 
           currentView={currentView} 
-          onViewChange={handleViewChange} 
+          onViewChange={handleViewChange}
+          disabled={isTransitioning}
         />
       </div>
 
       {/* Map Views */}
-      <MapProvider>
-        {/* 2D Map View - Only render when active */}
-        {currentView === '2d' && (
-          <div className="w-full h-full absolute inset-0 z-10">
-            <MapView initialViewState={initialViewState2D} />
-          </div>
-        )}
-        
-        {/* 3D View - Use proper mounting/unmounting instead of opacity */}
-        <CesiumProvider>
-          {currentView === '3d' && (
-            <div 
-              className="w-full h-full absolute inset-0 z-10"
-              style={{
-                backgroundColor: '#000'
-              }}
-              data-container="cesium-outer-container"
-            >
-              <CesiumView initialViewState={initialViewState3D} />
+      <SharedLayerProvider>
+        <MapProvider>
+          {/* 2D Map View - Only render when active */}
+          {currentView === '2d' && (
+            <div className="w-full h-full absolute inset-0 z-10">
+              <MapView initialViewState={initialViewState2D} />
             </div>
           )}
-        </CesiumProvider>
-        
-        {/* Layer Panel - Always render but with different content based on view */}
-        {projectId && (
-          <LayerPanel 
-            currentView={currentView}
-            children2D={<LayerList projectId={projectId} />}
-            children3D={<CesiumLayerList projectId={projectId} />}
-          />
-        )}
-      </MapProvider>
+          
+          {/* 3D View - Use proper mounting/unmounting instead of opacity */}
+          <CesiumProvider>
+            {currentView === '3d' && (
+              <div 
+                className="w-full h-full absolute inset-0 z-10"
+                style={{
+                  backgroundColor: '#000'
+                }}
+                data-container="cesium-outer-container"
+              >
+                <CesiumView initialViewState={initialViewState3D} />
+              </div>
+            )}
+          </CesiumProvider>
+          
+          {/* Layer Panel - Always render but with different content based on view */}
+          {projectId && (
+            <LayerPanel 
+              currentView={currentView}
+              children2D={<LayerList projectId={projectId} />}
+              children3D={<CesiumLayerList projectId={projectId} />}
+            />
+          )}
+        </MapProvider>
+      </SharedLayerProvider>
     </div>
   );
 } 
