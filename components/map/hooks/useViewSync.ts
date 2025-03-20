@@ -49,17 +49,31 @@ export function useViewSync() {
         throw new Error('Coordinates out of valid range');
       }
 
-      // Convert zoom level to height
-      const tileSize = 512;
-      const earthCircumference = 40075016.686;
-      const height = earthCircumference / (tileSize * Math.pow(2, state.zoom));
+      // Convert zoom level to height using a more accurate formula
+      // At zoom level 0, one tile covers 360 degrees
+      // At zoom level z, one tile covers 360/2^z degrees
+      const zoomScale = Math.pow(2, state.zoom);
+      const degPerTile = 360 / zoomScale;
+      
+      // Convert degrees to meters at the given latitude
+      const metersPerDegree = 111319.9; // approximately at equator
+      const metersPerDegreeAtLat = metersPerDegree * Math.cos(Cesium.Math.toRadians(latitude));
+      
+      // Calculate height based on field of view and visible extent
+      const fovRadians = Cesium.Math.toRadians(60); // Typical FOV
+      const visibleExtentMeters = degPerTile * metersPerDegreeAtLat;
+      const height = (visibleExtentMeters / 2) / Math.tan(fovRadians / 2);
 
-      // Clamp height to reasonable values
-      const clampedHeight = Math.max(100, Math.min(height, 10000000));
+      // Clamp height to reasonable values (in meters)
+      const clampedHeight = Math.max(100, Math.min(height, 20000000));
 
       logger.debug('Converting 2D to 3D view state', {
         from: state,
-        height: clampedHeight
+        calculatedHeight: height,
+        clampedHeight,
+        zoom: state.zoom,
+        degPerTile,
+        visibleExtentMeters
       });
 
       return {
@@ -67,14 +81,15 @@ export function useViewSync() {
         latitude,
         height: clampedHeight,
         heading: state.bearing ? -state.bearing : 0,
-        pitch: state.pitch || 0
+        pitch: -90 // Always look straight down
       };
     } catch (error) {
       logger.error('Error converting 2D to 3D view state', error);
       return {
         longitude: 0,
         latitude: 0,
-        height: 10000000
+        height: 10000000,
+        pitch: -90
       };
     }
   }, []);
@@ -226,11 +241,11 @@ export function useViewSync() {
             return;
           }
 
-          // Set initial view orientation looking straight down
-          const heading = cesiumState.heading || 0;
-          const pitch = cesiumState.pitch || -90; // Look straight down by default
-
           try {
+            logger.debug('Starting camera transition', {
+              destination: cesiumState
+            });
+
             cesiumViewer.camera.flyTo({
               destination: Cesium.Cartesian3.fromDegrees(
                 cesiumState.longitude,
@@ -238,13 +253,13 @@ export function useViewSync() {
                 cesiumState.height
               ),
               orientation: {
-                heading: Cesium.Math.toRadians(heading),
-                pitch: Cesium.Math.toRadians(pitch),
+                heading: Cesium.Math.toRadians(cesiumState.heading || 0),
+                pitch: Cesium.Math.toRadians(-90), // Always look straight down
                 roll: 0
               },
               complete: () => resolve(),
-              duration: 1.5,
-              easingFunction: Cesium.EasingFunction.QUADRATIC_IN_OUT
+              duration: 2,
+              easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT
             });
           } catch (error) {
             reject(new Error(`Failed to execute camera flyTo: ${error instanceof Error ? error.message : 'Unknown error'}`));

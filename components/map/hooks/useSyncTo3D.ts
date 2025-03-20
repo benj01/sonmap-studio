@@ -7,6 +7,7 @@ import { LogManager } from '@/core/logging/log-manager';
 import { getLayerAdapter } from '../utils/layer-adapters';
 import { DataSource } from 'cesium';
 import { ImageryProvider } from 'cesium';
+import { useLayerData } from './useLayerData';
 
 const SOURCE = 'useSyncTo3D';
 const logManager = LogManager.getInstance();
@@ -77,14 +78,43 @@ export function useSyncTo3D() {
           }
 
           try {
+            // Get layer data including features
+            const { data: layerData } = useLayerData(layerId);
+            if (!layerData) {
+              logger.warn('No layer data available', { layerId });
+              continue;
+            }
+
+            logger.debug('Converting layer to 3D', {
+              layerId,
+              type: layer.type,
+              featureCount: layerData.features.length
+            });
+
+            // Prepare layer with GeoJSON data
+            const layerWithData = {
+              ...layer,
+              metadata: {
+                ...layer.metadata,
+                geojson: {
+                  type: 'FeatureCollection',
+                  features: layerData.features
+                }
+              }
+            };
+
             const adapter = getLayerAdapter(layer.type);
-            const cesiumLayer = adapter.to3D(layer);
+            const cesiumLayer = await adapter.to3D(layerWithData);
             
             // Add layer based on type
             switch (cesiumLayer.type) {
               case 'vector':
                 if (cesiumLayer.dataSource) {
-                  viewer.entities.add(cesiumLayer.dataSource as DataSource);
+                  await viewer.dataSources.add(cesiumLayer.dataSource);
+                  logger.debug('Added vector layer to viewer', {
+                    layerId,
+                    entityCount: cesiumLayer.dataSource.entities.values.length
+                  });
                 }
                 break;
               case '3d-tiles':
@@ -101,15 +131,12 @@ export function useSyncTo3D() {
                 logger.warn('Unsupported layer type', { type: cesiumLayer.type });
             }
           } catch (error) {
-            logger.error('Error syncing layer to 3D', { layerId, error });
+            logger.error('Error syncing layer to 3D', { 
+              layerId, 
+              error: error instanceof Error ? error.message : error 
+            });
           }
         }
-      }
-
-      // 3. Sync selected features (future)
-      if (options.includeFeatures) {
-        logger.debug('Feature synchronization not yet implemented');
-        // TODO: Implement feature synchronization
       }
 
       logger.info('2D to 3D synchronization complete');

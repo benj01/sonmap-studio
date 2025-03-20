@@ -1,6 +1,8 @@
 import { SharedLayer } from '../context/SharedLayerContext';
 import { CesiumLayer } from '../hooks/useCesiumLayers';
 import { LogManager } from '@/core/logging/log-manager';
+import * as Cesium from 'cesium';
+import { geoJsonToCesium } from './data-converters';
 
 const SOURCE = 'LayerAdapters';
 const logManager = LogManager.getInstance();
@@ -22,46 +24,95 @@ const logger = {
 
 export interface LayerAdapter {
   to2D: (layer: SharedLayer) => any;
-  to3D: (layer: SharedLayer) => CesiumLayer;
+  to3D: (layer: SharedLayer) => Promise<CesiumLayer>;
   from2D: (layer: any) => SharedLayer;
   from3D: (layer: CesiumLayer) => SharedLayer;
 }
 
-// Adapter for GeoJSON layers
-export const geojsonAdapter: LayerAdapter = {
-  to2D: (layer: SharedLayer) => {
-    if (!layer.metadata.source2D) {
-      logger.warn('No 2D source data available for conversion', { layerId: layer.id });
-      throw new Error('No 2D source data available for conversion');
-    }
-    return layer.metadata.source2D;
-  },
+export interface SharedLayer {
+  id: string;
+  name: string;
+  type: string;
+  visible: boolean;
+  metadata: {
+    sourceType?: '2d' | '3d';
+    geojson?: any;
+    source2D?: any;
+    source3D?: any;
+    style?: {
+      paint?: Record<string, any>;
+      layout?: Record<string, any>;
+    };
+  };
+  selected: boolean;
+}
 
-  to3D: (layer: SharedLayer) => {
-    if (!layer.metadata.source3D) {
-      logger.warn('No 3D source data available for conversion', { layerId: layer.id });
-      throw new Error('No 3D source data available for conversion');
-    }
+// Adapter for vector/GeoJSON layers
+export const vectorAdapter: LayerAdapter = {
+  to2D: (layer: SharedLayer) => {
+    logger.debug('Converting vector layer to 2D', { layerId: layer.id });
     return {
       id: layer.id,
-      name: layer.name,
-      type: 'vector',
-      visible: layer.visible,
-      source: layer.metadata.source3D,
-      dataSource: layer.metadata.source3D
+      type: 'geojson',
+      source: {
+        type: 'geojson',
+        data: layer.metadata.geojson
+      },
+      paint: layer.metadata.style?.paint || {},
+      layout: layer.metadata.style?.layout || {}
     };
+  },
+
+  to3D: async (layer: SharedLayer) => {
+    logger.debug('Converting vector layer to 3D', { 
+      layerId: layer.id,
+      hasGeojson: !!layer.metadata.geojson
+    });
+
+    if (!layer.metadata.geojson) {
+      throw new Error('No GeoJSON data available for conversion');
+    }
+
+    try {
+      // Convert GeoJSON to Cesium DataSource
+      const dataSource = await geoJsonToCesium(layer.metadata.geojson, {
+        strokeColor: layer.metadata.style?.paint?.['line-color'] || '#1E88E5',
+        strokeWidth: layer.metadata.style?.paint?.['line-width'] || 3,
+        fillColor: layer.metadata.style?.paint?.['fill-color'] || '#1E88E5',
+        fillOpacity: layer.metadata.style?.paint?.['fill-opacity'] || 0.5,
+        clampToGround: true
+      });
+
+      return {
+        id: layer.id,
+        name: layer.name,
+        type: 'vector',
+        visible: layer.visible,
+        source: dataSource,
+        dataSource: dataSource
+      };
+    } catch (error) {
+      logger.error('Error converting vector layer to 3D', { 
+        layerId: layer.id,
+        error 
+      });
+      throw error;
+    }
   },
 
   from2D: (layer: any) => {
     return {
       id: layer.id,
       name: layer.name || layer.id,
-      type: 'geojson',
+      type: 'vector',
       visible: true,
       metadata: {
         sourceType: '2d',
-        source2D: layer,
-        style: layer.style
+        geojson: layer.source.data,
+        style: {
+          paint: layer.paint,
+          layout: layer.layout
+        }
       },
       selected: false
     };
@@ -71,11 +122,11 @@ export const geojsonAdapter: LayerAdapter = {
     return {
       id: layer.id,
       name: layer.name,
-      type: 'geojson',
+      type: 'vector',
       visible: layer.visible,
       metadata: {
         sourceType: '3d',
-        source3D: layer.source,
+        source3D: layer.dataSource,
         style: layer.options?.style
       },
       selected: false
@@ -90,7 +141,7 @@ export const tilesetAdapter: LayerAdapter = {
     throw new Error('3D Tiles cannot be converted to 2D');
   },
 
-  to3D: (layer: SharedLayer) => {
+  to3D: async (layer: SharedLayer) => {
     if (!layer.metadata.source3D) {
       logger.warn('No 3D source data available for conversion', { layerId: layer.id });
       throw new Error('No 3D source data available for conversion');
@@ -136,7 +187,7 @@ export const imageryAdapter: LayerAdapter = {
     return layer.metadata.source2D;
   },
 
-  to3D: (layer: SharedLayer) => {
+  to3D: async (layer: SharedLayer) => {
     if (!layer.metadata.source3D) {
       logger.warn('No 3D source data available for conversion', { layerId: layer.id });
       throw new Error('No 3D source data available for conversion');
@@ -184,7 +235,8 @@ export const imageryAdapter: LayerAdapter = {
 
 // Map of layer types to their adapters
 export const layerAdapters: Record<string, LayerAdapter> = {
-  geojson: geojsonAdapter,
+  geojson: vectorAdapter,
+  vector: vectorAdapter,
   '3d-tiles': tilesetAdapter,
   imagery: imageryAdapter
 };
@@ -194,7 +246,7 @@ export function getLayerAdapter(type: string): LayerAdapter {
   const adapter = layerAdapters[type];
   if (!adapter) {
     logger.warn('No adapter found for layer type', { type });
-    return geojsonAdapter; // Default to GeoJSON adapter
+    return vectorAdapter; // Default to vector adapter
   }
   return adapter;
 } 
