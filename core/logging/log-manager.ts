@@ -45,7 +45,7 @@ export class LogManager {
     this.sourceFilters.set('ImportManager', LogLevel.INFO);
     
     // UI components - set to WARN to reduce noise
-    this.sourceFilters.set('MapView', LogLevel.WARN);
+    this.sourceFilters.set('MapView', LogLevel.DEBUG);
     this.sourceFilters.set('LayerList', LogLevel.WARN);
     this.sourceFilters.set('LayerItem', LogLevel.WARN);
     this.sourceFilters.set('MapContext', LogLevel.WARN);
