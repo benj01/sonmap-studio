@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ArrowLeft, Settings, Users, Files, Map, Beaker } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
 import { FileManager } from '@/components/files/components/manager'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { MapContainer } from '@/components/map/components/MapContainer'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
@@ -33,6 +33,7 @@ interface ProjectClientProps {
 export default function ProjectClient({ projectId, searchParams }: ProjectClientProps) {
   const [project, setProject] = useState<Project | null>(null)
   const [activeTab, setActiveTab] = useState('map')
+  const mapContainerRef = useRef<HTMLDivElement>(null)
   const supabase = createClient()
   const router = useRouter()
   const { toast } = useToast()
@@ -73,6 +74,26 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
 
     loadProject()
   }, [projectId, supabase, toast, router])
+
+  // Handle tab changes
+  const handleTabChange = (value: string) => {
+    setActiveTab(value);
+    // Give the DOM time to update before triggering resize
+    requestAnimationFrame(() => {
+      const mapboxgl = document.querySelector('.mapboxgl-map');
+      const cesiumViewer = document.querySelector('.cesium-viewer');
+      if (value === 'map') {
+        if (mapboxgl) {
+          // @ts-ignore - we know this exists
+          mapboxgl._map?.resize();
+        }
+        if (cesiumViewer) {
+          // @ts-ignore - we know this exists
+          cesiumViewer._cesiumWidget?.resize();
+        }
+      }
+    });
+  };
 
   if (isLoading) {
     return <LoadingState text="Loading project..." />
@@ -125,7 +146,7 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="map" className="space-y-4" onValueChange={setActiveTab}>
+      <Tabs defaultValue="map" className="space-y-4" onValueChange={handleTabChange}>
         <TabsList>
           <TabsTrigger value="map">
             <Map className="mr-2 h-4 w-4" />
@@ -149,10 +170,13 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
               </CardDescription>
             </CardHeader>
             <CardContent className="flex-1 relative">
-              <div className={cn(
-                "absolute inset-0 rounded-lg overflow-hidden",
-                activeTab === 'map' ? 'visible' : 'invisible'
-              )}>
+              <div 
+                ref={mapContainerRef}
+                className={cn(
+                  "absolute inset-0 rounded-lg overflow-hidden",
+                  activeTab === 'map' ? 'block' : 'hidden'
+                )}
+              >
                 <MapContainer 
                   initialViewState2D={{
                     center: [0, 0],

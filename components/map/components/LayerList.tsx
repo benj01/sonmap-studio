@@ -7,7 +7,7 @@ import { Database } from '@/types/supabase';
 import { LayerItem } from './LayerItem';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AlertCircle } from 'lucide-react';
-import { useSharedLayers } from '../context/SharedLayerContext';
+import { useMapStore } from '@/store/mapStore';
 
 const SOURCE = 'LayerList';
 const logManager = LogManager.getInstance();
@@ -33,7 +33,7 @@ interface LayerListProps {
 }
 
 export function LayerList({ projectId, defaultVisibility = true }: LayerListProps) {
-  const { layers, selectedLayers, getSelectedLayers, addLayer } = useSharedLayers();
+  const { layers, addLayer, setLayerVisibility } = useMapStore();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const supabase = createClient();
@@ -71,20 +71,9 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
 
         logger.info('Layers loaded', { count: data?.length || 0 });
         
-        // Add fetched layers to the shared context with default visibility
+        // Add fetched layers to the store with default visibility
         data?.forEach(layer => {
-          addLayer({
-            id: layer.id,
-            name: layer.name,
-            type: layer.type,
-            visible: defaultVisibility,
-            selected: false,
-            metadata: {
-              sourceType: '2d',
-              source2D: layer.properties,
-              style: layer.properties?.style
-            }
-          });
+          addLayer(layer.id, defaultVisibility, layer.properties?.sourceId);
         });
       } catch (err) {
         const error = err as Error;
@@ -102,14 +91,13 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
     }
   }, [projectId, addLayer]);
 
-  // Log when selected layers change
-  useEffect(() => {
-    const selectedLayersList = getSelectedLayers();
-    logger.debug('Selected layers updated', {
-      count: selectedLayers.length,
-      layers: selectedLayersList.map(l => l.name)
-    });
-  }, [selectedLayers, getSelectedLayers]);
+  // Convert Map to array for rendering
+  const layerArray = Array.from(layers.entries()).map(([id, state]) => ({
+    id,
+    name: id, // You might want to store the name in the layer state
+    type: 'default', // You might want to store the type in the layer state
+    properties: {} // You might want to store properties in the layer state
+  }));
 
   if (loading) {
     return (
@@ -133,7 +121,7 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
     );
   }
 
-  if (!layers.length) {
+  if (!layerArray.length) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
         No layers available
@@ -144,17 +132,13 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
   return (
     <div className="space-y-1">
       <div className="text-xs text-muted-foreground mb-2">
-        {selectedLayers.length} layer{selectedLayers.length !== 1 ? 's' : ''} selected
+        {layerArray.length} layer{layerArray.length !== 1 ? 's' : ''} available
       </div>
-      {layers.map(layer => (
+      {layerArray.map(layer => (
         <LayerItem
           key={layer.id}
-          layer={{
-            id: layer.id,
-            name: layer.name,
-            type: layer.type,
-            properties: layer.metadata
-          }}
+          layer={layer}
+          onVisibilityChange={(visible) => setLayerVisibility(layer.id, visible)}
         />
       ))}
     </div>

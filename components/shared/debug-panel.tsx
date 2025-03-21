@@ -1,11 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { LogManager } from '@/core/logging/log-manager';
 import { Download, Bug, Trash } from 'lucide-react';
 
-export function DebugPanel() {
+interface DebugPanelProps {
+  children?: ReactNode;
+}
+
+export function DebugPanel({ children }: DebugPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const logManager = LogManager.getInstance();
 
@@ -42,7 +46,7 @@ export function DebugPanel() {
   return (
     <div className="fixed bottom-4 right-4 z-50 w-96 max-h-[600px] bg-background border rounded-lg shadow-lg overflow-hidden">
       <div className="flex items-center justify-between p-2 border-b bg-muted">
-        <h3 className="font-medium">Debug Logs</h3>
+        <h3 className="font-medium">Debug Panel</h3>
         <div className="flex items-center gap-2">
           <Button
             variant="ghost"
@@ -67,20 +71,28 @@ export function DebugPanel() {
           </Button>
         </div>
       </div>
-      <div className="p-4 overflow-auto max-h-[500px] space-y-2">
-        {logManager.getLogs().map((log, i) => (
-          <div 
-            key={i}
-            className="text-sm font-mono whitespace-pre-wrap"
-          >
-            [{log.timestamp}] {log.level}: {log.message}
-            {log.data && (
-              <pre className="mt-1 p-2 bg-muted rounded text-xs">
-                {JSON.stringify(log.data, null, 2)}
-              </pre>
-            )}
+      <div className="p-4 overflow-auto max-h-[500px] space-y-4">
+        {children && (
+          <div className="border-b pb-4">
+            {children}
           </div>
-        ))}
+        )}
+        <div className="space-y-2">
+          <h4 className="font-medium">Logs</h4>
+          {logManager.getLogs().map((log, i) => (
+            <div 
+              key={i}
+              className="text-sm font-mono whitespace-pre-wrap"
+            >
+              [{log.timestamp}] {log.level}: {log.message}
+              {log.data && (
+                <pre className="mt-1 p-2 bg-muted rounded text-xs">
+                  {JSON.stringify(log.data, null, 2)}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

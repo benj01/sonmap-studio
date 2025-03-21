@@ -3,14 +3,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapView } from './MapView';
 import { CesiumView } from './cesium/CesiumView';
-import { CesiumProvider } from '../context/CesiumContext';
-import { MapProvider, useMapContext } from '../hooks/useMapContext';
-import { SharedLayerProvider } from '../context/SharedLayerContext';
 import { LayerPanel } from './LayerPanel';
 import { LayerList } from './LayerList';
 import { LogManager } from '@/core/logging/log-manager';
-import { useViewSync, ViewState, CesiumViewState } from '../hooks/useViewSync';
-import { useCesium } from '../context/CesiumContext';
+import { useMapStore, ViewState, CesiumViewState } from '@/store/mapStore';
 import { SyncTo3DButton } from './SyncTo3DButton';
 
 const SOURCE = 'MapContainer';
@@ -42,8 +38,7 @@ interface MapContainerProps {
   projectId?: string;
 }
 
-// Inner component to use hooks within providers
-function MapContainerInner({
+export function MapContainer({
   className = '',
   initialViewState2D = {
     center: [0, 0],
@@ -60,9 +55,15 @@ function MapContainerInner({
 }: MapContainerProps) {
   const [mapboxLoaded, setMapboxLoaded] = useState(false);
   const [cesiumLoaded, setCesiumLoaded] = useState(false);
-  const mapRef = useRef<mapboxgl.Map | null>(null);
-  const cesiumRef = useRef<any>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+
+  const {
+    viewState2D,
+    viewState3D,
+    setMapboxInstance,
+    setCesiumInstance,
+    cleanup
+  } = useMapStore();
 
   const handleMapboxLoad = useCallback(() => {
     setMapboxLoaded(true);
@@ -82,11 +83,14 @@ function MapContainerInner({
     const resizeObserver = new ResizeObserver(() => {
       // Ensure maps are properly sized even when container visibility changes
       requestAnimationFrame(() => {
-        if (mapRef.current) {
-          mapRef.current.resize();
+        const mapboxInstance = useMapStore.getState().mapboxInstance;
+        const cesiumInstance = useMapStore.getState().cesiumInstance;
+        
+        if (mapboxInstance) {
+          mapboxInstance.resize();
         }
-        if (cesiumRef.current) {
-          cesiumRef.current.resize();
+        if (cesiumInstance) {
+          cesiumInstance.resize();
         }
       });
     });
@@ -97,11 +101,14 @@ function MapContainerInner({
     // Also handle visibility changes
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        if (mapRef.current) {
-          mapRef.current.resize();
+        const mapboxInstance = useMapStore.getState().mapboxInstance;
+        const cesiumInstance = useMapStore.getState().cesiumInstance;
+        
+        if (mapboxInstance) {
+          mapboxInstance.resize();
         }
-        if (cesiumRef.current) {
-          cesiumRef.current.resize();
+        if (cesiumInstance) {
+          cesiumInstance.resize();
         }
       }
     };
@@ -120,19 +127,9 @@ function MapContainerInner({
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect();
       }
-      // Only cleanup map instances if we're actually unmounting the component
-      // not just hiding it with CSS
-      const mapContainer = mapRef.current?.getContainer();
-      const cesiumContainer = cesiumRef.current?.container;
-      
-      if (mapContainer && document.body.contains(mapContainer)) {
-        mapRef.current?.remove();
-      }
-      if (cesiumContainer && document.body.contains(cesiumContainer)) {
-        cesiumRef.current?.destroy();
-      }
+      cleanup();
     };
-  }, []);
+  }, [cleanup]);
 
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden map-container">
@@ -161,10 +158,10 @@ function MapContainerInner({
           {/* 2D Map View */}
           <div className="flex-1 relative border border-border rounded-lg shadow-md overflow-hidden min-w-0">
             <MapView 
-              initialViewState={initialViewState2D} 
+              initialViewState={viewState2D} 
               onLoad={handleMapboxLoad}
               onMapRef={(map) => {
-                mapRef.current = map;
+                setMapboxInstance(map);
                 // Ensure map is properly sized after ref is set
                 requestAnimationFrame(() => map.resize());
               }}
@@ -175,10 +172,10 @@ function MapContainerInner({
         {/* Bottom row: 3D Map View */}
         <div className="relative border border-border rounded-lg shadow-md overflow-hidden" style={{ height: '55%' }}>
           <CesiumView 
-            initialViewState={initialViewState3D}
+            initialViewState={viewState3D}
             onLoad={handleCesiumLoad}
             onViewerRef={(viewer) => {
-              cesiumRef.current = viewer;
+              setCesiumInstance(viewer);
               // Ensure viewer is properly sized after ref is set
               requestAnimationFrame(() => viewer.resize());
             }}
@@ -186,17 +183,5 @@ function MapContainerInner({
         </div>
       </div>
     </div>
-  );
-}
-
-export function MapContainer(props: MapContainerProps) {
-  return (
-    <SharedLayerProvider>
-      <MapProvider>
-        <CesiumProvider>
-          <MapContainerInner {...props} />
-        </CesiumProvider>
-      </MapProvider>
-    </SharedLayerProvider>
   );
 }

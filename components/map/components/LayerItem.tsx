@@ -5,12 +5,10 @@ import { useEffect, useRef } from 'react';
 import { Eye, EyeOff, Settings, AlertCircle, Maximize } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { useMapContext } from '../hooks/useMapContext';
+import { useMapStore } from '@/store/mapStore';
 import { useLayerData } from '../hooks/useLayerData';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as mapboxgl from 'mapbox-gl';
-import { useSharedLayers } from '../context/SharedLayerContext';
-import { Checkbox } from '@/components/ui/checkbox';
 
 const SOURCE = 'LayerItem';
 const logManager = LogManager.getInstance();
@@ -40,29 +38,29 @@ interface Layer {
 interface LayerItemProps {
   layer: Layer;
   className?: string;
+  onVisibilityChange?: (visible: boolean) => void;
 }
 
-export function LayerItem({ layer, className = '' }: LayerItemProps) {
-  const { map, layers, toggleLayer, addLayer, getLayerVisibility } = useMapContext();
-  const { toggleVisibility, toggleSelection, selectedLayers } = useSharedLayers();
+export function LayerItem({ layer, className = '', onVisibilityChange }: LayerItemProps) {
+  const { mapboxInstance, layers, setLayerVisibility } = useMapStore();
   const { data, loading, error } = useLayerData(layer.id);
   const setupCompleteRef = useRef(false);
   const registeredRef = useRef(false);
   const layerId = `layer-${layer.id}`;
 
-  // Register with context on mount
+  // Register with store on mount
   useEffect(() => {
     if (!registeredRef.current) {
-      logger.debug('Registering layer with context', { layerId });
-      addLayer(layerId);
+      logger.debug('Registering layer with store', { layerId });
+      setLayerVisibility(layerId, true);
       registeredRef.current = true;
     }
-  }, [layerId, addLayer]);
+  }, [layerId, setLayerVisibility]);
 
-  // Register layer with context and add to map when data is loaded
+  // Register layer with store and add to map when data is loaded
   useEffect(() => {
     // Skip if map is not ready or data is not loaded
-    if (!map?.loaded()) {
+    if (!mapboxInstance?.loaded()) {
       logger.debug('Map not ready yet', { layerId });
       return;
     }
@@ -82,37 +80,37 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
     const setupLayer = async () => {
       try {
         // Skip if component is unmounted or map is not ready
-        if (!mounted || !map?.loaded()) {
+        if (!mounted || !mapboxInstance?.loaded()) {
           logger.debug('Skipping layer setup - conditions not met', {
             isMounted: mounted,
-            mapLoaded: map?.loaded(),
+            mapLoaded: mapboxInstance?.loaded(),
             layerId
           });
           return;
         }
 
         // If layer is already set up properly, just update visibility
-        if (setupCompleteRef.current && map.getLayer(layerId) && map.getSource(sourceId)) {
-          const isVisible = layers.get(layerId) ?? true;
+        if (setupCompleteRef.current && mapboxInstance.getLayer(layerId) && mapboxInstance.getSource(sourceId)) {
+          const isVisible = layers.get(layerId)?.visible ?? true;
           logger.debug('Layer exists, updating visibility', { layerId, isVisible });
-          map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+          mapboxInstance.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
           return;
         }
 
         // Clean up any partial setup
         try {
-          if (map.getLayer(layerId)) {
-            map.removeLayer(layerId);
+          if (mapboxInstance.getLayer(layerId)) {
+            mapboxInstance.removeLayer(layerId);
           }
-          if (map.getSource(sourceId)) {
-            map.removeSource(sourceId);
+          if (mapboxInstance.getSource(sourceId)) {
+            mapboxInstance.removeSource(sourceId);
           }
         } catch (error) {
           logger.warn('Cleanup failed', { error });
         }
 
         // Get initial visibility state
-        const isVisible = layers.get(layerId) ?? true;
+        const isVisible = layers.get(layerId)?.visible ?? true;
 
         // Validate features
         if (!data.features?.length) {
@@ -127,11 +125,11 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         };
 
         // Wait for map to be ready
-        if (!map.isStyleLoaded()) {
+        if (!mapboxInstance.isStyleLoaded()) {
           logger.debug('Waiting for style to load', { layerId });
           await new Promise<void>((resolve) => {
             const checkStyle = () => {
-              if (map.isStyleLoaded()) {
+              if (mapboxInstance.isStyleLoaded()) {
                 resolve();
               } else {
                 requestAnimationFrame(checkStyle);
@@ -142,7 +140,7 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         }
 
         // Add source
-        map.addSource(sourceId, {
+        mapboxInstance.addSource(sourceId, {
           type: 'geojson',
           data: geojsonData
         });
@@ -153,8 +151,8 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         // For line features
         if (geometryType === 'LineString' || geometryType === 'MultiLineString') {
           // Find the first symbol layer in the map style
-          const layers = map.getStyle()?.layers || [];
-          const firstSymbolId = layers.find(layer => layer.type === 'symbol')?.id;
+          const layers = mapboxInstance.getStyle()?.layers || [];
+          const firstSymbolId = layers.find((layer: mapboxgl.Layer) => layer.type === 'symbol')?.id;
 
           // Add the custom layer before the first symbol layer
           const layerOptions: mapboxgl.LineLayer = {
@@ -174,14 +172,14 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           };
 
           if (firstSymbolId) {
-            map.addLayer(layerOptions, firstSymbolId);
+            mapboxInstance.addLayer(layerOptions, firstSymbolId);
           } else {
-            map.addLayer(layerOptions);
+            mapboxInstance.addLayer(layerOptions);
           }
         }
         // For point features
         else if (geometryType === 'Point' || geometryType === 'MultiPoint') {
-          map.addLayer({
+          mapboxInstance.addLayer({
             id: layerId,
             source: sourceId,
             type: 'circle',
@@ -193,7 +191,7 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
         }
         // For polygon features
         else if (geometryType === 'Polygon' || geometryType === 'MultiPolygon') {
-          map.addLayer({
+          mapboxInstance.addLayer({
             id: layerId,
             source: sourceId,
             type: 'fill',
@@ -204,7 +202,7 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           });
 
           // Add outline layer for polygons
-          map.addLayer({
+          mapboxInstance.addLayer({
             id: `${layerId}-outline`,
             source: sourceId,
             type: 'line',
@@ -248,101 +246,36 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
                 polygon.coordinates[0].forEach(coord => bounds.extend(coord as [number, number]));
                 break;
               }
-              case 'MultiPoint': {
-                const multiPoint = feature.geometry as GeoJSON.MultiPoint;
-                multiPoint.coordinates.forEach(coord => bounds.extend(coord as [number, number]));
-                break;
-              }
-              case 'MultiLineString': {
-                const multiLine = feature.geometry as GeoJSON.MultiLineString;
-                multiLine.coordinates.forEach(line => 
-                  line.forEach(coord => bounds.extend(coord as [number, number]))
-                );
-                break;
-              }
-              case 'MultiPolygon': {
-                const multiPolygon = feature.geometry as GeoJSON.MultiPolygon;
-                multiPolygon.coordinates.forEach(polygon => 
-                  polygon[0].forEach(coord => bounds.extend(coord as [number, number]))
-                );
-                break;
-              }
             }
           });
 
-          map.fitBounds(bounds, {
+          // Fit bounds with padding
+          mapboxInstance.fitBounds(bounds, {
             padding: 50,
-            animate: true,
-            maxZoom: 18
+            duration: 1000
           });
         }
       } catch (error) {
-        logger.error('Layer setup failed', { error, layerId });
-        setupCompleteRef.current = false;
+        logger.error('Error setting up layer', { error, layerId });
       }
     };
 
-    // Set up layer
     setupLayer();
-
-    // Listen for style load
-    const onStyleLoad = () => {
-      if (mounted) {
-        setupCompleteRef.current = false;  // Reset on style load
-        setupLayer();
-      }
-    };
-    map.on('style.load', onStyleLoad);
 
     return () => {
       mounted = false;
-      map.off('style.load', onStyleLoad);
-      
-      // Don't remove the layer on unmount unless we're really cleaning up
-      // This prevents the layer from being removed when the component re-renders
-      if (map.getStyle() && !map._removed) {
-        logger.debug('Component unmounting - preserving layer', { layerId });
-      }
     };
-  }, [map, data?.features, layerId]); // Simplified dependencies
-
-  // Handle visibility changes separately
-  useEffect(() => {
-    try {
-      // Skip if map is not initialized or layer doesn't exist
-      if (!map?.getLayer) {
-        logger.debug('Map not initialized yet', { layerId });
-        return;
-      }
-
-      // Check if the layer exists
-      const layerExists = map.getStyle()?.layers?.some(l => l.id === layerId);
-      if (!layerExists) {
-        logger.debug('Layer not found in map', { layerId });
-        return;
-      }
-      
-      const isVisible = layers.get(layerId) ?? true;
-      logger.debug('Updating layer visibility', { layerId, isVisible });
-      map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
-    } catch (error) {
-      logger.warn('Error updating layer visibility', { layerId, error });
-    }
-  }, [map, layerId, layers]);
-
-  const isSelected = selectedLayers.includes(layer.id);
+  }, [data, loading, layerId, mapboxInstance, layers]);
 
   const handleVisibilityToggle = () => {
-    toggleVisibility(layer.id);
-    toggleLayer(layerId);
-  };
-
-  const handleSelectionToggle = () => {
-    toggleSelection(layer.id);
+    const currentVisibility = layers.get(layerId)?.visible ?? true;
+    const newVisibility = !currentVisibility;
+    setLayerVisibility(layerId, newVisibility);
+    onVisibilityChange?.(newVisibility);
   };
 
   const handleZoomToLayer = () => {
-    if (!map || !data?.features?.length) return;
+    if (!mapboxInstance || !data?.features?.length) return;
 
     const bounds = new mapboxgl.LngLatBounds();
     data.features.forEach(feature => {
@@ -364,65 +297,58 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
           polygon.coordinates[0].forEach(coord => bounds.extend(coord as [number, number]));
           break;
         }
-        case 'MultiPoint': {
-          const multiPoint = feature.geometry as GeoJSON.MultiPoint;
-          multiPoint.coordinates.forEach(coord => bounds.extend(coord as [number, number]));
-          break;
-        }
-        case 'MultiLineString': {
-          const multiLine = feature.geometry as GeoJSON.MultiLineString;
-          multiLine.coordinates.forEach(line => 
-            line.forEach(coord => bounds.extend(coord as [number, number]))
-          );
-          break;
-        }
-        case 'MultiPolygon': {
-          const multiPolygon = feature.geometry as GeoJSON.MultiPolygon;
-          multiPolygon.coordinates.forEach(polygon => 
-            polygon[0].forEach(coord => bounds.extend(coord as [number, number]))
-          );
-          break;
-        }
       }
     });
 
-    map.fitBounds(bounds, {
+    mapboxInstance.fitBounds(bounds, {
       padding: 50,
-      animate: true,
-      maxZoom: 18
+      duration: 1000
     });
   };
 
+  if (loading) {
+    return (
+      <div className={cn('flex items-center gap-2 p-2', className)}>
+        <Skeleton className="h-4 w-4" />
+        <Skeleton className="h-4 w-16" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className={cn('flex items-center gap-2 p-2 text-destructive', className)}>
+        <AlertCircle className="h-4 w-4" />
+        <span className="text-sm">{error.message}</span>
+      </div>
+    );
+  }
+
+  const isVisible = layers.get(layerId)?.visible ?? true;
+
   return (
-    <div className={`flex items-center justify-between py-1 px-2 hover:bg-accent/50 rounded-sm ${className}`}>
-      <div className="flex items-center gap-1.5">
-        <Checkbox
-          checked={isSelected}
-          onCheckedChange={handleSelectionToggle}
-          className="h-3.5 w-3.5"
-        />
-        <span className="text-xs truncate">{layer.name}</span>
-      </div>
-      <div className="flex items-center gap-1">
-        <button
-          onClick={handleZoomToLayer}
-          className="p-0.5 hover:bg-accent rounded-sm"
-          title="Zoom to layer"
-        >
-          <Maximize className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={handleVisibilityToggle}
-          className="p-0.5 hover:bg-accent rounded-sm"
-          title={layers.get(layerId) ?? true ? 'Hide layer' : 'Show layer'}
-        >
-          {layers.get(layerId) ?? true ? (
-            <Eye className="h-3.5 w-3.5" />
-          ) : (
-            <EyeOff className="h-3.5 w-3.5" />
-          )}
-        </button>
-      </div>
+    <div className={cn('flex items-center gap-2 p-2 hover:bg-accent rounded-md', className)}>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-4 w-4"
+        onClick={handleVisibilityToggle}
+      >
+        {isVisible ? (
+          <Eye className="h-4 w-4" />
+        ) : (
+          <EyeOff className="h-4 w-4" />
+        )}
+      </Button>
+      <span className="text-sm flex-1 truncate">{layer.name}</span>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-4 w-4"
+        onClick={handleZoomToLayer}
+      >
+        <Maximize className="h-4 w-4" />
+      </Button>
     </div>
   );
 }

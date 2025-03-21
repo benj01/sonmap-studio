@@ -3,11 +3,9 @@
 import { useEffect, useRef } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { useMapContext } from '../hooks/useMapContext';
-import { useViewSync } from '../hooks/useViewSync';
 import { LogManager } from '@/core/logging/log-manager';
 import { DebugPanel } from '@/components/shared/debug-panel';
-import { ViewState } from '../hooks/useViewSync';
+import { ViewState } from '@/store/mapStore';
 import { env } from '@/env.mjs';
 
 const SOURCE = 'MapView';
@@ -37,8 +35,6 @@ interface MapViewProps {
 export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
   const INIT_DELAY = 500;
   const mapContainer = useRef<HTMLDivElement>(null);
-  const { setMap } = useMapContext();
-  const { syncViews } = useViewSync();
   const mapInstanceRef = useRef<mapboxgl.Map | null>(null);
   const mountedRef = useRef(true);
   const initAttempts = useRef(0);
@@ -108,15 +104,17 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
         logger.debug('Creating map instance with config', {
           container: mapContainer.current.id || 'unnamed-container',
           style: 'mapbox://styles/mapbox/streets-v12',
-          initialCenter: [0, 0],
-          initialZoom: 1
+          initialCenter: initialViewState?.center || [0, 0],
+          initialZoom: initialViewState?.zoom || 1
         });
 
         const map = new mapboxgl.Map({
           container: mapContainer.current,
           style: 'mapbox://styles/mapbox/streets-v12',
-          center: [0, 0],
-          zoom: 1,
+          center: initialViewState?.center || [0, 0],
+          zoom: initialViewState?.zoom || 1,
+          pitch: initialViewState?.pitch || 0,
+          bearing: initialViewState?.bearing || 0,
           preserveDrawingBuffer: true
         });
 
@@ -161,9 +159,8 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
         }
 
         // Store map instance
-        logger.info('Storing map instance in context');
+        logger.info('Storing map instance');
         mapInstanceRef.current = map;
-        setMap(map);
 
         // Set up event handlers after successful initialization
         map.on('load', () => {
@@ -247,13 +244,21 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
         mapInstanceRef.current = null;
       }
     };
-  }, [setMap, onLoad, onMapRef]);
+  }, [initialViewState, onLoad, onMapRef]);
 
   return (
-    <div 
-      ref={mapContainer} 
-      style={{ width: '100%', height: '100%' }}
-      data-testid="mapbox-container"
-    />
+    <div ref={mapContainer} className="w-full h-full relative">
+      <DebugPanel>
+        <div className="space-y-1">
+          <div>Map Status:</div>
+          <div className="text-xs">
+            Loaded: {hasLoadedRef.current ? 'Yes' : 'No'}
+          </div>
+          <div className="text-xs">
+            Attempts: {initAttempts.current}/{maxInitAttempts}
+          </div>
+        </div>
+      </DebugPanel>
+    </div>
   );
 } 
