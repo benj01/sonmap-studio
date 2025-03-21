@@ -73,7 +73,7 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
         
         // Add fetched layers to the store with default visibility
         data?.forEach(layer => {
-          addLayer(layer.id, defaultVisibility, layer.properties?.sourceId, {
+          addLayer(`layer-${layer.id}`, defaultVisibility, layer.properties?.sourceId, {
             name: layer.name || `Layer ${layer.id.slice(0, 8)}`,
             type: layer.type || 'default',
             properties: layer.properties || {}
@@ -97,8 +97,8 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
 
   // Convert Map to array for rendering
   const layerArray = Array.from(layers.entries()).map(([id, state]) => ({
-    id,
-    name: state.metadata?.name || `Layer ${id.slice(0, 8)}`,
+    id: id,  // Keep the prefixed ID
+    name: state.metadata?.name || `Layer ${id.replace('layer-', '').slice(0, 8)}`,
     type: state.metadata?.type || 'default',
     properties: state.metadata?.properties || {}
   }));
@@ -142,7 +142,7 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
         <LayerItem
           key={layer.id}
           layer={layer}
-          onVisibilityChange={(visible) => setLayerVisibility(`layer-${layer.id}`, visible)}
+          onVisibilityChange={(visible) => setLayerVisibility(layer.id, visible)}
         />
       ))}
     </div>

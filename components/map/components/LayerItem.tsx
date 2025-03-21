@@ -43,10 +43,11 @@ interface LayerItemProps {
 
 export function LayerItem({ layer, className = '', onVisibilityChange }: LayerItemProps) {
   const { mapboxInstance, layers, setLayerVisibility } = useMapStore();
-  const { data, loading, error } = useLayerData(layer.id);
+  const rawLayerId = layer.id.replace('layer-', '');
+  const { data, loading, error } = useLayerData(rawLayerId);
   const setupCompleteRef = useRef(false);
   const registeredRef = useRef(false);
-  const layerId = `layer-${layer.id}`;
+  const layerId = layer.id;
 
   // Register layer with store and add to map when data is loaded
   useEffect(() => {
@@ -261,7 +262,24 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
   const handleVisibilityToggle = () => {
     const currentVisibility = layers.get(layerId)?.visible ?? true;
     const newVisibility = !currentVisibility;
+    
+    // Update the store
     setLayerVisibility(layerId, newVisibility);
+    
+    // Update the Mapbox layer visibility if it exists
+    if (mapboxInstance?.getLayer(layerId)) {
+      mapboxInstance.setLayoutProperty(layerId, 'visibility', newVisibility ? 'visible' : 'none');
+      
+      // Also update the outline layer if it exists (for polygons)
+      const outlineLayerId = `${layerId}-outline`;
+      if (mapboxInstance.getLayer(outlineLayerId)) {
+        mapboxInstance.setLayoutProperty(outlineLayerId, 'visibility', newVisibility ? 'visible' : 'none');
+      }
+      
+      logger.debug('Updated Mapbox layer visibility', { layerId, visible: newVisibility });
+    }
+    
+    // Notify parent component
     onVisibilityChange?.(newVisibility);
   };
 
