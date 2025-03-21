@@ -142,7 +142,7 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
         <LayerItem
           key={layer.id}
           layer={layer}
-          onVisibilityChange={(visible) => setLayerVisibility(layer.id, visible)}
+          onVisibilityChange={(visible) => setLayerVisibility(`layer-${layer.id}`, visible)}
         />
       ))}
     </div>

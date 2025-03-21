@@ -48,15 +48,6 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
   const registeredRef = useRef(false);
   const layerId = `layer-${layer.id}`;
 
-  // Register with store on mount
-  useEffect(() => {
-    if (!registeredRef.current) {
-      logger.debug('Registering layer with store', { layerId });
-      setLayerVisibility(layerId, true);
-      registeredRef.current = true;
-    }
-  }, [layerId, setLayerVisibility]);
-
   // Register layer with store and add to map when data is loaded
   useEffect(() => {
     // Skip if map is not ready or data is not loaded

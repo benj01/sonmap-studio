@@ -47,7 +47,7 @@ export interface CesiumViewState {
   height: number;
 }
 
-interface MapState {
+export interface MapState {
   // Layer states
   layers: Map<string, LayerState>;
   // View states
@@ -64,6 +64,7 @@ interface MapState {
   setViewState3D: (state: CesiumViewState) => void;
   setMapboxInstance: (instance: any) => void;
   setCesiumInstance: (instance: any) => void;
+  reset: () => void;
   cleanup: () => void;
 }
 
@@ -144,45 +145,52 @@ export const useMapStore = create<MapState>()(
       },
 
       cleanup: () => {
-        const { mapboxInstance, cesiumInstance } = get();
-        
-        if (mapboxInstance) {
-          try {
-            if (!mapboxInstance._removed) {
-              if (mapboxInstance.isStyleLoaded()) {
-                const style = mapboxInstance.getStyle();
-                if (style?.layers) {
-                  [...style.layers].reverse().forEach(layer => {
-                    if (layer.id && mapboxInstance.getLayer(layer.id)) {
-                      mapboxInstance.removeLayer(layer.id);
-                    }
-                  });
-                }
-                if (style?.sources) {
-                  Object.keys(style.sources).forEach(sourceId => {
-                    if (mapboxInstance.getSource(sourceId)) {
-                      mapboxInstance.removeSource(sourceId);
-                    }
-                  });
-                }
-              }
-              mapboxInstance.remove();
-            }
-          } catch (error) {
-            logger.warn('Error during Mapbox cleanup', error);
+        set((state) => {
+          // Cleanup map instances
+          if (state.mapboxInstance) {
+            state.mapboxInstance.remove();
           }
-        }
-
-        if (cesiumInstance) {
-          try {
-            cesiumInstance.destroy();
-          } catch (error) {
-            logger.warn('Error during Cesium cleanup', error);
+          if (state.cesiumInstance) {
+            state.cesiumInstance.destroy();
           }
-        }
+          return {
+            mapboxInstance: null,
+            cesiumInstance: null
+          };
+        });
+      },
 
-        set({ mapboxInstance: null, cesiumInstance: null });
-        logger.info('Map instances cleaned up');
+      reset: () => {
+        set((state) => {
+          logger.info('Resetting map state');
+          
+          // Clean up existing map instances
+          if (state.mapboxInstance) {
+            state.mapboxInstance.remove();
+          }
+          if (state.cesiumInstance) {
+            state.cesiumInstance.destroy();
+          }
+
+          // Return to initial state but preserve layers
+          return {
+            // Keep existing layers
+            layers: state.layers,
+            viewState2D: {
+              center: [0, 0],
+              zoom: 1,
+              pitch: 0,
+              bearing: 0
+            },
+            viewState3D: {
+              latitude: 0,
+              longitude: 0,
+              height: 10000000
+            },
+            mapboxInstance: null,
+            cesiumInstance: null
+          };
+        });
       }
     }),
     {

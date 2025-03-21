@@ -7,7 +7,9 @@ import { LayerPanel } from './LayerPanel';
 import { LayerList } from './LayerList';
 import { LogManager } from '@/core/logging/log-manager';
 import { useMapStore, ViewState, CesiumViewState } from '@/store/mapStore';
+import type { MapState } from '@/store/mapStore';
 import { SyncTo3DButton } from './SyncTo3DButton';
+import { ResetButton } from './ResetButton';
 
 const SOURCE = 'MapContainer';
 const logManager = LogManager.getInstance();
@@ -55,6 +57,7 @@ export function MapContainer({
 }: MapContainerProps) {
   const [mapboxLoaded, setMapboxLoaded] = useState(false);
   const [cesiumLoaded, setCesiumLoaded] = useState(false);
+  const [remountTrigger, setRemountTrigger] = useState(0);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   const {
@@ -64,6 +67,20 @@ export function MapContainer({
     setCesiumInstance,
     cleanup
   } = useMapStore();
+
+  // Subscribe to reset events
+  useEffect(() => {
+    const unsubscribe = useMapStore.subscribe((state: MapState) => {
+      if (!state.mapboxInstance && !state.cesiumInstance) {
+        // Both instances are null, trigger remount
+        setRemountTrigger(prev => prev + 1);
+        setMapboxLoaded(false);
+        setCesiumLoaded(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const handleMapboxLoad = useCallback(() => {
     setMapboxLoaded(true);
@@ -86,11 +103,21 @@ export function MapContainer({
         const mapboxInstance = useMapStore.getState().mapboxInstance;
         const cesiumInstance = useMapStore.getState().cesiumInstance;
         
-        if (mapboxInstance) {
-          mapboxInstance.resize();
+        if (mapboxInstance && !mapboxInstance._removed) {
+          try {
+            mapboxInstance.resize();
+          } catch (error) {
+            logger.warn('Error resizing Mapbox instance', error);
+          }
         }
         if (cesiumInstance) {
-          cesiumInstance.resize();
+          try {
+            if (!cesiumInstance.isDestroyed()) {
+              cesiumInstance.resize();
+            }
+          } catch (error) {
+            logger.warn('Error resizing Cesium instance', error);
+          }
         }
       });
     });
@@ -104,11 +131,21 @@ export function MapContainer({
         const mapboxInstance = useMapStore.getState().mapboxInstance;
         const cesiumInstance = useMapStore.getState().cesiumInstance;
         
-        if (mapboxInstance) {
-          mapboxInstance.resize();
+        if (mapboxInstance && !mapboxInstance._removed) {
+          try {
+            mapboxInstance.resize();
+          } catch (error) {
+            logger.warn('Error resizing Mapbox instance', error);
+          }
         }
         if (cesiumInstance) {
-          cesiumInstance.resize();
+          try {
+            if (!cesiumInstance.isDestroyed()) {
+              cesiumInstance.resize();
+            }
+          } catch (error) {
+            logger.warn('Error resizing Cesium instance', error);
+          }
         }
       }
     };
@@ -142,8 +179,9 @@ export function MapContainer({
             {projectId ? (
               <LayerPanel defaultCollapsed={false}>
                 {mapboxLoaded && cesiumLoaded && (
-                  <div className="p-4 border-b border-border">
+                  <div className="p-4 border-b border-border flex items-center gap-2">
                     <SyncTo3DButton />
+                    <ResetButton />
                   </div>
                 )}
                 <LayerList projectId={projectId} defaultVisibility={true} />
@@ -158,12 +196,15 @@ export function MapContainer({
           {/* 2D Map View */}
           <div className="flex-1 relative border border-border rounded-lg shadow-md overflow-hidden min-w-0">
             <MapView 
+              key={`mapbox-${remountTrigger}`}
               initialViewState={viewState2D} 
               onLoad={handleMapboxLoad}
               onMapRef={(map) => {
                 setMapboxInstance(map);
                 // Ensure map is properly sized after ref is set
-                requestAnimationFrame(() => map.resize());
+                if (map && !map._removed) {
+                  requestAnimationFrame(() => map.resize());
+                }
               }}
             />
           </div>
@@ -172,12 +213,22 @@ export function MapContainer({
         {/* Bottom row: 3D Map View */}
         <div className="relative border border-border rounded-lg shadow-md overflow-hidden" style={{ height: '55%' }}>
           <CesiumView 
+            key={`cesium-${remountTrigger}`}
             initialViewState={viewState3D}
             onLoad={handleCesiumLoad}
             onViewerRef={(viewer) => {
               setCesiumInstance(viewer);
               // Ensure viewer is properly sized after ref is set
-              requestAnimationFrame(() => viewer.resize());
+              // Add a small delay to ensure the viewer is fully initialized
+              setTimeout(() => {
+                try {
+                  if (viewer && !viewer.isDestroyed()) {
+                    viewer.resize();
+                  }
+                } catch (error) {
+                  logger.warn('Error resizing Cesium viewer', error);
+                }
+              }, 100);
             }}
           />
         </div>
