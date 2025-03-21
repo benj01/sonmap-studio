@@ -81,6 +81,11 @@ function MapContainerInner({
           <div className="w-[300px] border border-border rounded-lg shadow-md overflow-auto bg-background">
             {projectId ? (
               <LayerPanel defaultCollapsed={false}>
+                {mapboxLoaded && cesiumLoaded && (
+                  <div className="p-4 border-b border-border">
+                    <SyncTo3DButton />
+                  </div>
+                )}
                 <LayerList projectId={projectId} defaultVisibility={true} />
               </LayerPanel>
             ) : (
@@ -96,11 +101,6 @@ function MapContainerInner({
               initialViewState={initialViewState2D} 
               onLoad={handleMapboxLoad}
             />
-            {mapboxLoaded && cesiumLoaded && (
-              <div className="absolute bottom-4 right-4 z-[1000]">
-                <SyncTo3DButton />
-              </div>
-            )}
           </div>
         </div>
         

@@ -55,14 +55,15 @@ export function SyncTo3DButton() {
 
   return (
     <Button
-      variant="outline"
-      size="icon"
+      variant="default"
+      size="default"
       onClick={handleSync}
       disabled={!map || !viewer || isSyncing}
-      className="bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60"
-      title="Synchronize 3D view with 2D view"
+      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
+      title="Synchronize selected layers and view to 3D map"
     >
-      <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
+      <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
+      <span>Synchronize to 3D</span>
     </Button>
   );
 } 
