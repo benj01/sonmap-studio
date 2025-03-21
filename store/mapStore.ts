@@ -20,11 +20,18 @@ const logger = {
   }
 };
 
+export interface LayerMetadata {
+  name: string;
+  type: string;
+  properties: Record<string, any>;
+}
+
 export interface LayerState {
   id: string;
   sourceId?: string;
   visible: boolean;
   added: boolean;
+  metadata?: LayerMetadata;
 }
 
 export interface ViewState {
@@ -51,7 +58,7 @@ interface MapState {
   cesiumInstance: any | null;
   // Actions
   setLayerVisibility: (layerId: string, visible: boolean) => void;
-  addLayer: (layerId: string, initialVisibility?: boolean, sourceId?: string) => void;
+  addLayer: (layerId: string, initialVisibility?: boolean, sourceId?: string, metadata?: LayerMetadata) => void;
   removeLayer: (layerId: string) => void;
   setViewState2D: (state: ViewState) => void;
   setViewState3D: (state: CesiumViewState) => void;
@@ -92,16 +99,17 @@ export const useMapStore = create<MapState>()(
         });
       },
 
-      addLayer: (layerId, initialVisibility = true, sourceId) => {
+      addLayer: (layerId, initialVisibility = true, sourceId, metadata) => {
         set((state) => {
           const newLayers = new Map(state.layers);
           newLayers.set(layerId, {
             id: layerId,
             sourceId,
             visible: initialVisibility,
-            added: false
+            added: false,
+            metadata
           });
-          logger.debug('Layer added', { layerId, sourceId, initialVisibility });
+          logger.debug('Layer added', { layerId, sourceId, initialVisibility, metadata });
           return { layers: newLayers };
         });
       },

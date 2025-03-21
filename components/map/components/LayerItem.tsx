@@ -340,7 +340,10 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
           <EyeOff className="h-4 w-4" />
         )}
       </Button>
-      <span className="text-sm flex-1 truncate">{layer.name}</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium truncate">{layer.name}</div>
+        <div className="text-xs text-muted-foreground truncate">{layer.type}</div>
+      </div>
       <Button
         variant="ghost"
         size="icon"

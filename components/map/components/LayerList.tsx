@@ -73,7 +73,11 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
         
         // Add fetched layers to the store with default visibility
         data?.forEach(layer => {
-          addLayer(layer.id, defaultVisibility, layer.properties?.sourceId);
+          addLayer(layer.id, defaultVisibility, layer.properties?.sourceId, {
+            name: layer.name || `Layer ${layer.id.slice(0, 8)}`,
+            type: layer.type || 'default',
+            properties: layer.properties || {}
+          });
         });
       } catch (err) {
         const error = err as Error;
@@ -94,9 +98,9 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
   // Convert Map to array for rendering
   const layerArray = Array.from(layers.entries()).map(([id, state]) => ({
     id,
-    name: id, // You might want to store the name in the layer state
-    type: 'default', // You might want to store the type in the layer state
-    properties: {} // You might want to store properties in the layer state
+    name: state.metadata?.name || `Layer ${id.slice(0, 8)}`,
+    type: state.metadata?.type || 'default',
+    properties: state.metadata?.properties || {}
   }));
 
   if (loading) {
