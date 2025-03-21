@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import { useMapContext } from './useMapContext';
 import { useCesium } from '../context/CesiumContext';
 import { useSharedLayers } from '../context/SharedLayerContext';
@@ -33,11 +33,38 @@ export interface SyncOptions {
   includeFeatures?: boolean;
 }
 
+// Helper hook to safely handle layer data
+function useSelectedLayerData(layerId: string | undefined) {
+  const { data } = useLayerData(layerId || '');
+  return layerId ? data : null;
+}
+
 export function useSyncTo3D() {
   const { map } = useMapContext();
   const { viewer } = useCesium();
   const { layers, selectedLayers } = useSharedLayers();
   const { syncViews } = useViewSync();
+  
+  // Track loading state
+  const [isLoading, setIsLoading] = useState(false);
+  const mountedRef = useRef(true);
+
+  // Create refs for the latest values to use in async operations
+  const selectedLayersRef = useRef(selectedLayers);
+  const layersRef = useRef(layers);
+
+  // Update refs when values change
+  useEffect(() => {
+    selectedLayersRef.current = selectedLayers;
+    layersRef.current = layers;
+  }, [selectedLayers, layers]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const syncTo3D = useCallback(async (options: SyncOptions) => {
     if (!map || !viewer) {
@@ -45,7 +72,13 @@ export function useSyncTo3D() {
       return;
     }
 
+    if (isLoading) {
+      logger.warn('Sync already in progress, skipping');
+      return;
+    }
+
     try {
+      setIsLoading(true);
       logger.info('Starting 2D to 3D synchronization', options);
 
       // 1. Sync view state
@@ -62,33 +95,43 @@ export function useSyncTo3D() {
       }
 
       // 2. Sync selected layers
-      if (options.includeLayers) {
-        logger.debug('Syncing selected layers', { selectedLayers });
+      if (options.includeLayers && selectedLayersRef.current.length > 0) {
+        logger.debug('Syncing selected layers', { selectedLayers: selectedLayersRef.current });
+        
         // Clear existing 3D layers
         viewer.entities.removeAll();
         viewer.imageryLayers.removeAll();
         viewer.scene.primitives.removeAll();
 
-        // Add selected layers to 3D view
-        for (const layerId of selectedLayers) {
-          const layer = layers.find(l => l.id === layerId);
+        // Process each selected layer sequentially
+        for (const layerId of selectedLayersRef.current) {
+          if (!mountedRef.current) {
+            logger.debug('Component unmounted, stopping sync');
+            return;
+          }
+
+          if (!layerId) continue;
+
+          const layer = layersRef.current.find(l => l.id === layerId);
           if (!layer) {
             logger.warn('Selected layer not found', { layerId });
             continue;
           }
 
           try {
-            // Get layer data including features
-            const { data: layerData } = useLayerData(layerId);
-            if (!layerData) {
-              logger.warn('No layer data available', { layerId });
-              continue;
+            // Fetch layer data
+            const response = await fetch(`/api/v1/layers/${layerId}`);
+            if (!response.ok) {
+              throw new Error(`Failed to fetch layer data: ${response.statusText}`);
             }
+            const layerData = await response.json();
+
+            if (!mountedRef.current) return;
 
             logger.debug('Converting layer to 3D', {
               layerId,
               type: layer.type,
-              featureCount: layerData.features.length
+              featureCount: layerData.features?.length || 0
             });
 
             // Prepare layer with GeoJSON data
@@ -98,7 +141,7 @@ export function useSyncTo3D() {
                 ...layer.metadata,
                 geojson: {
                   type: 'FeatureCollection',
-                  features: layerData.features
+                  features: layerData.features || []
                 }
               }
             };
@@ -106,6 +149,8 @@ export function useSyncTo3D() {
             const adapter = getLayerAdapter(layer.type);
             const cesiumLayer = await adapter.to3D(layerWithData);
             
+            if (!mountedRef.current) return;
+
             // Add layer based on type
             switch (cesiumLayer.type) {
               case 'vector':
@@ -139,12 +184,18 @@ export function useSyncTo3D() {
         }
       }
 
-      logger.info('2D to 3D synchronization complete');
+      if (mountedRef.current) {
+        logger.info('2D to 3D synchronization complete');
+      }
     } catch (error) {
       logger.error('Error during 2D to 3D synchronization', error);
       throw error;
+    } finally {
+      if (mountedRef.current) {
+        setIsLoading(false);
+      }
     }
-  }, [map, viewer, layers, selectedLayers, syncViews]);
+  }, [map, viewer, syncViews]);
 
-  return { syncTo3D };
+  return { syncTo3D, isLoading };
 } 

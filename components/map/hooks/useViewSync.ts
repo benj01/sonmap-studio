@@ -49,39 +49,30 @@ export function useViewSync() {
         throw new Error('Coordinates out of valid range');
       }
 
-      // Convert zoom level to height using a more accurate formula
-      // At zoom level 0, one tile covers 360 degrees
-      // At zoom level z, one tile covers 360/2^z degrees
-      const zoomScale = Math.pow(2, state.zoom);
-      const degPerTile = 360 / zoomScale;
+      // Convert zoom level to height using a more gradual scale
+      // Base height at zoom level 0 (fully zoomed out)
+      const baseHeight = 20000000; // meters
+      // Minimum height at maximum zoom
+      const minHeight = 100; // meters
       
-      // Convert degrees to meters at the given latitude
-      const metersPerDegree = 111319.9; // approximately at equator
-      const metersPerDegreeAtLat = metersPerDegree * Math.cos(Cesium.Math.toRadians(latitude));
-      
-      // Calculate height based on field of view and visible extent
-      const fovRadians = Cesium.Math.toRadians(60); // Typical FOV
-      const visibleExtentMeters = degPerTile * metersPerDegreeAtLat;
-      const height = (visibleExtentMeters / 2) / Math.tan(fovRadians / 2);
-
-      // Clamp height to reasonable values (in meters)
-      const clampedHeight = Math.max(100, Math.min(height, 20000000));
+      // Calculate height using exponential scale
+      // This creates a more gradual zoom effect
+      const zoomFactor = Math.pow(0.5, state.zoom);
+      const height = Math.max(minHeight, baseHeight * zoomFactor);
 
       logger.debug('Converting 2D to 3D view state', {
         from: state,
         calculatedHeight: height,
-        clampedHeight,
         zoom: state.zoom,
-        degPerTile,
-        visibleExtentMeters
+        zoomFactor
       });
 
       return {
         longitude,
         latitude,
-        height: clampedHeight,
+        height,
         heading: state.bearing ? -state.bearing : 0,
-        pitch: -90 // Always look straight down
+        pitch: state.pitch ? state.pitch : -45 // Use a 45-degree tilt by default
       };
     } catch (error) {
       logger.error('Error converting 2D to 3D view state', error);
@@ -89,7 +80,7 @@ export function useViewSync() {
         longitude: 0,
         latitude: 0,
         height: 10000000,
-        pitch: -90
+        pitch: -45
       };
     }
   }, []);
