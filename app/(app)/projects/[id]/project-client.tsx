@@ -12,6 +12,7 @@ import { FileManager } from '@/components/files/components/manager'
 import { useEffect, useState } from 'react'
 import { MapContainer } from '@/components/map/components/MapContainer'
 import Link from 'next/link'
+import { cn } from '@/lib/utils'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -31,6 +32,7 @@ interface ProjectClientProps {
 
 export default function ProjectClient({ projectId, searchParams }: ProjectClientProps) {
   const [project, setProject] = useState<Project | null>(null)
+  const [activeTab, setActiveTab] = useState('map')
   const supabase = createClient()
   const router = useRouter()
   const { toast } = useToast()
@@ -98,41 +100,32 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
   }
 
   return (
-    <div className="container py-8">
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center space-x-4">
-          <Button
-            variant="ghost"
-            onClick={() => router.back()}
-          >
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back
-          </Button>
+    <div className="container mx-auto py-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Link href="/projects">
+            <Button variant="ghost" size="icon">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+          </Link>
           <div>
             <h1 className="text-2xl font-bold">{project?.name || 'Loading...'}</h1>
-            {project?.description && (
-              <p className="text-muted-foreground">{project.description}</p>
-            )}
+            <p className="text-sm text-muted-foreground">
+              {project?.description || 'No description'}
+            </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <Link href={`/projects/${projectId}/test-import`} passHref>
-            <Button variant="outline" size="sm">
-              <Beaker className="mr-2 h-4 w-4" />
-              Test Import
-            </Button>
-          </Link>
-          <Button
-            variant="outline"
-            onClick={() => router.push(`/projects/${projectId}/settings`)}
-          >
-            <Settings className="mr-2 h-4 w-4" />
+          <Button variant="outline" size="sm">
+            <Settings className="h-4 w-4 mr-2" />
             Settings
           </Button>
         </div>
       </div>
 
-      <Tabs defaultValue="map" className="space-y-4">
+      {/* Tabs */}
+      <Tabs defaultValue="map" className="space-y-4" onValueChange={setActiveTab}>
         <TabsList>
           <TabsTrigger value="map">
             <Map className="mr-2 h-4 w-4" />
@@ -155,8 +148,11 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
                 Visualize your project data on the map. Toggle between 2D and 3D views using the control in the top right.
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex-1">
-              <div className="relative h-full bg-muted rounded-lg overflow-hidden">
+            <CardContent className="flex-1 relative">
+              <div className={cn(
+                "absolute inset-0 rounded-lg overflow-hidden",
+                activeTab === 'map' ? 'visible' : 'invisible'
+              )}>
                 <MapContainer 
                   initialViewState2D={{
                     center: [0, 0],
@@ -176,7 +172,7 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
         <TabsContent value="files" className="space-y-4">
           <FileManager projectId={projectId} />
         </TabsContent>
-        <TabsContent value="members" className="space-y-4">
+        <TabsContent value="members">
           <Card>
             <CardHeader>
               <CardTitle>Team Members</CardTitle>

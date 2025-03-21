@@ -31,9 +31,10 @@ const logger = {
 interface MapViewProps {
   initialViewState?: ViewState;
   onLoad?: () => void;
+  onMapRef?: (map: mapboxgl.Map) => void;
 }
 
-export function MapView({ initialViewState, onLoad }: MapViewProps) {
+export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
   const INIT_DELAY = 500;
   const mapContainer = useRef<HTMLDivElement>(null);
   const { setMap } = useMapContext();
@@ -177,6 +178,7 @@ export function MapView({ initialViewState, onLoad }: MapViewProps) {
           if (!hasLoadedRef.current) {
             hasLoadedRef.current = true;
             onLoad?.();
+            onMapRef?.(map);
           }
         });
 
@@ -245,7 +247,7 @@ export function MapView({ initialViewState, onLoad }: MapViewProps) {
         mapInstanceRef.current = null;
       }
     };
-  }, [setMap, onLoad]);
+  }, [setMap, onLoad, onMapRef]);
 
   return (
     <div 

@@ -37,6 +37,7 @@ interface CesiumViewProps {
   className?: string;
   initialViewState?: CesiumViewState;
   onLoad?: () => void;
+  onViewerRef?: (viewer: Cesium.Viewer) => void;
 }
 
 // Use a static ID for the Cesium container
@@ -49,7 +50,8 @@ export function CesiumView({
     longitude: 0,
     height: 10000000
   },
-  onLoad
+  onLoad,
+  onViewerRef
 }: CesiumViewProps) {
   const { setViewer, viewer } = useCesium();
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');

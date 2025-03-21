@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapView } from './MapView';
 import { CesiumView } from './cesium/CesiumView';
 import { CesiumProvider } from '../context/CesiumContext';
@@ -60,6 +60,9 @@ function MapContainerInner({
 }: MapContainerProps) {
   const [mapboxLoaded, setMapboxLoaded] = useState(false);
   const [cesiumLoaded, setCesiumLoaded] = useState(false);
+  const mapRef = useRef<mapboxgl.Map | null>(null);
+  const cesiumRef = useRef<any>(null);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
 
   const handleMapboxLoad = useCallback(() => {
     setMapboxLoaded(true);
@@ -71,8 +74,68 @@ function MapContainerInner({
     logger.info('Cesium viewer loaded successfully');
   }, []);
 
+  // Handle map resize when container becomes visible
+  useEffect(() => {
+    const container = document.querySelector('.map-container');
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      // Ensure maps are properly sized even when container visibility changes
+      requestAnimationFrame(() => {
+        if (mapRef.current) {
+          mapRef.current.resize();
+        }
+        if (cesiumRef.current) {
+          cesiumRef.current.resize();
+        }
+      });
+    });
+
+    resizeObserver.observe(container);
+    resizeObserverRef.current = resizeObserver;
+
+    // Also handle visibility changes
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (mapRef.current) {
+          mapRef.current.resize();
+        }
+        if (cesiumRef.current) {
+          cesiumRef.current.resize();
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      resizeObserver.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, []);
+
+  // Cleanup function
+  useEffect(() => {
+    return () => {
+      if (resizeObserverRef.current) {
+        resizeObserverRef.current.disconnect();
+      }
+      // Only cleanup map instances if we're actually unmounting the component
+      // not just hiding it with CSS
+      const mapContainer = mapRef.current?.getContainer();
+      const cesiumContainer = cesiumRef.current?.container;
+      
+      if (mapContainer && document.body.contains(mapContainer)) {
+        mapRef.current?.remove();
+      }
+      if (cesiumContainer && document.body.contains(cesiumContainer)) {
+        cesiumRef.current?.destroy();
+      }
+    };
+  }, []);
+
   return (
-    <div className="absolute inset-0 flex flex-col overflow-hidden">
+    <div className="absolute inset-0 flex flex-col overflow-hidden map-container">
       {/* Map Views Container */}
       <div className="flex-1 flex flex-col gap-4 p-4 bg-background h-full">
         {/* Top row: Layer Panel + 2D Map */}
@@ -100,6 +163,11 @@ function MapContainerInner({
             <MapView 
               initialViewState={initialViewState2D} 
               onLoad={handleMapboxLoad}
+              onMapRef={(map) => {
+                mapRef.current = map;
+                // Ensure map is properly sized after ref is set
+                requestAnimationFrame(() => map.resize());
+              }}
             />
           </div>
         </div>
@@ -109,6 +177,11 @@ function MapContainerInner({
           <CesiumView 
             initialViewState={initialViewState3D}
             onLoad={handleCesiumLoad}
+            onViewerRef={(viewer) => {
+              cesiumRef.current = viewer;
+              // Ensure viewer is properly sized after ref is set
+              requestAnimationFrame(() => viewer.resize());
+            }}
           />
         </div>
       </div>
