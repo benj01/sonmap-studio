@@ -142,8 +142,8 @@ export function LayerList({ projectId, defaultVisibility = true }: LayerListProp
   }
 
   return (
-    <div className="space-y-2">
-      <div className="px-4 py-2 text-sm text-muted-foreground">
+    <div className="space-y-1">
+      <div className="text-xs text-muted-foreground mb-2">
         {selectedLayers.length} layer{selectedLayers.length !== 1 ? 's' : ''} selected
       </div>
       {layers.map(layer => (

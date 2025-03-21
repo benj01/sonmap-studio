@@ -34,13 +34,13 @@ export function LayerPanel({ children, defaultCollapsed = false }: LayerPanelPro
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
 
   return (
-    <div className="relative">
-      <Card className={`bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-all duration-300 ${isCollapsed ? 'w-12' : 'w-80'}`}>
-        <div className="flex items-center justify-between p-4 border-b">
-          {!isCollapsed && <h3 className="text-lg font-semibold">Layers</h3>}
+    <div className="relative h-full">
+      <Card className={`h-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-all duration-300 ${isCollapsed ? 'w-12' : 'w-full'}`}>
+        <div className="flex items-center justify-between p-2 border-b">
+          {!isCollapsed && <h3 className="text-base font-semibold">Layers</h3>}
           <Button
             variant="ghost"
-            size="icon"
+            size="sm"
             onClick={() => setIsCollapsed(!isCollapsed)}
             className="ml-auto"
           >
@@ -48,8 +48,8 @@ export function LayerPanel({ children, defaultCollapsed = false }: LayerPanelPro
           </Button>
         </div>
         {!isCollapsed && (
-          <ScrollArea className="h-[calc(100vh-8rem)]">
-            <div className="p-4">
+          <ScrollArea className="h-[calc(100%-2.5rem)]">
+            <div className="p-2">
               {children}
             </div>
           </ScrollArea>

@@ -2,7 +2,7 @@
 
 import { LogManager } from '@/core/logging/log-manager';
 import { useEffect, useRef } from 'react';
-import { Eye, EyeOff, Settings, AlertCircle } from 'lucide-react';
+import { Eye, EyeOff, Settings, AlertCircle, Maximize } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useMapContext } from '../hooks/useMapContext';
@@ -341,27 +341,88 @@ export function LayerItem({ layer, className = '' }: LayerItemProps) {
     toggleSelection(layer.id);
   };
 
+  const handleZoomToLayer = () => {
+    if (!map || !data?.features?.length) return;
+
+    const bounds = new mapboxgl.LngLatBounds();
+    data.features.forEach(feature => {
+      if (!feature.geometry) return;
+      
+      switch (feature.geometry.type) {
+        case 'Point': {
+          const point = feature.geometry as GeoJSON.Point;
+          bounds.extend(point.coordinates as [number, number]);
+          break;
+        }
+        case 'LineString': {
+          const line = feature.geometry as GeoJSON.LineString;
+          line.coordinates.forEach(coord => bounds.extend(coord as [number, number]));
+          break;
+        }
+        case 'Polygon': {
+          const polygon = feature.geometry as GeoJSON.Polygon;
+          polygon.coordinates[0].forEach(coord => bounds.extend(coord as [number, number]));
+          break;
+        }
+        case 'MultiPoint': {
+          const multiPoint = feature.geometry as GeoJSON.MultiPoint;
+          multiPoint.coordinates.forEach(coord => bounds.extend(coord as [number, number]));
+          break;
+        }
+        case 'MultiLineString': {
+          const multiLine = feature.geometry as GeoJSON.MultiLineString;
+          multiLine.coordinates.forEach(line => 
+            line.forEach(coord => bounds.extend(coord as [number, number]))
+          );
+          break;
+        }
+        case 'MultiPolygon': {
+          const multiPolygon = feature.geometry as GeoJSON.MultiPolygon;
+          multiPolygon.coordinates.forEach(polygon => 
+            polygon[0].forEach(coord => bounds.extend(coord as [number, number]))
+          );
+          break;
+        }
+      }
+    });
+
+    map.fitBounds(bounds, {
+      padding: 50,
+      animate: true,
+      maxZoom: 18
+    });
+  };
+
   return (
-    <div className={`flex items-center justify-between p-2 hover:bg-accent rounded-md ${className}`}>
-      <div className="flex items-center space-x-2">
+    <div className={`flex items-center justify-between py-1 px-2 hover:bg-accent/50 rounded-sm ${className}`}>
+      <div className="flex items-center gap-1.5">
         <Checkbox
           checked={isSelected}
           onCheckedChange={handleSelectionToggle}
-          className="h-4 w-4"
+          className="h-3.5 w-3.5"
         />
-        <span className="text-sm">{layer.name}</span>
+        <span className="text-xs truncate">{layer.name}</span>
       </div>
-      <button
-        onClick={handleVisibilityToggle}
-        className="p-1 hover:bg-accent rounded"
-        title={layers.get(layerId) ?? true ? 'Hide layer' : 'Show layer'}
-      >
-        {layers.get(layerId) ?? true ? (
-          <Eye className="h-4 w-4" />
-        ) : (
-          <EyeOff className="h-4 w-4" />
-        )}
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={handleZoomToLayer}
+          className="p-0.5 hover:bg-accent rounded-sm"
+          title="Zoom to layer"
+        >
+          <Maximize className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={handleVisibilityToggle}
+          className="p-0.5 hover:bg-accent rounded-sm"
+          title={layers.get(layerId) ?? true ? 'Hide layer' : 'Show layer'}
+        >
+          {layers.get(layerId) ?? true ? (
+            <Eye className="h-3.5 w-3.5" />
+          ) : (
+            <EyeOff className="h-3.5 w-3.5" />
+          )}
+        </button>
+      </div>
     </div>
   );
 }

@@ -74,37 +74,44 @@ function MapContainerInner({
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden">
       {/* Map Views Container */}
-      <div className="flex-1 grid grid-rows-2 gap-4 p-4 bg-background">
-        {/* 2D Map View (Top) */}
-        <div className="relative border border-border rounded-lg shadow-md overflow-hidden">
-          <MapView 
-            initialViewState={initialViewState2D} 
-            onLoad={handleMapboxLoad}
-          />
-          {mapboxLoaded && cesiumLoaded && (
-            <div className="absolute bottom-4 right-4 z-[1000]">
-              <SyncTo3DButton />
-            </div>
-          )}
+      <div className="flex-1 flex flex-col gap-4 p-4 bg-background h-full">
+        {/* Top row: Layer Panel + 2D Map */}
+        <div className="flex gap-4" style={{ height: '45%' }}>
+          {/* Layer Panel - Always visible */}
+          <div className="w-[300px] border border-border rounded-lg shadow-md overflow-auto bg-background">
+            {projectId ? (
+              <LayerPanel defaultCollapsed={false}>
+                <LayerList projectId={projectId} defaultVisibility={true} />
+              </LayerPanel>
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                No project selected
+              </div>
+            )}
+          </div>
+
+          {/* 2D Map View */}
+          <div className="flex-1 relative border border-border rounded-lg shadow-md overflow-hidden min-w-0">
+            <MapView 
+              initialViewState={initialViewState2D} 
+              onLoad={handleMapboxLoad}
+            />
+            {mapboxLoaded && cesiumLoaded && (
+              <div className="absolute bottom-4 right-4 z-[1000]">
+                <SyncTo3DButton />
+              </div>
+            )}
+          </div>
         </div>
         
-        {/* 3D Map View (Bottom) */}
-        <div className="relative border border-border rounded-lg shadow-md overflow-hidden">
+        {/* Bottom row: 3D Map View */}
+        <div className="relative border border-border rounded-lg shadow-md overflow-hidden" style={{ height: '55%' }}>
           <CesiumView 
             initialViewState={initialViewState3D}
             onLoad={handleCesiumLoad}
           />
         </div>
       </div>
-
-      {/* Layer Panel - Always on top, collapsed by default */}
-      {projectId && (
-        <div className="absolute top-4 left-4 pointer-events-auto z-[1000]">
-          <LayerPanel defaultCollapsed={true}>
-            <LayerList projectId={projectId} defaultVisibility={true} />
-          </LayerPanel>
-        </div>
-      )}
     </div>
   );
 }
