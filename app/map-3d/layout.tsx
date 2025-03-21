@@ -4,7 +4,7 @@ export default function Map3DLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="h-full">
+    <div className="h-screen overflow-hidden">
       {children}
     </div>
   );

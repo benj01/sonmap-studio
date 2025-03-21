@@ -72,11 +72,11 @@ function MapContainerInner({
   }, []);
 
   return (
-    <div className={`relative w-full h-full ${className}`}>
+    <div className="absolute inset-0 flex flex-col overflow-hidden">
       {/* Map Views Container */}
-      <div className="grid grid-rows-2 w-full h-full">
+      <div className="flex-1 grid grid-rows-2 gap-4 p-4 bg-background">
         {/* 2D Map View (Top) */}
-        <div className="relative border-b border-border">
+        <div className="relative border border-border rounded-lg shadow-md overflow-hidden">
           <MapView 
             initialViewState={initialViewState2D} 
             onLoad={handleMapboxLoad}
@@ -89,7 +89,7 @@ function MapContainerInner({
         </div>
         
         {/* 3D Map View (Bottom) */}
-        <div className="relative">
+        <div className="relative border border-border rounded-lg shadow-md overflow-hidden">
           <CesiumView 
             initialViewState={initialViewState3D}
             onLoad={handleCesiumLoad}
@@ -97,11 +97,11 @@ function MapContainerInner({
         </div>
       </div>
 
-      {/* Layer Panel - Always on top */}
+      {/* Layer Panel - Always on top, collapsed by default */}
       {projectId && (
         <div className="absolute top-4 left-4 pointer-events-auto z-[1000]">
-          <LayerPanel>
-            <LayerList projectId={projectId} />
+          <LayerPanel defaultCollapsed={true}>
+            <LayerList projectId={projectId} defaultVisibility={true} />
           </LayerPanel>
         </div>
       )}

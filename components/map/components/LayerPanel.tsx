@@ -27,10 +27,11 @@ const logger = {
 
 interface LayerPanelProps {
   children: React.ReactNode;
+  defaultCollapsed?: boolean;
 }
 
-export function LayerPanel({ children }: LayerPanelProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+export function LayerPanel({ children, defaultCollapsed = false }: LayerPanelProps) {
+  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
 
   return (
     <div className="relative">

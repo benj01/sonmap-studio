@@ -147,16 +147,16 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
             Members
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="map" className="space-y-4">
-          <Card>
+        <TabsContent value="map" className="space-y-4 h-[calc(100vh-12rem)]">
+          <Card className="h-full flex flex-col">
             <CardHeader>
               <CardTitle>Map View</CardTitle>
               <CardDescription>
                 Visualize your project data on the map. Toggle between 2D and 3D views using the control in the top right.
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              <div className="relative h-[500px] bg-muted rounded-lg overflow-hidden">
+            <CardContent className="flex-1">
+              <div className="relative h-full bg-muted rounded-lg overflow-hidden">
                 <MapContainer 
                   initialViewState2D={{
                     center: [0, 0],

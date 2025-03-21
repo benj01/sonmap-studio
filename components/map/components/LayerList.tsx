@@ -29,9 +29,10 @@ const logger = {
 
 interface LayerListProps {
   projectId?: string;
+  defaultVisibility?: boolean;
 }
 
-export function LayerList({ projectId }: LayerListProps) {
+export function LayerList({ projectId, defaultVisibility = true }: LayerListProps) {
   const { layers, selectedLayers, getSelectedLayers, addLayer } = useSharedLayers();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
@@ -70,13 +71,13 @@ export function LayerList({ projectId }: LayerListProps) {
 
         logger.info('Layers loaded', { count: data?.length || 0 });
         
-        // Add fetched layers to the shared context
+        // Add fetched layers to the shared context with default visibility
         data?.forEach(layer => {
           addLayer({
             id: layer.id,
             name: layer.name,
             type: layer.type,
-            visible: true,
+            visible: defaultVisibility,
             selected: false,
             metadata: {
               sourceType: '2d',
