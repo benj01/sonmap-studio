@@ -119,7 +119,8 @@ export class GeometryValidator implements FeatureProcessor {
   private isValidPoint(coordinates: number[]): boolean {
     return (
       Array.isArray(coordinates) &&
-      coordinates.length >= 2 &&
+      coordinates.length >= 2 && // At least 2 coordinates (longitude, latitude)
+      coordinates.length <= 3 && // Maximum 3 coordinates (longitude, latitude, height)
       coordinates.every(coord => typeof coord === 'number' && !isNaN(coord))
     );
   }
@@ -143,7 +144,7 @@ export class GeometryValidator implements FeatureProcessor {
         return { isValid: false, reason: 'Invalid ring coordinates' };
       }
 
-      // First and last points must be the same
+      // First and last points must be the same (only checking longitude and latitude)
       const first = ring[0];
       const last = ring[ring.length - 1];
       if (!first || !last || first[0] !== last[0] || first[1] !== last[1]) {

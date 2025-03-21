@@ -37,27 +37,18 @@ interface LayerFeature {
   geojson: string;
 }
 
-function validateCoordinates(coordinates: any[]): boolean {
+function validateCoordinates(coordinates: any): boolean {
   if (!Array.isArray(coordinates)) return false;
   
-  // Handle different geometry types
-  if (coordinates.length >= 2) {
-    // Point coordinates [lng, lat] or [lng, lat, altitude]
-    const [lng, lat] = coordinates;
-    return (
-      typeof lng === 'number' &&
-      typeof lat === 'number' &&
-      lng >= -180 &&
-      lng <= 180 &&
-      lat >= -90 &&
-      lat <= 90
-    );
+  // Handle nested arrays (for polygons, etc.)
+  if (Array.isArray(coordinates[0])) {
+    return coordinates.every((coord: any[]) => validateCoordinates(coord));
   }
   
-  // Handle nested coordinate arrays (LineString, Polygon, etc.)
-  return coordinates.every(coord => 
-    Array.isArray(coord) ? validateCoordinates(coord) : false
-  );
+  // Handle single coordinate
+  return coordinates.length >= 2 && 
+         coordinates.length <= 3 && // Allow z-value
+         coordinates.every(c => typeof c === 'number' && !isNaN(c));
 }
 
 function validateGeometry(geometry: any): boolean {
@@ -68,7 +59,27 @@ function validateGeometry(geometry: any): boolean {
     if (geometry.type === 'LineString') {
       return Array.isArray(geometry.coordinates) && 
         geometry.coordinates.length >= 2 &&
-        geometry.coordinates.every((coord: any[]) => validateCoordinates(coord));
+        geometry.coordinates.every((coord: any[]) => 
+          Array.isArray(coord) && 
+          coord.length >= 2 && 
+          coord.length <= 3 && // Allow z-value
+          coord.every(c => typeof c === 'number' && !isNaN(c))
+        );
+    }
+    
+    // For Polygon, validate each ring
+    if (geometry.type === 'Polygon') {
+      return Array.isArray(geometry.coordinates) &&
+        geometry.coordinates.every((ring: any[]) =>
+          Array.isArray(ring) &&
+          ring.length >= 4 && // At least 4 points for a closed ring
+          ring.every((coord: any[]) =>
+            Array.isArray(coord) &&
+            coord.length >= 2 &&
+            coord.length <= 3 && // Allow z-value
+            coord.every(c => typeof c === 'number' && !isNaN(c))
+          )
+        );
     }
     
     // For other types, use general validation

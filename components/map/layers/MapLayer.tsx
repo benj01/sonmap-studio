@@ -2,6 +2,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import mapboxgl, { AnySourceData, LayerSpecification } from 'mapbox-gl';
 import { useMapContext } from '../hooks/useMapContext';
 import { LogManager } from '@/core/logging/log-manager';
+import { useSharedLayers } from '../context/SharedLayerContext';
 
 const SOURCE = 'MapLayer';
 const logManager = LogManager.getInstance();
@@ -40,6 +41,7 @@ export function MapLayer({
   beforeId,
 }: MapLayerProps) {
   const { map, addLayer, registerLayerAddition, isSourceLoaded } = useMapContext();
+  const { layers } = useSharedLayers();
   const sourceAddedRef = useRef(false);
   const layerAddedRef = useRef(false);
 
@@ -62,11 +64,13 @@ export function MapLayer({
 
       // Add layer if it doesn't exist
       if (!layerAddedRef.current && !map.getLayer(id)) {
-        const layerConfig: LayerSpecification = {
+        const { type, ...restLayer } = layer;
+        const layerConfig = {
           id,
           source: source.id,
-          ...layer,
-        };
+          type,
+          ...restLayer,
+        } as LayerSpecification;
 
         if (beforeId) {
           map.addLayer(layerConfig, beforeId);
@@ -127,6 +131,21 @@ export function MapLayer({
       }
     };
   }, [map, id, source, layer, initialVisibility, addLayer, addSourceAndLayer]);
+
+  // Handle visibility changes from shared context
+  useEffect(() => {
+    if (!map || !layerAddedRef.current) return;
+
+    const layer = layers.find(l => l.id === id);
+    if (layer) {
+      try {
+        map.setLayoutProperty(id, 'visibility', layer.visible ? 'visible' : 'none');
+        logger.debug('Updated layer visibility', { layerId: id, visible: layer.visible });
+      } catch (error) {
+        logger.error('Error updating layer visibility', { error, layerId: id });
+      }
+    }
+  }, [map, id, layers]);
 
   return null;
 } 
