@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import createClient from '@/utils/supabase/client';
 import { Database } from '@/types/supabase';
 import { LogManager } from '@/core/logging/log-manager';
@@ -22,6 +22,16 @@ const logger = {
     logManager.debug(SOURCE, message, data);
   }
 };
+
+// Cache for layer data
+const layerCache = new Map<string, {
+  data: LayerData;
+  timestamp: number;
+  subscribers: number;
+  isValid: boolean;
+}>();
+
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
 interface LayerData {
   id: string;
@@ -95,10 +105,63 @@ export function useLayerData(layerId: string) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
   const supabase = createClient();
+  const mounted = useRef(true);
+  const fetchingRef = useRef(false);
+  const cleanupRef = useRef(false);
+
+  useEffect(() => {
+    mounted.current = true;
+    cleanupRef.current = false;
+    
+    // Subscribe to cache
+    const cached = layerCache.get(layerId);
+    if (cached) {
+      cached.subscribers++;
+      if (cached.isValid) {
+        setData(cached.data);
+        setLoading(false);
+      }
+    }
+    
+    return () => {
+      mounted.current = false;
+      cleanupRef.current = true;
+      
+      // Unsubscribe from cache
+      const cached = layerCache.get(layerId);
+      if (cached) {
+        cached.subscribers--;
+        if (cached.subscribers === 0) {
+          cached.isValid = false; // Mark as invalid but keep data for potential reuse
+          if (Date.now() - cached.timestamp > CACHE_TTL) {
+            layerCache.delete(layerId); // Only delete if also expired
+          }
+        }
+      }
+    };
+  }, [layerId]);
 
   useEffect(() => {
     async function fetchLayerData() {
+      // Prevent concurrent fetches or fetching during cleanup
+      if (fetchingRef.current || cleanupRef.current) return;
+      fetchingRef.current = true;
+
       try {
+        // Check cache first
+        const cached = layerCache.get(layerId);
+        if (cached && cached.isValid && Date.now() - cached.timestamp < CACHE_TTL) {
+          logger.debug('Using cached layer data', { layerId });
+          if (mounted.current) {
+            setData(cached.data);
+            setLoading(false);
+          }
+          return;
+        }
+
+        // Skip if cleanup started
+        if (cleanupRef.current) return;
+
         logger.debug('Fetching layer data', { layerId });
         
         // First get the layer metadata
@@ -107,6 +170,9 @@ export function useLayerData(layerId: string) {
           .select('*')
           .eq('id', layerId)
           .single();
+
+        // Skip if cleanup started
+        if (cleanupRef.current) return;
 
         if (layerError) {
           logger.error('Layer metadata fetch error', { error: layerError });
@@ -119,11 +185,17 @@ export function useLayerData(layerId: string) {
 
         logger.debug('Layer metadata fetched', { name: layerData.name });
 
+        // Skip if cleanup started
+        if (cleanupRef.current) return;
+
         // Then get the features for this layer with PostGIS geometry
         const { data: features, error: featuresError } = await supabase
           .rpc('get_layer_features', {
             layer_id: layerId
           });
+
+        // Skip if cleanup started
+        if (cleanupRef.current) return;
 
         if (featuresError) {
           logger.error('Features fetch error', { error: featuresError });
@@ -133,6 +205,9 @@ export function useLayerData(layerId: string) {
         logger.debug('Features fetched', { 
           featureCount: features?.length || 0
         });
+
+        // Skip if cleanup started
+        if (cleanupRef.current) return;
 
         // Convert features to GeoJSON with validation
         const geoJsonFeatures: GeoJSON.Feature[] = [];
@@ -164,6 +239,9 @@ export function useLayerData(layerId: string) {
           }
         }
 
+        // Skip if cleanup started
+        if (cleanupRef.current) return;
+
         const preparedData = {
           id: layerData.id,
           name: layerData.name,
@@ -172,28 +250,32 @@ export function useLayerData(layerId: string) {
           features: geoJsonFeatures
         };
 
-        logger.info('Layer loaded', { 
-          name: preparedData.name,
-          featureCount: geoJsonFeatures.length,
-          invalidFeatures: (features || []).length - geoJsonFeatures.length
+        // Update cache
+        layerCache.set(layerId, {
+          data: preparedData,
+          timestamp: Date.now(),
+          subscribers: cached?.subscribers || 1,
+          isValid: true
         });
 
-        setData(preparedData);
+        if (mounted.current) {
+          setData(preparedData);
+        }
       } catch (err) {
         const error = err as Error;
         logger.error('Failed to load layer data', { error });
-        setError(error);
+        if (mounted.current) {
+          setError(error);
+        }
       } finally {
-        setLoading(false);
+        if (mounted.current) {
+          setLoading(false);
+        }
+        fetchingRef.current = false;
       }
     }
 
-    logger.debug('Initializing layer data fetch', { layerId });
     fetchLayerData();
-
-    return () => {
-      logger.debug('Cleaning up layer data', { layerId });
-    };
   }, [layerId]);
 
   return { data, loading, error };

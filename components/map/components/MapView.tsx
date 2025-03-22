@@ -43,9 +43,11 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
   const styleTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const isInitializingRef = useRef<boolean>(false);
   const hasLoadedRef = useRef<boolean>(false);
+  const cleanupRef = useRef<boolean>(false);
 
   useEffect(() => {
     mountedRef.current = true;
+    cleanupRef.current = false;
     
     const initializeMap = async () => {
       // If we've already loaded successfully, don't reinitialize
@@ -57,6 +59,12 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
       // Prevent concurrent initialization attempts
       if (isInitializingRef.current) {
         logger.debug('Map initialization already in progress, skipping');
+        return false;
+      }
+
+      // If cleanup has been triggered, don't initialize
+      if (cleanupRef.current) {
+        logger.debug('Cleanup in progress, skipping initialization');
         return false;
       }
 
@@ -152,6 +160,12 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
           })
         ]);
 
+        if (cleanupRef.current) {
+          logger.warn('Cleanup triggered during initialization, removing map');
+          map.remove();
+          return false;
+        }
+
         if (!mountedRef.current) {
           logger.warn('Component unmounted during initialization, cleaning up map');
           map.remove();
@@ -164,6 +178,8 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
 
         // Set up event handlers after successful initialization
         map.on('load', () => {
+          if (cleanupRef.current || !mountedRef.current) return;
+          
           logger.info('Map loaded successfully', {
             center: map.getCenter(),
             zoom: map.getZoom(),
@@ -180,7 +196,7 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
         });
 
         map.on('move', () => {
-          if (!map.loaded()) return; // Skip if map isn't loaded yet
+          if (!map.loaded() || cleanupRef.current) return;
           const center = map.getCenter();
           logger.debug('Map moved', {
             center: [center.lng, center.lat],
@@ -205,7 +221,7 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
       }
 
       const success = await initializeMap();
-      if (!success && mountedRef.current && !hasLoadedRef.current) {
+      if (!success && mountedRef.current && !hasLoadedRef.current && !cleanupRef.current) {
         initAttempts.current++;
         // Exponential backoff for retries
         const delay = Math.min(1000 * Math.pow(2, initAttempts.current), 5000);
@@ -225,6 +241,7 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
     return () => {
       logger.debug('Cleaning up map component');
       mountedRef.current = false;
+      cleanupRef.current = true;
       isInitializingRef.current = false;
       
       if (styleTimeoutRef.current) {
@@ -235,7 +252,7 @@ export function MapView({ initialViewState, onLoad, onMapRef }: MapViewProps) {
         clearTimeout(initTimeoutRef.current);
       }
 
-      if (mapInstanceRef.current && !hasLoadedRef.current) {
+      if (mapInstanceRef.current) {
         try {
           mapInstanceRef.current.remove();
         } catch (error) {

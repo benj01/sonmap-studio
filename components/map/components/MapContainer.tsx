@@ -59,6 +59,8 @@ export function MapContainer({
   const [cesiumLoaded, setCesiumLoaded] = useState(false);
   const [remountTrigger, setRemountTrigger] = useState(0);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const unmountingRef = useRef(false);
+  const intentionalCleanupRef = useRef(false);
 
   const {
     viewState2D,
@@ -71,8 +73,13 @@ export function MapContainer({
   // Subscribe to reset events
   useEffect(() => {
     const unsubscribe = useMapStore.subscribe((state: MapState) => {
-      if (!state.mapboxInstance && !state.cesiumInstance) {
-        // Both instances are null, trigger remount
+      // Only trigger remount if it's not an intentional cleanup or unmounting
+      // AND if both instances are null (complete reset)
+      if (!unmountingRef.current && 
+          !intentionalCleanupRef.current && 
+          !state.mapboxInstance && 
+          !state.cesiumInstance &&
+          remountTrigger === 0) { // Only remount if we haven't already triggered a remount
         setRemountTrigger(prev => prev + 1);
         setMapboxLoaded(false);
         setCesiumLoaded(false);
@@ -80,16 +87,20 @@ export function MapContainer({
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [remountTrigger]);
 
   const handleMapboxLoad = useCallback(() => {
-    setMapboxLoaded(true);
-    logger.info('Mapbox map loaded successfully');
+    if (!unmountingRef.current) {
+      setMapboxLoaded(true);
+      logger.info('Mapbox map loaded successfully');
+    }
   }, []);
 
   const handleCesiumLoad = useCallback(() => {
-    setCesiumLoaded(true);
-    logger.info('Cesium viewer loaded successfully');
+    if (!unmountingRef.current) {
+      setCesiumLoaded(true);
+      logger.info('Cesium viewer loaded successfully');
+    }
   }, []);
 
   // Handle map resize when container becomes visible
@@ -99,27 +110,29 @@ export function MapContainer({
 
     const resizeObserver = new ResizeObserver(() => {
       // Ensure maps are properly sized even when container visibility changes
-      requestAnimationFrame(() => {
-        const mapboxInstance = useMapStore.getState().mapboxInstance;
-        const cesiumInstance = useMapStore.getState().cesiumInstance;
-        
-        if (mapboxInstance && !mapboxInstance._removed) {
-          try {
-            mapboxInstance.resize();
-          } catch (error) {
-            logger.warn('Error resizing Mapbox instance', error);
-          }
-        }
-        if (cesiumInstance) {
-          try {
-            if (!cesiumInstance.isDestroyed()) {
-              cesiumInstance.resize();
+      if (!unmountingRef.current) {
+        requestAnimationFrame(() => {
+          const mapboxInstance = useMapStore.getState().mapboxInstance;
+          const cesiumInstance = useMapStore.getState().cesiumInstance;
+          
+          if (mapboxInstance && !mapboxInstance._removed) {
+            try {
+              mapboxInstance.resize();
+            } catch (error) {
+              logger.warn('Error resizing Mapbox instance', error);
             }
-          } catch (error) {
-            logger.warn('Error resizing Cesium instance', error);
           }
-        }
-      });
+          if (cesiumInstance) {
+            try {
+              if (!cesiumInstance.isDestroyed()) {
+                cesiumInstance.resize();
+              }
+            } catch (error) {
+              logger.warn('Error resizing Cesium instance', error);
+            }
+          }
+        });
+      }
     });
 
     resizeObserver.observe(container);
@@ -127,7 +140,7 @@ export function MapContainer({
 
     // Also handle visibility changes
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      if (!unmountingRef.current && document.visibilityState === 'visible') {
         const mapboxInstance = useMapStore.getState().mapboxInstance;
         const cesiumInstance = useMapStore.getState().cesiumInstance;
         
@@ -161,12 +174,19 @@ export function MapContainer({
   // Cleanup function
   useEffect(() => {
     return () => {
+      unmountingRef.current = true;
+      intentionalCleanupRef.current = true;
       if (resizeObserverRef.current) {
         resizeObserverRef.current.disconnect();
       }
       cleanup();
     };
   }, [cleanup]);
+
+  // Reset intentionalCleanupRef when remounting
+  useEffect(() => {
+    intentionalCleanupRef.current = false;
+  }, [remountTrigger]);
 
   return (
     <div className="absolute inset-0 flex flex-col overflow-hidden map-container">
@@ -194,16 +214,31 @@ export function MapContainer({
           </div>
 
           {/* 2D Map View */}
-          <div className="flex-1 relative border border-border rounded-lg shadow-md overflow-hidden min-w-0">
+          <div className="flex-1 border border-border rounded-lg shadow-md overflow-hidden">
             <MapView 
               key={`mapbox-${remountTrigger}`}
               initialViewState={viewState2D} 
               onLoad={handleMapboxLoad}
               onMapRef={(map) => {
-                setMapboxInstance(map);
-                // Ensure map is properly sized after ref is set
-                if (map && !map._removed) {
-                  requestAnimationFrame(() => map.resize());
+                if (!unmountingRef.current) {
+                  setMapboxInstance(map);
+                  // Ensure map is properly sized after ref is set
+                  if (map && !map._removed) {
+                    requestAnimationFrame(() => {
+                      try {
+                        map.resize();
+                        // Force a style reload to ensure layers are properly displayed
+                        if (map.isStyleLoaded()) {
+                          const currentStyle = map.getStyle();
+                          if (currentStyle) {
+                            map.setStyle(currentStyle);
+                          }
+                        }
+                      } catch (error) {
+                        logger.warn('Error resizing map or reloading style', error);
+                      }
+                    });
+                  }
                 }
               }}
             />
@@ -217,18 +252,19 @@ export function MapContainer({
             initialViewState={viewState3D}
             onLoad={handleCesiumLoad}
             onViewerRef={(viewer) => {
-              setCesiumInstance(viewer);
-              // Ensure viewer is properly sized after ref is set
-              // Add a small delay to ensure the viewer is fully initialized
-              setTimeout(() => {
-                try {
-                  if (viewer && !viewer.isDestroyed()) {
-                    viewer.resize();
+              if (!unmountingRef.current) {
+                setCesiumInstance(viewer);
+                // Ensure viewer is properly sized after ref is set
+                setTimeout(() => {
+                  try {
+                    if (viewer && !viewer.isDestroyed()) {
+                      viewer.resize();
+                    }
+                  } catch (error) {
+                    logger.warn('Error resizing Cesium viewer', error);
                   }
-                } catch (error) {
-                  logger.warn('Error resizing Cesium viewer', error);
-                }
-              }, 100);
+                }, 100);
+              }
             }}
           />
         </div>

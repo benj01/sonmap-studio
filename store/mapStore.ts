@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { LogManager } from '@/core/logging/log-manager';
+import { useFileEventStore } from './fileEventStore';
+import type { FileEvent } from './fileEventStore';
 
 const SOURCE = 'mapStore';
 const logManager = LogManager.getInstance();
@@ -24,6 +26,7 @@ export interface LayerMetadata {
   name: string;
   type: string;
   properties: Record<string, any>;
+  fileId?: string;
 }
 
 export interface LayerState {
@@ -66,6 +69,7 @@ export interface MapState {
   setCesiumInstance: (instance: any) => void;
   reset: () => void;
   cleanup: () => void;
+  handleFileDeleted: (fileId: string) => void;
 }
 
 export const useMapStore = create<MapState>()(
@@ -118,8 +122,73 @@ export const useMapStore = create<MapState>()(
       removeLayer: (layerId) => {
         set((state) => {
           const newLayers = new Map(state.layers);
+          const layer = newLayers.get(layerId);
+          
+          // Clean up map instances if they exist
+          if (layer) {
+            if (state.mapboxInstance?.getLayer(layerId)) {
+              state.mapboxInstance.removeLayer(layerId);
+            }
+            if (layer.sourceId && state.mapboxInstance?.getSource(layer.sourceId)) {
+              // Check if any other layers are using this source
+              let sourceInUse = false;
+              newLayers.forEach((l) => {
+                if (l.id !== layerId && l.sourceId === layer.sourceId) {
+                  sourceInUse = true;
+                }
+              });
+              
+              if (!sourceInUse) {
+                try {
+                  state.mapboxInstance.removeSource(layer.sourceId);
+                } catch (error) {
+                  logger.warn('Error removing source', { error, sourceId: layer.sourceId });
+                }
+              }
+            }
+            
+            if (state.cesiumInstance) {
+              // Add Cesium-specific cleanup if needed
+              // This would depend on how you're managing Cesium layers
+            }
+          }
+          
           newLayers.delete(layerId);
           logger.debug('Layer removed', { layerId });
+          return { layers: newLayers };
+        });
+      },
+
+      // Add a new method to handle file deletions
+      handleFileDeleted: (fileId: string) => {
+        set((state) => {
+          const newLayers = new Map(state.layers);
+          const layersToRemove: string[] = [];
+
+          // Find all layers associated with the deleted file
+          newLayers.forEach((layer, layerId) => {
+            if (layer.metadata?.fileId === fileId) {
+              layersToRemove.push(layerId);
+            }
+          });
+
+          // Remove each layer
+          layersToRemove.forEach(layerId => {
+            if (state.mapboxInstance?.getLayer(layerId)) {
+              state.mapboxInstance.removeLayer(layerId);
+            }
+            const layer = newLayers.get(layerId);
+            if (layer?.sourceId && state.mapboxInstance?.getSource(layer.sourceId)) {
+              try {
+                state.mapboxInstance.removeSource(layer.sourceId);
+              } catch (error) {
+                logger.warn('Error removing source', { error, sourceId: layer.sourceId });
+              }
+            }
+            newLayers.delete(layerId);
+          });
+
+          logger.debug('Layers removed for deleted file', { fileId, removedLayers: layersToRemove });
           return { layers: newLayers };
         });
       },
@@ -198,8 +267,18 @@ export const useMapStore = create<MapState>()(
       partialize: (state) => ({
         viewState2D: state.viewState2D,
         viewState3D: state.viewState3D,
-        // Only persist non-volatile state
       })
     }
   )
-); 
+);
+
+// Subscribe to file events
+if (typeof window !== 'undefined') {
+  const unsubscribe = useFileEventStore.subscribe((state) => {
+    const event = state.lastEvent;
+    if (event?.type === 'delete') {
+      const mapStore = useMapStore.getState();
+      mapStore.handleFileDeleted(event.fileId);
+    }
+  });
+} 
