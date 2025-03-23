@@ -45,6 +45,7 @@ export interface MapContainerProps {
     heading?: number;
     pitch?: number;
   };
+  projectId?: string;
 }
 
 export function MapContainer({
@@ -59,15 +60,25 @@ export function MapContainer({
   useEffect(() => {
     // Set initial view states if provided
     if (initialViewState2D) {
+      logger.debug('Setting initial 2D view state', initialViewState2D);
       setViewState2D({
-        center: [initialViewState2D.longitude, initialViewState2D.latitude],
-        zoom: initialViewState2D.zoom,
+        longitude: initialViewState2D.longitude ?? 0,
+        latitude: initialViewState2D.latitude ?? 0,
+        zoom: initialViewState2D.zoom ?? 1,
         pitch: initialViewState2D.pitch ?? 0,
         bearing: initialViewState2D.bearing ?? 0
       });
     }
+
     if (initialViewState3D) {
-      setViewState3D(initialViewState3D);
+      logger.debug('Setting initial 3D view state', initialViewState3D);
+      setViewState3D({
+        longitude: initialViewState3D.longitude ?? 0,
+        latitude: initialViewState3D.latitude ?? 0,
+        height: initialViewState3D.height ?? 10000000,
+        heading: initialViewState3D.heading ?? 0,
+        pitch: initialViewState3D.pitch ?? -45
+      });
     }
 
     // Cleanup on unmount

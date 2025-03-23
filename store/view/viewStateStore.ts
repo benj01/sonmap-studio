@@ -21,7 +21,8 @@ const logger = {
 };
 
 export interface ViewState2D {
-  center: [number, number];
+  longitude: number;
+  latitude: number;
   zoom: number;
   pitch: number;
   bearing: number;
@@ -31,6 +32,8 @@ export interface ViewState3D {
   latitude: number;
   longitude: number;
   height: number;
+  heading?: number;
+  pitch?: number;
 }
 
 interface ViewStateStore {
@@ -51,7 +54,8 @@ interface ViewState {
 
 const initialState: ViewState = {
   viewState2D: {
-    center: [0, 0] as [number, number],
+    longitude: 0,
+    latitude: 0,
     zoom: 1,
     pitch: 0,
     bearing: 0
@@ -107,9 +111,13 @@ export const viewStateSelectors = {
     return state.viewState3D;
   },
 
-  // Get center coordinates
-  getCenter: (state: ViewStateStore) => {
-    return state.viewState2D.center;
+  // Get coordinates
+  getLongitude2D: (state: ViewStateStore) => {
+    return state.viewState2D.longitude;
+  },
+
+  getLatitude2D: (state: ViewStateStore) => {
+    return state.viewState2D.latitude;
   },
 
   // Get zoom level
@@ -132,13 +140,12 @@ export const viewStateSelectors = {
     return state.viewState3D.height;
   },
 
-  // Get 3D latitude
-  getLatitude: (state: ViewStateStore) => {
+  // Get 3D coordinates
+  getLatitude3D: (state: ViewStateStore) => {
     return state.viewState3D.latitude;
   },
 
-  // Get 3D longitude
-  getLongitude: (state: ViewStateStore) => {
+  getLongitude3D: (state: ViewStateStore) => {
     return state.viewState3D.longitude;
   }
 };
@@ -152,8 +159,12 @@ export const useViewState3D = () => {
   return useViewStateStore(viewStateSelectors.getViewState3D);
 };
 
-export const useCenter = () => {
-  return useViewStateStore(viewStateSelectors.getCenter);
+export const useLongitude2D = () => {
+  return useViewStateStore(viewStateSelectors.getLongitude2D);
+};
+
+export const useLatitude2D = () => {
+  return useViewStateStore(viewStateSelectors.getLatitude2D);
 };
 
 export const useZoom = () => {
@@ -172,10 +183,10 @@ export const useHeight = () => {
   return useViewStateStore(viewStateSelectors.getHeight);
 };
 
-export const useLatitude = () => {
-  return useViewStateStore(viewStateSelectors.getLatitude);
+export const useLatitude3D = () => {
+  return useViewStateStore(viewStateSelectors.getLatitude3D);
 };
 
-export const useLongitude = () => {
-  return useViewStateStore(viewStateSelectors.getLongitude);
+export const useLongitude3D = () => {
+  return useViewStateStore(viewStateSelectors.getLongitude3D);
 }; 

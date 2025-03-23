@@ -13,6 +13,7 @@ import { useEffect, useState, useRef } from 'react'
 import { MapContainer } from '@/components/map/components/MapContainer'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
+import { env } from '@/env.mjs'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -178,8 +179,11 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
                 )}
               >
                 <MapContainer 
+                  accessToken={env.NEXT_PUBLIC_MAPBOX_TOKEN}
+                  style="mapbox://styles/mapbox/satellite-streets-v12"
                   initialViewState2D={{
-                    center: [0, 0],
+                    latitude: 0,
+                    longitude: 0,
                     zoom: 2
                   }}
                   initialViewState3D={{

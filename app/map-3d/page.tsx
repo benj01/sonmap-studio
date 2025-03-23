@@ -1,6 +1,7 @@
 'use client';
 
 import { MapContainer } from '@/components/map/components/MapContainer';
+import { env } from '@/env.mjs';
 
 export default function Map3DPage() {
   return (
@@ -14,8 +15,11 @@ export default function Map3DPage() {
       </div>
       <div className="flex-1 relative">
         <MapContainer 
+          accessToken={env.NEXT_PUBLIC_MAPBOX_TOKEN}
+          style="mapbox://styles/mapbox/satellite-streets-v12"
           initialViewState2D={{
-            center: [0, 0],
+            latitude: 0,
+            longitude: 0,
             zoom: 2
           }}
           initialViewState3D={{
