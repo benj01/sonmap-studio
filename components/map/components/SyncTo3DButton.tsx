@@ -1,9 +1,8 @@
 'use client';
 
-import { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { RefreshCw } from 'lucide-react';
-import { useMapStore } from '@/store/mapStore';
+import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
+import { useViewStateStore } from '@/store/view/viewStateStore';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'SyncTo3DButton';
@@ -25,48 +24,45 @@ const logger = {
 };
 
 export function SyncTo3DButton() {
-  const [isSyncing, setIsSyncing] = useState(false);
-  const { mapboxInstance, cesiumInstance, viewState2D, setViewState3D } = useMapStore();
+  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const { setViewState3D } = useViewStateStore();
 
-  const handleSync = async () => {
-    if (!mapboxInstance || !cesiumInstance || isSyncing) return;
+  const handleSync = () => {
+    if (!mapboxInstance) {
+      logger.warn('Cannot sync to 3D view: Mapbox instance not available');
+      return;
+    }
 
     try {
-      setIsSyncing(true);
-      logger.info('Starting 2D to 3D synchronization');
-
-      // Get current map center and zoom
       const center = mapboxInstance.getCenter();
       const zoom = mapboxInstance.getZoom();
 
-      // Convert to Cesium view state
-      // Note: This is a simplified conversion. You might want to add more sophisticated
-      // conversion logic based on your specific needs
+      // Convert zoom level to height (rough approximation)
+      const height = Math.pow(2, 20 - zoom) * 1000;
+
       setViewState3D({
         latitude: center.lat,
         longitude: center.lng,
-        height: Math.pow(2, 20 - zoom) // Simple height calculation based on zoom
+        height
       });
 
-      logger.info('View synchronization complete');
+      logger.info('Synced 2D view to 3D', {
+        latitude: center.lat,
+        longitude: center.lng,
+        height
+      });
     } catch (error) {
-      logger.error('Error during view synchronization', error);
-    } finally {
-      setIsSyncing(false);
+      logger.error('Error syncing to 3D view', error);
     }
   };
 
   return (
     <Button
-      variant="default"
-      size="default"
+      variant="outline"
       onClick={handleSync}
-      disabled={!mapboxInstance || !cesiumInstance || isSyncing}
-      className="w-full bg-primary hover:bg-primary/90 text-primary-foreground"
-      title="Synchronize view to 3D map"
+      disabled={!mapboxInstance}
     >
-      <RefreshCw className={`h-4 w-4 mr-2 ${isSyncing ? 'animate-spin' : ''}`} />
-      <span>Synchronize to 3D</span>
+      Sync to 3D
     </Button>
   );
 } 

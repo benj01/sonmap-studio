@@ -35,14 +35,18 @@ export function LayerPanel({ children, defaultCollapsed = false }: LayerPanelPro
 
   return (
     <div className="relative h-full">
-      <Card className={`h-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-all duration-300 ${isCollapsed ? 'w-12' : 'w-full'}`}>
+      <Card className={`h-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-all duration-300 ${isCollapsed ? 'w-12' : 'w-[300px]'}`}>
         <div className="flex items-center justify-between p-2 border-b">
           {!isCollapsed && <h3 className="text-base font-semibold">Layers</h3>}
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setIsCollapsed(!isCollapsed)}
+            onClick={() => {
+              setIsCollapsed(!isCollapsed);
+              logger.debug(`Layer panel ${isCollapsed ? 'expanded' : 'collapsed'}`);
+            }}
             className="ml-auto"
+            aria-label={isCollapsed ? 'Expand layer panel' : 'Collapse layer panel'}
           >
             {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </Button>
