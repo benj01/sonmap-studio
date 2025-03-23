@@ -36,53 +36,35 @@ export function MapView({ accessToken, style }: MapViewProps) {
   const { viewState2D, setViewState2D } = useViewStateStore();
 
   useEffect(() => {
-    if (!mapContainer.current) return;
+    if (!mapContainer.current || !accessToken || !style) {
+      logger.debug('MapView initialization skipped - missing requirements', {
+        hasContainer: !!mapContainer.current,
+        hasAccessToken: !!accessToken,
+        hasStyle: !!style
+      });
+      return;
+    }
 
-    // Debug log for access token and view state
-    logger.debug('MapView initialization', {
+    // Skip initialization if we already have a valid map instance
+    const existingMap = useMapInstanceStore.getState().mapInstances.mapbox.instance;
+    if (existingMap && !existingMap._removed) {
+      logger.debug('MapView initialization skipped - map already exists');
+      return;
+    }
+
+    logger.debug('MapView initialization starting', {
       hasAccessToken: !!accessToken,
       accessTokenLength: accessToken?.length,
       accessTokenStart: accessToken?.substring(0, 5),
-      style,
-      viewState2D
+      style
     });
 
-    if (!accessToken) {
-      const error = new Error('Mapbox access token is required');
-      logger.error('Error initializing Mapbox map', { 
-        error: error.message,
-        accessToken: 'undefined or empty'
-      });
-      setMapboxStatus('error', error.message);
-      return;
-    }
-
-    if (!style) {
-      const error = new Error('Mapbox style URL is required');
-      logger.error('Error initializing Mapbox map', { error: error.message });
-      setMapboxStatus('error', error.message);
-      return;
-    }
-
-    // Ensure we have valid coordinates
+    // Initialize view state values
     const longitude = viewState2D?.longitude ?? 0;
     const latitude = viewState2D?.latitude ?? 0;
     const zoom = viewState2D?.zoom ?? 1;
     const bearing = viewState2D?.bearing ?? 0;
     const pitch = viewState2D?.pitch ?? 0;
-
-    logger.debug('Initializing Mapbox map', {
-      hasContainer: !!mapContainer.current,
-      hasToken: !!accessToken,
-      style,
-      initialState: {
-        longitude,
-        latitude,
-        zoom,
-        bearing,
-        pitch
-      }
-    });
 
     mapboxgl.accessToken = accessToken;
     setMapboxStatus('initializing');
@@ -137,7 +119,14 @@ export function MapView({ accessToken, style }: MapViewProps) {
       setMapboxInstance(map);
 
       return () => {
+        // Only cleanup if component is truly unmounting
+        if (document.body.contains(mapContainer.current)) {
+          logger.debug('MapView cleanup skipped - container still in DOM');
+          return;
+        }
+
         if (!map._removed) {
+          logger.info('MapView cleanup starting - removing map instance');
           map.remove();
           setMapboxInstance(null);
           setMapboxStatus('initializing');

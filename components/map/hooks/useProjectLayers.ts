@@ -34,13 +34,30 @@ export function useProjectLayers(projectId: string) {
       try {
         logger.debug('Loading project layers', { projectId });
 
-        // Get all feature collections for this project's files
+        // First get the main shapefile that has been imported
+        const { data: mainFile, error: mainFileError } = await supabase
+          .from('project_files')
+          .select('*')
+          .eq('project_id', projectId)
+          .eq('is_imported', true)
+          .single();
+
+        if (mainFileError) {
+          throw mainFileError;
+        }
+
+        logger.debug('Found main imported file', { 
+          fileId: mainFile.id,
+          name: mainFile.name,
+          importMetadata: mainFile.import_metadata
+        });
+
+        // Get the feature collection and its layers
         const { data: collections, error: collectionsError } = await supabase
           .from('feature_collections')
           .select(`
             id,
             name,
-            project_file_id,
             layers (
               id,
               name,
@@ -48,28 +65,33 @@ export function useProjectLayers(projectId: string) {
               properties
             )
           `)
-          .eq('project_files.project_id', projectId)
-          .order('created_at', { ascending: false });
+          .eq('id', mainFile.import_metadata.collection_id)
+          .single();
 
         if (collectionsError) {
           throw collectionsError;
         }
 
-        // Add each layer to the store
-        collections?.forEach(collection => {
-          collection.layers?.forEach(layer => {
-            logger.debug('Adding layer to store', {
-              layerId: layer.id,
-              name: layer.name,
-              type: layer.type
-            });
+        logger.debug('Feature collection loaded', { 
+          collectionId: collections.id,
+          name: collections.name,
+          layerCount: collections.layers?.length
+        });
 
-            addLayer(layer.id, true, collection.id, {
-              name: layer.name,
-              type: layer.type,
-              properties: layer.properties || {},
-              fileId: collection.project_file_id
-            });
+        // Add each layer to the store
+        collections.layers?.forEach(layer => {
+          logger.debug('Adding layer to store', {
+            layerId: layer.id,
+            name: layer.name,
+            type: layer.type,
+            fileId: mainFile.id
+          });
+
+          addLayer(layer.id, true, collections.id, {
+            name: layer.name,
+            type: layer.type,
+            properties: layer.properties || {},
+            fileId: mainFile.id
           });
         });
 
