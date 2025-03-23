@@ -26,30 +26,65 @@ The application is experiencing React state management issues, specifically with
   - [x] `stores/map/mapInstanceStore.ts` - Map instance management
   - [x] `stores/view/viewStateStore.ts` - 2D/3D view state
 
-### Phase 2: State Normalization
-- [ ] Define new state structures:
+### Phase 2: State Normalization ✅
+- [x] Define new state structures:
   ```typescript
-  // Example structure (to be implemented)
-  interface LayerState {
+  // Implemented in layerStore.ts
+  interface NormalizedLayerState {
     byId: Record<string, Layer>;
     allIds: string[];
     metadata: Record<string, LayerMetadata>;
   }
 
-  interface VerificationState {
+  // Implemented in verificationStore.ts
+  interface NormalizedVerificationState {
     status: Record<string, VerificationStatus>;
     pending: string[];
     inProgress: string[];
     lastVerified: Record<string, number>;
   }
-  ```
 
-### Phase 3: Selector Implementation
-- [ ] Create typed selectors for each store:
-  - [ ] Layer selectors (getLayerById, getAllLayers, etc.)
-  - [ ] Verification selectors (getPendingVerifications, getVerificationStatus, etc.)
-  - [ ] Map instance selectors
-  - [ ] View state selectors
+  // Implemented in mapInstanceStore.ts
+  interface NormalizedMapInstanceState {
+    mapbox: {
+      instance: MapboxMap | null;
+      status: 'initializing' | 'ready' | 'error';
+      error?: string;
+    };
+    cesium: {
+      instance: any | null;
+      status: 'initializing' | 'ready' | 'error';
+      error?: string;
+    };
+  }
+  ```
+- [x] All stores now use normalized state structures
+- [x] Each store maintains its own normalized state with proper typing
+- [x] State updates are handled through immutable operations
+- [x] Proper error handling and status tracking implemented
+
+### Phase 3: Selector Implementation ✅
+- [x] Create typed selectors for each store:
+  - [x] Layer selectors:
+    - `getLayerById`, `getAllLayers`, `getVisibleLayers`
+    - `getLayerMetadata`, `getLayersByStatus`, `getLayersWithErrors`
+  - [x] Verification selectors:
+    - `getVerificationStatus`, `getPendingVerifications`
+    - `getInProgressVerifications`, `getLastVerified`
+    - `getLayersNeedingVerification`, `getLayersWithVerificationErrors`
+  - [x] Map instance selectors:
+    - `getMapboxInstance`, `getCesiumInstance`
+    - `getMapboxStatus`, `getCesiumStatus`
+    - `getMapboxError`, `getCesiumError`
+    - `areInstancesReady`, `hasInstanceError`
+  - [x] View state selectors:
+    - `getViewState2D`, `getViewState3D`
+    - `getCenter`, `getZoom`, `getPitch`, `getBearing`
+    - `getHeight`, `getLatitude`, `getLongitude`
+- [x] All selectors are properly typed and memoized
+- [x] Selectors follow normalized state structure
+- [x] Each selector has a corresponding custom hook
+- [x] Hooks are optimized to prevent unnecessary rerenders
 
 ### Phase 4: Hook Creation
 - [ ] Implement custom hooks for each domain:

@@ -20,46 +20,132 @@ const logger = {
   }
 };
 
+interface NormalizedMapInstanceState {
+  mapbox: {
+    instance: MapboxMap | null;
+    status: 'initializing' | 'ready' | 'error';
+    error?: string;
+  };
+  cesium: {
+    instance: any | null;
+    status: 'initializing' | 'ready' | 'error';
+    error?: string;
+  };
+}
+
 interface MapInstanceStore {
   // State
-  mapboxInstance: MapboxMap | null;
-  cesiumInstance: any | null;
+  mapInstances: NormalizedMapInstanceState;
   
   // Actions
   setMapboxInstance: (instance: MapboxMap | null) => void;
   setCesiumInstance: (instance: any | null) => void;
+  setMapboxStatus: (status: NormalizedMapInstanceState['mapbox']['status'], error?: string) => void;
+  setCesiumStatus: (status: NormalizedMapInstanceState['cesium']['status'], error?: string) => void;
   cleanup: () => void;
   reset: () => void;
 }
 
+const initialState: NormalizedMapInstanceState = {
+  mapbox: {
+    instance: null,
+    status: 'initializing'
+  },
+  cesium: {
+    instance: null,
+    status: 'initializing'
+  }
+};
+
 export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
   // Initial state
-  mapboxInstance: null,
-  cesiumInstance: null,
+  mapInstances: initialState,
 
   // Actions
   setMapboxInstance: (instance) => {
-    set({ mapboxInstance: instance });
-    logger.debug('Mapbox instance set', { hasInstance: !!instance });
+    set((state) => {
+      const updatedMapbox = {
+        ...state.mapInstances.mapbox,
+        instance,
+        status: instance ? 'ready' as const : 'initializing' as const
+      };
+
+      logger.debug('Mapbox instance set', { hasInstance: !!instance });
+      return {
+        mapInstances: {
+          ...state.mapInstances,
+          mapbox: updatedMapbox
+        }
+      };
+    });
   },
 
   setCesiumInstance: (instance) => {
-    set({ cesiumInstance: instance });
-    logger.debug('Cesium instance set', { hasInstance: !!instance });
+    set((state) => {
+      const updatedCesium = {
+        ...state.mapInstances.cesium,
+        instance,
+        status: instance ? 'ready' as const : 'initializing' as const
+      };
+
+      logger.debug('Cesium instance set', { hasInstance: !!instance });
+      return {
+        mapInstances: {
+          ...state.mapInstances,
+          cesium: updatedCesium
+        }
+      };
+    });
+  },
+
+  setMapboxStatus: (status, error) => {
+    set((state) => {
+      const updatedMapbox = {
+        ...state.mapInstances.mapbox,
+        status,
+        error
+      };
+
+      logger.debug('Mapbox status updated', { status, error });
+      return {
+        mapInstances: {
+          ...state.mapInstances,
+          mapbox: updatedMapbox
+        }
+      };
+    });
+  },
+
+  setCesiumStatus: (status, error) => {
+    set((state) => {
+      const updatedCesium = {
+        ...state.mapInstances.cesium,
+        status,
+        error
+      };
+
+      logger.debug('Cesium status updated', { status, error });
+      return {
+        mapInstances: {
+          ...state.mapInstances,
+          cesium: updatedCesium
+        }
+      };
+    });
   },
 
   cleanup: () => {
     set((state) => {
       // Cleanup map instances
-      if (state.mapboxInstance) {
-        state.mapboxInstance.remove();
+      if (state.mapInstances.mapbox.instance) {
+        state.mapInstances.mapbox.instance.remove();
       }
-      if (state.cesiumInstance) {
-        state.cesiumInstance.destroy();
+      if (state.mapInstances.cesium.instance) {
+        state.mapInstances.cesium.instance.destroy();
       }
+
       return {
-        mapboxInstance: null,
-        cesiumInstance: null
+        mapInstances: initialState
       };
     });
     logger.info('Map instances cleaned up');
@@ -68,18 +154,95 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
   reset: () => {
     set((state) => {
       // Clean up existing map instances
-      if (state.mapboxInstance) {
-        state.mapboxInstance.remove();
+      if (state.mapInstances.mapbox.instance) {
+        state.mapInstances.mapbox.instance.remove();
       }
-      if (state.cesiumInstance) {
-        state.cesiumInstance.destroy();
+      if (state.mapInstances.cesium.instance) {
+        state.mapInstances.cesium.instance.destroy();
       }
 
       return {
-        mapboxInstance: null,
-        cesiumInstance: null
+        mapInstances: initialState
       };
     });
     logger.info('Map instance store reset');
   }
-})); 
+}));
+
+// Map instance selectors
+export const mapInstanceSelectors = {
+  // Get Mapbox instance
+  getMapboxInstance: (state: MapInstanceStore) => {
+    return state.mapInstances.mapbox.instance;
+  },
+
+  // Get Cesium instance
+  getCesiumInstance: (state: MapInstanceStore) => {
+    return state.mapInstances.cesium.instance;
+  },
+
+  // Get Mapbox status
+  getMapboxStatus: (state: MapInstanceStore) => {
+    return state.mapInstances.mapbox.status;
+  },
+
+  // Get Cesium status
+  getCesiumStatus: (state: MapInstanceStore) => {
+    return state.mapInstances.cesium.status;
+  },
+
+  // Get Mapbox error
+  getMapboxError: (state: MapInstanceStore) => {
+    return state.mapInstances.mapbox.error;
+  },
+
+  // Get Cesium error
+  getCesiumError: (state: MapInstanceStore) => {
+    return state.mapInstances.cesium.error;
+  },
+
+  // Check if both instances are ready
+  areInstancesReady: (state: MapInstanceStore) => {
+    return state.mapInstances.mapbox.status === 'ready' && 
+           state.mapInstances.cesium.status === 'ready';
+  },
+
+  // Check if any instance has an error
+  hasInstanceError: (state: MapInstanceStore) => {
+    return state.mapInstances.mapbox.status === 'error' || 
+           state.mapInstances.cesium.status === 'error';
+  }
+};
+
+// Custom hooks for map instance operations
+export const useMapboxInstance = () => {
+  return useMapInstanceStore(mapInstanceSelectors.getMapboxInstance);
+};
+
+export const useCesiumInstance = () => {
+  return useMapInstanceStore(mapInstanceSelectors.getCesiumInstance);
+};
+
+export const useMapboxStatus = () => {
+  return useMapInstanceStore(mapInstanceSelectors.getMapboxStatus);
+};
+
+export const useCesiumStatus = () => {
+  return useMapInstanceStore(mapInstanceSelectors.getCesiumStatus);
+};
+
+export const useMapboxError = () => {
+  return useMapInstanceStore(mapInstanceSelectors.getMapboxError);
+};
+
+export const useCesiumError = () => {
+  return useMapInstanceStore(mapInstanceSelectors.getCesiumError);
+};
+
+export const useInstancesReady = () => {
+  return useMapInstanceStore(mapInstanceSelectors.areInstancesReady);
+};
+
+export const useInstanceError = () => {
+  return useMapInstanceStore(mapInstanceSelectors.hasInstanceError);
+}; 

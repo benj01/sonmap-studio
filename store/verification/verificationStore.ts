@@ -25,12 +25,16 @@ export interface VerificationStatus {
   error?: string;
 }
 
-interface VerificationStore {
-  // State
+interface NormalizedVerificationState {
   status: Record<string, VerificationStatus>;
   pending: string[];
   inProgress: string[];
   lastVerified: Record<string, number>;
+}
+
+interface VerificationStore {
+  // State
+  verification: NormalizedVerificationState;
   
   // Actions
   setVerificationStatus: (layerId: string, status: VerificationStatus['status'], error?: string) => void;
@@ -42,12 +46,16 @@ interface VerificationStore {
   reset: () => void;
 }
 
-export const useVerificationStore = create<VerificationStore>()((set) => ({
-  // Initial state
+const initialState: NormalizedVerificationState = {
   status: {},
   pending: [],
   inProgress: [],
-  lastVerified: {},
+  lastVerified: {}
+};
+
+export const useVerificationStore = create<VerificationStore>()((set) => ({
+  // Initial state
+  verification: initialState,
 
   // Actions
   setVerificationStatus: (layerId, status, error) => {
@@ -61,57 +69,80 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
 
       // Update status
       const updatedStatus = {
-        ...state.status,
+        ...state.verification.status,
         [layerId]: newStatus
       };
 
       // Update lastVerified if status is verified
       const updatedLastVerified = {
-        ...state.lastVerified,
-        [layerId]: status === 'verified' ? now : state.lastVerified[layerId]
+        ...state.verification.lastVerified,
+        [layerId]: status === 'verified' ? now : state.verification.lastVerified[layerId]
       };
 
       logger.debug('Verification status updated', { layerId, status, error });
       return {
-        status: updatedStatus,
-        lastVerified: updatedLastVerified
+        verification: {
+          ...state.verification,
+          status: updatedStatus,
+          lastVerified: updatedLastVerified
+        }
       };
     });
   },
 
   addToPending: (layerId) => {
     set((state) => {
-      if (state.pending.includes(layerId)) return state;
+      if (state.verification.pending.includes(layerId)) return state;
       
-      const updatedPending = [...state.pending, layerId];
+      const updatedPending = [...state.verification.pending, layerId];
       logger.debug('Layer added to pending verification', { layerId });
-      return { pending: updatedPending };
+      return {
+        verification: {
+          ...state.verification,
+          pending: updatedPending
+        }
+      };
     });
   },
 
   removeFromPending: (layerId) => {
     set((state) => {
-      const updatedPending = state.pending.filter(id => id !== layerId);
+      const updatedPending = state.verification.pending.filter(id => id !== layerId);
       logger.debug('Layer removed from pending verification', { layerId });
-      return { pending: updatedPending };
+      return {
+        verification: {
+          ...state.verification,
+          pending: updatedPending
+        }
+      };
     });
   },
 
   addToInProgress: (layerId) => {
     set((state) => {
-      if (state.inProgress.includes(layerId)) return state;
+      if (state.verification.inProgress.includes(layerId)) return state;
       
-      const updatedInProgress = [...state.inProgress, layerId];
+      const updatedInProgress = [...state.verification.inProgress, layerId];
       logger.debug('Layer added to in-progress verification', { layerId });
-      return { inProgress: updatedInProgress };
+      return {
+        verification: {
+          ...state.verification,
+          inProgress: updatedInProgress
+        }
+      };
     });
   },
 
   removeFromInProgress: (layerId) => {
     set((state) => {
-      const updatedInProgress = state.inProgress.filter(id => id !== layerId);
+      const updatedInProgress = state.verification.inProgress.filter(id => id !== layerId);
       logger.debug('Layer removed from in-progress verification', { layerId });
-      return { inProgress: updatedInProgress };
+      return {
+        verification: {
+          ...state.verification,
+          inProgress: updatedInProgress
+        }
+      };
     });
   },
 
@@ -119,21 +150,84 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
     set((state) => {
       const now = Date.now();
       const updatedLastVerified = {
-        ...state.lastVerified,
+        ...state.verification.lastVerified,
         [layerId]: now
       };
       logger.debug('Last verified timestamp updated', { layerId, timestamp: now });
-      return { lastVerified: updatedLastVerified };
+      return {
+        verification: {
+          ...state.verification,
+          lastVerified: updatedLastVerified
+        }
+      };
     });
   },
 
   reset: () => {
-    set({
-      status: {},
-      pending: [],
-      inProgress: [],
-      lastVerified: {}
-    });
+    set({ verification: initialState });
     logger.info('Verification store reset');
   }
-})); 
+}));
+
+// Verification selectors
+export const verificationSelectors = {
+  // Get verification status for a layer
+  getVerificationStatus: (state: VerificationStore) => (layerId: string) => {
+    return state.verification.status[layerId];
+  },
+
+  // Get all pending verifications
+  getPendingVerifications: (state: VerificationStore) => {
+    return state.verification.pending;
+  },
+
+  // Get all in-progress verifications
+  getInProgressVerifications: (state: VerificationStore) => {
+    return state.verification.inProgress;
+  },
+
+  // Get last verified timestamp for a layer
+  getLastVerified: (state: VerificationStore) => (layerId: string) => {
+    return state.verification.lastVerified[layerId];
+  },
+
+  // Get layers that need verification (not verified recently)
+  getLayersNeedingVerification: (state: VerificationStore) => (maxAge: number = 30000) => {
+    const now = Date.now();
+    return Object.entries(state.verification.lastVerified)
+      .filter(([_, timestamp]) => now - timestamp > maxAge)
+      .map(([layerId]) => layerId);
+  },
+
+  // Get layers with verification errors
+  getLayersWithVerificationErrors: (state: VerificationStore) => {
+    return Object.entries(state.verification.status)
+      .filter(([_, status]) => status.error)
+      .map(([layerId]) => layerId);
+  }
+};
+
+// Custom hooks for verification operations
+export const useVerificationStatus = (layerId: string) => {
+  return useVerificationStore((state) => verificationSelectors.getVerificationStatus(state)(layerId));
+};
+
+export const usePendingVerifications = () => {
+  return useVerificationStore(verificationSelectors.getPendingVerifications);
+};
+
+export const useInProgressVerifications = () => {
+  return useVerificationStore(verificationSelectors.getInProgressVerifications);
+};
+
+export const useLastVerified = (layerId: string) => {
+  return useVerificationStore((state) => verificationSelectors.getLastVerified(state)(layerId));
+};
+
+export const useLayersNeedingVerification = (maxAge: number = 30000) => {
+  return useVerificationStore((state) => verificationSelectors.getLayersNeedingVerification(state)(maxAge));
+};
+
+export const useLayersWithVerificationErrors = () => {
+  return useVerificationStore(verificationSelectors.getLayersWithVerificationErrors);
+}; 

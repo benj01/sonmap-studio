@@ -93,4 +93,89 @@ export const useViewStateStore = create<ViewStateStore>()(
       })
     }
   )
-); 
+);
+
+// View state selectors
+export const viewStateSelectors = {
+  // Get 2D view state
+  getViewState2D: (state: ViewStateStore) => {
+    return state.viewState2D;
+  },
+
+  // Get 3D view state
+  getViewState3D: (state: ViewStateStore) => {
+    return state.viewState3D;
+  },
+
+  // Get center coordinates
+  getCenter: (state: ViewStateStore) => {
+    return state.viewState2D.center;
+  },
+
+  // Get zoom level
+  getZoom: (state: ViewStateStore) => {
+    return state.viewState2D.zoom;
+  },
+
+  // Get pitch
+  getPitch: (state: ViewStateStore) => {
+    return state.viewState2D.pitch;
+  },
+
+  // Get bearing
+  getBearing: (state: ViewStateStore) => {
+    return state.viewState2D.bearing;
+  },
+
+  // Get 3D height
+  getHeight: (state: ViewStateStore) => {
+    return state.viewState3D.height;
+  },
+
+  // Get 3D latitude
+  getLatitude: (state: ViewStateStore) => {
+    return state.viewState3D.latitude;
+  },
+
+  // Get 3D longitude
+  getLongitude: (state: ViewStateStore) => {
+    return state.viewState3D.longitude;
+  }
+};
+
+// Custom hooks for view state operations
+export const useViewState2D = () => {
+  return useViewStateStore(viewStateSelectors.getViewState2D);
+};
+
+export const useViewState3D = () => {
+  return useViewStateStore(viewStateSelectors.getViewState3D);
+};
+
+export const useCenter = () => {
+  return useViewStateStore(viewStateSelectors.getCenter);
+};
+
+export const useZoom = () => {
+  return useViewStateStore(viewStateSelectors.getZoom);
+};
+
+export const usePitch = () => {
+  return useViewStateStore(viewStateSelectors.getPitch);
+};
+
+export const useBearing = () => {
+  return useViewStateStore(viewStateSelectors.getBearing);
+};
+
+export const useHeight = () => {
+  return useViewStateStore(viewStateSelectors.getHeight);
+};
+
+export const useLatitude = () => {
+  return useViewStateStore(viewStateSelectors.getLatitude);
+};
+
+export const useLongitude = () => {
+  return useViewStateStore(viewStateSelectors.getLongitude);
+}; 
