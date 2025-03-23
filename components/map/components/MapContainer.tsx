@@ -9,6 +9,7 @@ import { CesiumView } from './cesium/CesiumView';
 import { LayerPanel } from './LayerPanel';
 import { SyncTo3DButton } from './SyncTo3DButton';
 import { ResetButton } from './ResetButton';
+import { useProjectLayers } from '../hooks/useProjectLayers';
 
 const SOURCE = 'MapContainer';
 const logManager = LogManager.getInstance();
@@ -52,10 +53,12 @@ export function MapContainer({
   accessToken,
   style,
   initialViewState2D,
-  initialViewState3D
+  initialViewState3D,
+  projectId
 }: MapContainerProps) {
   const { cleanup } = useMapInstanceStore();
   const { setViewState2D, setViewState3D } = useViewStateStore();
+  useProjectLayers(projectId || '');
 
   useEffect(() => {
     // Set initial view states if provided

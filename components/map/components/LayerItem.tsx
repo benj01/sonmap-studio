@@ -39,131 +39,83 @@ interface Layer {
 interface LayerItemProps {
   layer: Layer;
   className?: string;
-  onVisibilityChange?: (visible: boolean) => void;
 }
 
-export function LayerItem({ layer, className, onVisibilityChange }: LayerItemProps) {
-  const { id, name, type, properties } = layer;
-  const { isVisible, setVisibility, setupStatus, error } = useLayer(id);
+export function LayerItem({ layer, className }: LayerItemProps) {
+  const { layer: storeLayer, setVisibility, error: storeError } = useLayer(layer.id);
+  const { data, loading, error: dataError } = useLayerData(layer.id);
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
-  const { data, loading } = useLayerData(id);
-  const layerRef = useRef<mapboxgl.FillLayerSpecification | null>(null);
 
-  useEffect(() => {
-    if (!mapboxInstance || !data) return;
+  const handleVisibilityToggle = () => {
+    if (!mapboxInstance) return;
+
+    const newVisibility = !storeLayer?.visible;
+    setVisibility(newVisibility);
 
     try {
-      // Add source if it doesn't exist
-      if (!mapboxInstance.getSource(id)) {
-        mapboxInstance.addSource(id, {
-          type: 'geojson',
-          data: {
-            type: 'FeatureCollection',
-            features: data.features
-          }
-        });
+      if (mapboxInstance.getLayer(layer.id)) {
+        mapboxInstance.setLayoutProperty(
+          layer.id,
+          'visibility',
+          newVisibility ? 'visible' : 'none'
+        );
       }
-
-      // Add layer if it doesn't exist
-      if (!mapboxInstance.getLayer(id)) {
-        const layerConfig: mapboxgl.FillLayerSpecification = {
-          id,
-          type: 'fill',
-          source: id,
-          paint: {
-            'fill-color': properties.color || '#000000',
-            'fill-opacity': 0.5
-          }
-        };
-        mapboxInstance.addLayer(layerConfig);
-        layerRef.current = layerConfig;
-        logger.info(`Layer ${id} added to map`, layerConfig);
-      }
-
-      // Update layer visibility
-      mapboxInstance.setLayoutProperty(id, 'visibility', isVisible ? 'visible' : 'none');
-      onVisibilityChange?.(isVisible);
-
-    } catch (error) {
-      logger.error(`Error setting up layer ${id}`, error);
+    } catch (err) {
+      logger.error('Error toggling layer visibility', { error: err });
     }
-
-    // Cleanup on unmount
-    return () => {
-      if (mapboxInstance && !mapboxInstance._removed) {
-        try {
-          if (mapboxInstance.getLayer(id)) {
-            mapboxInstance.removeLayer(id);
-          }
-          if (mapboxInstance.getSource(id)) {
-            mapboxInstance.removeSource(id);
-          }
-          logger.info(`Layer ${id} removed from map`);
-        } catch (error) {
-          logger.warn(`Error cleaning up layer ${id}`, error);
-        }
-      }
-    };
-  }, [id, data, isVisible, mapboxInstance]);
+  };
 
   if (loading) {
-    return <Skeleton className="h-12 w-full" />;
+    return (
+      <div className={cn('p-4 border rounded-lg bg-background', className)}>
+        <Skeleton className="h-6 w-full" />
+      </div>
+    );
   }
 
+  const error = storeError || dataError;
+
   return (
-    <div className={cn('flex items-center justify-between p-2 border rounded-md', className)}>
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={() => setVisibility(!isVisible)}
-          title={isVisible ? 'Hide layer' : 'Show layer'}
-        >
-          {isVisible ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-        </Button>
-        <div className="flex flex-col">
-          <span className="text-sm font-medium">{name}</span>
-          <span className="text-xs text-muted-foreground">{type}</span>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        {setupStatus === 'error' && (
-          <AlertCircle className="h-4 w-4 text-destructive" aria-label={error} />
+    <div className={cn('p-4 border rounded-lg bg-background flex items-center gap-4', className)}>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={handleVisibilityToggle}
+        disabled={!!error}
+        title={storeLayer?.visible ? 'Hide layer' : 'Show layer'}
+      >
+        {storeLayer?.visible ? (
+          <Eye className="h-4 w-4" />
+        ) : (
+          <EyeOff className="h-4 w-4" />
         )}
+      </Button>
+
+      <div className="flex-1 min-w-0">
+        <h4 className="text-sm font-medium truncate">{layer.name}</h4>
+        <p className="text-xs text-muted-foreground truncate">
+          {data?.features?.length || 0} features
+        </p>
+      </div>
+
+      {error ? (
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => {
-            if (!mapboxInstance || !layerRef.current) return;
-            
-            try {
-              const bounds = mapboxInstance.getBounds();
-              if (bounds) {
-                mapboxInstance.fitBounds(bounds, {
-                  padding: 50,
-                  animate: true
-                });
-                logger.info(`Zoomed to layer ${id} bounds`);
-              }
-            } catch (error) {
-              logger.warn(`Error zooming to layer ${id} bounds`, error);
-            }
-          }}
-          aria-label="Zoom to layer"
+          className="text-destructive"
+          title={error instanceof Error ? error.message : 'Layer error'}
         >
-          <Maximize className="h-4 w-4" />
+          <AlertCircle className="h-4 w-4" />
         </Button>
+      ) : (
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => {
-            // TODO: Open layer settings dialog
-          }}
-          aria-label="Layer settings"
+          title="Layer settings"
         >
           <Settings className="h-4 w-4" />
         </Button>
-      </div>
+      )}
     </div>
   );
 }

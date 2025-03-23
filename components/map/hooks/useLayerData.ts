@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useRef } from 'react';
 import createClient from '@/utils/supabase/client';
-import { Database } from '@/types/supabase';
+import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
+import { useLayer } from '@/store/layers/hooks';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'useLayerData';
@@ -108,6 +109,8 @@ export function useLayerData(layerId: string) {
   const mounted = useRef(true);
   const fetchingRef = useRef(false);
   const cleanupRef = useRef(false);
+  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const { layer, updateStatus } = useLayer(layerId);
 
   useEffect(() => {
     mounted.current = true;
@@ -202,81 +205,84 @@ export function useLayerData(layerId: string) {
           throw featuresError;
         }
 
-        logger.debug('Features fetched', { 
-          featureCount: features?.length || 0
-        });
-
-        // Skip if cleanup started
-        if (cleanupRef.current) return;
-
-        // Convert features to GeoJSON with validation
-        const geoJsonFeatures: GeoJSON.Feature[] = [];
-        
-        for (const feature of features || []) {
-          try {
-            const geometry = JSON.parse(feature.geojson);
-            
-            // Validate geometry and coordinates
-            if (!validateGeometry(geometry)) {
-              logger.warn('Invalid geometry in feature', { 
-                featureId: feature.id,
-                geometry 
-              });
-              continue;
-            }
-
-            geoJsonFeatures.push({
-              type: 'Feature',
-              id: feature.id,
-              geometry,
-              properties: feature.properties || {}
-            });
-          } catch (error) {
-            logger.warn('Error parsing feature geometry', { 
-              featureId: feature.id,
-              error 
-            });
-          }
-        }
-
-        // Skip if cleanup started
-        if (cleanupRef.current) return;
-
-        const preparedData = {
+        const layerDataWithFeatures: LayerData = {
           id: layerData.id,
           name: layerData.name,
           type: layerData.type,
           properties: layerData.properties || {},
-          features: geoJsonFeatures
+          features: features || []
         };
 
-        // Update cache
+        // Cache the data
         layerCache.set(layerId, {
-          data: preparedData,
+          data: layerDataWithFeatures,
           timestamp: Date.now(),
-          subscribers: cached?.subscribers || 1,
+          subscribers: 1,
           isValid: true
         });
 
         if (mounted.current) {
-          setData(preparedData);
-        }
-      } catch (err) {
-        const error = err as Error;
-        logger.error('Failed to load layer data', { error });
-        if (mounted.current) {
-          setError(error);
-        }
-      } finally {
-        if (mounted.current) {
+          setData(layerDataWithFeatures);
           setLoading(false);
         }
+
+        // Initialize the layer in Mapbox if available
+        if (mapboxInstance && layer?.visible) {
+          try {
+            updateStatus('adding');
+
+            // Add source if it doesn't exist
+            if (!mapboxInstance.getSource(layerId)) {
+              mapboxInstance.addSource(layerId, {
+                type: 'geojson',
+                data: {
+                  type: 'FeatureCollection',
+                  features: features || []
+                }
+              });
+            }
+
+            // Add layer if it doesn't exist
+            if (!mapboxInstance.getLayer(layerId)) {
+              mapboxInstance.addLayer({
+                id: layerId,
+                type: 'fill',
+                source: layerId,
+                paint: {
+                  'fill-color': '#088',
+                  'fill-opacity': 0.8
+                }
+              });
+            }
+
+            updateStatus('complete');
+          } catch (err) {
+            logger.error('Error initializing layer in Mapbox', { error: err });
+            updateStatus('error', err instanceof Error ? err.message : 'Failed to initialize layer');
+          }
+        }
+
+      } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : 'Failed to fetch layer data';
+        logger.error('Layer data fetch error', { error: err });
+        if (mounted.current) {
+          setError(new Error(errorMessage));
+          setLoading(false);
+        }
+        updateStatus('error', errorMessage);
+      } finally {
         fetchingRef.current = false;
       }
     }
 
-    fetchLayerData();
-  }, [layerId]);
+    if (layerId) {
+      fetchLayerData();
+    }
+  }, [layerId, mapboxInstance, layer?.visible, updateStatus]);
 
-  return { data, loading, error };
+  return {
+    data,
+    loading,
+    error
+  };
 } 
