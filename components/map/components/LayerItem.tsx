@@ -93,15 +93,16 @@ function getLayerStyle(geometryType: string, properties: Record<string, any> = {
 }
 
 export function LayerItem({ layer, className = '', onVisibilityChange }: LayerItemProps) {
-  const { mapboxInstance, layers, setLayerVisibility } = useMapStore();
+  const { mapboxInstance, layers, setLayerVisibility, verifyLayer, updateLayerStatus } = useMapStore();
   const rawLayerId = layer.id.replace('layer-', '');
   const { data, loading, error } = useLayerData(rawLayerId);
-  const setupCompleteRef = useRef(false);
-  const registeredRef = useRef(false);
-  const layerId = layer.id;
   const mounted = useRef(true);
+  const setupCompleteRef = useRef(false);
   const cleanupInProgressRef = useRef(false);
-  const setupLayerRef = useRef<(() => Promise<void>) | null>(null);
+  const setupLayerRef = useRef<(() => void) | null>(null);
+  const setupAttempts = useRef(0);
+  const MAX_SETUP_ATTEMPTS = 3;
+  const layerId = layer.id;
 
   useEffect(() => {
     mounted.current = true;
@@ -141,6 +142,8 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
         styleLoaded: mapboxInstance?.isStyleLoaded()
       });
       
+      updateLayerStatus(layerId, 'pending');
+      
       // Wait for both map and style to be loaded
       const setupOnLoad = () => {
         if (mapboxInstance?.loaded() && mapboxInstance?.isStyleLoaded() && setupLayerRef.current) {
@@ -160,8 +163,7 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
     // If we have an error (like layer not found), clean up the layer from the store
     if (error) {
       logger.debug('Layer data error, cleaning up', { layerId, error });
-      // Remove layer from map store since it no longer exists in the database
-      setLayerVisibility(layerId, false);
+      updateLayerStatus(layerId, 'error', error.message);
       return;
     }
 
@@ -179,7 +181,7 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
 
     const setupLayer = async () => {
       try {
-        // Skip if component is unmounted, cleanup is in progress, or map is not ready
+        // Skip if conditions aren't met
         if (!mounted.current || cleanupInProgressRef.current || !mapboxInstance?.loaded() || !mapboxInstance?.isStyleLoaded()) {
           logger.debug('Skipping layer setup - conditions not met', {
             isMounted: mounted.current,
@@ -191,13 +193,16 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
           return;
         }
 
+        updateLayerStatus(layerId, 'adding');
+
         // Get initial visibility state
         const isVisible = layers.get(layerId)?.visible ?? true;
 
-        // If layer is already set up properly, just update visibility
-        if (setupCompleteRef.current && mapboxInstance.getLayer(layerId) && mapboxInstance.getSource(sourceId)) {
-          logger.debug('Layer exists, updating visibility', { layerId, isVisible });
+        // Verify if layer is already properly set up
+        if (setupCompleteRef.current && verifyLayer(layerId)) {
+          logger.debug('Layer exists and verified, updating visibility', { layerId, isVisible });
           mapboxInstance.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+          updateLayerStatus(layerId, 'complete');
           return;
         }
 
@@ -214,11 +219,16 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
         }
 
         // Skip if cleanup started during setup
-        if (cleanupInProgressRef.current) return;
+        if (cleanupInProgressRef.current) {
+          updateLayerStatus(layerId, 'error', 'Setup interrupted by cleanup');
+          return;
+        }
 
         // Validate features
         if (!data.features?.length) {
-          logger.warn('No features to display', { layerId });
+          const error = 'No features to display';
+          logger.warn(error, { layerId });
+          updateLayerStatus(layerId, 'error', error);
           return;
         }
 
@@ -229,7 +239,10 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
         };
 
         // Skip if cleanup started during setup
-        if (cleanupInProgressRef.current) return;
+        if (cleanupInProgressRef.current) {
+          updateLayerStatus(layerId, 'error', 'Setup interrupted by cleanup');
+          return;
+        }
 
         // Add source and layer
         mapboxInstance.addSource(sourceId, {
@@ -244,6 +257,7 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
           } catch (error) {
             logger.warn('Error removing source after cleanup started', { error, sourceId });
           }
+          updateLayerStatus(layerId, 'error', 'Setup interrupted by cleanup');
           return;
         }
 
@@ -263,10 +277,29 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
           }
         });
 
+        // Verify the layer was added successfully
+        if (!verifyLayer(layerId)) {
+          throw new Error('Layer verification failed after addition');
+        }
+
         setupCompleteRef.current = true;
+        updateLayerStatus(layerId, 'complete');
         logger.debug('Layer setup complete', { layerId });
       } catch (error) {
         logger.error('Error setting up layer', { error, layerId });
+        
+        // Increment setup attempts
+        setupAttempts.current++;
+        
+        // If we haven't exceeded max attempts, try again after a delay
+        if (setupAttempts.current < MAX_SETUP_ATTEMPTS) {
+          logger.debug('Retrying layer setup', { attempt: setupAttempts.current, layerId });
+          setTimeout(() => setupLayer(), 1000);
+          return;
+        }
+        
+        updateLayerStatus(layerId, 'error', error instanceof Error ? error.message : 'Unknown error');
+        
         // Clean up any partial setup on error
         try {
           if (mapboxInstance.getLayer(layerId)) {
@@ -285,7 +318,7 @@ export function LayerItem({ layer, className = '', onVisibilityChange }: LayerIt
     setupLayerRef.current = setupLayer;
 
     setupLayer();
-  }, [layerId, data, loading, error, mapboxInstance, layers, setLayerVisibility]);
+  }, [layerId, data, loading, error, mapboxInstance, layers, setLayerVisibility, verifyLayer, updateLayerStatus]);
 
   const handleVisibilityToggle = () => {
     const currentVisibility = layers.get(layerId)?.visible ?? true;

@@ -3,6 +3,8 @@ import { persist } from 'zustand/middleware';
 import { LogManager } from '@/core/logging/log-manager';
 import { useFileEventStore } from './fileEventStore';
 import type { FileEvent } from './fileEventStore';
+import { shallow } from 'zustand/shallow';
+import type { StoreApi, UseBoundStore } from 'zustand';
 
 const SOURCE = 'mapStore';
 const logManager = LogManager.getInstance();
@@ -34,7 +36,9 @@ export interface LayerState {
   sourceId?: string;
   visible: boolean;
   added: boolean;
+  setupStatus: 'pending' | 'adding' | 'complete' | 'error';
   metadata?: LayerMetadata;
+  error?: string;
 }
 
 export interface ViewState {
@@ -70,6 +74,8 @@ export interface MapState {
   reset: () => void;
   cleanup: () => void;
   handleFileDeleted: (fileId: string) => void;
+  verifyLayer: (layerId: string) => boolean;
+  updateLayerStatus: (layerId: string, status: LayerState['setupStatus'], error?: string) => void;
 }
 
 export const useMapStore = create<MapState>()(
@@ -94,35 +100,70 @@ export const useMapStore = create<MapState>()(
       // Actions
       setLayerVisibility: (layerId, visible) => {
         set((state) => {
-          const newLayers = new Map(state.layers);
-          const layer = newLayers.get(layerId);
-          if (layer) {
-            newLayers.set(layerId, { ...layer, visible });
-            logger.debug('Layer visibility updated', { layerId, visible });
+          const layer = state.layers.get(layerId);
+          if (!layer || layer.visible === visible) return state; // No change needed
+
+          state.layers.set(layerId, { ...layer, visible });
+          logger.debug('Layer visibility updated', { layerId, visible });
+          return { layers: new Map(state.layers) };
+        });
+      },
+
+      verifyLayer: (layerId: string) => {
+        const state = get();
+        const layer = state.layers.get(layerId);
+        const mapInstance = state.mapboxInstance;
+
+        if (!layer || !mapInstance) return false;
+
+        try {
+          return !!(mapInstance.getLayer(layerId) && 
+                   (!layer.sourceId || mapInstance.getSource(layer.sourceId)));
+        } catch (error) {
+          logger.error('Error verifying layer', { error, layerId });
+          return false;
+        }
+      },
+
+      updateLayerStatus: (layerId: string, status: LayerState['setupStatus'], error?: string) => {
+        set((state) => {
+          const layer = state.layers.get(layerId);
+          if (!layer || (layer.setupStatus === status && layer.error === error)) {
+            return state; // No change needed
           }
-          return { layers: newLayers };
+
+          state.layers.set(layerId, {
+            ...layer,
+            setupStatus: status,
+            error: error,
+            added: status === 'complete'
+          });
+          logger.debug('Layer status updated', { layerId, status, error });
+          return { layers: new Map(state.layers) };
         });
       },
 
       addLayer: (layerId, initialVisibility = true, sourceId, metadata) => {
         set((state) => {
-          const newLayers = new Map(state.layers);
-          newLayers.set(layerId, {
+          if (state.layers.has(layerId)) return state; // Layer already exists
+
+          state.layers.set(layerId, {
             id: layerId,
             sourceId,
             visible: initialVisibility,
             added: false,
+            setupStatus: 'pending',
             metadata
           });
-          logger.debug('Layer added', { layerId, sourceId, initialVisibility, metadata });
-          return { layers: newLayers };
+          logger.debug('Layer added to store', { layerId, sourceId, initialVisibility, metadata });
+          return { layers: new Map(state.layers) };
         });
       },
 
       removeLayer: (layerId) => {
         set((state) => {
-          const newLayers = new Map(state.layers);
-          const layer = newLayers.get(layerId);
+          const layer = state.layers.get(layerId);
+          if (!layer) return state; // Layer doesn't exist
           
           // Clean up map instances if they exist
           if (layer) {
@@ -132,7 +173,7 @@ export const useMapStore = create<MapState>()(
             if (layer.sourceId && state.mapboxInstance?.getSource(layer.sourceId)) {
               // Check if any other layers are using this source
               let sourceInUse = false;
-              newLayers.forEach((l) => {
+              state.layers.forEach((l) => {
                 if (l.id !== layerId && l.sourceId === layer.sourceId) {
                   sourceInUse = true;
                 }
@@ -146,16 +187,11 @@ export const useMapStore = create<MapState>()(
                 }
               }
             }
-            
-            if (state.cesiumInstance) {
-              // Add Cesium-specific cleanup if needed
-              // This would depend on how you're managing Cesium layers
-            }
           }
           
-          newLayers.delete(layerId);
+          state.layers.delete(layerId);
           logger.debug('Layer removed', { layerId });
-          return { layers: newLayers };
+          return { layers: new Map(state.layers) };
         });
       },
 
@@ -271,6 +307,18 @@ export const useMapStore = create<MapState>()(
     }
   )
 );
+
+// Selector for layer operations
+const layerSelector = (state: MapState) => ({
+  layers: state.layers,
+  verifyLayer: state.verifyLayer,
+  updateLayerStatus: state.updateLayerStatus,
+});
+
+type LayerOperations = ReturnType<typeof layerSelector>;
+
+// Custom hook for layer operations to prevent unnecessary re-renders
+export const useMapLayers = () => useMapStore(layerSelector);
 
 // Subscribe to file events
 if (typeof window !== 'undefined') {

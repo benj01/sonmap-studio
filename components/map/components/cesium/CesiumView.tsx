@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as Cesium from 'cesium';
 import { LogManager } from '@/core/logging/log-manager';
 import { createViewer } from '@/lib/cesium/init';
@@ -65,8 +65,12 @@ export function CesiumView({
   // Add a key state to force re-render of the container
   const [containerKey, setContainerKey] = useState<number>(0);
   
+  const mountedRef = useRef<boolean>(true);
+  const cleanupTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
+  const INIT_DELAY = 1000; // Add delay for initialization
+  
   // Add a utility function to safely clear a container
-  const safelyClearContainer = (container: HTMLElement) => {
+  const safelyClearContainer = useCallback((container: HTMLElement) => {
     try {
       // First approach: use innerHTML (fastest)
       // We need to be careful with this approach as it can conflict with React's DOM management
@@ -93,7 +97,7 @@ export function CesiumView({
     } catch (e) {
       logger.warn('Error using innerHTML to clear container:', e);
     }
-  };
+  }, []);
   
   // Function to check if the viewer is rendering correctly
   const checkRenderStatus = () => {
@@ -372,6 +376,8 @@ export function CesiumView({
   
   // Initialize Cesium when the component mounts
   useEffect(() => {
+    mountedRef.current = true;
+    
     const attemptInit = () => {
       if (initAttempts.current >= maxInitAttempts) {
         setError('Failed to initialize Cesium after maximum attempts');
@@ -385,19 +391,43 @@ export function CesiumView({
         setTimeout(attemptInit, delay);
       }
     };
-    
-    attemptInit();
-    
-    return () => {
-      if (viewerRef.current && !viewerRef.current.isDestroyed()) {
-        try {
-          viewerRef.current.destroy();
-        } catch (error) {
-          logger.warn('Error destroying Cesium viewer', error);
-        }
+
+    // Delay initialization to handle strict mode
+    const initTimeout = setTimeout(() => {
+      if (mountedRef.current) {
+        attemptInit();
       }
+    }, INIT_DELAY);
+
+    return () => {
+      mountedRef.current = false;
+      
+      if (initTimeout) {
+        clearTimeout(initTimeout);
+      }
+
+      // Delay cleanup to prevent premature destruction during strict mode remounting
+      cleanupTimeoutRef.current = setTimeout(() => {
+        if (viewerRef.current && !viewerRef.current.isDestroyed()) {
+          try {
+            viewerRef.current.destroy();
+            viewerRef.current = null;
+          } catch (error) {
+            logger.warn('Error destroying Cesium viewer', error);
+          }
+        }
+      }, 500);
     };
   }, [containerKey, initialViewState]);
+
+  // Add cleanup for the cleanup timeout
+  useEffect(() => {
+    return () => {
+      if (cleanupTimeoutRef.current) {
+        clearTimeout(cleanupTimeoutRef.current);
+      }
+    };
+  }, []);
   
   return (
     <div 
