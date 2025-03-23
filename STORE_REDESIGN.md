@@ -86,13 +86,29 @@ The application is experiencing React state management issues, specifically with
 - [x] Each selector has a corresponding custom hook
 - [x] Hooks are optimized to prevent unnecessary rerenders
 
-### Phase 4: Hook Creation
-- [ ] Implement custom hooks for each domain:
-  - [ ] `useLayer(id: string)` - Single layer operations
-  - [ ] `useLayers()` - Bulk layer operations
-  - [ ] `useVerification(id: string)` - Layer verification
-  - [ ] `useMapInstance()` - Map instance management
-  - [ ] `useViewState()` - View state management
+### Phase 4: Hook Creation ✅
+- [x] Implement custom hooks for each domain:
+  - [x] Layer Hooks:
+    - `useLayer(id: string)` - Single layer operations (visibility, status, removal)
+    - `useLayers()` - Bulk layer operations (add, remove, handle file deletion)
+    - `useLayerStatus(id: string)` - Layer status management
+    - `useLayerVisibility(id: string)` - Layer visibility management
+  - [x] Verification Hooks:
+    - `useVerification(id: string)` - Single layer verification operations
+    - `useVerifications()` - Bulk verification operations
+    - `useVerificationStatus(id: string)` - Verification status management
+    - `useVerificationQueue()` - Verification queue management
+  - [x] Map Instance Hooks:
+    - `useMapInstance()` - Combined map instance management
+    - `useMapboxInstance()` - Mapbox-specific operations
+    - `useCesiumInstance()` - Cesium-specific operations
+  - [x] View State Hooks:
+    - `useViewState()` - View state management (center, zoom, bearing, pitch)
+    - `useViewStateAnimation()` - View state animation management
+- [x] All hooks are properly typed and memoized
+- [x] Hooks follow consistent patterns across all stores
+- [x] Each hook provides granular access to state and actions
+- [x] Hooks are optimized to prevent unnecessary rerenders
 
 ### Phase 5: Migration Strategy
 1. [ ] Create new stores alongside existing store
@@ -189,6 +205,28 @@ Completed on [Current Date]
 - Created `store/view/viewStateStore.ts` with 2D/3D view state management
 - Each store is properly typed and includes logging functionality
 - Stores are separated by concern to prevent unnecessary rerenders
+
+### Phase 2: State Normalization ✅
+Completed on [Current Date]
+- Implemented normalized state structures for all stores
+- Added proper typing for all state interfaces
+- Implemented immutable state updates
+- Added error handling and status tracking
+
+### Phase 3: Selector Implementation ✅
+Completed on [Current Date]
+- Created typed selectors for all stores
+- Implemented memoized selectors for performance
+- Added comprehensive selector coverage
+- Ensured type safety throughout
+
+### Phase 4: Hook Creation ✅
+Completed on [Current Date]
+- Implemented comprehensive hooks for all stores
+- Created granular hooks for specific operations
+- Added proper memoization and optimization
+- Ensured consistent patterns across all hooks
+- Implemented proper error handling and type safety
 
 ---
 
