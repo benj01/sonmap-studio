@@ -136,19 +136,26 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
 
   cleanup: () => {
     set((state) => {
-      // Cleanup map instances
-      if (state.mapInstances.mapbox.instance) {
+      // Only cleanup instances that are in an error state or explicitly marked for removal
+      if (state.mapInstances.mapbox.instance && 
+          (state.mapInstances.mapbox.status === 'error' || state.mapInstances.mapbox.instance._removed)) {
         state.mapInstances.mapbox.instance.remove();
       }
-      if (state.mapInstances.cesium.instance) {
+      if (state.mapInstances.cesium.instance && 
+          (state.mapInstances.cesium.status === 'error' || state.mapInstances.cesium.instance._removed)) {
         state.mapInstances.cesium.instance.destroy();
       }
 
+      // Only reset instances that were actually cleaned up
       return {
-        mapInstances: initialState
+        mapInstances: {
+          ...state.mapInstances,
+          mapbox: state.mapInstances.mapbox.instance?._removed ? initialState.mapbox : state.mapInstances.mapbox,
+          cesium: state.mapInstances.cesium.instance?._removed ? initialState.cesium : state.mapInstances.cesium
+        }
       };
     });
-    logger.info('Map instances cleaned up');
+    logger.info('Map instances cleanup check complete');
   },
 
   reset: () => {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { LogManager } from '@/core/logging/log-manager';
@@ -56,11 +56,41 @@ export function MapContainer({
   initialViewState3D,
   projectId
 }: MapContainerProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const { cleanup } = useMapInstanceStore();
   const { setViewState2D, setViewState3D } = useViewStateStore();
+  const mountCount = useRef(0);
   useProjectLayers(projectId || '');
 
   useEffect(() => {
+    // Log container dimensions
+    if (containerRef.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      logger.debug('MapContainer dimensions', {
+        width: rect.width,
+        height: rect.height,
+        top: rect.top,
+        left: rect.left,
+        bottom: rect.bottom,
+        right: rect.right
+      });
+    }
+
+    // Increment mount count
+    mountCount.current += 1;
+
+    logger.debug('MapContainer effect starting', {
+      mountCount: mountCount.current,
+      hasInitialState2D: !!initialViewState2D,
+      hasInitialState3D: !!initialViewState3D
+    });
+
+    // Skip first mount in development due to strict mode
+    if (process.env.NODE_ENV === 'development' && mountCount.current === 1) {
+      logger.debug('Skipping first mount in development');
+      return;
+    }
+
     // Set initial view states if provided
     if (initialViewState2D) {
       logger.debug('Setting initial 2D view state', initialViewState2D);
@@ -84,20 +114,29 @@ export function MapContainer({
       });
     }
 
-    // Cleanup on unmount
     return () => {
+      logger.debug('MapContainer cleanup called', {
+        mountCount: mountCount.current
+      });
+
+      // Only cleanup on final unmount in development
+      if (process.env.NODE_ENV === 'development' && mountCount.current <= 2) {
+        logger.debug('Cleanup skipped - not final unmount');
+        return;
+      }
+
       cleanup();
       logger.info('Map container cleanup complete');
     };
-  }, []);
+  }, [cleanup, setViewState2D, setViewState3D, initialViewState2D, initialViewState3D]);
 
   return (
-    <div className="relative w-full h-full">
-      <div className="absolute inset-0 grid grid-cols-2 gap-4">
-        <div className="relative">
+    <div ref={containerRef} className="relative w-full h-full min-h-[600px]">
+      <div className="absolute inset-0 grid grid-cols-2 gap-4 p-4">
+        <div className="relative w-full h-full min-h-[400px]">
           <MapView accessToken={accessToken} style={style} />
         </div>
-        <div className="relative">
+        <div className="relative w-full h-full min-h-[400px]">
           <CesiumView />
         </div>
       </div>
