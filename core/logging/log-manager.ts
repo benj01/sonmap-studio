@@ -40,25 +40,22 @@ export class LogManager {
    */
   public configureDefaultSources() {
     // Core functionality - keep at INFO for important events
-    this.sourceFilters.set('Auth', LogLevel.INFO);
-    this.sourceFilters.set('FileManager', LogLevel.INFO);
-    this.sourceFilters.set('ImportManager', LogLevel.INFO);
+    this.sourceFilters.set('Auth', LogLevel.WARN);
+    this.sourceFilters.set('FileManager', LogLevel.WARN);
+    this.sourceFilters.set('ImportManager', LogLevel.WARN);
     
     // UI components - set to WARN to reduce noise
-    this.sourceFilters.set('MapView', LogLevel.DEBUG);
+    this.sourceFilters.set('MapView', LogLevel.INFO);
     this.sourceFilters.set('LayerList', LogLevel.WARN);
     this.sourceFilters.set('LayerItem', LogLevel.WARN);
     this.sourceFilters.set('MapContext', LogLevel.WARN);
     this.sourceFilters.set('Toolbar', LogLevel.WARN);
+    this.sourceFilters.set('useAutoZoom', LogLevel.DEBUG);
+    this.sourceFilters.set('layerHooks', LogLevel.WARN);
     
-    // Development components - set to DEBUG only in development
-    if (process.env.NODE_ENV === 'development') {
-      this.sourceFilters.set('useLayerData', LogLevel.DEBUG);
-      this.sourceFilters.set('useMapbox', LogLevel.DEBUG);
-    } else {
-      this.sourceFilters.set('useLayerData', LogLevel.WARN);
-      this.sourceFilters.set('useMapbox', LogLevel.WARN);
-    }
+    // Development components - set to WARN unless debugging specific components
+    this.sourceFilters.set('useLayerData', LogLevel.WARN);
+    this.sourceFilters.set('useMapbox', LogLevel.WARN);
   }
 
   /**

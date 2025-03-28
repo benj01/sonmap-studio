@@ -6,6 +6,7 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { LogManager } from '@/core/logging/log-manager';
+import { useAutoZoom } from '../hooks/useAutoZoom';
 
 const SOURCE = 'MapView';
 const logManager = LogManager.getInstance();
@@ -36,6 +37,9 @@ export function MapView({ accessToken, style }: MapViewProps) {
   const { viewState2D, setViewState2D } = useViewStateStore();
   const mapInstance = useRef<mapboxgl.Map | null>(null);
   const mountCount = useRef(0);
+
+  // Add auto-zoom hook
+  useAutoZoom();
 
   useEffect(() => {
     // Log container dimensions
