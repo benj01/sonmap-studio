@@ -2,6 +2,25 @@ import { useCallback } from 'react';
 import { useLayerStore } from './layerStore';
 import { layerSelectors } from './layerStore';
 import type { Layer, LayerMetadata } from './types';
+import { LogManager } from '@/core/logging/log-manager';
+
+const SOURCE = 'layerHooks';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  warn: (message: string, error?: any) => {
+    logManager.warn(SOURCE, message, error);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  },
+  debug: (message: string, data?: any) => {
+    logManager.debug(SOURCE, message, data);
+  }
+};
 
 // Single layer operations
 export const useLayer = (layerId: string) => {
@@ -39,6 +58,12 @@ export const useLayers = () => {
   const layers = useLayerStore(layerSelectors.getAllLayers);
   const visibleLayers = useLayerStore(layerSelectors.getVisibleLayers);
   const layersWithErrors = useLayerStore(layerSelectors.getLayersWithErrors);
+
+  logger.debug('useLayers hook called', {
+    layerCount: layers.length,
+    visibleLayerCount: visibleLayers.length,
+    errorCount: layersWithErrors.length
+  });
 
   const addLayer = useCallback((
     layerId: string,

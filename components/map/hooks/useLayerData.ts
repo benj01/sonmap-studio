@@ -229,10 +229,12 @@ export function useLayerData(layerId: string) {
         // Initialize the layer in Mapbox if available
         if (mapboxInstance && layer?.visible) {
           try {
+            logger.info('Initializing layer in Mapbox', { layerId });
             updateStatus('adding');
 
             // Add source if it doesn't exist
             if (!mapboxInstance.getSource(layerId)) {
+              logger.info('Adding source to map', { layerId });
               mapboxInstance.addSource(layerId, {
                 type: 'geojson',
                 data: {
@@ -244,6 +246,7 @@ export function useLayerData(layerId: string) {
 
             // Add layer if it doesn't exist
             if (!mapboxInstance.getLayer(layerId)) {
+              logger.info('Adding layer to map', { layerId });
               mapboxInstance.addLayer({
                 id: layerId,
                 type: 'fill',
@@ -255,9 +258,14 @@ export function useLayerData(layerId: string) {
               });
             }
 
+            logger.info('Layer initialization complete', { layerId });
             updateStatus('complete');
           } catch (err) {
-            logger.error('Error initializing layer in Mapbox', { error: err });
+            logger.error('Error initializing layer in Mapbox', { 
+              error: err instanceof Error ? err.message : err,
+              stack: err instanceof Error ? err.stack : undefined,
+              layerId 
+            });
             updateStatus('error', err instanceof Error ? err.message : 'Failed to initialize layer');
           }
         }

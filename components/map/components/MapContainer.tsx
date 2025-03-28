@@ -10,6 +10,7 @@ import { LayerPanel } from './LayerPanel';
 import { SyncTo3DButton } from './SyncTo3DButton';
 import { ResetButton } from './ResetButton';
 import { useProjectLayers } from '../hooks/useProjectLayers';
+import { LayerList } from './LayerList';
 
 const SOURCE = 'MapContainer';
 const logManager = LogManager.getInstance();
@@ -144,6 +145,7 @@ export function MapContainer({
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
         <LayerPanel>
           <div className="flex flex-col gap-2">
+            <LayerList />
             <SyncTo3DButton />
             <ResetButton />
           </div>

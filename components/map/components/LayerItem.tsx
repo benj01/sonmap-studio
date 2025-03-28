@@ -46,6 +46,16 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   const { data, loading, error: dataError } = useLayerData(layer.id);
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
 
+  useEffect(() => {
+    logger.info('LayerItem state', {
+      layerId: layer.id,
+      storeLayer,
+      data,
+      loading,
+      error: storeError || dataError
+    });
+  }, [layer.id, storeLayer, data, loading, storeError, dataError]);
+
   const handleVisibilityToggle = () => {
     if (!mapboxInstance) return;
 

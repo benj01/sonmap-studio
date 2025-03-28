@@ -19,6 +19,19 @@ const logger = {
   }
 };
 
+// Cache for memoized selectors
+const selectorCache = new WeakMap();
+
+// Helper function to create a memoized selector
+function createMemoizedSelector<T>(selector: (state: LayerStore) => T): (state: LayerStore) => T {
+  return (state: LayerStore) => {
+    if (!selectorCache.has(state)) {
+      selectorCache.set(state, selector(state));
+    }
+    return selectorCache.get(state);
+  };
+}
+
 export interface LayerMetadata {
   name: string;
   type: string;
@@ -115,6 +128,14 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         : state.layers.metadata;
 
       logger.debug('Layer added to store', { layerId, sourceId, initialVisibility, metadata });
+      logger.info('Layer store state after adding layer', {
+        layerId,
+        storeState: {
+          byId: Object.keys(updatedById),
+          allIds: updatedAllIds,
+          metadata: Object.keys(updatedMetadata)
+        }
+      });
       return {
         layers: {
           byId: updatedById,
@@ -223,16 +244,18 @@ export const layerSelectors = {
   },
 
   // Get all layers
-  getAllLayers: (state: LayerStore) => {
+  getAllLayers: createMemoizedSelector((state: LayerStore) => {
+    logger.debug('Computing getAllLayers selector');
     return state.layers.allIds.map(id => state.layers.byId[id]);
-  },
+  }),
 
   // Get visible layers
-  getVisibleLayers: (state: LayerStore) => {
+  getVisibleLayers: createMemoizedSelector((state: LayerStore) => {
+    logger.debug('Computing getVisibleLayers selector');
     return state.layers.allIds
       .map(id => state.layers.byId[id])
       .filter(layer => layer.visible);
-  },
+  }),
 
   // Get layer metadata
   getLayerMetadata: (state: LayerStore) => (layerId: string) => {
@@ -247,11 +270,12 @@ export const layerSelectors = {
   },
 
   // Get layers with errors
-  getLayersWithErrors: (state: LayerStore) => {
+  getLayersWithErrors: createMemoizedSelector((state: LayerStore) => {
+    logger.debug('Computing getLayersWithErrors selector');
     return state.layers.allIds
       .map(id => state.layers.byId[id])
       .filter(layer => layer.error);
-  }
+  })
 };
 
 // Custom hooks for layer operations
@@ -260,7 +284,16 @@ export const useLayer = (layerId: string) => {
 };
 
 export const useLayers = () => {
-  return useLayerStore(layerSelectors.getAllLayers);
+  const store = useLayerStore();
+  const layers = useLayerStore((state) => state.layers.allIds.map(id => state.layers.byId[id]));
+  const visibleLayers = useLayerStore((state) => state.layers.allIds
+    .map(id => state.layers.byId[id])
+    .filter(layer => layer.visible));
+
+  return {
+    layers,
+    visibleLayers
+  };
 };
 
 export const useVisibleLayers = () => {

@@ -41,13 +41,40 @@ export function LayerList({ className }: LayerListProps) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // Simulate loading state
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 1000);
+    logger.info('LayerList state', {
+      layerCount: layers.length,
+      layers: layers.map(l => ({
+        id: l.id,
+        name: l.metadata?.name,
+        visible: l.visible,
+        setupStatus: l.setupStatus,
+        metadata: l.metadata
+      }))
+    });
 
-    return () => clearTimeout(timer);
-  }, []);
+    // Update loading state based on layer status
+    const hasLayers = layers.length > 0;
+    const allLayersLoaded = layers.every(l => l.setupStatus === 'complete' || l.setupStatus === 'error');
+    
+    logger.info('LayerList loading state', {
+      hasLayers,
+      allLayersLoaded,
+      isLoading
+    });
+
+    // Only update loading state if it would actually change
+    if (hasLayers && allLayersLoaded && isLoading) {
+      setIsLoading(false);
+    } else if ((!hasLayers || !allLayersLoaded) && !isLoading) {
+      setIsLoading(true);
+    }
+  }, [layers]); // Remove isLoading from dependencies since we check it inside
+
+  logger.info('LayerList render', {
+    layerCount: layers.length,
+    isLoading,
+    hasLayers: layers.length > 0
+  });
 
   if (isLoading) {
     return (
@@ -84,9 +111,6 @@ export function LayerList({ className }: LayerListProps) {
             key={layer.id}
             layer={layerItemLayer}
             className={className}
-            onVisibilityChange={(visible) => {
-              logger.debug(`Layer ${layer.id} visibility changed to ${visible}`);
-            }}
           />
         );
       })}
