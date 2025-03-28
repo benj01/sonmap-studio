@@ -40,6 +40,17 @@ export function LayerList({ className }: LayerListProps) {
   const { layers, visibleLayers } = useLayers();
   const [isLoading, setIsLoading] = useState(true);
 
+  logger.info('LayerList hook data', {
+    layerCount: layers.length,
+    layers: layers.map(l => ({
+      id: l.id,
+      hasMetadata: !!l.metadata,
+      metadata: l.metadata,
+      visible: l.visible,
+      setupStatus: l.setupStatus
+    }))
+  });
+
   useEffect(() => {
     logger.info('LayerList state', {
       layerCount: layers.length,
@@ -59,7 +70,11 @@ export function LayerList({ className }: LayerListProps) {
     logger.info('LayerList loading state', {
       hasLayers,
       allLayersLoaded,
-      isLoading
+      isLoading,
+      layerStatuses: layers.map(l => ({
+        id: l.id,
+        status: l.setupStatus
+      }))
     });
 
     // Only update loading state if it would actually change
@@ -73,7 +88,8 @@ export function LayerList({ className }: LayerListProps) {
   logger.info('LayerList render', {
     layerCount: layers.length,
     isLoading,
-    hasLayers: layers.length > 0
+    hasLayers: layers.length > 0,
+    layersWithMetadata: layers.filter(l => l.metadata).length
   });
 
   if (isLoading) {

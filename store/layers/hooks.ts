@@ -59,10 +59,18 @@ export const useLayers = () => {
   const visibleLayers = useLayerStore(layerSelectors.getVisibleLayers);
   const layersWithErrors = useLayerStore(layerSelectors.getLayersWithErrors);
 
-  logger.debug('useLayers hook called', {
+  logger.info('useLayers hook called', {
     layerCount: layers.length,
+    layers: layers.map(l => ({
+      id: l.id,
+      hasMetadata: !!l.metadata,
+      metadata: l.metadata,
+      visible: l.visible,
+      setupStatus: l.setupStatus,
+      error: l.error
+    })),
     visibleLayerCount: visibleLayers.length,
-    errorCount: layersWithErrors.length
+    errorCount: layersWithErrors.filter(l => l.error !== undefined).length
   });
 
   const addLayer = useCallback((
@@ -71,6 +79,12 @@ export const useLayers = () => {
     sourceId?: string,
     metadata?: LayerMetadata
   ) => {
+    logger.info('Adding layer via useLayers', {
+      layerId,
+      initialVisibility,
+      sourceId,
+      metadata
+    });
     store.addLayer(layerId, initialVisibility, sourceId, metadata);
   }, [store]);
 

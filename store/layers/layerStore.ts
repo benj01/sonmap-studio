@@ -274,7 +274,7 @@ export const layerSelectors = {
     logger.debug('Computing getLayersWithErrors selector');
     return state.layers.allIds
       .map(id => state.layers.byId[id])
-      .filter(layer => layer.error);
+      .filter(layer => layer.error !== undefined);
   })
 };
 

@@ -112,15 +112,34 @@ export function useLayerData(layerId: string) {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { layer, updateStatus } = useLayer(layerId);
 
+  logger.info('useLayerData hook called', {
+    layerId,
+    hasLayer: !!layer,
+    hasMapbox: !!mapboxInstance,
+    loading,
+    error: error?.message
+  });
+
   useEffect(() => {
     mounted.current = true;
     cleanupRef.current = false;
+    
+    logger.info('useLayerData mount effect', {
+      layerId,
+      isMounted: mounted.current,
+      isCleanup: cleanupRef.current
+    });
     
     // Subscribe to cache
     const cached = layerCache.get(layerId);
     if (cached) {
       cached.subscribers++;
       if (cached.isValid) {
+        logger.info('Using cached layer data', {
+          layerId,
+          dataTimestamp: new Date(cached.timestamp).toISOString(),
+          subscribers: cached.subscribers
+        });
         setData(cached.data);
         setLoading(false);
       }
@@ -129,6 +148,12 @@ export function useLayerData(layerId: string) {
     return () => {
       mounted.current = false;
       cleanupRef.current = true;
+      
+      logger.info('useLayerData cleanup', {
+        layerId,
+        isMounted: mounted.current,
+        isCleanup: cleanupRef.current
+      });
       
       // Unsubscribe from cache
       const cached = layerCache.get(layerId);
@@ -147,14 +172,25 @@ export function useLayerData(layerId: string) {
   useEffect(() => {
     async function fetchLayerData() {
       // Prevent concurrent fetches or fetching during cleanup
-      if (fetchingRef.current || cleanupRef.current) return;
+      if (fetchingRef.current || cleanupRef.current) {
+        logger.info('Skipping fetch - already fetching or cleanup in progress', {
+          layerId,
+          isFetching: fetchingRef.current,
+          isCleanup: cleanupRef.current
+        });
+        return;
+      }
       fetchingRef.current = true;
 
       try {
         // Check cache first
         const cached = layerCache.get(layerId);
         if (cached && cached.isValid && Date.now() - cached.timestamp < CACHE_TTL) {
-          logger.debug('Using cached layer data', { layerId });
+          logger.info('Using cached layer data', {
+            layerId,
+            dataTimestamp: new Date(cached.timestamp).toISOString(),
+            subscribers: cached.subscribers
+          });
           if (mounted.current) {
             setData(cached.data);
             setLoading(false);
@@ -165,7 +201,7 @@ export function useLayerData(layerId: string) {
         // Skip if cleanup started
         if (cleanupRef.current) return;
 
-        logger.debug('Fetching layer data', { layerId });
+        logger.info('Fetching layer data from Supabase', { layerId });
         
         // First get the layer metadata
         const { data: layerData, error: layerError } = await supabase
@@ -175,7 +211,10 @@ export function useLayerData(layerId: string) {
           .single();
 
         // Skip if cleanup started
-        if (cleanupRef.current) return;
+        if (cleanupRef.current) {
+          logger.info('Skipping metadata processing - cleanup in progress', { layerId });
+          return;
+        }
 
         if (layerError) {
           logger.error('Layer metadata fetch error', { error: layerError });
@@ -186,10 +225,16 @@ export function useLayerData(layerId: string) {
           throw new Error('Layer not found');
         }
 
-        logger.debug('Layer metadata fetched', { name: layerData.name });
+        logger.info('Layer metadata fetched', { 
+          layerId,
+          name: layerData.name,
+          type: layerData.type
+        });
 
         // Skip if cleanup started
         if (cleanupRef.current) return;
+
+        logger.info('Fetching layer features', { layerId });
 
         // Then get the features for this layer with PostGIS geometry
         const { data: features, error: featuresError } = await supabase
@@ -198,12 +243,20 @@ export function useLayerData(layerId: string) {
           });
 
         // Skip if cleanup started
-        if (cleanupRef.current) return;
+        if (cleanupRef.current) {
+          logger.info('Skipping features processing - cleanup in progress', { layerId });
+          return;
+        }
 
         if (featuresError) {
           logger.error('Features fetch error', { error: featuresError });
           throw featuresError;
         }
+
+        logger.info('Layer features fetched', {
+          layerId,
+          featureCount: features?.length || 0
+        });
 
         const layerDataWithFeatures: LayerData = {
           id: layerData.id,
@@ -219,6 +272,12 @@ export function useLayerData(layerId: string) {
           timestamp: Date.now(),
           subscribers: 1,
           isValid: true
+        });
+
+        logger.info('Layer data cached', {
+          layerId,
+          name: layerData.name,
+          featureCount: features?.length || 0
         });
 
         if (mounted.current) {
@@ -259,7 +318,7 @@ export function useLayerData(layerId: string) {
             }
 
             logger.info('Layer initialization complete', { layerId });
-            updateStatus('complete');
+            updateStatus('complete', undefined);
           } catch (err) {
             logger.error('Error initializing layer in Mapbox', { 
               error: err instanceof Error ? err.message : err,

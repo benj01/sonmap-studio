@@ -34,106 +34,114 @@ export function useProjectLayers(projectId: string) {
       try {
         logger.info('Starting to load project layers', { projectId });
 
-        // First get the main shapefile that has been imported
-        const { data: mainFile, error: mainFileError } = await supabase
+        // Get all imported files for the project
+        const { data: importedFiles, error: filesError } = await supabase
           .from('project_files')
           .select('*')
           .eq('project_id', projectId)
           .eq('is_imported', true)
-          .single();
+          .not('import_metadata', 'is', null);  // Ensure it has import metadata
 
-        if (mainFileError) {
-          logger.error('Error fetching main file', { error: mainFileError });
-          throw mainFileError;
+        if (filesError) {
+          logger.error('Error fetching imported files', { error: filesError });
+          throw filesError;
         }
 
-        if (!mainFile) {
-          logger.error('No imported file found for project', { projectId });
+        if (!importedFiles?.length) {
+          logger.error('No imported files found for project', { projectId });
           return;
         }
 
-        logger.info('Found main imported file', { 
-          fileId: mainFile?.id,
-          name: mainFile?.name,
-          hasImportMetadata: !!mainFile?.import_metadata,
-          collectionId: mainFile?.import_metadata?.collection_id
+        logger.info('Found imported files', { 
+          count: importedFiles.length,
+          files: importedFiles.map(f => ({
+            id: f.id,
+            name: f.name,
+            hasImportMetadata: !!f.import_metadata,
+            collectionId: f.import_metadata?.collection_id
+          }))
         });
 
-        if (!mainFile.import_metadata?.collection_id) {
-          logger.error('Main file missing collection_id in import_metadata', {
-            fileId: mainFile.id,
-            importMetadata: mainFile.import_metadata
-          });
-          return;
-        }
+        // Process each imported file
+        for (const importedFile of importedFiles) {
+          if (!importedFile.import_metadata?.collection_id) {
+            logger.warn('File missing collection_id in import_metadata', {
+              fileId: importedFile.id,
+              importMetadata: importedFile.import_metadata
+            });
+            continue;
+          }
 
-        // Get the feature collection and its layers
-        const { data: collections, error: collectionsError } = await supabase
-          .from('feature_collections')
-          .select(`
-            id,
-            name,
-            layers (
+          // Get the feature collection and its layers
+          const { data: collections, error: collectionsError } = await supabase
+            .from('feature_collections')
+            .select(`
               id,
               name,
-              type,
-              properties
-            )
-          `)
-          .eq('id', mainFile.import_metadata.collection_id)
-          .single();
+              layers (
+                id,
+                name,
+                type,
+                properties
+              )
+            `)
+            .eq('id', importedFile.import_metadata.collection_id)
+            .single();
 
-        logger.info('Feature collection query result', {
-          collections,
-          error: collectionsError,
-          collectionId: mainFile.import_metadata.collection_id
-        });
+          if (collectionsError) {
+            logger.error('Error fetching feature collection', { 
+              error: collectionsError,
+              fileId: importedFile.id 
+            });
+            continue;
+          }
 
-        if (collectionsError) {
-          logger.error('Error fetching feature collection', { error: collectionsError });
-          throw collectionsError;
-        }
+          if (!collections || !collections.layers?.length) {
+            logger.warn('No layers found in feature collection', { 
+              fileId: importedFile.id,
+              collectionId: importedFile.import_metadata.collection_id
+            });
+            continue;
+          }
 
-        if (!collections) {
-          logger.error('No feature collection found', { 
-            collectionId: mainFile.import_metadata.collection_id,
-            mainFile
-          });
-          return;
-        }
-
-        logger.info('Feature collection loaded', { 
-          collectionId: collections.id,
-          name: collections.name,
-          layerCount: collections.layers?.length,
-          layers: collections.layers?.map(l => ({ id: l.id, name: l.name, type: l.type }))
-        });
-
-        if (!collections.layers?.length) {
-          logger.error('Feature collection has no layers', { collectionId: collections.id });
-          return;
-        }
-
-        // Add each layer to the store
-        collections.layers.forEach((layer, index) => {
-          logger.info(`Adding layer ${index + 1}/${collections.layers.length} to store`, {
-            layerId: layer.id,
-            name: layer.name,
-            type: layer.type,
-            fileId: mainFile.id
+          logger.info('Feature collection loaded', { 
+            fileId: importedFile.id,
+            collectionId: collections.id,
+            name: collections.name,
+            layerCount: collections.layers.length,
+            layers: collections.layers.map(l => ({ id: l.id, name: l.name, type: l.type }))
           });
 
-          addLayer(layer.id, true, collections.id, {
-            name: layer.name,
-            type: layer.type,
-            properties: layer.properties || {},
-            fileId: mainFile.id
+          // Add each layer to the store
+          collections.layers.forEach((layer, index) => {
+            logger.info(`Adding layer ${index + 1}/${collections.layers.length} to store`, {
+              layerId: layer.id,
+              name: layer.name,
+              type: layer.type,
+              fileId: importedFile.id
+            });
+
+            addLayer(
+              layer.id,
+              true, // initially visible
+              layer.id, // use layer id as source id
+              {
+                name: layer.name,
+                type: layer.type,
+                fileId: importedFile.id,
+                properties: layer.properties || {}
+              }
+            );
+
+            // Update layer status to complete and explicitly clear any errors
+            const store = useLayerStore.getState();
+            store.updateLayerStatus(layer.id, 'complete', undefined);
           });
-        });
+        }
 
         logger.info('Successfully loaded all project layers', {
           projectId,
-          layerCount: collections.layers.length
+          fileCount: importedFiles.length
         });
 
       } catch (error) {
