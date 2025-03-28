@@ -76,13 +76,25 @@ export function MapView({ accessToken, style }: MapViewProps) {
       return;
     }
 
-    // Skip initialization if we already have a valid map instance
+    // Check if we have a valid map instance
     const existingMap = useMapInstanceStore.getState().mapInstances.mapbox.instance;
-    if (existingMap && !existingMap._removed) {
-      logger.debug('MapView initialization skipped - map already exists', {
-        isRemoved: existingMap._removed
+    const isMapValid = existingMap && 
+                      !existingMap._removed && 
+                      existingMap.getContainer() === mapContainer.current;
+
+    if (isMapValid) {
+      logger.debug('MapView initialization skipped - valid map exists', {
+        isRemoved: existingMap._removed,
+        containerMatch: existingMap.getContainer() === mapContainer.current
       });
       return;
+    }
+
+    // If we have an invalid map instance, clean it up
+    if (existingMap && !isMapValid) {
+      logger.debug('Cleaning up invalid map instance');
+      existingMap.remove();
+      setMapboxInstance(null);
     }
 
     logger.debug('MapView initialization starting', {
@@ -182,7 +194,7 @@ export function MapView({ accessToken, style }: MapViewProps) {
         logger.info('Mapbox map removed');
       }
     };
-  }, [accessToken, style]);
+  }, [accessToken, style, setMapboxInstance, setMapboxStatus, setViewState2D, viewState2D]);
 
   return (
     <div className="relative w-full h-full min-h-[400px]">
