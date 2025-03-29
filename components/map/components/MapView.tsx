@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { LogManager } from '@/core/logging/log-manager';
 import { useAutoZoom } from '../hooks/useAutoZoom';
+import { MapLayers } from './MapLayers';
 
 const SOURCE = 'MapView';
 const logManager = LogManager.getInstance();
@@ -33,16 +34,16 @@ interface MapViewProps {
 
 export function MapView({ accessToken, style }: MapViewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
-  const { setMapboxInstance, setMapboxStatus } = useMapInstanceStore();
+  const { setMapboxInstance, setMapboxStatus, mapInstances } = useMapInstanceStore();
   const { viewState2D, setViewState2D } = useViewStateStore();
-  const mapInstance = useRef<mapboxgl.Map | null>(null);
+  const mapInstanceRef = useRef<mapboxgl.Map | null>(null);
   const mountCount = useRef(0);
+  const [isMapReady, setIsMapReady] = useState(false);
 
-  // Add auto-zoom hook
-  useAutoZoom();
+  // Pass readiness state to useAutoZoom
+  useAutoZoom(isMapReady);
 
   useEffect(() => {
-    // Log container dimensions
     if (mapContainer.current) {
       const rect = mapContainer.current.getBoundingClientRect();
       logger.debug('Map container dimensions', {
@@ -55,17 +56,16 @@ export function MapView({ accessToken, style }: MapViewProps) {
       });
     }
 
-    // Increment mount count
     mountCount.current += 1;
 
     logger.debug('MapView effect starting', {
-      hasExistingMap: !!mapInstance.current,
+      hasExistingMap: !!mapInstanceRef.current,
       hasContainer: !!mapContainer.current,
       containerInDOM: mapContainer.current ? document.body.contains(mapContainer.current) : false,
-      mountCount: mountCount.current
+      mountCount: mountCount.current,
+      isMapReady
     });
 
-    // Skip first mount in development due to strict mode
     if (process.env.NODE_ENV === 'development' && mountCount.current === 1) {
       logger.debug('Skipping first mount in development');
       return;
@@ -80,8 +80,7 @@ export function MapView({ accessToken, style }: MapViewProps) {
       return;
     }
 
-    // Check if we have a valid map instance
-    const existingMap = useMapInstanceStore.getState().mapInstances.mapbox.instance;
+    const existingMap = mapInstances.mapbox.instance;
     const isMapValid = existingMap && 
                       !existingMap._removed && 
                       existingMap.getContainer() === mapContainer.current;
@@ -89,16 +88,32 @@ export function MapView({ accessToken, style }: MapViewProps) {
     if (isMapValid) {
       logger.debug('MapView initialization skipped - valid map exists', {
         isRemoved: existingMap._removed,
-        containerMatch: existingMap.getContainer() === mapContainer.current
+        containerMatch: existingMap.getContainer() === mapContainer.current,
+        isStyleLoaded: existingMap.isStyleLoaded()
       });
+
+      if (existingMap.isStyleLoaded()) {
+        setIsMapReady(true);
+        setMapboxStatus('ready');
+      } else {
+        const checkLoad = () => {
+          if (existingMap.isStyleLoaded()) {
+            logger.info('Existing map style loaded');
+            setIsMapReady(true);
+            setMapboxStatus('ready');
+            existingMap.off('load', checkLoad);
+          }
+        };
+        existingMap.on('load', checkLoad);
+      }
       return;
     }
 
-    // If we have an invalid map instance, clean it up
     if (existingMap && !isMapValid) {
       logger.debug('Cleaning up invalid map instance');
       existingMap.remove();
       setMapboxInstance(null);
+      setIsMapReady(false);
     }
 
     logger.debug('MapView initialization starting', {
@@ -111,6 +126,7 @@ export function MapView({ accessToken, style }: MapViewProps) {
 
     mapboxgl.accessToken = accessToken;
     setMapboxStatus('initializing');
+    setIsMapReady(false);
 
     try {
       const map = new mapboxgl.Map({
@@ -124,21 +140,34 @@ export function MapView({ accessToken, style }: MapViewProps) {
         preserveDrawingBuffer: true
       });
 
-      mapInstance.current = map;
+      mapInstanceRef.current = map;
 
       map.on('load', () => {
         logger.info('Mapbox map loaded', {
           isRemoved: map._removed,
           containerInDOM: mapContainer.current ? document.body.contains(mapContainer.current) : false,
-          mountCount: mountCount.current
+          mountCount: mountCount.current,
+          isStyleLoaded: map.isStyleLoaded()
         });
-        setMapboxStatus('ready');
+        
+        // Wait for style to be fully loaded
+        if (map.isStyleLoaded()) {
+          setMapboxStatus('ready');
+          setIsMapReady(true);
+        } else {
+          map.once('styledata', () => {
+            logger.info('Map style fully loaded');
+            setMapboxStatus('ready');
+            setIsMapReady(true);
+          });
+        }
       });
 
       map.on('error', (error) => {
         const errorMessage = error.error ? error.error.message : 'Unknown error';
         logger.error('Mapbox map error', { error: errorMessage, details: error });
         setMapboxStatus('error', errorMessage);
+        setIsMapReady(false);
       });
 
       map.on('moveend', () => {
@@ -173,32 +202,35 @@ export function MapView({ accessToken, style }: MapViewProps) {
         stack: error instanceof Error ? error.stack : undefined
       });
       setMapboxStatus('error', errorMessage);
+      setIsMapReady(false);
     }
 
     return () => {
       logger.debug('Cleanup called', {
         mountCount: mountCount.current,
-        hasMap: !!mapInstance.current,
-        mapRemoved: mapInstance.current?._removed,
-        containerInDOM: mapContainer.current ? document.body.contains(mapContainer.current) : false
+        hasMap: !!mapInstanceRef.current,
+        mapRemoved: mapInstanceRef.current?._removed,
+        containerInDOM: mapContainer.current ? document.body.contains(mapContainer.current) : false,
+        isMapReady
       });
 
-      // Only cleanup on final unmount in development
+      setIsMapReady(false);
+
       if (process.env.NODE_ENV === 'development' && mountCount.current <= 2) {
         logger.debug('Cleanup skipped - not final unmount');
         return;
       }
 
-      if (mapInstance.current && !mapInstance.current._removed) {
+      if (mapInstanceRef.current && !mapInstanceRef.current._removed) {
         logger.info('MapView cleanup starting - removing map instance');
-        mapInstance.current.remove();
-        mapInstance.current = null;
+        mapInstanceRef.current.remove();
+        mapInstanceRef.current = null;
         setMapboxInstance(null);
         setMapboxStatus('initializing');
         logger.info('Mapbox map removed');
       }
     };
-  }, [accessToken, style, setMapboxInstance, setMapboxStatus, setViewState2D, viewState2D]);
+  }, [accessToken, style, setMapboxInstance, setMapboxStatus, mapInstances.mapbox.instance, viewState2D, setViewState2D]);
 
   return (
     <div className="relative w-full h-full min-h-[400px]">
@@ -207,6 +239,7 @@ export function MapView({ accessToken, style }: MapViewProps) {
         className="absolute inset-0 w-full h-full"
         style={{ minHeight: '400px' }}
       />
+      {isMapReady && <MapLayers />}
     </div>
   );
 } 
