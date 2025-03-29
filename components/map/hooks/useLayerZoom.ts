@@ -108,7 +108,7 @@ export function useLayerZoom() {
       }
 
       if (bounds && bounds.getNorthEast() && bounds.getSouthWest()) {
-        logger.info('Zooming to layer bounds', {
+        logger.info('Manual zoom to layer bounds', {
           layerId,
           bounds: {
             ne: bounds.getNorthEast(),

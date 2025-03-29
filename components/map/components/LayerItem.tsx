@@ -49,14 +49,14 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   const { zoomToLayer } = useLayerZoom();
 
   useEffect(() => {
-    logger.info('LayerItem state', {
-      layerId: layer.id,
-      storeLayer,
-      data,
-      loading,
-      error: storeError || dataError
-    });
-  }, [layer.id, storeLayer, data, loading, storeError, dataError]);
+    if (storeError || dataError) {
+      logger.error('LayerItem error', {
+        layerId: layer.id,
+        storeError,
+        dataError
+      });
+    }
+  }, [layer.id, storeError, dataError]);
 
   const handleVisibilityToggle = () => {
     if (!mapboxInstance) return;

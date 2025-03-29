@@ -1,0 +1,9 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# No Trial and Error
+
+- For Bugfixing, in general we should alter existing code only if we know exactely what that will cause. We always have to take the consequences into consideration. Maybe the specific bug gets resolves but we have to make sure that we take care of everything that is connected to the parts we changed.

@@ -40,57 +40,20 @@ export function LayerList({ className }: LayerListProps) {
   const { layers, visibleLayers } = useLayers();
   const [isLoading, setIsLoading] = useState(true);
 
-  logger.info('LayerList hook data', {
-    layerCount: layers.length,
-    layers: layers.map(l => ({
-      id: l.id,
-      hasMetadata: !!l.metadata,
-      metadata: l.metadata,
-      visible: l.visible,
-      setupStatus: l.setupStatus
-    }))
-  });
-
   useEffect(() => {
-    logger.info('LayerList state', {
-      layerCount: layers.length,
-      layers: layers.map(l => ({
-        id: l.id,
-        name: l.metadata?.name,
-        visible: l.visible,
-        setupStatus: l.setupStatus,
-        metadata: l.metadata
-      }))
-    });
-
     // Update loading state based on layer status
     const hasLayers = layers.length > 0;
     const allLayersLoaded = layers.every(l => l.setupStatus === 'complete' || l.setupStatus === 'error');
     
-    logger.info('LayerList loading state', {
-      hasLayers,
-      allLayersLoaded,
-      isLoading,
-      layerStatuses: layers.map(l => ({
-        id: l.id,
-        status: l.setupStatus
-      }))
-    });
-
-    // Only update loading state if it would actually change
+    // Only log loading state changes
     if (hasLayers && allLayersLoaded && isLoading) {
+      logger.info('LayerList: All layers loaded');
       setIsLoading(false);
     } else if ((!hasLayers || !allLayersLoaded) && !isLoading) {
+      logger.info('LayerList: Loading layers');
       setIsLoading(true);
     }
   }, [layers]); // Remove isLoading from dependencies since we check it inside
-
-  logger.info('LayerList render', {
-    layerCount: layers.length,
-    isLoading,
-    hasLayers: layers.length > 0,
-    layersWithMetadata: layers.filter(l => l.metadata).length
-  });
 
   if (isLoading) {
     return (

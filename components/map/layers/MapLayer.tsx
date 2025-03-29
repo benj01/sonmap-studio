@@ -62,30 +62,17 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   const layerRef = useRef(layer);
   const sourceDataRef = useRef(source.data.data);
 
-  logger.debug(`MapLayer instantiated`, {
-    id,
-    sourceId: source.id,
-    originalLayerId,
-    hasMap: !!mapboxInstance,
-    hasLayerState: !!layerState,
-    layerType: layer.type
-  });
-
   // ===== 1. Effect for Adding/Removing Source and Layer =====
   useEffect(() => {
-    logger.debug(`Effect ADD/REMOVE start`, { id, sourceId: source.id });
     let isMounted = true;
 
     const addLayerAndSource = async () => {
       if (!mapboxInstance) {
-        logger.warn(`Add/Remove: No map instance yet`, { id });
         return;
       }
 
       if (!isStyleLoaded(mapboxInstance)) {
-        logger.warn(`Add/Remove: Style not loaded initially, waiting...`, { id });
         mapboxInstance.once('styledata', () => {
-          logger.info(`Add/Remove: Style loaded, proceeding for ${id}`);
           if (isMounted) addLayerAndSource();
         });
         return;
@@ -94,13 +81,11 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       const map = mapboxInstance;
 
       try {
-        logger.debug(`Add/Remove: Adding source ${source.id} if needed`);
         if (!map.getSource(source.id)) {
           map.addSource(source.id, source.data);
-          logger.info(`Add/Remove: Source ${source.id} added`);
+          logger.info(`Source added: ${source.id}`);
         }
 
-        logger.debug(`Add/Remove: Adding layer ${id} if needed`);
         if (!map.getLayer(id)) {
           const layerConfig = {
             id,
@@ -111,14 +96,13 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               visibility: layerState?.visible ? 'visible' : 'none'
             }
           } as LayerSpecification;
-          logger.info(`Add/Remove: Layer ${id} added`, { type: layerConfig.type });
           map.addLayer(layerConfig, beforeId);
+          logger.info(`Layer added: ${id}`);
         }
       } catch (error) {
-        logger.error(`Add/Remove: Error during initial add`, { 
+        logger.error(`Failed to add layer/source`, { 
           id, 
-          error: error instanceof Error ? error.message : error,
-          stack: error instanceof Error ? error.stack : undefined
+          error: error instanceof Error ? error.message : error
         });
       }
     };
@@ -127,34 +111,27 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
 
     return () => {
       isMounted = false;
-      logger.debug(`Effect ADD/REMOVE cleanup`, { id, sourceId: source.id });
       if (mapboxInstance && !mapboxInstance._removed && isStyleLoaded(mapboxInstance)) {
         const map = mapboxInstance;
         try {
           if (map.getLayer(id)) {
-            logger.info(`Cleanup: Removing layer ${id}`);
             map.removeLayer(id);
+            logger.info(`Layer removed: ${id}`);
           }
           const style = map.getStyle();
           const layersUsingSource = (style?.layers || []).filter(l => l.source === source.id);
           if (layersUsingSource.length === 0 || (layersUsingSource.length === 1 && layersUsingSource[0].id === id)) {
             if (map.getSource(source.id)) {
-              logger.info(`Cleanup: Removing source ${source.id} (last user)`);
               map.removeSource(source.id);
+              logger.info(`Source removed: ${source.id}`);
             }
-          } else {
-            logger.debug(`Cleanup: Keeping source ${source.id} (used by other layers)`);
           }
         } catch (cleanupError) {
-          logger.error(`Cleanup: Error for ${id}`, { 
-            cleanupError: cleanupError instanceof Error ? cleanupError.message : cleanupError,
-            stack: cleanupError instanceof Error ? cleanupError.stack : undefined
+          logger.error(`Cleanup failed`, { 
+            id, 
+            error: cleanupError instanceof Error ? cleanupError.message : cleanupError
           });
         }
-      } else {
-        logger.warn(`Cleanup: Skipped for ${id} (map not ready)`, { 
-          isReady: mapboxInstance && !mapboxInstance._removed && isStyleLoaded(mapboxInstance) 
-        });
       }
     };
   }, [mapboxInstance, id, source.id, layer.type, beforeId]);
@@ -167,19 +144,17 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
 
     if (isGeoJSONSource(mapSource) && source.data.type === 'geojson' && source.data.data) {
       if (!isEqual(sourceDataRef.current, source.data.data)) {
-        logger.info(`Effect UPDATE_DATA: Updating source ${source.id}`, { id });
         try {
           mapSource.setData(source.data.data);
           sourceDataRef.current = source.data.data;
+          logger.info(`Source data updated: ${source.id}`);
         } catch (error) {
-          logger.error(`Effect UPDATE_DATA: Error setting data for ${source.id}`, { 
-            id, 
-            error: error instanceof Error ? error.message : error,
-            stack: error instanceof Error ? error.stack : undefined
+          logger.error(`Failed to update source data`, { 
+            id,
+            sourceId: source.id,
+            error: error instanceof Error ? error.message : error
           });
         }
-      } else {
-        logger.debug(`Effect UPDATE_DATA: Data unchanged for ${source.id}`, { id });
       }
     }
   }, [mapboxInstance, id, source.id, source.data]);
@@ -205,7 +180,6 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     };
 
     if (!isEqual(currentLayerProps, previousLayerProps)) {
-      logger.info(`Effect UPDATE_STYLE: Updating style properties for layer ${id}`);
       layerRef.current = layer;
 
       if (map.getLayer(id)) {
@@ -224,19 +198,14 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           }
           if (layer.filter) map.setFilter(id, layer.filter);
           map.setLayerZoomRange(id, layer.minzoom ?? 0, layer.maxzoom ?? 24);
-
-          logger.debug(`Effect UPDATE_STYLE: Style updated for ${id}`);
+          logger.debug(`Layer style updated: ${id}`);
         } catch (error) {
-          logger.error(`Effect UPDATE_STYLE: Error updating style for ${id}`, { 
-            error: error instanceof Error ? error.message : error,
-            stack: error instanceof Error ? error.stack : undefined
+          logger.error(`Failed to update layer style`, { 
+            id,
+            error: error instanceof Error ? error.message : error
           });
         }
-      } else {
-        logger.warn(`Effect UPDATE_STYLE: Layer ${id} not found`, { id });
       }
-    } else {
-      logger.debug(`Effect UPDATE_STYLE: Layer props unchanged for ${id}`);
     }
   }, [mapboxInstance, id, layer]);
 
@@ -244,62 +213,44 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   useEffect(() => {
     let retryTimeout: NodeJS.Timeout | null = null;
     let attemptCount = 0;
-    const MAX_VISIBILITY_ATTEMPTS = 5; // Try a few times
-    const RETRY_VISIBILITY_DELAY = 100; // ms
+    const MAX_VISIBILITY_ATTEMPTS = 5;
+    const RETRY_VISIBILITY_DELAY = 100;
 
     const updateVisibility = () => {
-      logger.debug(`Attempting visibility update for ${id}`, { 
-        attempt: attemptCount + 1,
-        hasMap: !!mapboxInstance,
-        hasLayerState: !!layerState,
-        isStyleLoaded: mapboxInstance ? isStyleLoaded(mapboxInstance) : false
-      });
-
-      // --- Check map instance and layer state first ---
       if (!mapboxInstance || !layerState) {
-        logger.warn(`Visibility update skipped: No map instance or layer state`, { id });
-        return; // Cannot proceed
+        return;
       }
 
-      // --- Now check style readiness ---
       if (!isStyleLoaded(mapboxInstance)) {
-        logger.warn(`Visibility update: Style not loaded (attempt ${attemptCount + 1})`, { id });
         if (attemptCount < MAX_VISIBILITY_ATTEMPTS - 1) {
           attemptCount++;
           retryTimeout = setTimeout(updateVisibility, RETRY_VISIBILITY_DELAY);
         } else {
-          logger.error(`Visibility update failed: Max retries exceeded`, { id });
+          logger.error(`Failed to update visibility after max retries`, { id });
         }
-        return; // Wait for retry or give up
+        return;
       }
 
-      // --- Map is ready, proceed ---
       const map = mapboxInstance;
       if (map.getLayer(id)) {
         try {
           const currentVisibility = map.getLayoutProperty(id, 'visibility') ?? 'visible';
           const newVisibility = layerState.visible ? 'visible' : 'none';
           if (currentVisibility !== newVisibility) {
-            logger.info(`Effect UPDATE_VISIBILITY: Setting visibility for ${id} to ${newVisibility}`);
             map.setLayoutProperty(id, 'visibility', newVisibility);
-          } else {
-            logger.debug(`Effect UPDATE_VISIBILITY: Visibility already ${newVisibility} for ${id}`);
+            logger.debug(`Layer visibility updated: ${id} -> ${newVisibility}`);
           }
         } catch (error) {
-          logger.error(`Effect UPDATE_VISIBILITY: Error setting visibility for ${id}`, { 
-            error: error instanceof Error ? error.message : error,
-            stack: error instanceof Error ? error.stack : undefined
+          logger.error(`Failed to update visibility`, { 
+            id,
+            error: error instanceof Error ? error.message : error
           });
         }
-      } else {
-        // This might happen if the layer was removed just before this effect ran
-        logger.warn(`Effect UPDATE_VISIBILITY: Layer ${id} not found during update attempt`);
       }
     };
 
-    updateVisibility(); // Initial attempt
+    updateVisibility();
 
-    // Cleanup function to clear timeout if component unmounts or deps change
     return () => {
       if (retryTimeout) {
         clearTimeout(retryTimeout);

@@ -33,11 +33,6 @@ interface LayerPanelProps {
 export function LayerPanel({ children, defaultCollapsed = false }: LayerPanelProps) {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
 
-  logger.info('LayerPanel render', {
-    isCollapsed,
-    hasChildren: !!children
-  });
-
   return (
     <div className="relative h-full">
       <Card className={`h-full bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 transition-all duration-300 overflow-hidden ${isCollapsed ? 'w-12' : 'w-[300px]'}`}>
@@ -49,7 +44,6 @@ export function LayerPanel({ children, defaultCollapsed = false }: LayerPanelPro
             variant="ghost"
             size="sm"
             onClick={() => {
-              logger.info('Layer panel toggle clicked', { currentState: isCollapsed });
               setIsCollapsed(!isCollapsed);
             }}
             className={`shrink-0 ${isCollapsed ? 'ml-0' : 'ml-auto'}`}

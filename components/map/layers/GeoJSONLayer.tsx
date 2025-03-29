@@ -69,11 +69,6 @@ function analyzeGeometryTypes(features: Feature<Geometry>[]): GeometryTypes {
     }
   });
 
-  logger.debug('Geometry types analysis', {
-    types,
-    featureCount: features.length
-  });
-
   return types;
 }
 
@@ -89,14 +84,14 @@ export function GeoJSONLayer({
   // Memoize geometry analysis
   const geometryTypes = useMemo(() => {
     if (!data?.features?.length) {
-      logger.warn('No features in data', { id });
+      logger.debug('No features in data', { id });
       return { hasPolygons: false, hasLines: false, hasPoints: false };
     }
     return analyzeGeometryTypes(data.features);
   }, [data, id]);
 
   // Log current state
-  logger.info('Creating GeoJSON layer', {
+  logger.debug('Creating GeoJSON layer', {
     id,
     featureCount: data?.features?.length || 0,
     geometryTypes,

@@ -82,7 +82,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
   setLayerVisibility: (layerId, visible) => {
     set((state) => {
       const layer = state.layers.byId[layerId];
-      if (!layer || layer.visible === visible) return state; // No change needed
+      if (!layer || layer.visible === visible) return state;
 
       const updatedLayer = { ...layer, visible };
       const updatedById = {
@@ -90,7 +90,6 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         [layerId]: updatedLayer
       };
 
-      logger.debug('Layer visibility updated', { layerId, visible });
       return {
         layers: {
           ...state.layers,
@@ -102,7 +101,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
 
   addLayer: (layerId, initialVisibility = true, sourceId, metadata) => {
     set((state) => {
-      if (state.layers.byId[layerId]) return state; // Layer already exists
+      if (state.layers.byId[layerId]) return state;
 
       const newLayer: Layer = {
         id: layerId,
@@ -119,23 +118,11 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
       };
 
       const updatedAllIds = [...state.layers.allIds, layerId];
-
       const updatedMetadata = metadata
-        ? {
-            ...state.layers.metadata,
-            [layerId]: metadata
-          }
+        ? { ...state.layers.metadata, [layerId]: metadata }
         : state.layers.metadata;
 
-      logger.debug('Layer added to store', { layerId, sourceId, initialVisibility, metadata });
-      logger.info('Layer store state after adding layer', {
-        layerId,
-        storeState: {
-          byId: Object.keys(updatedById),
-          allIds: updatedAllIds,
-          metadata: Object.keys(updatedMetadata)
-        }
-      });
+      logger.debug(`Layer added: ${layerId}`);
       return {
         layers: {
           byId: updatedById,
@@ -148,13 +135,13 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
 
   removeLayer: (layerId) => {
     set((state) => {
-      if (!state.layers.byId[layerId]) return state; // Layer doesn't exist
+      if (!state.layers.byId[layerId]) return state;
 
       const { [layerId]: removedLayer, ...updatedById } = state.layers.byId;
       const updatedAllIds = state.layers.allIds.filter(id => id !== layerId);
       const { [layerId]: removedMetadata, ...updatedMetadata } = state.layers.metadata;
 
-      logger.debug('Layer removed', { layerId });
+      logger.debug(`Layer removed: ${layerId}`);
       return {
         layers: {
           byId: updatedById,
@@ -169,7 +156,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     set((state) => {
       const layer = state.layers.byId[layerId];
       if (!layer || (layer.setupStatus === status && layer.error === error)) {
-        return state; // No change needed
+        return state;
       }
 
       const updatedLayer = {
@@ -184,7 +171,10 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         [layerId]: updatedLayer
       };
 
-      logger.debug('Layer status updated', { layerId, status, error });
+      if (error) {
+        logger.error(`Layer error: ${layerId}`, { error });
+      }
+
       return {
         layers: {
           ...state.layers,
@@ -196,30 +186,23 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
 
   handleFileDeleted: (fileId: string) => {
     set((state) => {
-      const layersToRemove: string[] = [];
+      const layersToRemove = state.layers.allIds
+        .map(id => state.layers.byId[id])
+        .filter(layer => layer.metadata?.fileId === fileId);
 
-      // Find all layers associated with the deleted file
-      Object.entries(state.layers.metadata).forEach(([layerId, metadata]) => {
-        if (metadata.fileId === fileId) {
-          layersToRemove.push(layerId);
-        }
-      });
+      if (layersToRemove.length === 0) return state;
 
-      // Remove each layer
       const updatedById = { ...state.layers.byId };
-      const updatedAllIds = [...state.layers.allIds];
       const updatedMetadata = { ...state.layers.metadata };
 
-      layersToRemove.forEach(layerId => {
-        delete updatedById[layerId];
-        const index = updatedAllIds.indexOf(layerId);
-        if (index > -1) {
-          updatedAllIds.splice(index, 1);
-        }
-        delete updatedMetadata[layerId];
+      layersToRemove.forEach(layer => {
+        delete updatedById[layer.id];
+        delete updatedMetadata[layer.id];
       });
 
-      logger.debug('Layers removed for deleted file', { fileId, removedLayers: layersToRemove });
+      const updatedAllIds = state.layers.allIds.filter(id => !layersToRemove.some(l => l.id === id));
+
+      logger.debug(`Removed ${layersToRemove.length} layers for deleted file: ${fileId}`);
       return {
         layers: {
           byId: updatedById,
@@ -232,7 +215,6 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
 
   reset: () => {
     set({ layers: initialState });
-    logger.info('Layer store reset');
   }
 }));
 
@@ -245,13 +227,11 @@ export const layerSelectors = {
 
   // Get all layers
   getAllLayers: createMemoizedSelector((state: LayerStore) => {
-    logger.debug('Computing getAllLayers selector');
     return state.layers.allIds.map(id => state.layers.byId[id]);
   }),
 
   // Get visible layers
   getVisibleLayers: createMemoizedSelector((state: LayerStore) => {
-    logger.debug('Computing getVisibleLayers selector');
     return state.layers.allIds
       .map(id => state.layers.byId[id])
       .filter(layer => layer.visible);
@@ -271,7 +251,6 @@ export const layerSelectors = {
 
   // Get layers with errors
   getLayersWithErrors: createMemoizedSelector((state: LayerStore) => {
-    logger.debug('Computing getLayersWithErrors selector');
     return state.layers.allIds
       .map(id => state.layers.byId[id])
       .filter(layer => layer.error !== undefined);

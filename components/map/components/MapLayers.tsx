@@ -25,19 +25,8 @@ const logger = {
 };
 
 function processFeature(feature: any): Feature<Geometry> | null {
-  logger.debug('Processing feature', {
-    featureId: feature.id,
-    hasDirectGeometry: !!feature.geometry,
-    hasGeojsonField: !!feature.geojson,
-    hasNestedGeojson: !!feature.properties?.geojson
-  });
-
   // Case 1: Feature already has valid geometry
   if (feature.geometry?.type && feature.geometry?.coordinates) {
-    logger.debug('Feature has direct geometry', {
-      featureId: feature.id,
-      geometryType: feature.geometry.type
-    });
     return feature as Feature<Geometry>;
   }
 
@@ -47,11 +36,6 @@ function processFeature(feature: any): Feature<Geometry> | null {
       const parsedGeometry = typeof feature.geojson === 'string' 
         ? JSON.parse(feature.geojson)
         : feature.geojson;
-
-      logger.debug('Parsed geometry from top-level geojson', {
-        featureId: feature.id,
-        geometryType: parsedGeometry.type
-      });
 
       return {
         type: 'Feature',
@@ -74,11 +58,6 @@ function processFeature(feature: any): Feature<Geometry> | null {
         ? JSON.parse(feature.properties.geojson)
         : feature.properties.geojson;
 
-      logger.debug('Parsed geometry from properties.geojson', {
-        featureId: feature.id,
-        geometryType: parsedGeometry.type
-      });
-
       return {
         type: 'Feature',
         geometry: parsedGeometry,
@@ -93,7 +72,6 @@ function processFeature(feature: any): Feature<Geometry> | null {
     }
   }
 
-  logger.warn('No valid geometry found for feature', { featureId: feature.id });
   return null;
 }
 
@@ -103,7 +81,6 @@ function LayerRenderer({ layer }: { layer: Layer }) {
   const { data, loading, error } = useLayerData(layer.id);
 
   if (loading) {
-    logger.debug('Layer data loading', { layerId: layer.id });
     return null;
   }
 
@@ -113,14 +90,8 @@ function LayerRenderer({ layer }: { layer: Layer }) {
   }
 
   if (!data?.features?.length) {
-    logger.debug('No features in layer data', { layerId: layer.id });
     return null;
   }
-
-  logger.info('Processing features for layer', {
-    layerId: layer.id,
-    originalFeatureCount: data.features.length
-  });
 
   // Process and validate features
   const processedFeatures = data.features
@@ -138,7 +109,7 @@ function LayerRenderer({ layer }: { layer: Layer }) {
     features: processedFeatures
   };
 
-  logger.info('Created feature collection', {
+  logger.debug('Layer features processed', {
     layerId: layer.id,
     originalCount: data.features.length,
     processedCount: processedFeatures.length,
@@ -187,17 +158,6 @@ export function MapLayers() {
     layers.filter(layer => layer.metadata), 
     [layers]
   );
-
-  logger.info('MapLayers render', {
-    layerCount: layers.length,
-    validLayerCount: validLayers.length,
-    layers: validLayers.map(l => ({
-      id: l.id,
-      hasMetadata: !!l.metadata,
-      visible: l.visible,
-      setupStatus: l.setupStatus
-    }))
-  });
 
   return (
     <>
