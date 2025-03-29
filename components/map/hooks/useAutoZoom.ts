@@ -64,7 +64,7 @@ export function useAutoZoom() {
   const { layers } = useLayers();
   const retryTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const retryCountRef = useRef<number>(0);
-  const MAX_RETRIES = 5;
+  const MAX_RETRIES = 10; // Increased from 5 to 10 to allow more time for layers to load
   const RETRY_DELAY = 500; // 500ms between retries
 
   useEffect(() => {
@@ -101,15 +101,33 @@ export function useAutoZoom() {
       // At this point we know mapboxInstance is ready
       const map = mapboxInstance;
 
-      // Check if all layers are loaded
-      const allLayersLoaded = layers.every(l => l.setupStatus === 'complete' || l.setupStatus === 'error');
+      // Check if all layers are loaded and have sources
+      const allLayersReady = layers.every(l => {
+        if (l.setupStatus !== 'complete') return false;
+        try {
+          return !!map.getSource(l.id);
+        } catch {
+          return false;
+        }
+      });
       
-      if (!allLayersLoaded) {
-        logger.debug('Not all layers loaded yet, skipping auto-zoom', {
+      if (!allLayersReady) {
+        logger.debug('Not all layer sources are ready, retrying auto-zoom', {
           layerCount: layers.length,
-          loadedLayers: layers.filter(l => l.setupStatus === 'complete').length,
-          errorLayers: layers.filter(l => l.setupStatus === 'error').length
+          readyLayers: layers.filter(l => {
+            try {
+              return l.setupStatus === 'complete' && !!map.getSource(l.id);
+            } catch {
+              return false;
+            }
+          }).length
         });
+
+        // Schedule retry if we haven't exceeded max retries
+        if (retryCountRef.current < MAX_RETRIES) {
+          retryCountRef.current++;
+          retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
+        }
         return;
       }
 
@@ -124,8 +142,9 @@ export function useAutoZoom() {
       try {
         // Calculate bounds from all visible layers
         let bounds: mapboxgl.LngLatBounds | undefined = undefined;
+        let hasValidBoundsForAnyLayer = false;
 
-        visibleLayers.forEach((layer, layerIndex) => {
+        visibleLayers.forEach((layer) => {
           try {
             // Try to get the source
             const source = map.getSource(layer.id);
@@ -134,12 +153,6 @@ export function useAutoZoom() {
                 layerId: layer.id,
                 retryCount: retryCountRef.current
               });
-
-              // Schedule retry if we haven't exceeded max retries
-              if (retryCountRef.current < MAX_RETRIES) {
-                retryCountRef.current++;
-                retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
-              }
               return;
             }
 
@@ -156,154 +169,127 @@ export function useAutoZoom() {
                 );
 
                 if (isValidBounds(layerBounds)) {
+                  hasValidBoundsForAnyLayer = true;
                   if (!bounds) {
                     bounds = layerBounds;
                   } else {
                     bounds.extend(layerBounds);
                   }
-                  return;
                 }
+                return;
               }
             }
 
             // Handle GeoJSON sources
-            if (source.type !== 'geojson') {
-              logger.debug('Source is not GeoJSON', { 
-                layerId: layer.id, 
-                sourceType: source.type
-              });
-              return;
-            }
+            if (source.type === 'geojson') {
+              const geoJSONSource = source as GeoJSONSourceWithData;
+              const features = geoJSONSource._data?.features;
 
-            // Get features from source
-            const geoJSONSource = source as GeoJSONSourceWithData;
-            const features = geoJSONSource._data?.features;
+              if (!features?.length) {
+                logger.debug('No features found in source', { 
+                  layerId: layer.id,
+                  featureCount: 0
+                });
+                return;
+              }
 
-            if (!features?.length) {
-              logger.debug('No features found in source', { 
-                layerId: layer.id,
-                featureCount: 0
-              });
-              return;
-            }
+              // Create bounds from features
+              const layerBounds = new mapboxgl.LngLatBounds();
+              let coordCount = 0;
 
-            // Create bounds from features
-            const layerBounds = new mapboxgl.LngLatBounds();
-            let coordCount = 0;
+              features.forEach((feature: any) => {
+                try {
+                  // Try to get geometry from standard GeoJSON structure first
+                  let geometry = feature.geometry;
+                  
+                  // If not found, try to parse from geojson field
+                  if (!geometry && feature.geojson) {
+                    try {
+                      geometry = JSON.parse(feature.geojson);
+                    } catch (parseError) {
+                      logger.warn('Failed to parse geojson field', {
+                        layerId: layer.id,
+                        featureId: feature.id,
+                        error: parseError
+                      });
+                      return;
+                    }
+                  }
 
-            features.forEach((feature: any) => {
-              try {
-                // Try to get geometry from standard GeoJSON structure first
-                let geometry = feature.geometry;
-                
-                // If not found, try to parse from geojson field
-                if (!geometry && feature.geojson) {
-                  try {
-                    geometry = JSON.parse(feature.geojson);
-                  } catch (parseError) {
-                    logger.warn('Failed to parse geojson field', {
-                      layerId: layer.id,
-                      featureId: feature.id,
-                      error: parseError
-                    });
+                  if (!geometry) {
                     return;
                   }
-                }
 
-                if (!geometry) {
-                  return;
-                }
-
-                if (geometry.type === 'Point') {
-                  const coordinates = geometry.coordinates as Coordinate;
-                  layerBounds.extend(coordsToLngLat(coordinates));
-                  coordCount++;
-                } else if (geometry.type === 'LineString') {
-                  const coordinates = geometry.coordinates as LineCoordinates;
-                  coordinates.forEach(coord => {
-                    layerBounds.extend(coordsToLngLat(coord));
+                  if (geometry.type === 'Point') {
+                    const coordinates = geometry.coordinates as Coordinate;
+                    layerBounds.extend(coordsToLngLat(coordinates));
                     coordCount++;
-                  });
-                } else if (geometry.type === 'MultiLineString') {
-                  const coordinates = geometry.coordinates as LineCoordinates[];
-                  coordinates.forEach(line => 
-                    line.forEach(coord => {
+                  } else if (geometry.type === 'LineString') {
+                    const coordinates = geometry.coordinates as LineCoordinates;
+                    coordinates.forEach(coord => {
                       layerBounds.extend(coordsToLngLat(coord));
                       coordCount++;
-                    })
-                  );
-                } else if (geometry.type === 'Polygon') {
-                  const coordinates = geometry.coordinates as PolygonCoordinates;
-                  coordinates.forEach(ring => 
-                    ring.forEach(coord => {
-                      layerBounds.extend(coordsToLngLat(coord));
-                      coordCount++;
-                    })
-                  );
-                } else if (geometry.type === 'MultiPolygon') {
-                  const coordinates = geometry.coordinates as MultiPolygonCoordinates;
-                  coordinates.forEach(polygon => 
-                    polygon.forEach(ring => 
+                    });
+                  } else if (geometry.type === 'MultiLineString') {
+                    const coordinates = geometry.coordinates as LineCoordinates[];
+                    coordinates.forEach(line => 
+                      line.forEach(coord => {
+                        layerBounds.extend(coordsToLngLat(coord));
+                        coordCount++;
+                      })
+                    );
+                  } else if (geometry.type === 'Polygon') {
+                    const coordinates = geometry.coordinates as PolygonCoordinates;
+                    coordinates.forEach(ring => 
                       ring.forEach(coord => {
                         layerBounds.extend(coordsToLngLat(coord));
                         coordCount++;
                       })
-                    )
-                  );
-                }
-              } catch (featureError) {
-                logger.warn('Error processing feature geometry', { 
-                  layerId: layer.id, 
-                  featureId: feature.id,
-                  error: featureError 
-                });
-              }
-            });
-
-            logger.debug('Layer bounds calculated', {
-              layerId: layer.id,
-              coordCount,
-              hasValidBounds: isValidBounds(layerBounds),
-              bounds: isValidBounds(layerBounds) ? {
-                ne: layerBounds.getNorthEast(),
-                sw: layerBounds.getSouthWest()
-              } : null
-            });
-
-            // Only extend overall bounds if we got valid bounds for this layer
-            if (isValidBounds(layerBounds)) {
-              if (!bounds) {
-                bounds = layerBounds;
-              } else {
-                bounds.extend(layerBounds);
-              }
-            }
-
-            // If we have valid bounds and this is the last layer, perform the zoom
-            if (bounds && isValidBounds(bounds) && layerIndex === visibleLayers.length - 1) {
-              // At this point TypeScript knows bounds is valid
-              const validBounds = bounds;
-              logger.info('Auto-zooming to layer bounds', {
-                layerCount: visibleLayers.length,
-                bounds: {
-                  ne: validBounds.getNorthEast(),
-                  sw: validBounds.getSouthWest()
+                    );
+                  } else if (geometry.type === 'MultiPolygon') {
+                    const coordinates = geometry.coordinates as MultiPolygonCoordinates;
+                    coordinates.forEach(polygon => 
+                      polygon.forEach(ring => 
+                        ring.forEach(coord => {
+                          layerBounds.extend(coordsToLngLat(coord));
+                          coordCount++;
+                        })
+                      )
+                    );
+                  }
+                } catch (featureError) {
+                  logger.warn('Error processing feature geometry', { 
+                    layerId: layer.id, 
+                    featureId: feature.id,
+                    error: featureError 
+                  });
                 }
               });
 
-              // Add padding to the bounds
-              const padding = 50; // pixels
-              map.fitBounds(validBounds, { padding });
+              if (isValidBounds(layerBounds) && coordCount > 0) {
+                hasValidBoundsForAnyLayer = true;
+                logger.debug('Layer bounds calculated', {
+                  layerId: layer.id,
+                  coordCount,
+                  bounds: {
+                    ne: layerBounds.getNorthEast(),
+                    sw: layerBounds.getSouthWest()
+                  }
+                });
 
-              // Clear retry count on success
-              retryCountRef.current = 0;
+                if (!bounds) {
+                  bounds = layerBounds;
+                } else {
+                  bounds.extend(layerBounds);
+                }
+              }
             }
           } catch (layerError) {
             logger.warn('Error processing layer', { layerId: layer.id, error: layerError });
           }
         });
 
-        if (bounds && isValidBounds(bounds)) {
+        if (bounds && isValidBounds(bounds) && hasValidBoundsForAnyLayer) {
           // Explicitly assert the bounds type since we've validated it
           const validBounds = bounds as mapboxgl.LngLatBounds;
           const ne = validBounds.getNorthEast();
@@ -323,6 +309,9 @@ export function useAutoZoom() {
             duration: 1000,
             maxZoom: 18 // Prevent zooming in too far
           });
+
+          // Clear retry count on success
+          retryCountRef.current = 0;
         } else {
           logger.warn('No valid bounds found for auto-zoom');
 
@@ -330,11 +319,6 @@ export function useAutoZoom() {
           if (retryCountRef.current < MAX_RETRIES) {
             retryCountRef.current++;
             retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
-          } else {
-            logger.warn('Max retries exceeded for auto-zoom, giving up', {
-              maxRetries: MAX_RETRIES,
-              totalDelay: MAX_RETRIES * RETRY_DELAY
-            });
           }
         }
       } catch (error) {

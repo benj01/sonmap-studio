@@ -2,12 +2,13 @@
 
 import { LogManager } from '@/core/logging/log-manager';
 import { useEffect, useRef } from 'react';
-import { Eye, EyeOff, Settings, AlertCircle, Maximize } from 'lucide-react';
+import { Eye, EyeOff, Settings, AlertCircle, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useLayer } from '@/store/layers/hooks';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useLayerData } from '../hooks/useLayerData';
+import { useLayerZoom } from '../hooks/useLayerZoom';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as mapboxgl from 'mapbox-gl';
 
@@ -45,6 +46,7 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   const { layer: storeLayer, setVisibility, error: storeError } = useLayer(layer.id);
   const { data, loading, error: dataError } = useLayerData(layer.id);
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const { zoomToLayer } = useLayerZoom();
 
   useEffect(() => {
     logger.info('LayerItem state', {
@@ -73,6 +75,10 @@ export function LayerItem({ layer, className }: LayerItemProps) {
     } catch (err) {
       logger.error('Error toggling layer visibility', { error: err });
     }
+  };
+
+  const handleZoomToLayer = () => {
+    zoomToLayer(layer.id);
   };
 
   if (loading) {
@@ -107,6 +113,16 @@ export function LayerItem({ layer, className }: LayerItemProps) {
           {data?.features?.length || 0} features
         </p>
       </div>
+
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={handleZoomToLayer}
+        disabled={!!error || !storeLayer?.visible}
+        title="Zoom to layer"
+      >
+        <Maximize2 className="h-4 w-4" />
+      </Button>
 
       {error ? (
         <Button
