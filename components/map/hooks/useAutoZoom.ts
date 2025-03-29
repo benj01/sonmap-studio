@@ -33,12 +33,15 @@ interface ExtendedFeature extends Feature {
   geojson?: string | GeoJSON;
 }
 
-type SourceState = {
+interface SourceState {
   isLoaded: boolean;
   hasData: boolean;
-};
+  lastChecked: number;
+}
 
 const DEBOUNCE_DELAY = 300;
+const SOURCE_CHECK_INTERVAL = 100;
+const MAX_SOURCE_CHECK_ATTEMPTS = 50; // 5 seconds total
 
 function isStyleLoaded(map: mapboxgl.Map): boolean {
   try {
@@ -50,66 +53,30 @@ function isStyleLoaded(map: mapboxgl.Map): boolean {
 
 function isVectorSource(source: mapboxgl.AnySourceImpl | undefined): source is mapboxgl.VectorTileSource {
   if (!source) return false;
-  
-  // Primary check: source type is explicitly 'vector'
-  if (source.type === 'vector') return true;
-  
-  // Secondary check: source has vector tile specific properties
-  const sourceAny = source as any;
-  return !!(
-    sourceAny._vectorTileLayerIds || 
-    sourceAny.vectorLayerIds ||
-    // Check if source has tile-specific properties
-    (sourceAny.tiles && Array.isArray(sourceAny.tiles))
-  );
+  return source.type === 'vector' || 
+         !!(source as any)._vectorTileLayerIds || 
+         !!(source as any).vectorLayerIds ||
+         (Array.isArray((source as any).tiles));
 }
 
 function isGeoJSONSource(source: mapboxgl.AnySourceImpl | undefined): source is mapboxgl.GeoJSONSource {
   if (!source) return false;
-  
-  // Primary check: source type is explicitly 'geojson'
-  if (source.type === 'geojson') return true;
-  
-  // Secondary check: source has GeoJSON specific properties
-  const sourceAny = source as any;
-  return !!(
-    sourceAny._data?.type === 'FeatureCollection' ||
-    sourceAny._data?.type === 'Feature' ||
-    sourceAny._data?.type === 'Point' ||
-    sourceAny._data?.type === 'LineString' ||
-    sourceAny._data?.type === 'Polygon'
-  );
+  return source.type === 'geojson' || 
+         (source as any)._data?.type === 'FeatureCollection' ||
+         (source as any)._data?.type === 'Feature' ||
+         (source as any)._data?.type === 'Point' ||
+         (source as any)._data?.type === 'LineString' ||
+         (source as any)._data?.type === 'Polygon';
 }
 
 function hasValidSourceData(source: mapboxgl.AnySourceImpl, map: mapboxgl.Map, sourceId: string): boolean {
   try {
-    // First check if source is loaded at the map level
-    if (!map.isSourceLoaded(sourceId)) {
-      return false;
-    }
-
-    if (isVectorSource(source)) {
-      // For vector sources, we need to check if we can query features
-      // This indicates the source is ready for use
-      const features = map.querySourceFeatures(sourceId);
-      return features.length > 0;
-    } else if (isGeoJSONSource(source)) {
-      // For GeoJSON sources, check if we can access the data
-      const sourceAny = source as any;
-      const data = sourceAny._data;
-      
-      if (!data) return false;
-      if (typeof data === 'string') return false;
-      if (typeof data !== 'object') return false;
-
-      // Check if we can query features
-      const features = map.querySourceFeatures(sourceId);
-      return features.length > 0;
-    }
-    
-    return false;
+    // For GeoJSON sources added via 'data' property, isSourceLoaded is sufficient
+    const loaded = map.isSourceLoaded(sourceId);
+    logger.debug(`Source readiness check for ${sourceId}: isSourceLoaded=${loaded}`);
+    return loaded;
   } catch (error) {
-    logger.warn('Error checking source data validity:', error);
+    logger.warn(`Error checking source readiness for ${sourceId}:`, error);
     return false;
   }
 }
@@ -141,47 +108,120 @@ function isMultiPolygon(geometry: Geometry): geometry is MultiPolygon {
 export function useAutoZoom(isMapReady: boolean) {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { layers } = useLayers();
-  const zoomCompletedForCurrentLayersRef = useRef<boolean>(false);
-  const visibleSourceIdsRef = useRef<string[]>([]);
+  const zoomCompletedRef = useRef<boolean>(false);
+  const sourceStatesRef = useRef<Record<string, SourceState>>({});
+  const lastVisibleLayerIdsRef = useRef<string[]>([]);
+  const missingSourcesRef = useRef<Set<string>>(new Set());
   
   // Get all visible layers
   const visibleLayerConfigs = layers.filter(layer => layer.visible);
   const visibleLayerIds = visibleLayerConfigs.map(layer => layer.id);
   const visibleSourceIds = visibleLayerConfigs.map(layer => `${layer.id}-source`);
 
-  // Update visibleSourceIdsRef when visible layers change
+  // Reset state when visible layers change
   useEffect(() => {
-    visibleSourceIdsRef.current = visibleSourceIds;
-    logger.debug('Visible source IDs updated', { 
-      count: visibleSourceIds.length,
-      sourceIds: visibleSourceIds 
-    });
-  }, [visibleSourceIds]);
+    const currentVisibleIds = visibleLayerIds.join(',');
+    const lastVisibleIds = lastVisibleLayerIdsRef.current.join(',');
+    
+    if (currentVisibleIds !== lastVisibleIds) {
+      logger.debug('Visible layers changed, resetting zoom state', {
+        previous: lastVisibleLayerIdsRef.current,
+        current: visibleLayerIds,
+        visibleSourceIds
+      });
+      
+      zoomCompletedRef.current = false;
+      sourceStatesRef.current = {};
+      missingSourcesRef.current = new Set();
+      lastVisibleLayerIdsRef.current = visibleLayerIds;
+    }
+  }, [visibleLayerIds]);
 
   // Reset state when map changes
   useEffect(() => {
     if (!mapboxInstance) {
-      zoomCompletedForCurrentLayersRef.current = false;
+      zoomCompletedRef.current = false;
+      sourceStatesRef.current = {};
+      missingSourcesRef.current = new Set();
     }
+  }, [mapboxInstance]);
+
+  const checkSourceReadiness = useCallback((sourceId: string): boolean => {
+    if (!mapboxInstance || !isStyleLoaded(mapboxInstance)) {
+      return false;
+    }
+
+    const source = mapboxInstance.getSource(sourceId);
+    if (!source) {
+      // Track missing sources
+      if (!missingSourcesRef.current.has(sourceId)) {
+        missingSourcesRef.current.add(sourceId);
+        logger.warn(`Source not found on map: ${sourceId}`, {
+          visibleSourceIds,
+          existingSources: Object.keys(sourceStatesRef.current)
+        });
+      }
+      return false;
+    }
+
+    const currentTime = Date.now();
+    const state = sourceStatesRef.current[sourceId];
+
+    // If we've checked recently, return cached state
+    if (state && currentTime - state.lastChecked < SOURCE_CHECK_INTERVAL) {
+      return state.isLoaded;
+    }
+
+    // Check source readiness
+    const isLoaded = mapboxInstance.isSourceLoaded(sourceId);
+
+    // Update state
+    sourceStatesRef.current[sourceId] = {
+      isLoaded,
+      hasData: isLoaded, // For GeoJSON sources, isLoaded implies hasData
+      lastChecked: currentTime
+    };
+
+    // Log state changes
+    if (state && state.isLoaded !== isLoaded) {
+      logger.debug(`Source ${sourceId} state changed:`, {
+        previous: state,
+        current: { isLoaded }
+      });
+    }
+
+    return isLoaded;
   }, [mapboxInstance]);
 
   const checkAllSourcesReady = useCallback((): boolean => {
     if (!mapboxInstance || !isStyleLoaded(mapboxInstance)) {
-      logger.debug('Map instance or style not ready');
       return false;
     }
 
     // Only check sources that actually exist on the map
-    const existingSources = visibleSourceIdsRef.current.filter(sourceId => mapboxInstance.getSource(sourceId));
+    const existingSources = visibleSourceIds.filter(sourceId => mapboxInstance.getSource(sourceId));
     
     if (!existingSources.length) {
-      logger.debug('No sources found on map to check');
+      logger.debug('No sources found on map to check', {
+        visibleSourceIds,
+        missingSources: Array.from(missingSourcesRef.current)
+      });
       return false;
     }
 
+    // Log missing sources periodically
+    if (missingSourcesRef.current.size > 0) {
+      logger.warn('Missing sources detected:', {
+        missing: Array.from(missingSourcesRef.current),
+        visible: visibleSourceIds,
+        existing: existingSources
+      });
+    }
+
     logger.debug('Checking source readiness:', {
-      visibleSourceIds: visibleSourceIdsRef.current,
+      visibleSourceIds,
       existingSources,
+      missingSources: Array.from(missingSourcesRef.current),
       mapInstance: !!mapboxInstance
     });
 
@@ -189,36 +229,9 @@ export function useAutoZoom(isMapReady: boolean) {
     let readySources = 0;
 
     for (const sourceId of existingSources) {
-      const source = mapboxInstance.getSource(sourceId);
+      const isReady = checkSourceReadiness(sourceId);
       
-      if (!source) {
-        logger.debug(`Source not found: ${sourceId}`);
-        allSourcesReady = false;
-        continue;
-      }
-
-      const sourceType = isVectorSource(source) ? 'vector' : 'geojson';
-      const isLoaded = mapboxInstance.isSourceLoaded(sourceId);
-      
-      // Check if data is actually queryable
-      let hasQueryableData = false;
-      if (isLoaded) {
-        try {
-          const features = mapboxInstance.querySourceFeatures(sourceId);
-          hasQueryableData = features.length > 0;
-        } catch (error) {
-          logger.warn(`Error querying source features for ${sourceId}:`, error);
-        }
-      }
-
-      logger.debug(`Source ${sourceId} check:`, {
-        sourceType,
-        isLoaded,
-        hasQueryableData,
-        source: source.type
-      });
-
-      if (!isLoaded || !hasQueryableData) {
+      if (!isReady) {
         allSourcesReady = false;
       } else {
         readySources++;
@@ -228,11 +241,12 @@ export function useAutoZoom(isMapReady: boolean) {
     logger.debug('Source readiness check complete:', {
       allSourcesReady,
       readySources,
-      totalSources: existingSources.length
+      totalSources: existingSources.length,
+      missingSources: Array.from(missingSourcesRef.current)
     });
 
     return allSourcesReady && readySources === existingSources.length;
-  }, [mapboxInstance]);
+  }, [mapboxInstance, visibleSourceIds, checkSourceReadiness]);
 
   const calculateAndFitBounds = useCallback(() => {
     if (!mapboxInstance || !checkAllSourcesReady()) {
@@ -240,23 +254,23 @@ export function useAutoZoom(isMapReady: boolean) {
       return;
     }
 
-    if (zoomCompletedForCurrentLayersRef.current) {
+    if (zoomCompletedRef.current) {
       logger.debug('Skipping zoom: Already completed for current layer set');
       return;
     }
 
     try {
-      logger.info(`Calculating bounds for sources: ${visibleSourceIdsRef.current.join(', ')}`);
+      logger.info(`Calculating bounds for sources: ${visibleSourceIds.join(', ')}`);
       const bounds = getBoundsFromLayers(mapboxInstance, visibleLayerConfigs);
 
       if (bounds && !bounds.isEmpty()) {
         logger.debug('Calculated combined bounds:', {
           ne: bounds.getNorthEast(),
           sw: bounds.getSouthWest(),
-          sourceCount: visibleSourceIdsRef.current.length
+          sourceCount: visibleSourceIds.length
         });
         mapboxInstance.fitBounds(bounds, { padding: 50, duration: 500 });
-        zoomCompletedForCurrentLayersRef.current = true;
+        zoomCompletedRef.current = true;
         logger.info('Auto-zoom executed successfully');
       } else {
         logger.warn('Bounds calculation resulted in null or empty bounds');
@@ -264,18 +278,19 @@ export function useAutoZoom(isMapReady: boolean) {
     } catch (error) {
       logger.error('Error during calculateAndFitBounds:', error);
     }
-  }, [mapboxInstance, checkAllSourcesReady, visibleLayerConfigs]);
+  }, [mapboxInstance, checkAllSourcesReady, visibleLayerConfigs, visibleSourceIds]);
 
   // Create the debounced version of the zoom function
   const debouncedZoom = useRef(
     debounce(calculateAndFitBounds, DEBOUNCE_DELAY)
   ).current;
 
+  // Effect to handle source data events and style loading
   useEffect(() => {
     if (!mapboxInstance) return;
 
     const handleSourceData = (e: mapboxgl.MapSourceDataEvent) => {
-      if (!e.sourceId || !visibleSourceIdsRef.current.includes(e.sourceId)) return;
+      if (!e.sourceId || !visibleSourceIds.includes(e.sourceId)) return;
 
       const source = mapboxInstance.getSource(e.sourceId);
       if (!source) return;
@@ -295,7 +310,7 @@ export function useAutoZoom(isMapReady: boolean) {
     mapboxInstance.on('sourcedata', handleSourceData);
     mapboxInstance.on('style.load', () => {
       logger.debug('Style loaded, checking source states');
-      visibleSourceIdsRef.current.forEach(sourceId => {
+      visibleSourceIds.forEach(sourceId => {
         const source = mapboxInstance.getSource(sourceId);
         if (source) {
           const event = {
@@ -314,7 +329,7 @@ export function useAutoZoom(isMapReady: boolean) {
       mapboxInstance.off('style.load', () => {});
       debouncedZoom.cancel();
     };
-  }, [mapboxInstance, debouncedZoom]);
+  }, [mapboxInstance, visibleSourceIds, debouncedZoom]);
 
   const getBoundsFromLayers = (map: mapboxgl.Map, layerConfigs: Layer[]): mapboxgl.LngLatBounds | null => {
     const bounds = new mapboxgl.LngLatBounds();
@@ -336,7 +351,6 @@ export function useAutoZoom(isMapReady: boolean) {
       }
 
       try {
-        // Try to get features from the source
         const features = map.querySourceFeatures(sourceId);
         
         if (features.length > 0) {

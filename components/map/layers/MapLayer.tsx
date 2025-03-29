@@ -54,26 +54,118 @@ function isStyleLoaded(map: mapboxgl.Map): boolean {
 }
 
 export function MapLayer({ id, source, layer, initialVisibility = true, beforeId }: MapLayerProps) {
+  // Early validation and logging
+  useEffect(() => {
+    logger.debug(`MapLayer render: ${id}`, {
+      sourceId: source.id,
+      layerType: layer.type,
+      hasSourceData: !!source.data,
+      sourceDataType: source.data?.type,
+      hasData: !!source.data?.data,
+      dataType: typeof source.data?.data,
+      isGeoJSON: source.data?.type === 'geojson',
+      isFeatureCollection: typeof source.data?.data !== 'string' && 
+                         source.data?.data?.type === 'FeatureCollection',
+      featureCount: typeof source.data?.data !== 'string' && 
+                   source.data?.data?.type === 'FeatureCollection' ? 
+                   source.data.data.features?.length : undefined
+    });
+
+    // Validate source data
+    if (!source.data) {
+      logger.error(`Invalid source data for layer ${id}`, {
+        sourceId: source.id,
+        source
+      });
+      return;
+    }
+
+    if (source.data.type === 'geojson' && !source.data.data) {
+      logger.error(`Missing GeoJSON data for layer ${id}`, {
+        sourceId: source.id,
+        source
+      });
+      return;
+    }
+
+    if (source.data.type === 'geojson' && 
+        typeof source.data.data !== 'string' && 
+        source.data.data?.type !== 'FeatureCollection' && 
+        source.data.data?.type !== 'Feature') {
+      logger.error(`Invalid GeoJSON data type for layer ${id}`, {
+        sourceId: source.id,
+        dataType: typeof source.data.data !== 'string' ? source.data.data?.type : 'string'
+      });
+      return;
+    }
+  }, [id, source.id, source.data]);
+
   const mapboxInstance = useMapboxInstance();
   const originalLayerId = id.replace(/-fill$|-line$|-circle$/, '');
   const { layer: layerState, updateStatus } = useLayer(originalLayerId);
   const previousStatusRef = useRef(layerState?.setupStatus);
+  const addAttemptsRef = useRef(0);
+  const MAX_ADD_ATTEMPTS = 5;
+  const ADD_RETRY_DELAY = 100;
+  const isMountedRef = useRef(true);
+  const sourceAddedRef = useRef(false);
+  const layerAddedRef = useRef(false);
 
   const layerRef = useRef(layer);
   const sourceDataRef = useRef(source.data.data);
 
+  // Log component lifecycle
+  useEffect(() => {
+    logger.debug(`MapLayer mounted: ${id}`, {
+      sourceId: source.id,
+      layerType: layer.type,
+      originalLayerId,
+      hasSourceData: !!source.data,
+      sourceDataType: source.data?.type,
+      hasData: !!source.data?.data
+    });
+
+    return () => {
+      isMountedRef.current = false;
+      logger.debug(`MapLayer unmounted: ${id}`, {
+        sourceId: source.id,
+        layerType: layer.type,
+        originalLayerId,
+        sourceAdded: sourceAddedRef.current,
+        layerAdded: layerAddedRef.current
+      });
+    };
+  }, [id, source.id, layer.type, originalLayerId]);
+
   // ===== 1. Effect for Adding/Removing Source and Layer =====
   useEffect(() => {
-    let isMounted = true;
+    let retryTimeout: NodeJS.Timeout | null = null;
 
     const addLayerAndSource = async () => {
       if (!mapboxInstance) {
+        logger.debug('Map instance not available, retrying...', { 
+          id,
+          sourceId: source.id,
+          attempts: addAttemptsRef.current,
+          sourceAdded: sourceAddedRef.current,
+          layerAdded: layerAddedRef.current
+        });
+        if (isMountedRef.current && addAttemptsRef.current < MAX_ADD_ATTEMPTS) {
+          addAttemptsRef.current++;
+          retryTimeout = setTimeout(addLayerAndSource, ADD_RETRY_DELAY);
+        }
         return;
       }
 
       if (!isStyleLoaded(mapboxInstance)) {
+        logger.debug('Style not loaded, waiting for styledata event', { 
+          id,
+          sourceId: source.id,
+          sourceAdded: sourceAddedRef.current,
+          layerAdded: layerAddedRef.current
+        });
         mapboxInstance.once('styledata', () => {
-          if (isMounted) addLayerAndSource();
+          if (isMountedRef.current) addLayerAndSource();
         });
         return;
       }
@@ -81,12 +173,49 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       const map = mapboxInstance;
 
       try {
-        if (!map.getSource(source.id)) {
+        // --- Source Addition ---
+        if (map.getSource(source.id)) {
+          logger.debug(`Source already exists: ${source.id}`, {
+            id,
+            layerType: layer.type,
+            sourceAdded: sourceAddedRef.current,
+            layerAdded: layerAddedRef.current
+          });
+          sourceAddedRef.current = true;
+        } else {
+          logger.info(`Adding source: ${source.id}`, {
+            id,
+            type: source.data.type,
+            hasData: !!source.data.data,
+            dataType: typeof source.data.data,
+            isGeoJSON: source.data.type === 'geojson',
+            isFeatureCollection: typeof source.data.data !== 'string' && 
+                               source.data.data?.type === 'FeatureCollection',
+            featureCount: typeof source.data.data !== 'string' && 
+                         source.data.data?.type === 'FeatureCollection' ? 
+                         source.data.data.features?.length : undefined
+          });
           map.addSource(source.id, source.data);
-          logger.info(`Source added: ${source.id}`);
+          sourceAddedRef.current = true;
         }
 
-        if (!map.getLayer(id)) {
+        // --- Layer Addition (Attempt Immediately) ---
+        if (map.getLayer(id)) {
+          logger.debug(`Layer already exists: ${id}`, {
+            sourceId: source.id,
+            layerType: layer.type,
+            sourceAdded: sourceAddedRef.current,
+            layerAdded: layerAddedRef.current
+          });
+          layerAddedRef.current = true;
+        } else {
+          logger.info(`Adding layer: ${id}`, {
+            sourceId: source.id,
+            type: layer.type,
+            visibility: layerState?.visible ? 'visible' : 'none',
+            sourceAdded: sourceAddedRef.current,
+            layerAdded: layerAddedRef.current
+          });
           const layerConfig = {
             id,
             source: source.id,
@@ -97,26 +226,52 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             }
           } as LayerSpecification;
           map.addLayer(layerConfig, beforeId);
-          logger.info(`Layer added: ${id}`);
+          layerAddedRef.current = true;
         }
+
+        // Reset attempts on success
+        addAttemptsRef.current = 0;
+        logger.info(`Layer and source setup complete: ${id}`, {
+          sourceId: source.id,
+          layerType: layer.type,
+          sourceAdded: sourceAddedRef.current,
+          layerAdded: layerAddedRef.current
+        });
       } catch (error) {
         logger.error(`Failed to add layer/source`, { 
           id, 
-          error: error instanceof Error ? error.message : error
+          sourceId: source.id,
+          error: error instanceof Error ? error.message : error,
+          stack: error instanceof Error ? error.stack : undefined,
+          attempts: addAttemptsRef.current,
+          mapStyleLoaded: isStyleLoaded(map),
+          sourceExists: !!map.getSource(source.id),
+          layerExists: !!map.getLayer(id),
+          sourceAdded: sourceAddedRef.current,
+          layerAdded: layerAddedRef.current
         });
+
+        // Retry on failure if we haven't exceeded max attempts
+        if (isMountedRef.current && addAttemptsRef.current < MAX_ADD_ATTEMPTS) {
+          addAttemptsRef.current++;
+          retryTimeout = setTimeout(addLayerAndSource, ADD_RETRY_DELAY);
+        }
       }
     };
 
     addLayerAndSource();
 
     return () => {
-      isMounted = false;
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
       if (mapboxInstance && !mapboxInstance._removed && isStyleLoaded(mapboxInstance)) {
         const map = mapboxInstance;
         try {
           if (map.getLayer(id)) {
             map.removeLayer(id);
             logger.info(`Layer removed: ${id}`);
+            layerAddedRef.current = false;
           }
           const style = map.getStyle();
           const layersUsingSource = (style?.layers || []).filter(l => l.source === source.id);
@@ -124,17 +279,21 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             if (map.getSource(source.id)) {
               map.removeSource(source.id);
               logger.info(`Source removed: ${source.id}`);
+              sourceAddedRef.current = false;
             }
           }
         } catch (cleanupError) {
           logger.error(`Cleanup failed`, { 
             id, 
-            error: cleanupError instanceof Error ? cleanupError.message : cleanupError
+            sourceId: source.id,
+            error: cleanupError instanceof Error ? cleanupError.message : cleanupError,
+            sourceAdded: sourceAddedRef.current,
+            layerAdded: layerAddedRef.current
           });
         }
       }
     };
-  }, [mapboxInstance, id, source.id, layer.type, beforeId]);
+  }, [mapboxInstance, id, source.id, layer.type, beforeId, layerState?.visible]);
 
   // ===== 2. Effect for Updating Source Data =====
   useEffect(() => {
