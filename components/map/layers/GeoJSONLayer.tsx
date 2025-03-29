@@ -2,6 +2,7 @@ import { FillLayerSpecification, LineLayerSpecification, CircleLayerSpecificatio
 import { MapLayer } from './MapLayer';
 import { LogManager } from '@/core/logging/log-manager';
 import type { Feature, Geometry } from 'geojson';
+import { useMemo } from 'react';
 
 const SOURCE = 'GeoJSONLayer';
 const logManager = LogManager.getInstance();
@@ -85,16 +86,19 @@ export function GeoJSONLayer({
   initialVisibility = true,
   beforeId,
 }: GeoJSONLayerProps) {
-  if (!data?.features?.length) {
-    logger.warn('No features in data', { id });
-    return null;
-  }
+  // Memoize geometry analysis
+  const geometryTypes = useMemo(() => {
+    if (!data?.features?.length) {
+      logger.warn('No features in data', { id });
+      return { hasPolygons: false, hasLines: false, hasPoints: false };
+    }
+    return analyzeGeometryTypes(data.features);
+  }, [data, id]);
 
-  const geometryTypes = analyzeGeometryTypes(data.features);
-  
+  // Log current state
   logger.info('Creating GeoJSON layer', {
     id,
-    featureCount: data.features.length,
+    featureCount: data?.features?.length || 0,
     geometryTypes,
     hasStyles: {
       fill: !!fillLayer,
@@ -103,48 +107,70 @@ export function GeoJSONLayer({
     }
   });
 
-  const source = {
+  // Memoize source configuration
+  const source = useMemo(() => ({
     id: `${id}-source`,
     data: {
       type: 'geojson' as const,
       data,
     } satisfies GeoJSONSourceSpecification,
-  };
+  }), [id, data]);
+
+  // Memoize layer specifications
+  const fillLayerSpec = useMemo(() => {
+    if (!geometryTypes.hasPolygons || !fillLayer) return null;
+    return {
+      type: 'fill' as const,
+      ...fillLayer,
+    };
+  }, [geometryTypes.hasPolygons, fillLayer]);
+
+  const lineLayerSpec = useMemo(() => {
+    if (!geometryTypes.hasLines || !lineLayer) return null;
+    return {
+      type: 'line' as const,
+      ...lineLayer,
+    };
+  }, [geometryTypes.hasLines, lineLayer]);
+
+  const circleLayerSpec = useMemo(() => {
+    if (!geometryTypes.hasPoints || !circleLayer) return null;
+    return {
+      type: 'circle' as const,
+      ...circleLayer,
+    };
+  }, [geometryTypes.hasPoints, circleLayer]);
+
+  // Early return if no data
+  if (!data?.features?.length) {
+    return null;
+  }
 
   return (
     <>
-      {geometryTypes.hasPolygons && fillLayer && (
+      {fillLayerSpec && (
         <MapLayer
           id={`${id}-fill`}
           source={source}
-          layer={{
-            type: 'fill',
-            ...fillLayer,
-          }}
+          layer={fillLayerSpec}
           initialVisibility={initialVisibility}
           beforeId={beforeId}
         />
       )}
-      {geometryTypes.hasLines && lineLayer && (
+      {lineLayerSpec && (
         <MapLayer
           id={`${id}-line`}
           source={source}
-          layer={{
-            type: 'line',
-            ...lineLayer,
-          }}
+          layer={lineLayerSpec}
           initialVisibility={initialVisibility}
           beforeId={beforeId}
         />
       )}
-      {geometryTypes.hasPoints && circleLayer && (
+      {circleLayerSpec && (
         <MapLayer
           id={`${id}-circle`}
           source={source}
-          layer={{
-            type: 'circle',
-            ...circleLayer,
-          }}
+          layer={circleLayerSpec}
           initialVisibility={initialVisibility}
           beforeId={beforeId}
         />

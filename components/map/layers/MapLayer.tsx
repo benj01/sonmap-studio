@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import mapboxgl, { 
   AnySourceData, 
   LayerSpecification, 
@@ -44,10 +44,26 @@ function isGeoJSONSource(source: mapboxgl.AnySourceImpl): source is GeoJSONSourc
   return 'setData' in source && typeof (source as any).setData === 'function';
 }
 
+function isMapReady(map: mapboxgl.Map | null): map is mapboxgl.Map {
+  if (!map) return false;
+  try {
+    // Check if map is removed using type assertion since _removed is internal
+    const mapInstance = map as mapboxgl.Map & { _removed?: boolean };
+    if (mapInstance._removed) return false;
+    return typeof mapInstance.isStyleLoaded === 'function' && 
+           mapInstance.isStyleLoaded() &&
+           typeof mapInstance.getLayer === 'function' &&
+           typeof mapInstance.addLayer === 'function';
+  } catch {
+    return false;
+  }
+}
+
 export function MapLayer({ id, source, layer, initialVisibility = true, beforeId }: MapLayerProps) {
   const mapboxInstance = useMapboxInstance();
   const originalLayerId = id.replace(/-fill$|-line$|-circle$/, '');
   const { layer: layerState, updateStatus } = useLayer(originalLayerId);
+  const previousStatusRef = useRef(layerState?.setupStatus);
 
   logger.debug(`MapLayer instantiated`, {
     id,
@@ -68,15 +84,18 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       layerType: layer.type
     });
 
-    if (!mapboxInstance) {
-      logger.warn(`No map instance available`, { id });
+    if (!isMapReady(mapboxInstance)) {
+      logger.warn(`Map not ready`, {
+        id,
+        hasMap: !!mapboxInstance,
+        isStyleLoaded: mapboxInstance?.isStyleLoaded?.(),
+        isRemoved: mapboxInstance?._removed
+      });
       return;
     }
 
-    if (!mapboxInstance.isStyleLoaded()) {
-      logger.warn(`Map style not loaded`, { id });
-      return;
-    }
+    // At this point TypeScript knows mapboxInstance is non-null and ready
+    const map = mapboxInstance;
 
     if (!layerState) {
       logger.warn(`No layer state available`, { id });
@@ -86,7 +105,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     const addSourceAndLayer = async () => {
       try {
         // Check if source exists
-        const existingSource = mapboxInstance.getSource(source.id);
+        const existingSource = map.getSource(source.id);
         if (!existingSource) {
           logger.info(`Adding source`, {
             sourceId: source.id,
@@ -97,7 +116,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               source.data.data !== null
           });
 
-          mapboxInstance.addSource(source.id, source.data);
+          map.addSource(source.id, source.data);
           logger.debug(`Source added successfully`, { sourceId: source.id });
         } else {
           logger.debug(`Source already exists`, { sourceId: source.id });
@@ -109,7 +128,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         }
 
         // Check if layer exists
-        const existingLayer = mapboxInstance.getLayer(id);
+        const existingLayer = map.getLayer(id);
         if (!existingLayer) {
           const layerConfig = {
             id,
@@ -130,9 +149,14 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             beforeId
           });
 
-          mapboxInstance.addLayer(layerConfig, beforeId);
+          map.addLayer(layerConfig, beforeId);
           logger.debug(`Layer added successfully`, { layerId: id });
-          updateStatus('complete');
+
+          // Only update status if it actually changes
+          if (previousStatusRef.current !== 'complete') {
+            previousStatusRef.current = 'complete';
+            updateStatus('complete');
+          }
         } else {
           logger.debug(`Layer already exists`, { layerId: id });
         }
@@ -143,36 +167,59 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           id,
           sourceId: source.id
         });
-        updateStatus('error', error instanceof Error ? error.message : 'Unknown error');
+
+        // Only update status if it actually changes
+        if (previousStatusRef.current !== 'error') {
+          previousStatusRef.current = 'error';
+          updateStatus('error', error instanceof Error ? error.message : 'Unknown error');
+        }
       }
     };
 
     addSourceAndLayer();
 
     return () => {
-      logger.debug(`Effect cleanup`, { id, hasMap: !!mapboxInstance });
-      if (!mapboxInstance || !mapboxInstance.getLayer || !mapboxInstance.removeLayer) return;
+      logger.debug(`Effect cleanup`, {
+        id,
+        hasMap: !!mapboxInstance,
+        isMapReady: isMapReady(mapboxInstance)
+      });
+
+      // Only attempt cleanup if map is in a good state
+      if (!isMapReady(mapboxInstance)) {
+        logger.warn(`Skipping cleanup - map not ready`, {
+          id,
+          hasMap: !!mapboxInstance,
+          isStyleLoaded: mapboxInstance?.isStyleLoaded?.(),
+          isRemoved: mapboxInstance?._removed
+        });
+        return;
+      }
+
+      // At this point TypeScript knows mapboxInstance is non-null and ready
+      const map = mapboxInstance;
 
       try {
-        if (mapboxInstance.getLayer(id)) {
+        // Always try to remove the layer first
+        if (map.getLayer(id)) {
           logger.info(`Removing layer during cleanup`, { layerId: id });
-          mapboxInstance.removeLayer(id);
+          map.removeLayer(id);
         }
 
-        // Only remove source if no other layers are using it
-        const style = mapboxInstance.getStyle();
-        const layers = style?.layers || [];
-        const sourceUsers = layers
-          .filter(l => l.source === source.id)
-          .map(l => l.id);
-        
-        if (sourceUsers.length <= 1 && mapboxInstance.getSource(source.id)) {
-          logger.info(`Removing source during cleanup`, { sourceId: source.id });
-          mapboxInstance.removeSource(source.id);
+        // Check if any other layers are using this source before removing it
+        const style = map.getStyle();
+        const layersUsingSource = (style?.layers || [])
+          .filter(l => l.source === source.id && l.id !== id);
+
+        if (layersUsingSource.length === 0 && map.getSource(source.id)) {
+          logger.info(`Removing source during cleanup (last user)`, {
+            sourceId: source.id
+          });
+          map.removeSource(source.id);
         } else {
-          logger.debug(`Skipping source removal - still in use`, {
+          logger.debug(`Keeping source - still in use`, {
             sourceId: source.id,
-            usedBy: sourceUsers
+            usedByLayers: layersUsingSource.map(l => l.id)
           });
         }
       } catch (cleanupError) {
@@ -183,41 +230,53 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         });
       }
     };
-  }, [mapboxInstance, id, source, layer, layerState, beforeId, updateStatus]);
+  }, [mapboxInstance, id, source, layer, beforeId]); // Removed layerState and updateStatus from deps
 
   useEffect(() => {
-    logger.debug(`Effect VISIBILITY start`, {
-      id,
-      hasMap: !!mapboxInstance,
-      isStyleLoaded: mapboxInstance?.isStyleLoaded?.(),
-      desiredVisibility: layerState?.visible
-    });
-
-    if (!mapboxInstance || !mapboxInstance.isStyleLoaded() || !layerState) {
+    if (!isMapReady(mapboxInstance) || !layerState) {
+      logger.debug(`Skipping visibility update - map or layer not ready`, {
+        id,
+        hasMap: !!mapboxInstance,
+        hasLayerState: !!layerState,
+        isMapReady: isMapReady(mapboxInstance)
+      });
       return;
     }
 
+    // At this point TypeScript knows mapboxInstance is non-null and ready
+    const map = mapboxInstance;
+
     try {
-      if (mapboxInstance.getLayer(id)) {
-        const currentVisibility = mapboxInstance.getLayoutProperty(id, 'visibility');
+      if (map.getLayer(id)) {
+        const currentVisibility = map.getLayoutProperty(id, 'visibility');
         const newVisibility = layerState.visible ? 'visible' : 'none';
 
         if (currentVisibility !== newVisibility) {
           logger.info(`Updating layer visibility`, {
             layerId: id,
             from: currentVisibility,
-            to: newVisibility
+            to: newVisibility,
+            triggeredBy: 'visibility toggle'
           });
-          mapboxInstance.setLayoutProperty(id, 'visibility', newVisibility);
+          map.setLayoutProperty(id, 'visibility', newVisibility);
+        } else {
+          logger.debug(`Visibility unchanged`, {
+            layerId: id,
+            visibility: currentVisibility,
+            matchesState: layerState.visible
+          });
         }
+      } else {
+        logger.warn(`Layer not found for visibility update`, { layerId: id });
       }
     } catch (error) {
       logger.error(`Error updating visibility`, {
         error: error instanceof Error ? error.message : error,
-        id
+        id,
+        stack: error instanceof Error ? error.stack : undefined
       });
     }
-  }, [mapboxInstance, id, layerState?.visible]);
+  }, [mapboxInstance, id, layerState?.visible]); // Restored layerState.visible dependency
 
   return null;
 } 

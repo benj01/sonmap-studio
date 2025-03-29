@@ -30,9 +30,11 @@ const layerCache = new Map<string, {
   timestamp: number;
   subscribers: number;
   isValid: boolean;
+  lastUpdate: number;
 }>();
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const UPDATE_THROTTLE = 1000; // 1 second between updates
 
 interface LayerData {
   id: string;
@@ -109,6 +111,7 @@ export function useLayerData(layerId: string) {
   const mounted = useRef(true);
   const fetchingRef = useRef(false);
   const cleanupRef = useRef(false);
+  const lastUpdateRef = useRef(0);
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { layer, updateStatus } = useLayer(layerId);
 
@@ -117,7 +120,8 @@ export function useLayerData(layerId: string) {
     hasLayer: !!layer,
     hasMapbox: !!mapboxInstance,
     loading,
-    error: error?.message
+    error: error?.message,
+    hasCachedData: !!layerCache.get(layerId)
   });
 
   useEffect(() => {
@@ -138,8 +142,10 @@ export function useLayerData(layerId: string) {
         logger.info('Using cached layer data', {
           layerId,
           dataTimestamp: new Date(cached.timestamp).toISOString(),
-          subscribers: cached.subscribers
+          subscribers: cached.subscribers,
+          lastUpdate: new Date(cached.lastUpdate).toISOString()
         });
+        // Use the exact same reference from cache
         setData(cached.data);
         setLoading(false);
       }
@@ -180,6 +186,17 @@ export function useLayerData(layerId: string) {
         });
         return;
       }
+
+      // Throttle updates
+      const now = Date.now();
+      if (now - lastUpdateRef.current < UPDATE_THROTTLE) {
+        logger.debug('Skipping fetch - update throttled', {
+          layerId,
+          timeSinceLastUpdate: now - lastUpdateRef.current
+        });
+        return;
+      }
+
       fetchingRef.current = true;
 
       try {
@@ -189,9 +206,11 @@ export function useLayerData(layerId: string) {
           logger.info('Using cached layer data', {
             layerId,
             dataTimestamp: new Date(cached.timestamp).toISOString(),
-            subscribers: cached.subscribers
+            subscribers: cached.subscribers,
+            lastUpdate: new Date(cached.lastUpdate).toISOString()
           });
           if (mounted.current) {
+            // Use the exact same reference from cache
             setData(cached.data);
             setLoading(false);
           }
@@ -271,7 +290,8 @@ export function useLayerData(layerId: string) {
           data: layerDataWithFeatures,
           timestamp: Date.now(),
           subscribers: 1,
-          isValid: true
+          isValid: true,
+          lastUpdate: Date.now()
         });
 
         logger.info('Layer data cached', {
@@ -281,9 +301,12 @@ export function useLayerData(layerId: string) {
         });
 
         if (mounted.current) {
+          // Use the exact same reference from cache
           setData(layerDataWithFeatures);
           setLoading(false);
         }
+
+        lastUpdateRef.current = Date.now();
 
         // Initialize the layer in Mapbox if available
         if (mapboxInstance && layer?.visible) {

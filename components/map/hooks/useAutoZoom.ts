@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import mapboxgl from 'mapbox-gl';
 import type { GeoJSON } from 'geojson';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
@@ -28,31 +28,15 @@ type Coordinate = [number, number];
 type LineCoordinates = Coordinate[];
 type PolygonCoordinates = LineCoordinates[];
 
-interface GeoJSONSourceWithData extends Omit<mapboxgl.GeoJSONSource, '_data'> {
-  _data?: string | GeoJSON.FeatureCollection;
-}
+const MAX_RETRIES = 10;
+const RETRY_DELAY = 500;
 
-function coordsToLngLat(coords: Coordinate): mapboxgl.LngLatLike {
-  // PostGIS returns coordinates in WGS84 (EPSG:4326) format
-  // Mapbox GL expects coordinates in [longitude, latitude] order
-  return coords;
-}
-
-function isValidBounds(bounds: mapboxgl.LngLatBounds): boolean {
-  try {
-    const ne = bounds.getNorthEast();
-    const sw = bounds.getSouthWest();
-    return !!(ne && sw && ne.lng !== sw.lng && ne.lat !== sw.lat);
-  } catch {
-    return false;
-  }
-}
-
-function isMapReady(map: mapboxgl.Map | null): boolean {
+function isMapReadyForZoom(map: mapboxgl.Map | null): map is mapboxgl.Map {
   if (!map) return false;
   try {
-    // Check if the map is fully loaded and interactive
-    return map.isStyleLoaded() && !map.isMoving() && !map.isZooming();
+    return map.isStyleLoaded() && 
+           typeof map.getSource === 'function' &&
+           typeof map.getLayer === 'function';
   } catch {
     return false;
   }
@@ -61,204 +45,228 @@ function isMapReady(map: mapboxgl.Map | null): boolean {
 export function useAutoZoom(isMapReady: boolean) {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { layers } = useLayers();
-  const retryTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
-  const retryCountRef = useRef<number>(0);
-  const MAX_RETRIES = 10;
-  const RETRY_DELAY = 500;
+  const processedLayersRef = useRef<string>('');
+  const retryCountRef = useRef(0);
+  const retryTimeoutRef = useRef<NodeJS.Timeout>();
+
+  const attemptAutoZoom = useCallback(() => {
+    if (!isMapReady || !isMapReadyForZoom(mapboxInstance)) {
+      logger.debug('Map not ready for auto-zoom', {
+        isMapReady,
+        hasMap: !!mapboxInstance,
+        isStyleLoaded: mapboxInstance ? mapboxInstance.isStyleLoaded() : false,
+        retryCount: retryCountRef.current
+      });
+
+      // Retry if we haven't exceeded max retries
+      if (retryCountRef.current < MAX_RETRIES) {
+        retryCountRef.current++;
+        retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
+        return;
+      }
+
+      logger.warn('Max retries reached for auto-zoom', {
+        retryCount: retryCountRef.current
+      });
+      return;
+    }
+
+    // Reset retry count on successful attempt
+    retryCountRef.current = 0;
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+    }
+
+    const visibleLayers = layers.filter(l => l.visible && l.setupStatus === 'complete');
+    
+    if (!visibleLayers.length) {
+      logger.debug('No visible and complete layers for auto-zoom');
+      return;
+    }
+
+    // Check if all sources are ready
+    const allSourcesReady = visibleLayers.every(layer => {
+      const sourceId = `${layer.id}-source`;
+      try {
+        const source = mapboxInstance.getSource(sourceId);
+        if (!source) return false;
+        
+        // For GeoJSON sources, check if data is loaded
+        if ('_data' in source) {
+          const geoJSONSource = source as any;
+          return !!geoJSONSource._data?.features?.length;
+        }
+        
+        return true;
+      } catch {
+        return false;
+      }
+    });
+
+    if (!allSourcesReady) {
+      logger.debug('Not all sources ready for auto-zoom', {
+        visibleLayerIds: visibleLayers.map(l => l.id),
+        retryCount: retryCountRef.current
+      });
+
+      // Retry if we haven't exceeded max retries
+      if (retryCountRef.current < MAX_RETRIES) {
+        retryCountRef.current++;
+        retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
+        return;
+      }
+
+      logger.warn('Max retries reached waiting for sources', {
+        retryCount: retryCountRef.current
+      });
+      return;
+    }
+
+    logger.debug('Calculating bounds for auto-zoom', {
+      visibleLayerCount: visibleLayers.length
+    });
+
+    const bounds = new mapboxgl.LngLatBounds();
+    let hasValidBounds = false;
+    let coordCount = 0;
+
+    visibleLayers.forEach(layer => {
+      try {
+        const sourceId = `${layer.id}-source`;
+        const source = mapboxInstance.getSource(sourceId);
+        
+        if (!source) {
+          logger.warn('Source not found for layer', { layerId: layer.id, sourceId });
+          return;
+        }
+
+        if ('_data' in source) {
+          const geoJSONSource = source as any;
+          const features = geoJSONSource._data?.features;
+
+          if (!features?.length) {
+            logger.debug('No features in source', { layerId: layer.id });
+            return;
+          }
+
+          features.forEach((feature: any) => {
+            try {
+              let geometry = feature.geometry;
+              
+              if (!geometry && feature.geojson) {
+                try {
+                  geometry = typeof feature.geojson === 'string' 
+                    ? JSON.parse(feature.geojson)
+                    : feature.geojson;
+                } catch (parseError) {
+                  logger.warn('Failed to parse geojson field', {
+                    layerId: layer.id,
+                    featureId: feature.id,
+                    error: parseError
+                  });
+                  return;
+                }
+              }
+
+              if (!geometry?.type || !geometry?.coordinates) {
+                logger.warn('Invalid geometry', {
+                  layerId: layer.id,
+                  featureId: feature.id,
+                  geometryType: geometry?.type
+                });
+                return;
+              }
+
+              const addCoordinate = (coord: Coordinate) => {
+                bounds.extend(coord as mapboxgl.LngLatLike);
+                coordCount++;
+              };
+
+              switch (geometry.type) {
+                case 'Point':
+                  addCoordinate(geometry.coordinates);
+                  break;
+                case 'LineString':
+                  geometry.coordinates.forEach(addCoordinate);
+                  break;
+                case 'MultiLineString':
+                  geometry.coordinates.forEach((line: LineCoordinates) => 
+                    line.forEach(addCoordinate));
+                  break;
+                case 'Polygon':
+                  geometry.coordinates.forEach((ring: LineCoordinates) => 
+                    ring.forEach(addCoordinate));
+                  break;
+                case 'MultiPolygon':
+                  geometry.coordinates.forEach((polygon: PolygonCoordinates) => 
+                    polygon.forEach(ring => ring.forEach(addCoordinate)));
+                  break;
+                default:
+                  logger.warn('Unsupported geometry type', {
+                    layerId: layer.id,
+                    featureId: feature.id,
+                    geometryType: geometry.type
+                  });
+              }
+            } catch (featureError) {
+              logger.warn('Error processing feature geometry', {
+                layerId: layer.id,
+                featureId: feature.id,
+                error: featureError
+              });
+            }
+          });
+        }
+      } catch (layerError) {
+        logger.warn('Error processing layer for bounds', {
+          layerId: layer.id,
+          error: layerError
+        });
+      }
+    });
+
+    if (coordCount > 0) {
+      hasValidBounds = true;
+    }
+
+    if (hasValidBounds && bounds.getNorthEast() && bounds.getSouthWest()) {
+      logger.info('Zooming to bounds', {
+        coordCount,
+        bounds: {
+          ne: bounds.getNorthEast().toArray(),
+          sw: bounds.getSouthWest().toArray()
+        }
+      });
+      
+      mapboxInstance.fitBounds(bounds, {
+        padding: 50,
+        animate: true,
+        duration: 1000,
+        maxZoom: 18
+      });
+    } else {
+      logger.warn('No valid bounds calculated', { coordCount });
+    }
+  }, [isMapReady, mapboxInstance, layers]);
 
   useEffect(() => {
+    if (isMapReady) {
+      const currentProcessedLayers = layers
+        .filter(l => l.visible && l.setupStatus === 'complete')
+        .map(l => l.id)
+        .sort()
+        .join(',');
+
+      if (currentProcessedLayers !== processedLayersRef.current) {
+        processedLayersRef.current = currentProcessedLayers;
+        attemptAutoZoom();
+      }
+    }
+
     return () => {
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
       }
     };
-  }, []);
-
-  useEffect(() => {
-    const attemptAutoZoom = () => {
-      // Check if map is ready and style is loaded
-      if (!isMapReady || !mapboxInstance || !mapboxInstance.isStyleLoaded()) {
-        logger.debug('Map not ready or style not loaded yet, skipping auto-zoom', {
-          hasInstance: !!mapboxInstance,
-          isMapReady,
-          isStyleLoaded: mapboxInstance?.isStyleLoaded(),
-          retryCount: retryCountRef.current
-        });
-
-        // Schedule retry if we haven't exceeded max retries
-        if (retryCountRef.current < MAX_RETRIES) {
-          retryCountRef.current++;
-          retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
-        } else {
-          logger.warn('Max retries exceeded for auto-zoom, giving up', {
-            maxRetries: MAX_RETRIES,
-            totalDelay: MAX_RETRIES * RETRY_DELAY
-          });
-        }
-        return;
-      }
-
-      // At this point we know mapboxInstance is ready
-      const map = mapboxInstance;
-
-      // Check if all layers are loaded and have sources
-      const allLayersReady = layers.every(l => {
-        if (l.setupStatus !== 'complete') return false;
-        try {
-          return !!map.getSource(l.id);
-        } catch {
-          return false;
-        }
-      });
-
-      if (!allLayersReady) {
-        logger.debug('Not all layer sources are ready yet', {
-          layerCount: layers.length,
-          readyLayers: layers.filter(l => l.setupStatus === 'complete').length
-        });
-
-        // Schedule retry if we haven't exceeded max retries
-        if (retryCountRef.current < MAX_RETRIES) {
-          retryCountRef.current++;
-          retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
-        }
-        return;
-      }
-
-      // Get visible layers
-      const visibleLayers = layers.filter(l => l.visible && l.setupStatus === 'complete');
-
-      if (!visibleLayers.length) {
-        logger.debug('No visible layers to zoom to');
-        return;
-      }
-
-      // Create bounds from all visible layers
-      const bounds = new mapboxgl.LngLatBounds();
-      let hasValidBounds = false;
-
-      visibleLayers.forEach((layer) => {
-        try {
-          const source = map.getSource(layer.id);
-          if (!source) {
-            logger.debug('Source not found for layer', { layerId: layer.id });
-            return;
-          }
-
-          // Handle vector sources
-          if (source.type === 'vector') {
-            const vectorSource = source as mapboxgl.VectorTileSource;
-            if (vectorSource.bounds) {
-              bounds.extend([
-                [vectorSource.bounds[0], vectorSource.bounds[1]],
-                [vectorSource.bounds[2], vectorSource.bounds[3]]
-              ]);
-              hasValidBounds = true;
-            }
-          }
-
-          // Handle GeoJSON sources
-          if (source.type === 'geojson') {
-            const geoJSONSource = source as GeoJSONSourceWithData;
-            const data = typeof geoJSONSource._data === 'string' 
-              ? JSON.parse(geoJSONSource._data) 
-              : geoJSONSource._data;
-            
-            const features = data?.features;
-
-            if (!features?.length) {
-              logger.debug('No features found in source', { 
-                layerId: layer.id,
-                featureCount: 0
-              });
-              return;
-            }
-
-            // Create bounds from features
-            let coordCount = 0;
-
-            features.forEach((feature: any) => {
-              try {
-                // Try to get geometry from standard GeoJSON structure first
-                let geometry = feature.geometry;
-                
-                // If not found, try to parse from geojson field
-                if (!geometry && feature.geojson) {
-                  try {
-                    geometry = JSON.parse(feature.geojson);
-                  } catch (parseError) {
-                    logger.warn('Failed to parse geojson field', {
-                      layerId: layer.id,
-                      featureId: feature.id,
-                      error: parseError
-                    });
-                    return;
-                  }
-                }
-
-                if (!geometry) return;
-
-                const addCoordinate = (coord: Coordinate) => {
-                  bounds.extend(coord as mapboxgl.LngLatLike);
-                  coordCount++;
-                };
-
-                if (geometry.type === 'Point') {
-                  addCoordinate(geometry.coordinates);
-                } else if (geometry.type === 'LineString') {
-                  geometry.coordinates.forEach(addCoordinate);
-                } else if (geometry.type === 'MultiLineString') {
-                  geometry.coordinates.forEach((line: LineCoordinates) => line.forEach(addCoordinate));
-                } else if (geometry.type === 'Polygon') {
-                  geometry.coordinates.forEach((ring: LineCoordinates) => ring.forEach(addCoordinate));
-                } else if (geometry.type === 'MultiPolygon') {
-                  geometry.coordinates.forEach((polygon: PolygonCoordinates) => 
-                    polygon.forEach((ring: LineCoordinates) => ring.forEach(addCoordinate))
-                  );
-                }
-
-                if (coordCount > 0) {
-                  hasValidBounds = true;
-                }
-              } catch (featureError) {
-                logger.warn('Error processing feature geometry', {
-                  layerId: layer.id,
-                  featureId: feature.id,
-                  error: featureError
-                });
-              }
-            });
-          }
-        } catch (error) {
-          logger.error('Error processing layer for bounds', {
-            layerId: layer.id,
-            error
-          });
-        }
-      });
-
-      if (hasValidBounds && bounds.getNorthEast() && bounds.getSouthWest()) {
-        logger.info('Zooming to combined layer bounds', {
-          bounds: {
-            ne: bounds.getNorthEast(),
-            sw: bounds.getSouthWest()
-          }
-        });
-
-        map.fitBounds(bounds, {
-          padding: 50,
-          animate: true,
-          duration: 1000,
-          maxZoom: 18
-        });
-      } else {
-        logger.warn('No valid bounds found for visible layers');
-      }
-    };
-
-    // Only attempt auto-zoom when map becomes ready
-    if (isMapReady) {
-      attemptAutoZoom();
-    }
-  }, [isMapReady, mapboxInstance, layers]);
+  }, [isMapReady, layers, attemptAutoZoom]);
 } 
