@@ -28,73 +28,84 @@ type Coordinate = [number, number];
 type LineCoordinates = Coordinate[];
 type PolygonCoordinates = LineCoordinates[];
 
-const MAX_RETRIES = 10;
-const RETRY_DELAY = 500;
+const MAX_AUTOZOOM_RETRIES = 5;
+const AUTOZOOM_RETRY_DELAY = 200;
 
-function isMapReadyForZoom(map: mapboxgl.Map | null): map is mapboxgl.Map {
-  if (!map) return false;
+function isStyleLoaded(map: mapboxgl.Map): boolean {
   try {
-    return map.isStyleLoaded() && 
-           typeof map.getSource === 'function' &&
-           typeof map.getLayer === 'function';
+    return typeof map.isStyleLoaded === 'function' && map.isStyleLoaded();
   } catch {
     return false;
   }
+}
+
+function isGeoJSONSource(source: mapboxgl.AnySourceImpl | undefined): source is mapboxgl.GeoJSONSource {
+  return !!source && 'setData' in source && typeof (source as any).setData === 'function';
 }
 
 export function useAutoZoom(isMapReady: boolean) {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { layers } = useLayers();
   const processedLayersRef = useRef<string>('');
-  const retryCountRef = useRef(0);
-  const retryTimeoutRef = useRef<NodeJS.Timeout>();
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const attemptAutoZoom = useCallback(() => {
-    if (!isMapReady || !isMapReadyForZoom(mapboxInstance)) {
-      logger.debug('Map not ready for auto-zoom', {
-        isMapReady,
-        hasMap: !!mapboxInstance,
-        isStyleLoaded: mapboxInstance ? mapboxInstance.isStyleLoaded() : false,
-        retryCount: retryCountRef.current
-      });
-
-      // Retry if we haven't exceeded max retries
-      if (retryCountRef.current < MAX_RETRIES) {
-        retryCountRef.current++;
-        retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
-        return;
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
       }
+    };
+  }, []);
 
-      logger.warn('Max retries reached for auto-zoom', {
-        retryCount: retryCountRef.current
-      });
-      return;
-    }
-
-    // Reset retry count on successful attempt
-    retryCountRef.current = 0;
+  const attemptAutoZoom = useCallback((retryCount = 0) => {
+    // Clear any pending retry from previous calls within this effect run
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
     }
 
-    const visibleLayers = layers.filter(l => l.visible && l.setupStatus === 'complete');
-    
-    if (!visibleLayers.length) {
-      logger.debug('No visible and complete layers for auto-zoom');
+    if (!isMapReady || !mapboxInstance) {
+      logger.debug('AutoZoom: Map instance not ready', { 
+        isMapReady,
+        hasMap: !!mapboxInstance,
+        retryCount
+      });
       return;
     }
 
-    // Check if all sources are ready
+    // Check Style Loaded
+    if (!isStyleLoaded(mapboxInstance)) {
+      logger.warn(`AutoZoom: Style not loaded (attempt ${retryCount + 1})`, {
+        retryCount,
+        maxRetries: MAX_AUTOZOOM_RETRIES
+      });
+      if (retryCount < MAX_AUTOZOOM_RETRIES - 1) {
+        retryTimeoutRef.current = setTimeout(() => attemptAutoZoom(retryCount + 1), AUTOZOOM_RETRY_DELAY);
+      } else {
+        logger.error(`AutoZoom failed: Max retries exceeded waiting for style`);
+      }
+      return;
+    }
+
+    // Style is loaded, proceed
+    const map = mapboxInstance;
+    const visibleLayers = layers.filter(l => l.visible && l.setupStatus === 'complete');
+
+    if (!visibleLayers.length) {
+      logger.debug('AutoZoom: No visible layers');
+      return;
+    }
+
     const allSourcesReady = visibleLayers.every(layer => {
       const sourceId = `${layer.id}-source`;
       try {
-        const source = mapboxInstance.getSource(sourceId);
+        const source = map.getSource(sourceId);
         if (!source) return false;
         
         // For GeoJSON sources, check if data is loaded
-        if ('_data' in source) {
-          const geoJSONSource = source as any;
-          return !!geoJSONSource._data?.features?.length;
+        if (isGeoJSONSource(source)) {
+          return !!source._data?.features?.length;
         }
         
         return true;
@@ -104,52 +115,37 @@ export function useAutoZoom(isMapReady: boolean) {
     });
 
     if (!allSourcesReady) {
-      logger.debug('Not all sources ready for auto-zoom', {
+      logger.warn(`AutoZoom: Not all sources ready yet (attempt ${retryCount + 1})`, {
         visibleLayerIds: visibleLayers.map(l => l.id),
-        retryCount: retryCountRef.current
+        retryCount,
+        maxRetries: MAX_AUTOZOOM_RETRIES
       });
-
-      // Retry if we haven't exceeded max retries
-      if (retryCountRef.current < MAX_RETRIES) {
-        retryCountRef.current++;
-        retryTimeoutRef.current = setTimeout(attemptAutoZoom, RETRY_DELAY);
-        return;
+      if (retryCount < MAX_AUTOZOOM_RETRIES - 1) {
+        retryTimeoutRef.current = setTimeout(() => attemptAutoZoom(retryCount + 1), AUTOZOOM_RETRY_DELAY);
+      } else {
+        logger.error(`AutoZoom failed: Max retries exceeded waiting for sources`);
       }
-
-      logger.warn('Max retries reached waiting for sources', {
-        retryCount: retryCountRef.current
-      });
       return;
     }
 
-    logger.debug('Calculating bounds for auto-zoom', {
-      visibleLayerCount: visibleLayers.length
+    // Sources are ready
+    logger.debug('AutoZoom: Calculating bounds', { 
+      visibleLayerCount: visibleLayers.length,
+      visibleLayerIds: visibleLayers.map(l => l.id)
     });
 
     const bounds = new mapboxgl.LngLatBounds();
     let hasValidBounds = false;
-    let coordCount = 0;
+    let totalCoordCount = 0;
 
     visibleLayers.forEach(layer => {
-      try {
-        const sourceId = `${layer.id}-source`;
-        const source = mapboxInstance.getSource(sourceId);
-        
-        if (!source) {
-          logger.warn('Source not found for layer', { layerId: layer.id, sourceId });
-          return;
-        }
-
-        if ('_data' in source) {
-          const geoJSONSource = source as any;
-          const features = geoJSONSource._data?.features;
-
-          if (!features?.length) {
-            logger.debug('No features in source', { layerId: layer.id });
-            return;
-          }
-
-          features.forEach((feature: any) => {
+      const sourceId = `${layer.id}-source`;
+      const source = map.getSource(sourceId);
+      
+      if (isGeoJSONSource(source)) {
+        const data = source._data;
+        if (typeof data === 'object' && data?.features) {
+          data.features.forEach((feature: any) => {
             try {
               let geometry = feature.geometry;
               
@@ -179,7 +175,7 @@ export function useAutoZoom(isMapReady: boolean) {
 
               const addCoordinate = (coord: Coordinate) => {
                 bounds.extend(coord as mapboxgl.LngLatLike);
-                coordCount++;
+                totalCoordCount++;
               };
 
               switch (geometry.type) {
@@ -217,35 +213,30 @@ export function useAutoZoom(isMapReady: boolean) {
             }
           });
         }
-      } catch (layerError) {
-        logger.warn('Error processing layer for bounds', {
-          layerId: layer.id,
-          error: layerError
-        });
       }
     });
 
-    if (coordCount > 0) {
+    if (totalCoordCount > 0) {
       hasValidBounds = true;
     }
 
     if (hasValidBounds && bounds.getNorthEast() && bounds.getSouthWest()) {
-      logger.info('Zooming to bounds', {
-        coordCount,
+      logger.info('AutoZoom: Zooming to bounds', { 
+        coordCount: totalCoordCount,
         bounds: {
           ne: bounds.getNorthEast().toArray(),
           sw: bounds.getSouthWest().toArray()
         }
       });
       
-      mapboxInstance.fitBounds(bounds, {
+      map.fitBounds(bounds, {
         padding: 50,
         animate: true,
         duration: 1000,
         maxZoom: 18
       });
     } else {
-      logger.warn('No valid bounds calculated', { coordCount });
+      logger.warn('AutoZoom: No valid bounds found', { totalCoordCount });
     }
   }, [isMapReady, mapboxInstance, layers]);
 
@@ -258,15 +249,20 @@ export function useAutoZoom(isMapReady: boolean) {
         .join(',');
 
       if (currentProcessedLayers !== processedLayersRef.current) {
+        logger.debug('AutoZoom: Triggering check due to map readiness or layer change', {
+          previousLayers: processedLayersRef.current,
+          currentLayers: currentProcessedLayers
+        });
         processedLayersRef.current = currentProcessedLayers;
         attemptAutoZoom();
       }
-    }
-
-    return () => {
+    } else {
+      processedLayersRef.current = '';
+      // Clear any pending retry if map becomes not ready
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
       }
-    };
+    }
   }, [isMapReady, layers, attemptAutoZoom]);
 } 
