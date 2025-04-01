@@ -7,6 +7,7 @@ import { Header } from 'components/layout/header'
 import { ModalProvider } from 'components/providers/modal-provider'
 import { DebugPanel } from '@/components/shared/debug-panel'
 import { CoordinateSystemsProvider } from '@/components/providers/coordinate-systems-provider'
+import { LoggerProvider } from '@/core/logging/LoggerContext'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -27,26 +28,28 @@ export default function RootLayout({
         <meta name="description" content={metadata.description} />
       </head>
       <body className={inter.className}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="dark"
-          enableSystem={false}
-          disableTransitionOnChange
-        >
-          <AuthProvider>
-            <CoordinateSystemsProvider>
-              <div className="relative flex min-h-screen flex-col">
-                {/* Global Header */}
-                <Header />
-                {/* Main Content */}
-                <main className="flex-1 bg-background">{children}</main>
-              </div>
-              <Toaster />
-              <ModalProvider />
-              <DebugPanel />
-            </CoordinateSystemsProvider>
-          </AuthProvider>
-        </ThemeProvider>
+        <LoggerProvider>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="dark"
+            enableSystem={false}
+            disableTransitionOnChange
+          >
+            <AuthProvider>
+              <CoordinateSystemsProvider>
+                <div className="relative flex min-h-screen flex-col">
+                  {/* Global Header */}
+                  <Header />
+                  {/* Main Content */}
+                  <main className="flex-1 bg-background">{children}</main>
+                </div>
+                <Toaster />
+                <ModalProvider />
+                <DebugPanel />
+              </CoordinateSystemsProvider>
+            </AuthProvider>
+          </ThemeProvider>
+        </LoggerProvider>
       </body>
     </html>
   )
