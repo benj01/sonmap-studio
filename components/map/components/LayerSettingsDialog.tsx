@@ -40,21 +40,25 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
     // Create style update based on geometry type
     const paint: Record<string, any> = {};
     
-    // Apply color to all geometry types
-    // For fill (polygons)
-    paint['fill-color'] = color;
-    paint['fill-opacity'] = 0.4;
-    paint['fill-outline-color'] = '#000';
+    // Determine layer type from ID
+    const isLineLayer = layer.id.endsWith('-line');
+    const isFillLayer = layer.id.endsWith('-fill');
+    const isCircleLayer = layer.id.endsWith('-circle');
     
-    // For lines
-    paint['line-color'] = color;
-    paint['line-width'] = 2;
-    
-    // For points
-    paint['circle-color'] = color;
-    paint['circle-radius'] = 5;
-    paint['circle-stroke-width'] = 2;
-    paint['circle-stroke-color'] = '#000';
+    // Apply color only to relevant geometry types
+    if (isLineLayer) {
+      paint['line-color'] = color;
+      paint['line-width'] = 2;
+    } else if (isFillLayer) {
+      paint['fill-color'] = color;
+      paint['fill-opacity'] = 0.4;
+      paint['fill-outline-color'] = '#000';
+    } else if (isCircleLayer) {
+      paint['circle-color'] = color;
+      paint['circle-radius'] = 5;
+      paint['circle-stroke-width'] = 2;
+      paint['circle-stroke-color'] = '#000';
+    }
 
     updateStyle({ paint });
     onOpenChange(false);
@@ -64,7 +68,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
-          <DialogTitle>Layer Settings - {layer?.name}</DialogTitle>
+          <DialogTitle>Layer Settings - {layer?.id}</DialogTitle>
         </DialogHeader>
         <div className="grid gap-4 py-4">
           <div className="grid gap-2">

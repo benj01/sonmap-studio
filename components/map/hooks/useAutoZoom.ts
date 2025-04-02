@@ -13,7 +13,7 @@ type LineCoordinates = Coordinate[];
 type PolygonCoordinates = LineCoordinates[];
 
 const MAX_AUTOZOOM_RETRIES = 10;
-const AUTOZOOM_RETRY_DELAY = 500; // Increased delay for more patience
+const AUTOZOOM_RETRY_DELAY = 500;
 
 function isGeoJSONSource(source: mapboxgl.AnySourceImpl | undefined): source is mapboxgl.GeoJSONSource {
   return !!source && 'setData' in source && typeof (source as any).setData === 'function';
@@ -25,7 +25,7 @@ export function useAutoZoom(isMapReady: boolean) {
   const logger = useLogger();
   const processedLayersRef = useRef<string>('');
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const addedSourcesRef = useRef<Set<string>>(new Set());
+  const loadedSourcesRef = useRef<Set<string>>(new Set());
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -36,31 +36,27 @@ export function useAutoZoom(isMapReady: boolean) {
     };
   }, []);
 
-  // Effect to listen for custom source added events
+  // Effect to listen for source data events
   useEffect(() => {
     if (!mapboxInstance) return;
 
-    const handleSourceAdded = (e: any) => {
-      if (e && e.sourceId && typeof e.sourceId === 'string') {
-        logger.debug(SOURCE, 'Detected custom source added event', { sourceId: e.sourceId });
-        if (!addedSourcesRef.current.has(e.sourceId)) {
-          addedSourcesRef.current.add(e.sourceId);
-        }
-      } else {
-        logger.warn(SOURCE, 'Received invalid sourceaddedcustom event', { eventData: e });
+    const handleSourceData = (e: mapboxgl.MapSourceDataEvent) => {
+      if (e.isSourceLoaded && e.sourceId) {
+        logger.debug(SOURCE, 'Source data loaded', { sourceId: e.sourceId });
+        loadedSourcesRef.current.add(e.sourceId);
       }
     };
 
-    logger.debug(SOURCE, 'Adding sourceaddedcustom listener');
-    mapboxInstance.on('sourceaddedcustom', handleSourceAdded);
+    logger.debug(SOURCE, 'Adding sourcedata listener');
+    mapboxInstance.on('sourcedata', handleSourceData);
 
     return () => {
       if (mapboxInstance && mapboxInstance.getCanvas() && !mapboxInstance._removed) {
-        logger.debug(SOURCE, 'Removing sourceaddedcustom listener');
+        logger.debug(SOURCE, 'Removing sourcedata listener');
         try {
-          mapboxInstance.off('sourceaddedcustom', handleSourceAdded);
+          mapboxInstance.off('sourcedata', handleSourceData);
         } catch (offError) {
-          logger.warn(SOURCE, 'Error removing sourceaddedcustom listener', { error: offError });
+          logger.warn(SOURCE, 'Error removing sourcedata listener', { error: offError });
         }
       }
     };
@@ -84,41 +80,50 @@ export function useAutoZoom(isMapReady: boolean) {
     }
 
     const map = mapboxInstance;
+    const requiredSourceIds = new Set(visibleLayers.map(l => `${l.id}-source`));
 
-    // Check if sources have been added (event received) AND are loaded
-    const sourceStates = visibleLayers.map(layer => {
-      const sourceId = `${layer.id}-source`;
-      const hasBeenAdded = addedSourcesRef.current.has(sourceId);
-      let isLoaded = false; // Assume not loaded initially
-      let reason = 'pending_add_event';
-      let sourceExists = map.getSource(sourceId); // Check if source object exists
-
-      if (hasBeenAdded) {
-        if (sourceExists) {
-          isLoaded = map.isSourceLoaded(sourceId);
-          reason = isLoaded ? 'loaded' : 'loading_after_add';
-        } else {
-          // This is weird: event fired but getSource is null?
-          reason = 'event_fired_source_gone';
-          logger.warn(SOURCE, `Source ${sourceId} missing after 'sourceaddedcustom' event.`);
+    // Check if all required sources are loaded using BOTH methods
+    const sourceStates = Array.from(requiredSourceIds).map(sourceId => {
+      // Check 1: Has the event listener already confirmed it?
+      const eventLoaded = loadedSourcesRef.current.has(sourceId);
+      
+      // Check 2: Does Mapbox synchronously say it's loaded right now?
+      let mapboxLoaded = false;
+      let sourceExists = map.getSource(sourceId);
+      
+      if (sourceExists) {
+        try {
+          mapboxLoaded = map.isSourceLoaded(sourceId);
+        } catch (e) {
+          // isSourceLoaded can throw if the source was just removed
+          logger.warn(SOURCE, 'Error checking isSourceLoaded', { sourceId, error: e });
+          sourceExists = undefined; // Treat as non-existent if check throws
         }
-      } else if (sourceExists) {
-        reason = 'pending_add_event_source_exists';
-      } else {
-        reason = 'not_found';
       }
 
-      // Add specific log if waiting for load
-      if (reason === 'loading_after_add') {
-        logger.debug(SOURCE, `Waiting for map.isSourceLoaded('${sourceId}')`);
+      // Consider ready if EITHER check passes
+      const isReady = eventLoaded || mapboxLoaded;
+
+      // Determine reason for logging
+      let reason = 'not_found';
+      if (sourceExists) {
+        if (isReady) reason = 'loaded';
+        else reason = 'loading'; // Exists but not loaded by either check yet
+      }
+
+      // Add newly confirmed sources via isSourceLoaded to our ref for future checks
+      if (mapboxLoaded && !eventLoaded) {
+        logger.debug(SOURCE, 'Source confirmed loaded via isSourceLoaded', { sourceId });
+        loadedSourcesRef.current.add(sourceId);
       }
 
       return {
         sourceId,
-        ready: isLoaded, // Final readiness depends only on isLoaded
+        ready: isReady,
+        sourceExists: !!sourceExists,
         reason,
-        hasBeenAdded,
-        sourceExists // Log if the source object itself exists
+        eventLoaded,
+        mapboxLoaded
       };
     });
 
@@ -144,10 +149,10 @@ export function useAutoZoom(isMapReady: boolean) {
     }
 
     // All sources are ready, proceed with bounds calculation
-    logger.debug(SOURCE, 'AutoZoom: All required sources are added and loaded, calculating bounds', {
+    logger.debug(SOURCE, 'AutoZoom: All required sources are loaded, calculating bounds', {
       visibleLayerCount: visibleLayers.length,
       visibleLayerIds: visibleLayers.map(l => l.id),
-      addedSources: Array.from(addedSourcesRef.current)
+      loadedSources: Array.from(loadedSourcesRef.current)
     });
 
     const bounds = new mapboxgl.LngLatBounds();
@@ -275,8 +280,8 @@ export function useAutoZoom(isMapReady: boolean) {
           mapReady: isMapReady
         });
         processedLayersRef.current = currentVisibleLayers;
-        addedSourcesRef.current = new Set();
-        logger.debug(SOURCE, 'Resetting addedSources ref due to layer change');
+        loadedSourcesRef.current = new Set();
+        logger.debug(SOURCE, 'Resetting loadedSources ref due to layer change');
         attemptAutoZoom(); // Start the check
       } else {
         logger.debug(SOURCE, 'AutoZoom: No relevant layer changes detected', { currentLayers: currentVisibleLayers });
@@ -286,7 +291,7 @@ export function useAutoZoom(isMapReady: boolean) {
       if (processedLayersRef.current !== '') {
         logger.debug(SOURCE, 'AutoZoom: Map not ready, resetting state');
         processedLayersRef.current = '';
-        addedSourcesRef.current = new Set();
+        loadedSourcesRef.current = new Set();
         if (retryTimeoutRef.current) {
           clearTimeout(retryTimeoutRef.current);
           retryTimeoutRef.current = null;

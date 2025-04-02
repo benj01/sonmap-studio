@@ -207,15 +207,15 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     const map = mapboxInstance;
 
     const currentLayerProps = { 
-      paint: layer.paint, 
-      layout: layer.layout, 
+      paint: layer.paint || {}, 
+      layout: layer.layout || {}, 
       filter: layer.filter, 
       minzoom: layer.minzoom, 
       maxzoom: layer.maxzoom 
     };
     const previousLayerProps = { 
-      paint: layerRef.current.paint, 
-      layout: layerRef.current.layout, 
+      paint: layerRef.current.paint || {}, 
+      layout: layerRef.current.layout || {}, 
       filter: layerRef.current.filter, 
       minzoom: layerRef.current.minzoom, 
       maxzoom: layerRef.current.maxzoom 
@@ -229,12 +229,14 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         try {
           if (layer.paint) {
             Object.entries(layer.paint).forEach(([key, value]) => {
-              map.setPaintProperty(id, key as any, value);
+              if (value !== undefined) {
+                map.setPaintProperty(id, key as any, value);
+              }
             });
           }
           if (layer.layout) {
             Object.entries(layer.layout).forEach(([key, value]) => {
-              if (key !== 'visibility') {
+              if (key !== 'visibility' && value !== undefined) {
                 map.setLayoutProperty(id, key as any, value);
               }
             });
