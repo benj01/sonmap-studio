@@ -3,6 +3,7 @@ import { LogManager } from '@/core/logging/log-manager';
 import { shallow } from 'zustand/shallow';
 import { useCallback, useMemo } from 'react';
 import type { Layer, LayerMetadata } from './types';
+import { isEqual } from 'lodash';
 
 const SOURCE = 'layerStore';
 const logManager = LogManager.getInstance();
@@ -31,6 +32,7 @@ interface NormalizedLayerState {
 export interface LayerStore {
   // State
   layers: NormalizedLayerState;
+  isInitialLoadComplete: boolean;
   
   // Actions
   setLayerVisibility: (layerId: string, visible: boolean) => void;
@@ -38,7 +40,8 @@ export interface LayerStore {
   removeLayer: (layerId: string) => void;
   updateLayerStatus: (layerId: string, status: Layer['setupStatus'], error?: string) => void;
   handleFileDeleted: (fileId: string) => void;
-  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }) => void;
+  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => void;
+  setInitialLoadComplete: (complete: boolean) => void;
   reset: () => void;
 }
 
@@ -99,6 +102,7 @@ export const layerSelectors = {
 export const useLayerStore = create<LayerStore>()((set, get) => ({
   // Initial state
   layers: initialState,
+  isInitialLoadComplete: false,
 
   // Actions
   setLayerVisibility: (layerId, visible) => {
@@ -207,6 +211,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         return state;
       }
 
+      // Only update the specific fields that changed
       const updatedLayer = {
         ...layer,
         setupStatus: status,
@@ -214,12 +219,23 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         added: status === 'complete'
       };
 
+      // Only update the specific layer in byId
       const updatedById = {
         ...state.layers.byId,
         [layerId]: updatedLayer
       };
 
-      logger.debug('ACTION END: updateLayerStatus', { layerId, status, error });
+      logger.debug('ACTION END: updateLayerStatus', { 
+        layerId, 
+        status, 
+        error,
+        changes: {
+          statusChanged: layer.setupStatus !== status,
+          errorChanged: layer.error !== error,
+          addedChanged: layer.added !== (status === 'complete')
+        }
+      });
+
       return {
         layers: {
           ...state.layers,
@@ -271,8 +287,8 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     });
   },
 
-  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }) => {
-    logger.debug('ACTION START: updateLayerStyle', { layerId, style });
+  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => {
+    logger.debug('ACTION START: updateLayerStyle', { layerId, style, geometryTypes });
     set((state) => {
       const layer = state.layers.byId[layerId];
       if (!layer) {
@@ -305,7 +321,8 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
       // Create new metadata object
       const newMetadata: LayerMetadata = {
         ...currentMetadata,
-        style: newStyle
+        style: newStyle,
+        geometryTypes: geometryTypes || currentMetadata.geometryTypes
       };
 
       logger.debug('ACTION UPDATE: updateLayerStyle', { 
@@ -314,7 +331,8 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         newPaint,
         paintChanged: newPaint !== currentPaint,
         styleChanged: newStyle !== currentStyle,
-        metadataChanged: newMetadata !== currentMetadata
+        metadataChanged: newMetadata !== currentMetadata,
+        geometryTypesChanged: geometryTypes && !isEqual(geometryTypes, currentMetadata.geometryTypes)
       });
 
       // Create new layer object
@@ -340,9 +358,18 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     });
   },
 
+  setInitialLoadComplete: (complete: boolean) => {
+    logger.debug('ACTION START: setInitialLoadComplete', { complete });
+    set({ isInitialLoadComplete: complete });
+    logger.debug('ACTION END: setInitialLoadComplete', { complete });
+  },
+
   reset: () => {
     logger.debug('ACTION START: reset');
-    set({ layers: initialState });
+    set({ 
+      layers: initialState,
+      isInitialLoadComplete: false 
+    });
     logger.debug('ACTION END: reset');
   }
 }));
@@ -392,23 +419,24 @@ export const useLayers = () => {
   const store = useLayerStore();
   
   // Select primitive state parts
-  const allIds = useLayerStore(state => state.layers.allIds);
-  const byId = useLayerStore(state => state.layers.byId);
+  const allIds = useLayerStore((state: LayerStore) => state.layers.allIds);
+  const byId = useLayerStore((state: LayerStore) => state.layers.byId);
 
-  // Memoize the layers array construction
+  // Memoize the layers array construction with more granular dependencies
   const layers = useMemo(() => {
     logger.debug('HOOK MEMO: Recomputing layers array', { 
-      idCount: allIds.length
+      idCount: allIds.length,
+      byIdKeys: Object.keys(byId)
     });
     return allIds.map(id => byId[id]);
   }, [allIds, byId]);
 
   // Use selectors with built-in memoization
-  const visibleLayers = useLayerStore((state) => layerSelectors.getVisibleLayers(state));
-  const layersWithErrors = useLayerStore((state) => layerSelectors.getLayersWithErrors(state));
+  const visibleLayers = useLayerStore((state: LayerStore) => layerSelectors.getVisibleLayers(state));
+  const layersWithErrors = useLayerStore((state: LayerStore) => layerSelectors.getLayersWithErrors(state));
 
   // Select and stabilize store actions
-  const storeActions = useLayerStore((state) => ({
+  const storeActions = useLayerStore((state: LayerStore) => ({
     addLayer: state.addLayer,
     removeLayer: state.removeLayer,
     handleFileDeleted: state.handleFileDeleted
@@ -447,18 +475,13 @@ export const useLayers = () => {
     storeActions.removeLayer(layerId);
   }, [storeActions]);
 
-  const handleFileDeleted = useCallback((fileId: string) => {
-    logger.debug('HOOK ACTION: useLayers.handleFileDeleted', { fileId });
-    storeActions.handleFileDeleted(fileId);
-  }, [storeActions]);
-
   return {
     layers,
     visibleLayers,
     layersWithErrors,
     addLayer,
     removeLayer,
-    handleFileDeleted
+    handleFileDeleted: storeActions.handleFileDeleted
   };
 };
 

@@ -6,6 +6,7 @@ import type { FeatureCollection, Geometry, GeoJsonProperties, Feature } from 'ge
 import { useMemo, memo, useRef } from 'react';
 import type { Layer } from '@/store/layers/types';
 import isEqual from 'lodash/isEqual';
+import { useLayerStore } from '@/store/layers/layerStore';
 
 const SOURCE = 'MapLayers';
 const logManager = LogManager.getInstance();
@@ -96,6 +97,28 @@ function processFeature(feature: any): Feature<Geometry> | null {
 
   logger.warn('No valid geometry found for feature', { featureId: feature.id });
   return null;
+}
+
+// Helper function to analyze geometry types
+function analyzeGeometryTypes(features: Feature<Geometry>[]): { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean } {
+  const types = {
+    hasPolygons: false,
+    hasLines: false,
+    hasPoints: false
+  };
+
+  for (const feature of features) {
+    const geometryType = feature.geometry.type.toLowerCase();
+    if (geometryType.includes('polygon')) {
+      types.hasPolygons = true;
+    } else if (geometryType.includes('line') || geometryType.includes('linestring')) {
+      types.hasLines = true;
+    } else if (geometryType.includes('point')) {
+      types.hasPoints = true;
+    }
+  }
+
+  return types;
 }
 
 // Memoized LayerRenderer component
@@ -216,34 +239,24 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
     />
   );
 }, (prevProps, nextProps) => {
-  // Deep comparison for style changes
-  const styleRefChanged = prevProps.layer.metadata?.style !== nextProps.layer.metadata?.style;
-  const paintRefChanged = prevProps.layer.metadata?.style?.paint !== nextProps.layer.metadata?.style?.paint;
-  const paintContentChanged = !isEqual(
-    prevProps.layer.metadata?.style?.paint,
-    nextProps.layer.metadata?.style?.paint
-  );
-
+  // Shallow equality for style changes
+  const styleChanged = prevProps.layer.metadata?.style !== nextProps.layer.metadata?.style;
   const visibilityChanged = prevProps.layer.visible !== nextProps.layer.visible;
   const idChanged = prevProps.layer.id !== nextProps.layer.id;
 
   logger.debug('LayerRenderer memo comparison', {
     layerId: nextProps.layer.id,
     changes: {
-      styleRefChanged,
-      paintRefChanged,
-      paintContentChanged,
+      styleChanged,
       visibilityChanged,
-      idChanged
-    },
-    prevPaint: prevProps.layer.metadata?.style?.paint,
-    nextPaint: nextProps.layer.metadata?.style?.paint
+      idChanged,
+      prevStyle: prevProps.layer.metadata?.style,
+      nextStyle: nextProps.layer.metadata?.style
+    }
   });
 
   // Return true if nothing has changed (skip render)
-  return idChanged === false && 
-         visibilityChanged === false && 
-         paintContentChanged === false;
+  return !styleChanged && !visibilityChanged && !idChanged;
 });
 
 LayerRenderer.displayName = 'LayerRenderer';
@@ -257,13 +270,33 @@ export function MapLayers() {
     timestamp: new Date().toISOString()
   });
 
-  const { layers } = useLayers();
+  // Select primitive state parts with stable selectors
+  const allIds = useLayerStore(state => state.layers.allIds);
+  const byId = useLayerStore(state => state.layers.byId);
+  const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
 
-  // Memoize the valid layers array to prevent unnecessary re-renders
+  // Memoize the layers array creation
+  const layers = useMemo(() => {
+    logger.debug('MapLayers: Computing layers array', {
+      renderCount: renderCount.current,
+      allIdsCount: allIds.length
+    });
+    return allIds.map(id => byId[id]);
+  }, [allIds, byId]);
+
+  // Memoize the valid layers array
   const validLayers = useMemo(() => {
     logger.debug('MapLayers computing validLayers', {
       renderCount: renderCount.current,
-      inputLayerCount: layers.length
+      inputLayerCount: layers.length,
+      isInitialLoadComplete,
+      layerIds: layers.map(l => l.id),
+      layerStates: layers.map(l => ({
+        id: l.id,
+        hasMetadata: !!l.metadata,
+        visible: l.visible,
+        setupStatus: l.setupStatus
+      }))
     });
     
     const valid = layers.filter(layer => layer.metadata);
@@ -271,23 +304,44 @@ export function MapLayers() {
     logger.debug('MapLayers computed validLayers', {
       renderCount: renderCount.current,
       validLayerCount: valid.length,
-      validLayerIds: valid.map(l => l.id)
+      validLayerIds: valid.map(l => l.id),
+      validLayerStates: valid.map(l => ({
+        id: l.id,
+        hasMetadata: !!l.metadata,
+        visible: l.visible,
+        setupStatus: l.setupStatus
+      }))
     });
     
     return valid;
-  }, [layers]);
+  }, [layers, isInitialLoadComplete]);
 
-  // Memoize the layer renderers to prevent unnecessary re-renders
-  const layerRenderers = useMemo(() => (
-    validLayers.map((layer) => (
+  // Memoize the layer renderers
+  const layerRenderers = useMemo(() => {
+    if (!isInitialLoadComplete) {
+      logger.debug('MapLayers: Initial load not complete, deferring renderer creation', {
+        renderCount: renderCount.current,
+        layerCount: validLayers.length
+      });
+      return null;
+    }
+
+    logger.debug('MapLayers: Initial load complete, creating renderers', {
+      renderCount: renderCount.current,
+      layerCount: validLayers.length,
+      layerIds: validLayers.map(l => l.id)
+    });
+
+    return validLayers.map((layer) => (
       <LayerRenderer key={layer.id} layer={layer} />
-    ))
-  ), [validLayers]);
+    ));
+  }, [validLayers, isInitialLoadComplete]);
 
   logger.debug('MapLayers render complete', {
     renderCount: renderCount.current,
     layerCount: layers.length,
     validLayerCount: validLayers.length,
+    isInitialLoadComplete,
     layers: validLayers.map(l => ({
       id: l.id,
       hasMetadata: !!l.metadata,
@@ -295,6 +349,13 @@ export function MapLayers() {
       setupStatus: l.setupStatus
     }))
   });
+
+  if (!isInitialLoadComplete) {
+    logger.debug('MapLayers: Skipping render - initial load not complete', {
+      renderCount: renderCount.current
+    });
+    return null;
+  }
 
   return <>{layerRenderers}</>;
 } 

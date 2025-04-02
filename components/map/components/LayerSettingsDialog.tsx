@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { HexColorPicker } from "react-colorful";
 import { useLayer } from '@/store/layers/hooks';
 import {
@@ -39,35 +39,69 @@ const logger = {
   }
 };
 
+interface GeometryTypes {
+  hasPolygons: boolean;
+  hasLines: boolean;
+  hasPoints: boolean;
+}
+
 export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettingsDialogProps) {
   // Get the base layer ID by removing any geometry type suffix
   const baseLayerId = layerId.replace(/-line$|-fill$|-circle$/, '');
   const { layer, updateStyle } = useLayer(baseLayerId);
   const [color, setColor] = useState("#088");
 
+  // Determine geometry types from layer metadata or layer ID
+  const geometryTypes = useMemo((): GeometryTypes => {
+    // First try to get from metadata
+    if (layer?.metadata?.geometryTypes) {
+      return layer.metadata.geometryTypes as GeometryTypes;
+    }
+
+    // Then try to infer from layer type
+    const layerType = layer?.metadata?.type?.toLowerCase();
+    if (layerType) {
+      if (layerType.includes('polygon')) return { hasPolygons: true, hasLines: false, hasPoints: false };
+      if (layerType.includes('line') || layerType.includes('string')) return { hasPolygons: false, hasLines: true, hasPoints: false };
+      if (layerType.includes('point')) return { hasPolygons: false, hasLines: false, hasPoints: true };
+    }
+
+    // Finally, try to infer from the original layer ID
+    if (layerId.endsWith('-fill')) return { hasPolygons: true, hasLines: false, hasPoints: false };
+    if (layerId.endsWith('-line')) return { hasPolygons: false, hasLines: true, hasPoints: false };
+    if (layerId.endsWith('-circle')) return { hasPolygons: false, hasLines: false, hasPoints: true };
+
+    // Default to all false if we can't determine
+    return { hasPolygons: false, hasLines: false, hasPoints: false };
+  }, [layer?.metadata, layerId]);
+
   logger.debug('LayerSettingsDialog render', {
     originalLayerId: layerId,
     baseLayerId,
     hasLayer: !!layer,
     layerMetadata: layer?.metadata,
+    geometryTypes,
     open
   });
 
   useEffect(() => {
     // Initialize color from layer style if available
     if (layer?.metadata?.style?.paint) {
-      const currentColor = layer.metadata.style.paint['fill-color'] || 
-                          layer.metadata.style.paint['line-color'] || 
-                          layer.metadata.style.paint['circle-color'] ||
+      // Try to get color based on detected geometry types
+      const currentColor = (geometryTypes.hasPolygons && layer.metadata.style.paint['fill-color']) ||
+                          (geometryTypes.hasLines && layer.metadata.style.paint['line-color']) ||
+                          (geometryTypes.hasPoints && layer.metadata.style.paint['circle-color']) ||
                           "#088";
+      
       logger.debug('Initializing color from layer style', {
         baseLayerId,
         currentColor,
-        paint: layer.metadata.style.paint
+        paint: layer.metadata.style.paint,
+        geometryTypes
       });
       setColor(currentColor);
     }
-  }, [layer, baseLayerId]);
+  }, [layer, baseLayerId, geometryTypes]);
 
   const handleSave = () => {
     if (!layer) {
@@ -78,44 +112,56 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
     logger.debug('Starting style save', {
       baseLayerId,
       layerType: layer.metadata?.type,
+      geometryTypes,
       currentStyle: layer.metadata?.style,
       newColor: color
     });
 
-    // Determine layer type from the layer's metadata or properties
-    const layerType = layer.metadata?.type;
-    const isLineLayer = layerType === 'line' || layerType === 'linestring';
-    const isFillLayer = layerType === 'fill' || layerType === 'polygon';
-    const isCircleLayer = layerType === 'circle' || layerType === 'point';
-    
-    // Create paint object based on geometry type
+    // Create paint object based on detected geometry types
     const paint: Record<string, any> = {};
     
-    if (isLineLayer) {
+    if (geometryTypes.hasLines) {
       paint['line-color'] = color;
       paint['line-width'] = 2;
-    } else if (isFillLayer) {
+    } else if (geometryTypes.hasPolygons) {
       paint['fill-color'] = color;
       paint['fill-opacity'] = 0.4;
       paint['fill-outline-color'] = '#000';
-    } else if (isCircleLayer) {
+    } else if (geometryTypes.hasPoints) {
       paint['circle-color'] = color;
       paint['circle-radius'] = 5;
       paint['circle-stroke-width'] = 2;
       paint['circle-stroke-color'] = '#000';
     } else {
-      logger.warn('Unknown layer type - defaulting to line style', {
-        baseLayerId,
-        layerType,
-        metadata: layer.metadata
-      });
-      paint['line-color'] = color;
-      paint['line-width'] = 2;
+      // If we can't determine geometry type, try to infer from existing paint properties
+      const existingPaint = layer.metadata?.style?.paint || {};
+      if ('line-color' in existingPaint) {
+        paint['line-color'] = color;
+        paint['line-width'] = existingPaint['line-width'] || 2;
+      } else if ('fill-color' in existingPaint) {
+        paint['fill-color'] = color;
+        paint['fill-opacity'] = existingPaint['fill-opacity'] || 0.4;
+        paint['fill-outline-color'] = existingPaint['fill-outline-color'] || '#000';
+      } else if ('circle-color' in existingPaint) {
+        paint['circle-color'] = color;
+        paint['circle-radius'] = existingPaint['circle-radius'] || 5;
+        paint['circle-stroke-width'] = existingPaint['circle-stroke-width'] || 2;
+        paint['circle-stroke-color'] = existingPaint['circle-stroke-color'] || '#000';
+      } else {
+        logger.warn('Could not determine geometry type - defaulting to line style', {
+          baseLayerId,
+          layerType: layer.metadata?.type,
+          geometryTypes,
+          existingPaint
+        });
+        paint['line-color'] = color;
+        paint['line-width'] = 2;
+      }
     }
 
     logger.debug('Calling updateStyle', {
       baseLayerId,
-      layerType,
+      geometryTypes,
       paint,
       layerExists: !!layer,
       updateStyleExists: !!updateStyle,
@@ -126,7 +172,8 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
       updateStyle({ paint });
       logger.info('Style update called successfully', {
         baseLayerId,
-        paint
+        paint,
+        geometryTypes
       });
     } catch (error) {
       logger.error('Error updating style', {

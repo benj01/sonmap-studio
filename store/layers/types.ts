@@ -7,6 +7,11 @@ export interface LayerMetadata {
     paint?: Record<string, any>;
     layout?: Record<string, any>;
   };
+  geometryTypes?: {
+    hasPolygons: boolean;
+    hasLines: boolean;
+    hasPoints: boolean;
+  };
 }
 
 export interface Layer {

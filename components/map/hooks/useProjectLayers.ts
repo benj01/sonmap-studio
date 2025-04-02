@@ -5,6 +5,7 @@ import createClient from '@/utils/supabase/client';
 import { useLayerStore } from '@/store/layers/layerStore';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { LogManager } from '@/core/logging/log-manager';
+import type { Feature, Geometry } from 'geojson';
 
 const SOURCE = 'useProjectLayers';
 const logManager = LogManager.getInstance();
@@ -24,9 +25,46 @@ const logger = {
   }
 };
 
+interface ProjectLayer {
+  id: string;
+  name: string;
+  type: string;
+  properties: Record<string, any>;
+  features?: Feature<Geometry>[];
+}
+
+interface ImportedFile {
+  id: string;
+  collections: {
+    layers: ProjectLayer[];
+  };
+}
+
+// Helper function to analyze geometry types
+function analyzeGeometryTypes(features: Feature<Geometry>[]): { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean } {
+  const types = {
+    hasPolygons: false,
+    hasLines: false,
+    hasPoints: false
+  };
+
+  for (const feature of features) {
+    const geometryType = feature.geometry.type.toLowerCase();
+    if (geometryType.includes('polygon')) {
+      types.hasPolygons = true;
+    } else if (geometryType.includes('line') || geometryType.includes('linestring')) {
+      types.hasLines = true;
+    } else if (geometryType.includes('point')) {
+      types.hasPoints = true;
+    }
+  }
+
+  return types;
+}
+
 export function useProjectLayers(projectId: string) {
   const supabase = createClient();
-  const { addLayer } = useLayerStore();
+  const { addLayer, setInitialLoadComplete } = useLayerStore();
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
 
   useEffect(() => {
@@ -49,6 +87,7 @@ export function useProjectLayers(projectId: string) {
 
         if (!importedFiles?.length) {
           logger.error('No imported files found for project', { projectId });
+          setInitialLoadComplete(true); // Mark as complete even if no files
           return;
         }
 
@@ -61,6 +100,9 @@ export function useProjectLayers(projectId: string) {
             collectionId: f.import_metadata?.collection_id
           }))
         });
+
+        let totalLayers = 0;
+        let loadedLayers = 0;
 
         // Process each imported file
         for (const importedFile of importedFiles) {
@@ -112,13 +154,27 @@ export function useProjectLayers(projectId: string) {
             layers: collections.layers.map(l => ({ id: l.id, name: l.name, type: l.type }))
           });
 
+          totalLayers += collections.layers.length;
+
           // Add each layer to the store
-          collections.layers.forEach((layer, index) => {
+          collections.layers.forEach((layer: ProjectLayer, index) => {
             logger.info(`Adding layer ${index + 1}/${collections.layers.length} to store`, {
               layerId: layer.id,
               name: layer.name,
               type: layer.type,
               fileId: importedFile.id
+            });
+
+            // Analyze geometry types before adding layer
+            const geometryTypes = layer.features ? analyzeGeometryTypes(layer.features) : {
+              hasPolygons: false,
+              hasLines: false,
+              hasPoints: false
+            };
+            
+            logger.debug(`Analyzed geometry types for layer ${layer.id}`, {
+              geometryTypes,
+              featureCount: layer.features?.length || 0
             });
 
             addLayer(
@@ -129,20 +185,27 @@ export function useProjectLayers(projectId: string) {
                 name: layer.name,
                 type: layer.type,
                 fileId: importedFile.id,
-                properties: layer.properties || {}
+                properties: layer.properties || {},
+                geometryTypes
               }
             );
 
             // Update layer status to complete and explicitly clear any errors
             const store = useLayerStore.getState();
             store.updateLayerStatus(layer.id, 'complete', undefined);
+            loadedLayers++;
           });
         }
 
         logger.info('Successfully loaded all project layers', {
           projectId,
-          fileCount: importedFiles.length
+          fileCount: importedFiles.length,
+          totalLayers,
+          loadedLayers
         });
+
+        // Set initial load complete after all layers are processed
+        setInitialLoadComplete(true);
 
       } catch (error) {
         logger.error('Error loading project layers', { 
@@ -150,6 +213,8 @@ export function useProjectLayers(projectId: string) {
           stack: error instanceof Error ? error.stack : undefined,
           projectId 
         });
+        // Even on error, mark initial load as complete to prevent infinite loading state
+        setInitialLoadComplete(true);
       }
     }
 
@@ -158,13 +223,15 @@ export function useProjectLayers(projectId: string) {
       loadProjectLayers();
     } else {
       logger.error('No project ID provided, skipping layer load');
+      setInitialLoadComplete(true);
     }
 
     return () => {
       logger.info('Cleaning up project layers', { projectId });
+      setInitialLoadComplete(false);
       // TODO: Add cleanup logic to remove layers when project changes
     };
-  }, [projectId, addLayer]);
+  }, [projectId, addLayer, setInitialLoadComplete]);
 
   return {
     // Return any necessary values or functions
