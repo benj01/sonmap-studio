@@ -82,45 +82,57 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         return;
       }
 
-      if (!isStyleLoaded(mapboxInstance)) {
-        logger.warn(`Add/Remove: Style not loaded initially, waiting...`, { id });
-        mapboxInstance.once('styledata', () => {
-          logger.info(`Add/Remove: Style loaded, proceeding for ${id}`);
-          if (isMounted) addLayerAndSource();
-        });
-        return;
-      }
+      const checkAndProceed = () => {
+        if (!mapboxInstance) return;
 
-      const map = mapboxInstance;
-
-      try {
-        logger.debug(`Add/Remove: Adding source ${source.id} if needed`);
-        if (!map.getSource(source.id)) {
-          map.addSource(source.id, source.data);
-          logger.info(`Add/Remove: Source ${source.id} added`);
+        if (!isStyleLoaded(mapboxInstance)) {
+          logger.warn(`Add/Remove: Style still not loaded for ${id}, waiting for 'idle'`);
+          // Use 'idle' as a stronger signal that things *should* be settled
+          mapboxInstance.once('idle', () => {
+            logger.info(`Add/Remove: Map idle, retrying add for ${id}`);
+            if (isMounted) checkAndProceed(); // Retry the check
+          });
+          return; // Don't proceed yet
         }
 
-        logger.debug(`Add/Remove: Adding layer ${id} if needed`);
-        if (!map.getLayer(id)) {
-          const layerConfig = {
-            id,
-            source: source.id,
-            ...layer,
-            layout: {
-              ...layer.layout,
-              visibility: layerState?.visible ? 'visible' : 'none'
-            }
-          } as LayerSpecification;
-          logger.info(`Add/Remove: Layer ${id} added`, { type: layerConfig.type });
-          map.addLayer(layerConfig, beforeId);
+        // Style is loaded, attempt addSource/addLayer
+        try {
+          logger.debug(`Add/Remove: Adding source ${source.id} if needed`);
+          if (!mapboxInstance.getSource(source.id)) {
+            mapboxInstance.addSource(source.id, source.data);
+            logger.info(`Add/Remove: Source ${source.id} added`);
+
+            // Fire custom event to notify source addition
+            mapboxInstance.fire('sourceaddedcustom', { sourceId: source.id });
+            logger.debug(`Add/Remove: Fired sourceaddedcustom event for ${source.id}`);
+          }
+
+          logger.debug(`Add/Remove: Adding layer ${id} if needed`);
+          if (!mapboxInstance.getLayer(id)) {
+            const layerConfig = {
+              id,
+              source: source.id,
+              ...layer,
+              layout: {
+                ...layer.layout,
+                visibility: layerState?.visible ? 'visible' : 'none'
+              }
+            } as LayerSpecification;
+            logger.info(`Add/Remove: Layer ${id} added`, { type: layerConfig.type });
+            mapboxInstance.addLayer(layerConfig, beforeId);
+          }
+        } catch (error) {
+          // Generic error handling - might indicate a real issue
+          logger.error(`Add/Remove: Error during add for ${id}`, { 
+            error: error instanceof Error ? error.message : error,
+            stack: error instanceof Error ? error.stack : undefined
+          });
+          // Update layer status to 'error'?
         }
-      } catch (error) {
-        logger.error(`Add/Remove: Error during initial add`, { 
-          id, 
-          error: error instanceof Error ? error.message : error,
-          stack: error instanceof Error ? error.stack : undefined
-        });
-      }
+      };
+
+      // Start the process
+      checkAndProceed();
     };
 
     addLayerAndSource();

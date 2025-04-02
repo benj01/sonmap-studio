@@ -197,7 +197,7 @@ export class LogManager {
   /**
    * Safely stringify an object, handling circular references and large objects
    */
-  private safeStringify(obj: any, indent: number = 2): string {
+  public safeStringify(obj: any, indent: number = 2): string {
     const MAX_DEPTH = 3;
     const MAX_ARRAY_LENGTH = 10;
     const TRUNCATE_LENGTH = 100;

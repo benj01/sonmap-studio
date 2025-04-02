@@ -135,19 +135,28 @@ export function MapView({ accessToken, style }: MapViewProps) {
           isStyleLoaded: map.isStyleLoaded()
         });
         
-        // Wait for style to be fully loaded
-        if (map.isStyleLoaded()) {
-          setMapboxStatus('ready');
-          setIsMapReady(true);
-        } else {
-          map.once('styledata', () => {
-            logger.info(SOURCE, 'Map style fully loaded');
+        // Wait for base style to be loaded
+        const checkBaseStyle = () => {
+          if (!map.isStyleLoaded()) {
+            logger.debug(SOURCE, 'Waiting for base style to load');
+            map.once('styledata', checkBaseStyle);
+            return;
+          }
+
+          // Add a small delay to ensure the style is stable
+          requestAnimationFrame(() => {
+            logger.info(SOURCE, 'Base map style loaded and stable');
             setMapboxStatus('ready');
             setIsMapReady(true);
+            map.off('styledata', checkBaseStyle);
           });
-        }
+        };
+
+        // Start checking immediately
+        checkBaseStyle();
       });
 
+      // Add error handler for map errors
       map.on('error', (error) => {
         const errorMessage = error.error ? error.error.message : 'Unknown error';
         logger.error(SOURCE, 'Mapbox map error', { error: errorMessage, details: error });

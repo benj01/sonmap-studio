@@ -3,41 +3,17 @@ import mapboxgl from 'mapbox-gl';
 import type { GeoJSON } from 'geojson';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useLayers } from '@/store/layers/hooks';
-import { LogManager } from '@/core/logging/log-manager';
+import { useLogger } from '@/core/logging/LoggerContext';
 import type { Layer } from '@/store/layers/types';
 
 const SOURCE = 'useAutoZoom';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 type Coordinate = [number, number];
 type LineCoordinates = Coordinate[];
 type PolygonCoordinates = LineCoordinates[];
 
-const MAX_AUTOZOOM_RETRIES = 5;
-const AUTOZOOM_RETRY_DELAY = 200;
-
-function isStyleLoaded(map: mapboxgl.Map): boolean {
-  try {
-    return typeof map.isStyleLoaded === 'function' && map.isStyleLoaded();
-  } catch {
-    return false;
-  }
-}
+const MAX_AUTOZOOM_RETRIES = 10;
+const AUTOZOOM_RETRY_DELAY = 500; // Increased delay for more patience
 
 function isGeoJSONSource(source: mapboxgl.AnySourceImpl | undefined): source is mapboxgl.GeoJSONSource {
   return !!source && 'setData' in source && typeof (source as any).setData === 'function';
@@ -46,8 +22,10 @@ function isGeoJSONSource(source: mapboxgl.AnySourceImpl | undefined): source is 
 export function useAutoZoom(isMapReady: boolean) {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { layers } = useLayers();
+  const logger = useLogger();
   const processedLayersRef = useRef<string>('');
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const addedSourcesRef = useRef<Set<string>>(new Set());
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -58,80 +36,118 @@ export function useAutoZoom(isMapReady: boolean) {
     };
   }, []);
 
+  // Effect to listen for custom source added events
+  useEffect(() => {
+    if (!mapboxInstance) return;
+
+    const handleSourceAdded = (e: any) => {
+      if (e && e.sourceId && typeof e.sourceId === 'string') {
+        logger.debug(SOURCE, 'Detected custom source added event', { sourceId: e.sourceId });
+        if (!addedSourcesRef.current.has(e.sourceId)) {
+          addedSourcesRef.current.add(e.sourceId);
+        }
+      } else {
+        logger.warn(SOURCE, 'Received invalid sourceaddedcustom event', { eventData: e });
+      }
+    };
+
+    logger.debug(SOURCE, 'Adding sourceaddedcustom listener');
+    mapboxInstance.on('sourceaddedcustom', handleSourceAdded);
+
+    return () => {
+      if (mapboxInstance && mapboxInstance.getCanvas() && !mapboxInstance._removed) {
+        logger.debug(SOURCE, 'Removing sourceaddedcustom listener');
+        try {
+          mapboxInstance.off('sourceaddedcustom', handleSourceAdded);
+        } catch (offError) {
+          logger.warn(SOURCE, 'Error removing sourceaddedcustom listener', { error: offError });
+        }
+      }
+    };
+  }, [mapboxInstance, logger]);
+
   const attemptAutoZoom = useCallback((retryCount = 0) => {
-    // Clear any pending retry from previous calls within this effect run
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
       retryTimeoutRef.current = null;
     }
 
     if (!isMapReady || !mapboxInstance) {
-      logger.debug('AutoZoom: Map instance not ready', { 
-        isMapReady,
-        hasMap: !!mapboxInstance,
-        retryCount
-      });
+      logger.debug(SOURCE, 'AutoZoom: Map instance not ready', { isMapReady, hasMap: !!mapboxInstance, retryCount });
       return;
     }
 
-    // Check Style Loaded
-    if (!isStyleLoaded(mapboxInstance)) {
-      logger.warn(`AutoZoom: Style not loaded (attempt ${retryCount + 1})`, {
-        retryCount,
-        maxRetries: MAX_AUTOZOOM_RETRIES
-      });
-      if (retryCount < MAX_AUTOZOOM_RETRIES - 1) {
-        retryTimeoutRef.current = setTimeout(() => attemptAutoZoom(retryCount + 1), AUTOZOOM_RETRY_DELAY);
-      } else {
-        logger.error(`AutoZoom failed: Max retries exceeded waiting for style`);
-      }
-      return;
-    }
-
-    // Style is loaded, proceed
-    const map = mapboxInstance;
     const visibleLayers = layers.filter(l => l.visible && l.setupStatus === 'complete');
-
     if (!visibleLayers.length) {
-      logger.debug('AutoZoom: No visible layers');
+      logger.debug(SOURCE, 'AutoZoom: No visible layers ready for zooming');
       return;
     }
 
-    const allSourcesReady = visibleLayers.every(layer => {
+    const map = mapboxInstance;
+
+    // Check if sources have been added (event received) AND are loaded
+    const sourceStates = visibleLayers.map(layer => {
       const sourceId = `${layer.id}-source`;
-      try {
-        const source = map.getSource(sourceId);
-        if (!source) return false;
-        
-        // For GeoJSON sources, check if data is loaded
-        if (isGeoJSONSource(source)) {
-          return !!source._data?.features?.length;
+      const hasBeenAdded = addedSourcesRef.current.has(sourceId);
+      let isLoaded = false; // Assume not loaded initially
+      let reason = 'pending_add_event';
+      let sourceExists = map.getSource(sourceId); // Check if source object exists
+
+      if (hasBeenAdded) {
+        if (sourceExists) {
+          isLoaded = map.isSourceLoaded(sourceId);
+          reason = isLoaded ? 'loaded' : 'loading_after_add';
+        } else {
+          // This is weird: event fired but getSource is null?
+          reason = 'event_fired_source_gone';
+          logger.warn(SOURCE, `Source ${sourceId} missing after 'sourceaddedcustom' event.`);
         }
-        
-        return true;
-      } catch {
-        return false;
+      } else if (sourceExists) {
+        reason = 'pending_add_event_source_exists';
+      } else {
+        reason = 'not_found';
       }
+
+      // Add specific log if waiting for load
+      if (reason === 'loading_after_add') {
+        logger.debug(SOURCE, `Waiting for map.isSourceLoaded('${sourceId}')`);
+      }
+
+      return {
+        sourceId,
+        ready: isLoaded, // Final readiness depends only on isLoaded
+        reason,
+        hasBeenAdded,
+        sourceExists // Log if the source object itself exists
+      };
     });
 
+    const allSourcesReady = sourceStates.every(state => state.ready);
+
     if (!allSourcesReady) {
-      logger.warn(`AutoZoom: Not all sources ready yet (attempt ${retryCount + 1})`, {
-        visibleLayerIds: visibleLayers.map(l => l.id),
-        retryCount,
-        maxRetries: MAX_AUTOZOOM_RETRIES
+      logger.warn(SOURCE, 'AutoZoom: Not all sources ready yet', {
+        attempt: retryCount + 1,
+        maxRetries: MAX_AUTOZOOM_RETRIES,
+        sourceStates,
+        totalWaitTime: (retryCount + 1) * AUTOZOOM_RETRY_DELAY
       });
+
       if (retryCount < MAX_AUTOZOOM_RETRIES - 1) {
         retryTimeoutRef.current = setTimeout(() => attemptAutoZoom(retryCount + 1), AUTOZOOM_RETRY_DELAY);
       } else {
-        logger.error(`AutoZoom failed: Max retries exceeded waiting for sources`);
+        logger.error(SOURCE, 'AutoZoom failed: Max retries exceeded waiting for sources', {
+          sourceStates,
+          totalWaitTime: MAX_AUTOZOOM_RETRIES * AUTOZOOM_RETRY_DELAY
+        });
       }
       return;
     }
 
-    // Sources are ready
-    logger.debug('AutoZoom: Calculating bounds', { 
+    // All sources are ready, proceed with bounds calculation
+    logger.debug(SOURCE, 'AutoZoom: All required sources are added and loaded, calculating bounds', {
       visibleLayerCount: visibleLayers.length,
-      visibleLayerIds: visibleLayers.map(l => l.id)
+      visibleLayerIds: visibleLayers.map(l => l.id),
+      addedSources: Array.from(addedSourcesRef.current)
     });
 
     const bounds = new mapboxgl.LngLatBounds();
@@ -141,11 +157,14 @@ export function useAutoZoom(isMapReady: boolean) {
     visibleLayers.forEach(layer => {
       const sourceId = `${layer.id}-source`;
       const source = map.getSource(sourceId);
-      
+
       if (isGeoJSONSource(source)) {
         const data = source._data;
-        if (typeof data === 'object' && data?.features) {
-          data.features.forEach((feature: any) => {
+        if (typeof data === 'object' && 
+            data !== null && 
+            'features' in data && 
+            Array.isArray((data as any).features)) {
+          (data as any).features.forEach((feature: any) => {
             try {
               let geometry = feature.geometry;
               
@@ -155,7 +174,7 @@ export function useAutoZoom(isMapReady: boolean) {
                     ? JSON.parse(feature.geojson)
                     : feature.geojson;
                 } catch (parseError) {
-                  logger.warn('Failed to parse geojson field', {
+                  logger.warn(SOURCE, 'Failed to parse geojson field', {
                     layerId: layer.id,
                     featureId: feature.id,
                     error: parseError
@@ -165,7 +184,7 @@ export function useAutoZoom(isMapReady: boolean) {
               }
 
               if (!geometry?.type || !geometry?.coordinates) {
-                logger.warn('Invalid geometry', {
+                logger.warn(SOURCE, 'Invalid geometry', {
                   layerId: layer.id,
                   featureId: feature.id,
                   geometryType: geometry?.type
@@ -198,14 +217,14 @@ export function useAutoZoom(isMapReady: boolean) {
                     polygon.forEach(ring => ring.forEach(addCoordinate)));
                   break;
                 default:
-                  logger.warn('Unsupported geometry type', {
+                  logger.warn(SOURCE, 'Unsupported geometry type', {
                     layerId: layer.id,
                     featureId: feature.id,
                     geometryType: geometry.type
                   });
               }
             } catch (featureError) {
-              logger.warn('Error processing feature geometry', {
+              logger.warn(SOURCE, 'Error processing feature geometry', {
                 layerId: layer.id,
                 featureId: feature.id,
                 error: featureError
@@ -221,7 +240,7 @@ export function useAutoZoom(isMapReady: boolean) {
     }
 
     if (hasValidBounds && bounds.getNorthEast() && bounds.getSouthWest()) {
-      logger.info('AutoZoom: Zooming to bounds', { 
+      logger.info(SOURCE, 'AutoZoom: Zooming to bounds', { 
         coordCount: totalCoordCount,
         bounds: {
           ne: bounds.getNorthEast().toArray(),
@@ -236,33 +255,43 @@ export function useAutoZoom(isMapReady: boolean) {
         maxZoom: 18
       });
     } else {
-      logger.warn('AutoZoom: No valid bounds found', { totalCoordCount });
+      logger.warn(SOURCE, 'AutoZoom: No valid bounds found', { totalCoordCount });
     }
-  }, [isMapReady, mapboxInstance, layers]);
+  }, [isMapReady, mapboxInstance, layers, logger]);
 
+  // Main effect to trigger autozoom check
   useEffect(() => {
-    if (isMapReady) {
-      const currentProcessedLayers = layers
+    if (isMapReady && mapboxInstance) {
+      const currentVisibleLayers = layers
         .filter(l => l.visible && l.setupStatus === 'complete')
         .map(l => l.id)
         .sort()
         .join(',');
 
-      if (currentProcessedLayers !== processedLayersRef.current) {
-        logger.debug('AutoZoom: Triggering check due to map readiness or layer change', {
+      if (currentVisibleLayers !== processedLayersRef.current) {
+        logger.debug(SOURCE, 'AutoZoom: Triggering check due to map readiness or layer change', {
           previousLayers: processedLayersRef.current,
-          currentLayers: currentProcessedLayers
+          currentLayers: currentVisibleLayers,
+          mapReady: isMapReady
         });
-        processedLayersRef.current = currentProcessedLayers;
-        attemptAutoZoom();
+        processedLayersRef.current = currentVisibleLayers;
+        addedSourcesRef.current = new Set();
+        logger.debug(SOURCE, 'Resetting addedSources ref due to layer change');
+        attemptAutoZoom(); // Start the check
+      } else {
+        logger.debug(SOURCE, 'AutoZoom: No relevant layer changes detected', { currentLayers: currentVisibleLayers });
       }
     } else {
-      processedLayersRef.current = '';
-      // Clear any pending retry if map becomes not ready
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-        retryTimeoutRef.current = null;
+      // Reset state when map is not ready
+      if (processedLayersRef.current !== '') {
+        logger.debug(SOURCE, 'AutoZoom: Map not ready, resetting state');
+        processedLayersRef.current = '';
+        addedSourcesRef.current = new Set();
+        if (retryTimeoutRef.current) {
+          clearTimeout(retryTimeoutRef.current);
+          retryTimeoutRef.current = null;
+        }
       }
     }
-  }, [isMapReady, layers, attemptAutoZoom]);
+  }, [isMapReady, mapboxInstance, layers, attemptAutoZoom, logger]);
 } 

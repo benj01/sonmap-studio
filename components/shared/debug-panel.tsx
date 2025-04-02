@@ -87,7 +87,7 @@ export function DebugPanel({ children }: DebugPanelProps) {
               [{log.timestamp}] {log.level}: {log.message}
               {log.data && (
                 <pre className="mt-1 p-2 bg-muted rounded text-xs">
-                  {JSON.stringify(log.data, null, 2)}
+                  {logManager.safeStringify(log.data, 2)}
                 </pre>
               )}
             </div>
