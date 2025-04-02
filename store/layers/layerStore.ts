@@ -206,12 +206,31 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     logger.debug('ACTION START: updateLayerStatus', { layerId, status, error });
     set((state) => {
       const layer = state.layers.byId[layerId];
-      if (!layer || (layer.setupStatus === status && layer.error === error)) {
-        logger.debug('ACTION SKIP: updateLayerStatus - no change needed', { layerId, status, error });
+      if (!layer) {
+        logger.debug('ACTION SKIP: updateLayerStatus - layer not found', { layerId });
         return state;
       }
 
-      // Only update the specific fields that changed
+      // Check if any relevant fields actually changed
+      const statusChanged = layer.setupStatus !== status;
+      const errorChanged = layer.error !== error;
+      const addedChanged = layer.added !== (status === 'complete');
+
+      if (!statusChanged && !errorChanged && !addedChanged) {
+        logger.debug('ACTION SKIP: updateLayerStatus - no changes needed', { 
+          layerId, 
+          status, 
+          error,
+          currentState: {
+            status: layer.setupStatus,
+            error: layer.error,
+            added: layer.added
+          }
+        });
+        return state;
+      }
+
+      // Create a new object ONLY for the updated layer
       const updatedLayer = {
         ...layer,
         setupStatus: status,
@@ -219,7 +238,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         added: status === 'complete'
       };
 
-      // Only update the specific layer in byId
+      // Create a new byId object, replacing only the updated layer
       const updatedById = {
         ...state.layers.byId,
         [layerId]: updatedLayer
@@ -230,12 +249,18 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         status, 
         error,
         changes: {
-          statusChanged: layer.setupStatus !== status,
-          errorChanged: layer.error !== error,
-          addedChanged: layer.added !== (status === 'complete')
+          statusChanged,
+          errorChanged,
+          addedChanged
+        },
+        references: {
+          layerRefChanged: layer !== updatedLayer,
+          byIdRefChanged: state.layers.byId !== updatedById,
+          layersRefChanged: state.layers.byId !== updatedById
         }
       });
 
+      // Return new state object, keeping refs for unchanged parts
       return {
         layers: {
           ...state.layers,

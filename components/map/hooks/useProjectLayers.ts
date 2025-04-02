@@ -190,9 +190,7 @@ export function useProjectLayers(projectId: string) {
               }
             );
 
-            // Update layer status to complete and explicitly clear any errors
-            const store = useLayerStore.getState();
-            store.updateLayerStatus(layer.id, 'complete', undefined);
+            // Remove premature status update - let MapLayer handle it
             loadedLayers++;
           });
         }

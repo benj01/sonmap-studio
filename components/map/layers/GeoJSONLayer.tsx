@@ -2,7 +2,8 @@ import { FillLayerSpecification, LineLayerSpecification, CircleLayerSpecificatio
 import { MapLayer } from './MapLayer';
 import { LogManager } from '@/core/logging/log-manager';
 import type { Feature, Geometry } from 'geojson';
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
+import { useLayerStore } from '@/store/layers/layerStore';
 
 const SOURCE = 'GeoJSONLayer';
 const logManager = LogManager.getInstance();
@@ -115,6 +116,25 @@ export function GeoJSONLayer({
       data,
     } satisfies GeoJSONSourceSpecification,
   }), [id, data]);
+
+  // Add effect to analyze geometry types and update layer style
+  useEffect(() => {
+    if (!data?.features?.length) {
+      logger.warn('No features in data for geometry analysis', { id });
+      return;
+    }
+
+    const geometryTypes = analyzeGeometryTypes(data.features);
+    logger.debug('Analyzed geometry types for layer', {
+      id,
+      geometryTypes,
+      featureCount: data.features.length
+    });
+
+    // Update layer style with geometry types
+    const store = useLayerStore.getState();
+    store.updateLayerStyle(id, {}, geometryTypes);
+  }, [id, data]);
 
   // Memoize layer specifications
   const fillLayerSpec = useMemo(() => {

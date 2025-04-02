@@ -2,8 +2,6 @@
 
 import { useEffect, useState, useRef } from 'react';
 import createClient from '@/utils/supabase/client';
-import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
-import { useLayer } from '@/store/layers/hooks';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'useLayerData';
@@ -42,12 +40,6 @@ interface LayerData {
   type: string;
   properties: Record<string, any>;
   features: GeoJSON.Feature[];
-}
-
-interface LayerFeature {
-  id: string;
-  properties: Record<string, any>;
-  geojson: string;
 }
 
 function validateCoordinates(coordinates: any): boolean {
@@ -112,13 +104,9 @@ export function useLayerData(layerId: string) {
   const fetchingRef = useRef(false);
   const cleanupRef = useRef(false);
   const lastUpdateRef = useRef(0);
-  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
-  const { layer, updateStatus } = useLayer(layerId);
 
   logger.info('useLayerData hook called', {
     layerId,
-    hasLayer: !!layer,
-    hasMapbox: !!mapboxInstance,
     loading,
     error: error?.message,
     hasCachedData: !!layerCache.get(layerId)
@@ -145,7 +133,6 @@ export function useLayerData(layerId: string) {
           subscribers: cached.subscribers,
           lastUpdate: new Date(cached.lastUpdate).toISOString()
         });
-        // Use the exact same reference from cache
         setData(cached.data);
         setLoading(false);
       }
@@ -210,7 +197,6 @@ export function useLayerData(layerId: string) {
             lastUpdate: new Date(cached.lastUpdate).toISOString()
           });
           if (mounted.current) {
-            // Use the exact same reference from cache
             setData(cached.data);
             setLoading(false);
           }
@@ -301,56 +287,11 @@ export function useLayerData(layerId: string) {
         });
 
         if (mounted.current) {
-          // Use the exact same reference from cache
           setData(layerDataWithFeatures);
           setLoading(false);
         }
 
         lastUpdateRef.current = Date.now();
-
-        // Initialize the layer in Mapbox if available
-        if (mapboxInstance && layer?.visible) {
-          try {
-            logger.info('Initializing layer in Mapbox', { layerId });
-            updateStatus('adding');
-
-            // Add source if it doesn't exist
-            if (!mapboxInstance.getSource(layerId)) {
-              logger.info('Adding source to map', { layerId });
-              mapboxInstance.addSource(layerId, {
-                type: 'geojson',
-                data: {
-                  type: 'FeatureCollection',
-                  features: features || []
-                }
-              });
-            }
-
-            // Add layer if it doesn't exist
-            if (!mapboxInstance.getLayer(layerId)) {
-              logger.info('Adding layer to map', { layerId });
-              mapboxInstance.addLayer({
-                id: layerId,
-                type: 'fill',
-                source: layerId,
-                paint: {
-                  'fill-color': '#088',
-                  'fill-opacity': 0.8
-                }
-              });
-            }
-
-            logger.info('Layer initialization complete', { layerId });
-            updateStatus('complete', undefined);
-          } catch (err) {
-            logger.error('Error initializing layer in Mapbox', { 
-              error: err instanceof Error ? err.message : err,
-              stack: err instanceof Error ? err.stack : undefined,
-              layerId 
-            });
-            updateStatus('error', err instanceof Error ? err.message : 'Failed to initialize layer');
-          }
-        }
 
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to fetch layer data';
@@ -359,7 +300,6 @@ export function useLayerData(layerId: string) {
           setError(new Error(errorMessage));
           setLoading(false);
         }
-        updateStatus('error', errorMessage);
       } finally {
         fetchingRef.current = false;
       }
@@ -368,7 +308,7 @@ export function useLayerData(layerId: string) {
     if (layerId) {
       fetchLayerData();
     }
-  }, [layerId, mapboxInstance, layer?.visible, updateStatus]);
+  }, [layerId]);
 
   return {
     data,

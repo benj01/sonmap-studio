@@ -4,7 +4,10 @@ import mapboxgl, {
   LayerSpecification, 
   Map as MapboxMap,
   GeoJSONSource,
-  GeoJSONSourceSpecification
+  GeoJSONSourceSpecification,
+  FillLayerSpecification,
+  LineLayerSpecification,
+  CircleLayerSpecification
 } from 'mapbox-gl';
 import { useMapboxInstance } from '@/store/map/mapInstanceStore';
 import { useLayer, useLayerVisibility } from '@/store/layers/hooks';
@@ -36,7 +39,7 @@ export interface MapLayerProps {
     id: string;
     data: GeoJSONSourceSpecification;
   };
-  layer: Omit<LayerSpecification, 'id' | 'source'>;
+  layer: Omit<FillLayerSpecification | LineLayerSpecification | CircleLayerSpecification, 'id' | 'source'>;
   initialVisibility?: boolean;
   beforeId?: string;
 }
@@ -79,6 +82,100 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   const mountedRef = useRef(true);
   const layerRef = useRef(layer);
   const sourceDataRef = useRef(source.data.data);
+
+  const addMapLayer = useCallback(async () => {
+    if (!mapboxInstance || !mountedRef.current || !isSourceReady) {
+      logger.debug('>>> Cannot add layer - missing dependencies', { 
+        layerId: id, 
+        hasMapbox: !!mapboxInstance,
+        isMounted: mountedRef.current,
+        isSourceReady
+      });
+      return false;
+    }
+
+    try {
+      if (!mapboxInstance.getLayer(id)) {
+        const layerConfig = {
+          ...layer,
+          id,
+          source: source.id,
+          layout: {
+            ...layer.layout,
+            visibility: isVisible ? 'visible' : 'none'
+          }
+        } as (mapboxgl.FillLayerSpecification | mapboxgl.LineLayerSpecification | mapboxgl.CircleLayerSpecification);
+
+        logger.debug('>>> Adding layer to mapbox', { 
+          layerId: id, 
+          sourceId: source.id,
+          layerExists: !!mapboxInstance.getLayer(id),
+          sourceExists: !!mapboxInstance.getSource(source.id),
+          layerType: layerConfig.type
+        });
+
+        mapboxInstance.addLayer(layerConfig, beforeId);
+        layerAddedRef.current = true;
+        internalLayerAddedRef.current = true;
+
+        // Add confirmation log after layer addition
+        logger.debug('>>> Layer added to mapbox', { 
+          layerId: id, 
+          layerExists: mapboxInstance.getLayer(id) !== undefined,
+          sourceExists: mapboxInstance.getSource(source.id) !== undefined,
+          layerType: mapboxInstance.getLayer(id)?.type,
+          sourceType: mapboxInstance.getSource(source.id)?.type,
+          layerConfig: {
+            type: layerConfig.type,
+            visibility: layerConfig.layout?.visibility,
+            source: layerConfig.source
+          }
+        });
+
+        setIsLayerReady(true);
+
+        // Add confirmation log after ready state update
+        logger.debug('>>> Layer ready state updated', {
+          layerId: id,
+          isLayerReady: true,
+          layerExists: mapboxInstance.getLayer(id) !== undefined,
+          layerType: mapboxInstance.getLayer(id)?.type,
+          layerConfig: {
+            type: layerConfig.type,
+            visibility: layerConfig.layout?.visibility,
+            source: layerConfig.source
+          }
+        });
+
+        logger.info(`>>> Successfully called mapboxInstance.addLayer for ${id}`);
+        logger.info(`>>> Layer ${id} is now ready`, { isLayerReady: true });
+        updateStatus('complete');
+        return true;
+      } else {
+        logger.debug('>>> Layer already exists', {
+          layerId: id,
+          layerExists: !!mapboxInstance.getLayer(id),
+          sourceExists: !!mapboxInstance.getSource(source.id),
+          layerType: mapboxInstance.getLayer(id)?.type
+        });
+        layerAddedRef.current = true;
+        internalLayerAddedRef.current = true;
+        setIsLayerReady(true);
+        return true;
+      }
+    } catch (error) {
+      logger.error('>>> Error adding layer to mapbox', { 
+        layerId: id, 
+        error: error instanceof Error ? error.message : 'Unknown error',
+        stack: error instanceof Error ? error.stack : undefined,
+        sourceId: source.id,
+        isSourceReady
+      });
+      updateStatus('error', error instanceof Error ? error.message : String(error));
+      setIsLayerReady(false);
+      return false;
+    }
+  }, [mapboxInstance, id, source.id, layer, isVisible, beforeId, isSourceReady, updateStatus]);
 
   logger.debug(`MapLayer instantiated`, {
     id,
@@ -127,63 +224,6 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             addMapLayer();
           }
         }
-      }
-    };
-
-    const addMapLayer = () => {
-      if (!mapboxInstance || !isMounted || !isSourceReady) {
-        logger.debug(`Add/Remove: Cannot add layer ${id}`, {
-          hasMap: !!mapboxInstance,
-          isMounted,
-          isSourceReady
-        });
-        return false;
-      }
-
-      try {
-        if (!mapboxInstance.getLayer(id)) {
-          const layerConfig = {
-            id,
-            source: source.id,
-            ...layer,
-            layout: {
-              ...layer.layout,
-              visibility: isVisible ? 'visible' : 'none'
-            }
-          } as LayerSpecification;
-
-          logger.info(`Add/Remove: Adding layer ${id}`, { 
-            type: layerConfig.type,
-            initialVisibility: isVisible,
-            sourceId: source.id,
-            isSourceReady
-          });
-
-          mapboxInstance.addLayer(layerConfig, beforeId);
-          layerAddedRef.current = true;
-          internalLayerAddedRef.current = true;
-          setIsLayerReady(true);
-          logger.info(`>>> Successfully called mapboxInstance.addLayer for ${id}`);
-          logger.info(`>>> Layer ${id} is now ready`, { isLayerReady: true });
-          updateStatus('complete');
-          return true;
-        } else {
-          logger.debug(`Add/Remove: Layer ${id} already exists`);
-          layerAddedRef.current = true;
-          internalLayerAddedRef.current = true;
-          setIsLayerReady(true);
-          return true;
-        }
-      } catch (error) {
-        logger.error(`Add/Remove: Error adding layer ${id}`, { 
-          error: error instanceof Error ? error.message : error,
-          stack: error instanceof Error ? error.stack : undefined,
-          sourceId: source.id,
-          isSourceReady
-        });
-        updateStatus('error', error instanceof Error ? error.message : String(error));
-        setIsLayerReady(false);
-        return false;
       }
     };
 
@@ -361,13 +401,55 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       if (mapboxInstance && !mapboxInstance._removed && isStyleLoaded(mapboxInstance)) {
         try {
           // Only remove layer if we know it was successfully added
-          if (internalLayerAddedRef.current && mapboxInstance.getLayer(id)) {
-            logger.info(`Cleanup: Removing layer ${id}`);
-            mapboxInstance.removeLayer(id);
+          if (internalLayerAddedRef.current) {
+            const layerExists = mapboxInstance.getLayer(id);
+            logger.info(`Cleanup: Starting layer removal process for ${id}`, {
+              internalLayerAdded: internalLayerAddedRef.current,
+              layerExists: !!layerExists,
+              layerType: layerExists ? mapboxInstance.getLayer(id)?.type : undefined,
+              sourceId: layerExists ? mapboxInstance.getLayer(id)?.source : undefined,
+              mapState: {
+                isStyleLoaded: mapboxInstance.isStyleLoaded(),
+                isMoving: mapboxInstance.isMoving(),
+                isZooming: mapboxInstance.isZooming(),
+                isRotating: mapboxInstance.isRotating(),
+                isEasing: mapboxInstance.isEasing()
+              }
+            });
+
+            if (layerExists) {
+              logger.info(`Cleanup: Attempting to remove layer ${id}`);
+              mapboxInstance.removeLayer(id);
+              
+              // Verify layer was actually removed
+              const layerStillExists = mapboxInstance.getLayer(id);
+              if (layerStillExists) {
+                logger.error(`Cleanup: Failed to remove layer ${id} - layer still exists`);
+              } else {
+                logger.info(`Cleanup: Successfully removed layer ${id}`);
+              }
+            } else {
+              logger.warn(`Cleanup: Layer ${id} not found during cleanup`, {
+                internalLayerAdded: internalLayerAddedRef.current,
+                mapState: {
+                  isStyleLoaded: mapboxInstance.isStyleLoaded(),
+                  isMoving: mapboxInstance.isMoving(),
+                  isZooming: mapboxInstance.isZooming(),
+                  isRotating: mapboxInstance.isRotating(),
+                  isEasing: mapboxInstance.isEasing()
+                }
+              });
+            }
           }
 
           const style = mapboxInstance.getStyle();
           const layersUsingSource = (style?.layers || []).filter(l => l.source === source.id);
+          logger.debug(`Cleanup: Checking source ${source.id} usage`, {
+            layerId: id,
+            layersUsingSource: layersUsingSource.map(l => l.id),
+            sourceExists: !!mapboxInstance.getSource(source.id)
+          });
+
           if (layersUsingSource.length === 0 || (layersUsingSource.length === 1 && layersUsingSource[0].id === id)) {
             if (mapboxInstance.getSource(source.id)) {
               logger.info(`Cleanup: Removing source ${source.id} (last user)`);
@@ -379,12 +461,26 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         } catch (cleanupError) {
           logger.error(`Cleanup: Error for ${id}`, { 
             cleanupError: cleanupError instanceof Error ? cleanupError.message : cleanupError,
-            stack: cleanupError instanceof Error ? cleanupError.stack : undefined
+            stack: cleanupError instanceof Error ? cleanupError.stack : undefined,
+            mapState: {
+              isStyleLoaded: mapboxInstance.isStyleLoaded(),
+              isMoving: mapboxInstance.isMoving(),
+              isZooming: mapboxInstance.isZooming(),
+              isRotating: mapboxInstance.isRotating(),
+              isEasing: mapboxInstance.isEasing()
+            }
           });
         }
       } else {
         logger.warn(`Cleanup: Skipped for ${id} (map not ready)`, { 
-          isReady: mapboxInstance && !mapboxInstance._removed && isStyleLoaded(mapboxInstance) 
+          isReady: mapboxInstance && !mapboxInstance._removed && isStyleLoaded(mapboxInstance),
+          mapState: mapboxInstance ? {
+            isStyleLoaded: mapboxInstance.isStyleLoaded(),
+            isMoving: mapboxInstance.isMoving(),
+            isZooming: mapboxInstance.isZooming(),
+            isRotating: mapboxInstance.isRotating(),
+            isEasing: mapboxInstance.isEasing()
+          } : null
         });
       }
     };

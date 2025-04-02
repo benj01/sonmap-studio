@@ -163,7 +163,7 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
     };
   }, [data?.features, layer.id, loading, error]);
 
-  // Extract layer styles from metadata
+  // Extract layer styles from metadata - memoize with stable dependencies
   const { styles, baseLayerId } = useMemo(() => {
     const paint = layer.metadata?.style?.paint || {};
     const baseId = layer.id.replace(/-line$|-fill$|-circle$/, '');
@@ -239,24 +239,26 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
     />
   );
 }, (prevProps, nextProps) => {
-  // Shallow equality for style changes
-  const styleChanged = prevProps.layer.metadata?.style !== nextProps.layer.metadata?.style;
-  const visibilityChanged = prevProps.layer.visible !== nextProps.layer.visible;
+  // Compare only essential properties
   const idChanged = prevProps.layer.id !== nextProps.layer.id;
+  const visibilityChanged = prevProps.layer.visible !== nextProps.layer.visible;
+  // Compare style object references first (fastest)
+  const styleRefChanged = prevProps.layer.metadata?.style !== nextProps.layer.metadata?.style;
+  // Only do deep compare if refs are different
+  const styleContentChanged = styleRefChanged && !isEqual(
+    prevProps.layer.metadata?.style,
+    nextProps.layer.metadata?.style
+  );
+
+  const shouldSkipRender = !idChanged && !visibilityChanged && !styleRefChanged && !styleContentChanged;
 
   logger.debug('LayerRenderer memo comparison', {
     layerId: nextProps.layer.id,
-    changes: {
-      styleChanged,
-      visibilityChanged,
-      idChanged,
-      prevStyle: prevProps.layer.metadata?.style,
-      nextStyle: nextProps.layer.metadata?.style
-    }
+    shouldSkipRender,
+    changes: { idChanged, visibilityChanged, styleRefChanged, styleContentChanged }
   });
 
-  // Return true if nothing has changed (skip render)
-  return !styleChanged && !visibilityChanged && !idChanged;
+  return shouldSkipRender;
 });
 
 LayerRenderer.displayName = 'LayerRenderer';

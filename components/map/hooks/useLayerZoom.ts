@@ -37,10 +37,11 @@ export function useLayerZoom() {
     }
 
     try {
-      // Get the source from the layer
-      const source = mapboxInstance.getSource(layerId);
+      // Get the source from the layer using the correct source ID convention
+      const sourceId = `${layerId}-source`;
+      const source = mapboxInstance.getSource(sourceId);
       if (!source) {
-        logger.warn('Source not found for layer', { layerId });
+        logger.warn('Source not found for layer using derived ID', { layerId, sourceId });
         return;
       }
 
