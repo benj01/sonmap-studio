@@ -1,5 +1,8 @@
 import { create } from 'zustand';
 import { LogManager } from '@/core/logging/log-manager';
+import { shallow } from 'zustand/shallow';
+import { useCallback, useMemo } from 'react';
+import type { Layer, LayerMetadata } from './types';
 
 const SOURCE = 'layerStore';
 const logManager = LogManager.getInstance();
@@ -19,43 +22,13 @@ const logger = {
   }
 };
 
-// Cache for memoized selectors
-const selectorCache = new WeakMap();
-
-// Helper function to create a memoized selector
-function createMemoizedSelector<T>(selector: (state: LayerStore) => T): (state: LayerStore) => T {
-  return (state: LayerStore) => {
-    if (!selectorCache.has(state)) {
-      selectorCache.set(state, selector(state));
-    }
-    return selectorCache.get(state);
-  };
-}
-
-export interface LayerMetadata {
-  name: string;
-  type: string;
-  properties: Record<string, any>;
-  fileId?: string;
-}
-
-export interface Layer {
-  id: string;
-  sourceId?: string;
-  visible: boolean;
-  added: boolean;
-  setupStatus: 'pending' | 'adding' | 'complete' | 'error';
-  metadata?: LayerMetadata;
-  error?: string;
-}
-
 interface NormalizedLayerState {
   byId: Record<string, Layer>;
   allIds: string[];
   metadata: Record<string, LayerMetadata>;
 }
 
-interface LayerStore {
+export interface LayerStore {
   // State
   layers: NormalizedLayerState;
   
@@ -65,24 +38,77 @@ interface LayerStore {
   removeLayer: (layerId: string) => void;
   updateLayerStatus: (layerId: string, status: Layer['setupStatus'], error?: string) => void;
   handleFileDeleted: (fileId: string) => void;
+  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }) => void;
   reset: () => void;
 }
 
-const initialState: NormalizedLayerState = {
+export const initialState: NormalizedLayerState = {
   byId: {},
   allIds: [],
   metadata: {}
 };
 
+// Layer selectors with detailed logging
+export const layerSelectors = {
+  getLayerById: (state: LayerStore) => (layerId: string): Layer | undefined => {
+    logger.debug('SELECTOR RUN: getLayerById', { layerId });
+    return state.layers.byId[layerId];
+  },
+
+  getAllLayers: (state: LayerStore): Layer[] => {
+    logger.debug('SELECTOR RUN: getAllLayers', { 
+      layerCount: state.layers.allIds.length
+    });
+    return state.layers.allIds.map(id => state.layers.byId[id]);
+  },
+
+  getVisibleLayers: (state: LayerStore): Layer[] => {
+    logger.debug('SELECTOR RUN: getVisibleLayers', { 
+      totalLayers: state.layers.allIds.length,
+      visibleCount: state.layers.allIds.filter(id => state.layers.byId[id].visible).length
+    });
+    return state.layers.allIds
+      .map(id => state.layers.byId[id])
+      .filter(layer => layer.visible);
+  },
+
+  getLayerMetadata: (state: LayerStore) => (layerId: string): LayerMetadata | undefined => {
+    logger.debug('SELECTOR RUN: getLayerMetadata', { layerId });
+    return state.layers.metadata[layerId];
+  },
+
+  getLayersByStatus: (state: LayerStore) => (status: Layer['setupStatus']): Layer[] => {
+    logger.debug('SELECTOR RUN: getLayersByStatus', { status });
+    return state.layers.allIds
+      .map(id => state.layers.byId[id])
+      .filter(layer => layer.setupStatus === status);
+  },
+
+  getLayersWithErrors: (state: LayerStore): Layer[] => {
+    logger.debug('SELECTOR RUN: getLayersWithErrors', { 
+      totalLayers: state.layers.allIds.length,
+      errorCount: state.layers.allIds.filter(id => state.layers.byId[id].error !== undefined).length
+    });
+    return state.layers.allIds
+      .map(id => state.layers.byId[id])
+      .filter(layer => layer.error !== undefined);
+  }
+};
+
+// Create store with shallow equality support
 export const useLayerStore = create<LayerStore>()((set, get) => ({
   // Initial state
   layers: initialState,
 
   // Actions
   setLayerVisibility: (layerId, visible) => {
+    logger.debug('ACTION START: setLayerVisibility', { layerId, visible });
     set((state) => {
       const layer = state.layers.byId[layerId];
-      if (!layer || layer.visible === visible) return state; // No change needed
+      if (!layer || layer.visible === visible) {
+        logger.debug('ACTION SKIP: setLayerVisibility - no change needed', { layerId, visible });
+        return state;
+      }
 
       const updatedLayer = { ...layer, visible };
       const updatedById = {
@@ -90,7 +116,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         [layerId]: updatedLayer
       };
 
-      logger.debug('Layer visibility updated', { layerId, visible });
+      logger.debug('ACTION END: setLayerVisibility', { layerId, visible });
       return {
         layers: {
           ...state.layers,
@@ -101,8 +127,12 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
   },
 
   addLayer: (layerId, initialVisibility = true, sourceId, metadata) => {
+    logger.debug('ACTION START: addLayer', { layerId, initialVisibility, sourceId, hasMetadata: !!metadata });
     set((state) => {
-      if (state.layers.byId[layerId]) return state; // Layer already exists
+      if (state.layers.byId[layerId]) {
+        logger.debug('ACTION SKIP: addLayer - layer already exists', { layerId });
+        return state;
+      }
 
       const newLayer: Layer = {
         id: layerId,
@@ -127,9 +157,8 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
           }
         : state.layers.metadata;
 
-      logger.debug('Layer added to store', { layerId, sourceId, initialVisibility, metadata });
-      logger.info('Layer store state after adding layer', {
-        layerId,
+      logger.debug('ACTION END: addLayer', { 
+        layerId, 
         storeState: {
           byId: Object.keys(updatedById),
           allIds: updatedAllIds,
@@ -147,14 +176,18 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
   },
 
   removeLayer: (layerId) => {
+    logger.debug('ACTION START: removeLayer', { layerId });
     set((state) => {
-      if (!state.layers.byId[layerId]) return state; // Layer doesn't exist
+      if (!state.layers.byId[layerId]) {
+        logger.debug('ACTION SKIP: removeLayer - layer does not exist', { layerId });
+        return state;
+      }
 
       const { [layerId]: removedLayer, ...updatedById } = state.layers.byId;
       const updatedAllIds = state.layers.allIds.filter(id => id !== layerId);
       const { [layerId]: removedMetadata, ...updatedMetadata } = state.layers.metadata;
 
-      logger.debug('Layer removed', { layerId });
+      logger.debug('ACTION END: removeLayer', { layerId });
       return {
         layers: {
           byId: updatedById,
@@ -166,10 +199,12 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
   },
 
   updateLayerStatus: (layerId: string, status: Layer['setupStatus'], error?: string) => {
+    logger.debug('ACTION START: updateLayerStatus', { layerId, status, error });
     set((state) => {
       const layer = state.layers.byId[layerId];
       if (!layer || (layer.setupStatus === status && layer.error === error)) {
-        return state; // No change needed
+        logger.debug('ACTION SKIP: updateLayerStatus - no change needed', { layerId, status, error });
+        return state;
       }
 
       const updatedLayer = {
@@ -184,7 +219,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         [layerId]: updatedLayer
       };
 
-      logger.debug('Layer status updated', { layerId, status, error });
+      logger.debug('ACTION END: updateLayerStatus', { layerId, status, error });
       return {
         layers: {
           ...state.layers,
@@ -195,6 +230,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
   },
 
   handleFileDeleted: (fileId: string) => {
+    logger.debug('ACTION START: handleFileDeleted', { fileId });
     set((state) => {
       const layersToRemove: string[] = [];
 
@@ -204,6 +240,11 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
           layersToRemove.push(layerId);
         }
       });
+
+      if (layersToRemove.length === 0) {
+        logger.debug('ACTION SKIP: handleFileDeleted - no layers to remove', { fileId });
+        return state;
+      }
 
       // Remove each layer
       const updatedById = { ...state.layers.byId };
@@ -219,7 +260,7 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         delete updatedMetadata[layerId];
       });
 
-      logger.debug('Layers removed for deleted file', { fileId, removedLayers: layersToRemove });
+      logger.debug('ACTION END: handleFileDeleted', { fileId, removedLayers: layersToRemove });
       return {
         layers: {
           byId: updatedById,
@@ -230,84 +271,198 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     });
   },
 
+  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }) => {
+    logger.debug('ACTION START: updateLayerStyle', { layerId, style });
+    set((state) => {
+      const layer = state.layers.byId[layerId];
+      if (!layer) {
+        logger.debug('ACTION SKIP: updateLayerStyle - layer does not exist', { layerId });
+        return state;
+      }
+
+      // Ensure metadata and style exist before merging
+      const currentMetadata = state.layers.metadata[layerId] || { name: '', type: '', properties: {} };
+      const currentStyle = currentMetadata.style || {};
+
+      const updatedMetadata: LayerMetadata = {
+        ...currentMetadata,
+        style: {
+          ...currentStyle,
+          ...style
+        }
+      };
+
+      logger.debug('ACTION END: updateLayerStyle', { layerId, newStyle: updatedMetadata.style });
+      return {
+        layers: {
+          ...state.layers,
+          metadata: {
+            ...state.layers.metadata,
+            [layerId]: updatedMetadata
+          },
+          byId: {
+            ...state.layers.byId,
+            [layerId]: {
+              ...layer,
+              metadata: updatedMetadata
+            }
+          }
+        }
+      };
+    });
+  },
+
   reset: () => {
+    logger.debug('ACTION START: reset');
     set({ layers: initialState });
-    logger.info('Layer store reset');
+    logger.debug('ACTION END: reset');
   }
 }));
 
-// Layer selectors
-export const layerSelectors = {
-  // Get a single layer by ID
-  getLayerById: (state: LayerStore) => (layerId: string) => {
-    return state.layers.byId[layerId];
-  },
-
-  // Get all layers
-  getAllLayers: createMemoizedSelector((state: LayerStore) => {
-    logger.debug('Computing getAllLayers selector');
-    return state.layers.allIds.map(id => state.layers.byId[id]);
-  }),
-
-  // Get visible layers
-  getVisibleLayers: createMemoizedSelector((state: LayerStore) => {
-    logger.debug('Computing getVisibleLayers selector');
-    return state.layers.allIds
-      .map(id => state.layers.byId[id])
-      .filter(layer => layer.visible);
-  }),
-
-  // Get layer metadata
-  getLayerMetadata: (state: LayerStore) => (layerId: string) => {
-    return state.layers.metadata[layerId];
-  },
-
-  // Get layers by setup status
-  getLayersByStatus: (state: LayerStore) => (status: Layer['setupStatus']) => {
-    return state.layers.allIds
-      .map(id => state.layers.byId[id])
-      .filter(layer => layer.setupStatus === status);
-  },
-
-  // Get layers with errors
-  getLayersWithErrors: createMemoizedSelector((state: LayerStore) => {
-    logger.debug('Computing getLayersWithErrors selector');
-    return state.layers.allIds
-      .map(id => state.layers.byId[id])
-      .filter(layer => layer.error !== undefined);
-  })
-};
-
 // Custom hooks for layer operations
 export const useLayer = (layerId: string) => {
-  return useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
-};
-
-export const useLayers = () => {
+  logger.debug('HOOK RUN: useLayer', { layerId });
   const store = useLayerStore();
-  const layers = useLayerStore((state) => state.layers.allIds.map(id => state.layers.byId[id]));
-  const visibleLayers = useLayerStore((state) => state.layers.allIds
-    .map(id => state.layers.byId[id])
-    .filter(layer => layer.visible));
+  const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
+  const metadata = useLayerStore((state) => layerSelectors.getLayerMetadata(state)(layerId));
+
+  const setVisibility = useCallback((visible: boolean) => {
+    logger.debug('HOOK ACTION: useLayer.setVisibility', { layerId, visible });
+    store.setLayerVisibility(layerId, visible);
+  }, [layerId, store]);
+
+  const updateStatus = useCallback((status: Layer['setupStatus'], error?: string) => {
+    logger.debug('HOOK ACTION: useLayer.updateStatus', { layerId, status, error });
+    store.updateLayerStatus(layerId, status, error);
+  }, [layerId, store]);
+
+  const updateStyle = useCallback((style: { paint?: Record<string, any>; layout?: Record<string, any> }) => {
+    logger.debug('HOOK ACTION: useLayer.updateStyle', { layerId, style });
+    store.updateLayerStyle(layerId, style);
+  }, [layerId, store]);
+
+  const remove = useCallback(() => {
+    logger.debug('HOOK ACTION: useLayer.remove', { layerId });
+    store.removeLayer(layerId);
+  }, [layerId, store]);
 
   return {
-    layers,
-    visibleLayers
+    layer,
+    metadata,
+    setVisibility,
+    updateStatus,
+    updateStyle,
+    remove,
+    isVisible: layer?.visible ?? false,
+    setupStatus: layer?.setupStatus ?? 'pending',
+    error: layer?.error
   };
 };
 
-export const useVisibleLayers = () => {
-  return useLayerStore(layerSelectors.getVisibleLayers);
+export const useLayers = () => {
+  logger.debug('HOOK RUN: useLayers');
+  const store = useLayerStore();
+  
+  // Select primitive state parts
+  const allIds = useLayerStore(state => state.layers.allIds);
+  const byId = useLayerStore(state => state.layers.byId);
+
+  // Memoize the layers array construction
+  const layers = useMemo(() => {
+    logger.debug('HOOK MEMO: Recomputing layers array', { 
+      idCount: allIds.length
+    });
+    return allIds.map(id => byId[id]);
+  }, [allIds, byId]);
+
+  // Use selectors with built-in memoization
+  const visibleLayers = useLayerStore((state) => layerSelectors.getVisibleLayers(state));
+  const layersWithErrors = useLayerStore((state) => layerSelectors.getLayersWithErrors(state));
+
+  // Select and stabilize store actions
+  const storeActions = useLayerStore((state) => ({
+    addLayer: state.addLayer,
+    removeLayer: state.removeLayer,
+    handleFileDeleted: state.handleFileDeleted
+  }));
+
+  logger.debug('HOOK STATE: useLayers', {
+    layerCount: layers.length,
+    layers: layers.map(l => ({
+      id: l.id,
+      hasMetadata: !!l.metadata,
+      visible: l.visible,
+      setupStatus: l.setupStatus,
+      error: l.error
+    })),
+    visibleLayerCount: visibleLayers.length,
+    errorCount: layersWithErrors.length
+  });
+
+  const addLayer = useCallback((
+    layerId: string,
+    initialVisibility: boolean = true,
+    sourceId?: string,
+    metadata?: LayerMetadata
+  ) => {
+    logger.debug('HOOK ACTION: useLayers.addLayer', {
+      layerId,
+      initialVisibility,
+      sourceId,
+      hasMetadata: !!metadata
+    });
+    storeActions.addLayer(layerId, initialVisibility, sourceId, metadata);
+  }, [storeActions]);
+
+  const removeLayer = useCallback((layerId: string) => {
+    logger.debug('HOOK ACTION: useLayers.removeLayer', { layerId });
+    storeActions.removeLayer(layerId);
+  }, [storeActions]);
+
+  const handleFileDeleted = useCallback((fileId: string) => {
+    logger.debug('HOOK ACTION: useLayers.handleFileDeleted', { fileId });
+    storeActions.handleFileDeleted(fileId);
+  }, [storeActions]);
+
+  return {
+    layers,
+    visibleLayers,
+    layersWithErrors,
+    addLayer,
+    removeLayer,
+    handleFileDeleted
+  };
 };
 
-export const useLayerMetadata = (layerId: string) => {
-  return useLayerStore((state) => layerSelectors.getLayerMetadata(state)(layerId));
+export const useLayerStatus = (layerId: string) => {
+  logger.debug('HOOK RUN: useLayerStatus', { layerId });
+  const store = useLayerStore();
+  const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
+
+  const updateStatus = useCallback((status: Layer['setupStatus'], error?: string) => {
+    logger.debug('HOOK ACTION: useLayerStatus.updateStatus', { layerId, status, error });
+    store.updateLayerStatus(layerId, status, error);
+  }, [layerId, store]);
+
+  return {
+    status: layer?.setupStatus ?? 'pending',
+    error: layer?.error,
+    updateStatus
+  };
 };
 
-export const useLayersByStatus = (status: Layer['setupStatus']) => {
-  return useLayerStore((state) => layerSelectors.getLayersByStatus(state)(status));
-};
+export const useLayerVisibility = (layerId: string) => {
+  logger.debug('HOOK RUN: useLayerVisibility', { layerId });
+  const store = useLayerStore();
+  const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
 
-export const useLayersWithErrors = () => {
-  return useLayerStore(layerSelectors.getLayersWithErrors);
+  const setVisibility = useCallback((visible: boolean) => {
+    logger.debug('HOOK ACTION: useLayerVisibility.setVisibility', { layerId, visible });
+    store.setLayerVisibility(layerId, visible);
+  }, [layerId, store]);
+
+  return {
+    isVisible: layer?.visible ?? false,
+    setVisibility
+  };
 }; 

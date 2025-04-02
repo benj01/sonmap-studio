@@ -3,6 +3,10 @@ export interface LayerMetadata {
   type: string;
   properties: Record<string, any>;
   fileId?: string;
+  style?: {
+    paint?: Record<string, any>;
+    layout?: Record<string, any>;
+  };
 }
 
 export interface Layer {

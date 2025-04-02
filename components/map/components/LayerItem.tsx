@@ -1,7 +1,7 @@
 'use client';
 
 import { LogManager } from '@/core/logging/log-manager';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Eye, EyeOff, Settings, AlertCircle, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -11,6 +11,7 @@ import { useLayerData } from '../hooks/useLayerData';
 import { useLayerZoom } from '../hooks/useLayerZoom';
 import { Skeleton } from '@/components/ui/skeleton';
 import * as mapboxgl from 'mapbox-gl';
+import { LayerSettingsDialog } from './LayerSettingsDialog';
 
 const SOURCE = 'LayerItem';
 const logManager = LogManager.getInstance();
@@ -30,15 +31,15 @@ const logger = {
   }
 };
 
-interface Layer {
+export interface LayerItemLayer {
   id: string;
   name: string;
   type: string;
   properties: Record<string, any>;
 }
 
-interface LayerItemProps {
-  layer: Layer;
+export interface LayerItemProps {
+  layer: LayerItemLayer;
   className?: string;
 }
 
@@ -47,6 +48,7 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   const { data, loading, error: dataError } = useLayerData(layer.id);
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { zoomToLayer } = useLayerZoom();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     logger.info('LayerItem state', {
@@ -138,10 +140,17 @@ export function LayerItem({ layer, className }: LayerItemProps) {
           variant="ghost"
           size="icon"
           title="Layer settings"
+          onClick={() => setSettingsOpen(true)}
         >
           <Settings className="h-4 w-4" />
         </Button>
       )}
+
+      <LayerSettingsDialog
+        layerId={layer.id}
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+      />
     </div>
   );
 }

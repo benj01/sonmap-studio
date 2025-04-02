@@ -3,7 +3,7 @@ import { useLayerData } from '../hooks/useLayerData';
 import { GeoJSONLayer } from '../layers/GeoJSONLayer';
 import { LogManager } from '@/core/logging/log-manager';
 import type { FeatureCollection, Geometry, GeoJsonProperties, Feature } from 'geojson';
-import { useMemo } from 'react';
+import { useMemo, memo, useRef } from 'react';
 import type { Layer } from '@/store/layers/types';
 
 const SOURCE = 'MapLayers';
@@ -97,23 +97,29 @@ function processFeature(feature: any): Feature<Geometry> | null {
   return null;
 }
 
-function LayerRenderer({ layer }: { layer: Layer }) {
-  if (!layer.metadata) return null;
+// Memoized LayerRenderer component
+const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+
+  logger.debug('LayerRenderer render', {
+    layerId: layer.id,
+    renderCount: renderCount.current,
+    timestamp: new Date().toISOString()
+  });
 
   const { data, loading, error } = useLayerData(layer.id);
 
   if (loading) {
-    logger.debug('Layer data loading', { layerId: layer.id });
     return null;
   }
 
   if (error) {
-    logger.error('Layer data error', { layerId: layer.id, error });
+    logger.error('Error loading layer data', { layerId: layer.id, error });
     return null;
   }
 
   if (!data?.features?.length) {
-    logger.debug('No features in layer data', { layerId: layer.id });
     return null;
   }
 
@@ -149,46 +155,87 @@ function LayerRenderer({ layer }: { layer: Layer }) {
     }, {})
   });
 
+  // Extract layer styles from metadata
+  const style = layer.metadata?.style;
+  const fillLayer = style?.paint ? { paint: style.paint } : {
+    paint: {
+      'fill-color': '#088',
+      'fill-opacity': 0.4,
+      'fill-outline-color': '#000'
+    }
+  };
+  const lineLayer = style?.paint ? { paint: style.paint } : {
+    paint: {
+      'line-color': '#088',
+      'line-width': 2
+    }
+  };
+  const circleLayer = style?.paint ? { paint: style.paint } : {
+    paint: {
+      'circle-color': '#088',
+      'circle-radius': 5,
+      'circle-stroke-width': 2,
+      'circle-stroke-color': '#000'
+    }
+  };
+
   return (
     <GeoJSONLayer
-      key={layer.id}
       id={layer.id}
       data={featureCollection}
+      fillLayer={fillLayer}
+      lineLayer={lineLayer}
+      circleLayer={circleLayer}
       initialVisibility={layer.visible}
-      fillLayer={{
-        paint: {
-          'fill-color': '#088',
-          'fill-opacity': 0.4,
-          'fill-outline-color': '#000'
-        }
-      }}
-      lineLayer={{
-        paint: {
-          'line-color': '#088',
-          'line-width': 2
-        }
-      }}
-      circleLayer={{
-        paint: {
-          'circle-color': '#088',
-          'circle-radius': 5,
-          'circle-stroke-width': 2,
-          'circle-stroke-color': '#000'
-        }
-      }}
     />
   );
-}
+});
+
+LayerRenderer.displayName = 'LayerRenderer';
 
 export function MapLayers() {
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+
+  logger.warn('MapLayers render start', {
+    renderCount: renderCount.current,
+    timestamp: new Date().toISOString()
+  });
+
   const { layers } = useLayers();
 
-  const validLayers = useMemo(() => 
-    layers.filter(layer => layer.metadata), 
-    [layers]
-  );
+  // Log the layers received from the hook
+  logger.debug('MapLayers received layers from hook', {
+    renderCount: renderCount.current,
+    layerCount: layers.length,
+    layers: layers.map(l => ({
+      id: l.id,
+      hasMetadata: !!l.metadata,
+      visible: l.visible,
+      setupStatus: l.setupStatus
+    }))
+  });
 
-  logger.info('MapLayers render', {
+  // Memoize the valid layers array to prevent unnecessary re-renders
+  const validLayers = useMemo(() => {
+    logger.debug('MapLayers computing validLayers', {
+      renderCount: renderCount.current,
+      inputLayerCount: layers.length
+    });
+    
+    const valid = layers.filter(layer => layer.metadata);
+    
+    logger.debug('MapLayers computed validLayers', {
+      renderCount: renderCount.current,
+      validLayerCount: valid.length,
+      validLayerIds: valid.map(l => l.id)
+    });
+    
+    return valid;
+  }, [layers]);
+
+  logger.info('MapLayers render complete', {
+    renderCount: renderCount.current,
     layerCount: layers.length,
     validLayerCount: validLayers.length,
     layers: validLayers.map(l => ({
