@@ -7,7 +7,7 @@ import mapboxgl, {
   GeoJSONSourceSpecification
 } from 'mapbox-gl';
 import { useMapboxInstance } from '@/store/map/mapInstanceStore';
-import { useLayer } from '@/store/layers/hooks';
+import { useLayer, useLayerVisibility } from '@/store/layers/hooks';
 import { LogManager } from '@/core/logging/log-manager';
 import type { Feature, Geometry, GeoJSON } from 'geojson';
 import isEqual from 'lodash/isEqual';
@@ -57,6 +57,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   const mapboxInstance = useMapboxInstance();
   const originalLayerId = id.replace(/-fill$|-line$|-circle$/, '');
   const { layer: layerState, updateStatus } = useLayer(originalLayerId);
+  const { isVisible } = useLayerVisibility(originalLayerId);
   const previousStatusRef = useRef(layerState?.setupStatus);
 
   const layerRef = useRef(layer);
@@ -68,7 +69,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     originalLayerId,
     hasMap: !!mapboxInstance,
     hasLayerState: !!layerState,
-    layerType: layer.type
+    layerType: layer.type,
+    isVisible
   });
 
   // ===== 1. Effect for Adding/Removing Source and Layer =====
@@ -115,10 +117,13 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               ...layer,
               layout: {
                 ...layer.layout,
-                visibility: layerState?.visible ? 'visible' : 'none'
+                visibility: isVisible ? 'visible' : 'none'
               }
             } as LayerSpecification;
-            logger.info(`Add/Remove: Layer ${id} added`, { type: layerConfig.type });
+            logger.info(`Add/Remove: Layer ${id} added`, { 
+              type: layerConfig.type,
+              initialVisibility: isVisible 
+            });
             mapboxInstance.addLayer(layerConfig, beforeId);
           }
         } catch (error) {
@@ -263,13 +268,13 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       logger.debug(`Attempting visibility update for ${id}`, { 
         attempt: attemptCount + 1,
         hasMap: !!mapboxInstance,
-        hasLayerState: !!layerState,
-        isStyleLoaded: mapboxInstance ? isStyleLoaded(mapboxInstance) : false
+        isStyleLoaded: mapboxInstance ? isStyleLoaded(mapboxInstance) : false,
+        isVisible
       });
 
-      // --- Check map instance and layer state first ---
-      if (!mapboxInstance || !layerState) {
-        logger.warn(`Visibility update skipped: No map instance or layer state`, { id });
+      // --- Check map instance first ---
+      if (!mapboxInstance) {
+        logger.warn(`Visibility update skipped: No map instance`, { id });
         return; // Cannot proceed
       }
 
@@ -290,7 +295,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       if (map.getLayer(id)) {
         try {
           const currentVisibility = map.getLayoutProperty(id, 'visibility') ?? 'visible';
-          const newVisibility = layerState.visible ? 'visible' : 'none';
+          const newVisibility = isVisible ? 'visible' : 'none';
           if (currentVisibility !== newVisibility) {
             logger.info(`Effect UPDATE_VISIBILITY: Setting visibility for ${id} to ${newVisibility}`);
             map.setLayoutProperty(id, 'visibility', newVisibility);
@@ -317,7 +322,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         clearTimeout(retryTimeout);
       }
     };
-  }, [mapboxInstance, id, layerState?.visible]);
+  }, [mapboxInstance, id, isVisible]);
 
   return null;
 } 
