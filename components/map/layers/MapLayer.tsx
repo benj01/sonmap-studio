@@ -222,7 +222,11 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     };
 
     if (!isEqual(currentLayerProps, previousLayerProps)) {
-      logger.info(`Effect UPDATE_STYLE: Updating style properties for layer ${id}`);
+      logger.info(`Effect UPDATE_STYLE: Updating style properties for layer ${id}`, {
+        layerId: id,
+        paint: currentLayerProps.paint,
+        layout: currentLayerProps.layout
+      });
       layerRef.current = layer;
 
       if (map.getLayer(id)) {
@@ -230,6 +234,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           if (layer.paint) {
             Object.entries(layer.paint).forEach(([key, value]) => {
               if (value !== undefined) {
+                logger.debug(`Setting paint property for ${id}`, { key, value });
                 map.setPaintProperty(id, key as any, value);
               }
             });
@@ -237,18 +242,29 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           if (layer.layout) {
             Object.entries(layer.layout).forEach(([key, value]) => {
               if (key !== 'visibility' && value !== undefined) {
+                logger.debug(`Setting layout property for ${id}`, { key, value });
                 map.setLayoutProperty(id, key as any, value);
               }
             });
           }
-          if (layer.filter) map.setFilter(id, layer.filter);
-          map.setLayerZoomRange(id, layer.minzoom ?? 0, layer.maxzoom ?? 24);
+          if (layer.filter) {
+            logger.debug(`Setting filter for ${id}`, { filter: layer.filter });
+            map.setFilter(id, layer.filter);
+          }
+          if (layer.minzoom !== undefined || layer.maxzoom !== undefined) {
+            logger.debug(`Setting zoom range for ${id}`, { 
+              minzoom: layer.minzoom ?? 0, 
+              maxzoom: layer.maxzoom ?? 24 
+            });
+            map.setLayerZoomRange(id, layer.minzoom ?? 0, layer.maxzoom ?? 24);
+          }
 
-          logger.debug(`Effect UPDATE_STYLE: Style updated for ${id}`);
+          logger.info(`Effect UPDATE_STYLE: Style updated for ${id}`);
         } catch (error) {
           logger.error(`Effect UPDATE_STYLE: Error updating style for ${id}`, { 
             error: error instanceof Error ? error.message : error,
-            stack: error instanceof Error ? error.stack : undefined
+            stack: error instanceof Error ? error.stack : undefined,
+            layerProps: currentLayerProps
           });
         }
       } else {

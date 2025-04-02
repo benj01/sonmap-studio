@@ -119,37 +119,77 @@ export function GeoJSONLayer({
   // Memoize layer specifications
   const fillLayerSpec = useMemo(() => {
     if (!geometryTypes.hasPolygons || !fillLayer) return null;
+    logger.debug('Creating fill layer spec', {
+      id: `${id}-fill`,
+      paint: fillLayer.paint,
+      layout: fillLayer.layout
+    });
     return {
       type: 'fill' as const,
-      ...fillLayer,
+      paint: {
+        'fill-color': fillLayer.paint?.['fill-color'] || '#088',
+        'fill-opacity': fillLayer.paint?.['fill-opacity'] || 0.4,
+        'fill-outline-color': fillLayer.paint?.['fill-outline-color'] || '#000'
+      },
+      layout: fillLayer.layout || {}
     };
-  }, [geometryTypes.hasPolygons, fillLayer]);
+  }, [geometryTypes.hasPolygons, fillLayer, id]);
 
   const lineLayerSpec = useMemo(() => {
     if (!geometryTypes.hasLines || !lineLayer) return null;
+    logger.debug('Creating line layer spec', {
+      id: `${id}-line`,
+      paint: lineLayer.paint,
+      layout: lineLayer.layout
+    });
     return {
       type: 'line' as const,
-      ...lineLayer,
+      paint: {
+        'line-color': lineLayer.paint?.['line-color'] || '#088',
+        'line-width': lineLayer.paint?.['line-width'] || 2
+      },
+      layout: lineLayer.layout || {}
     };
-  }, [geometryTypes.hasLines, lineLayer]);
+  }, [geometryTypes.hasLines, lineLayer, id]);
 
   const circleLayerSpec = useMemo(() => {
     if (!geometryTypes.hasPoints || !circleLayer) return null;
+    logger.debug('Creating circle layer spec', {
+      id: `${id}-circle`,
+      paint: circleLayer.paint,
+      layout: circleLayer.layout
+    });
     return {
       type: 'circle' as const,
-      ...circleLayer,
+      paint: {
+        'circle-color': circleLayer.paint?.['circle-color'] || '#088',
+        'circle-radius': circleLayer.paint?.['circle-radius'] || 5,
+        'circle-stroke-width': circleLayer.paint?.['circle-stroke-width'] || 2,
+        'circle-stroke-color': circleLayer.paint?.['circle-stroke-color'] || '#000'
+      },
+      layout: circleLayer.layout || {}
     };
-  }, [geometryTypes.hasPoints, circleLayer]);
+  }, [geometryTypes.hasPoints, circleLayer, id]);
 
   // Early return if no data
   if (!data?.features?.length) {
+    logger.debug('No features to render', { id });
     return null;
   }
+
+  logger.debug('Rendering layer components', {
+    id,
+    hasFill: !!fillLayerSpec,
+    hasLine: !!lineLayerSpec,
+    hasCircle: !!circleLayerSpec,
+    source: source.id
+  });
 
   return (
     <>
       {fillLayerSpec && (
         <MapLayer
+          key={`${id}-fill`}
           id={`${id}-fill`}
           source={source}
           layer={fillLayerSpec}
@@ -159,6 +199,7 @@ export function GeoJSONLayer({
       )}
       {lineLayerSpec && (
         <MapLayer
+          key={`${id}-line`}
           id={`${id}-line`}
           source={source}
           layer={lineLayerSpec}
@@ -168,6 +209,7 @@ export function GeoJSONLayer({
       )}
       {circleLayerSpec && (
         <MapLayer
+          key={`${id}-circle`}
           id={`${id}-circle`}
           source={source}
           layer={circleLayerSpec}

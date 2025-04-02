@@ -280,32 +280,60 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         return state;
       }
 
-      // Ensure metadata and style exist before merging
+      // Create new style object with deep cloning of existing properties
       const currentMetadata = state.layers.metadata[layerId] || { name: '', type: '', properties: {} };
       const currentStyle = currentMetadata.style || {};
+      const currentPaint = currentStyle.paint || {};
+      const currentLayout = currentStyle.layout || {};
 
-      const updatedMetadata: LayerMetadata = {
-        ...currentMetadata,
-        style: {
-          ...currentStyle,
-          ...style
-        }
+      // Create new paint and layout objects
+      const newPaint = style.paint 
+        ? { ...currentPaint, ...style.paint }
+        : currentPaint;
+
+      const newLayout = style.layout
+        ? { ...currentLayout, ...style.layout }
+        : currentLayout;
+
+      // Create new style object
+      const newStyle = {
+        ...currentStyle,
+        paint: newPaint,
+        layout: newLayout
       };
 
-      logger.debug('ACTION END: updateLayerStyle', { layerId, newStyle: updatedMetadata.style });
+      // Create new metadata object
+      const newMetadata: LayerMetadata = {
+        ...currentMetadata,
+        style: newStyle
+      };
+
+      logger.debug('ACTION UPDATE: updateLayerStyle', { 
+        layerId, 
+        oldPaint: currentPaint,
+        newPaint,
+        paintChanged: newPaint !== currentPaint,
+        styleChanged: newStyle !== currentStyle,
+        metadataChanged: newMetadata !== currentMetadata
+      });
+
+      // Create new layer object
+      const newLayer = {
+        ...layer,
+        metadata: newMetadata
+      };
+
+      // Create new state with all new objects
       return {
         layers: {
           ...state.layers,
           metadata: {
             ...state.layers.metadata,
-            [layerId]: updatedMetadata
+            [layerId]: newMetadata
           },
           byId: {
             ...state.layers.byId,
-            [layerId]: {
-              ...layer,
-              metadata: updatedMetadata
-            }
+            [layerId]: newLayer
           }
         }
       };
