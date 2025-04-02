@@ -39,23 +39,26 @@ export class LogManager {
    * Configure specific components to use debug logging
    */
   public configureDefaultSources() {
-    // Core functionality - keep at INFO for important events
+    // Core functionality - INFO/WARN is usually good
     this.sourceFilters.set('Auth', LogLevel.WARN);
     this.sourceFilters.set('FileManager', LogLevel.WARN);
-    this.sourceFilters.set('ImportManager', LogLevel.WARN);
-    
-    // UI components - set to WARN to reduce noise
-    this.sourceFilters.set('MapView', LogLevel.INFO);
+    this.sourceFilters.set('ImportManager', LogLevel.INFO); // Keep INFO for import status
+
+    // UI components - Raise level for less noise during normal operation
+    this.sourceFilters.set('MapView', LogLevel.INFO); // Keep INFO for load events
     this.sourceFilters.set('LayerList', LogLevel.WARN);
     this.sourceFilters.set('LayerItem', LogLevel.WARN);
     this.sourceFilters.set('MapContext', LogLevel.WARN);
     this.sourceFilters.set('Toolbar', LogLevel.WARN);
-    this.sourceFilters.set('useAutoZoom', LogLevel.DEBUG);
+    this.sourceFilters.set('LayerPanel', LogLevel.WARN); // Quieten panel renders
+    this.sourceFilters.set('MapLayers', LogLevel.WARN);  // Quieten MapLayers renders
+
+    // Hooks and Layer Components - Raise level significantly
+    this.sourceFilters.set('useAutoZoom', LogLevel.WARN); // Change from DEBUG to WARN (or ERROR to only see failures)
     this.sourceFilters.set('layerHooks', LogLevel.WARN);
-    
-    // Development components - set to WARN unless debugging specific components
     this.sourceFilters.set('useLayerData', LogLevel.WARN);
     this.sourceFilters.set('useMapbox', LogLevel.WARN);
+    this.sourceFilters.set('MapLayer', LogLevel.WARN); // Change from DEBUG/INFO to WARN (only see errors/cleanup issues)
   }
 
   /**
