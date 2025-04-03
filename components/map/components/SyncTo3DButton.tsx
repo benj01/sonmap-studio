@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useSyncTo3D } from '../hooks/useSyncTo3D';
 import { useCesium } from '../context/CesiumContext';
-import { useSharedLayers } from '../context/SharedLayerContext';
+import { useLayers } from '@/store/layers/hooks';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'SyncTo3DButton';
@@ -29,42 +29,49 @@ const logger = {
 export function SyncTo3DButton() {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { viewer, isInitialized } = useCesium();
-  const { layers } = useSharedLayers();
+  const { layers } = useLayers();
   const { syncTo3D, isLoading } = useSyncTo3D();
 
   // Check if all layers are ready
   const areLayersReady = useCallback(() => {
-    if (!layers.length) return false;
+    if (!layers.length) {
+      logger.debug('No layers available');
+      return false;
+    }
 
-    // Check if all layers have their required metadata
-    return layers.every(layer => {
-      const isReady = layer.metadata.sourceType === '2d' 
-        ? !!layer.metadata.source2D 
-        : !!layer.metadata.source3D;
+    // Check if all layers have their required data
+    const allReady = layers.every(layer => {
+      const isReady = layer.setupStatus === 'complete';
       
       if (!isReady) {
         logger.debug('Layer not ready', { 
           layerId: layer.id, 
-          sourceType: layer.metadata.sourceType,
-          hasSource: layer.metadata.sourceType === '2d' 
-            ? !!layer.metadata.source2D 
-            : !!layer.metadata.source3D
+          name: layer.metadata?.name,
+          setupStatus: layer.setupStatus
         });
       }
       return isReady;
     });
+
+    logger.debug('Layer readiness check', {
+      totalLayers: layers.length,
+      allReady
+    });
+
+    return allReady;
   }, [layers]);
 
   // Check if all map instances are ready
   const isMapReady = useCallback(() => {
     const isReady = !!mapboxInstance && !!viewer && isInitialized;
-    if (!isReady) {
-      logger.debug('Map instances not ready', {
-        hasMapbox: !!mapboxInstance,
-        hasCesium: !!viewer,
-        isInitialized
-      });
-    }
+    
+    logger.debug('Map readiness check', {
+      hasMapbox: !!mapboxInstance,
+      hasCesium: !!viewer,
+      isInitialized,
+      isReady
+    });
+    
     return isReady;
   }, [mapboxInstance, viewer, isInitialized]);
 
@@ -78,6 +85,7 @@ export function SyncTo3DButton() {
     }
 
     try {
+      logger.info('Starting sync to 3D');
       await syncTo3D({ syncView: true, syncLayers: true });
       logger.info('Successfully synced to 3D view');
     } catch (error) {

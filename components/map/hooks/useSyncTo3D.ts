@@ -2,11 +2,12 @@
 
 import { useCallback, useState } from 'react';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
-import { useCesium } from '../context/CesiumContext';
-import { useSharedLayers } from '../context/SharedLayerContext';
+import { useCesium } from '@/components/map/context/CesiumContext';
+import { useLayers } from '@/store/layers/hooks';
 import { useViewSync, ViewState } from './useViewSync';
 import { getLayerAdapter } from '../utils/layer-adapters';
 import { LogManager } from '@/core/logging/log-manager';
+import { SharedLayer } from '../context/SharedLayerContext';
 
 const SOURCE = 'useSyncTo3D';
 const logManager = LogManager.getInstance();
@@ -34,7 +35,7 @@ export interface SyncOptions {
 export function useSyncTo3D() {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { viewer, isInitialized } = useCesium();
-  const { layers } = useSharedLayers();
+  const { layers } = useLayers();
   const { syncViews } = useViewSync();
   const [isLoading, setIsLoading] = useState(false);
 
@@ -50,13 +51,14 @@ export function useSyncTo3D() {
 
     try {
       setIsLoading(true);
+      logger.debug('Starting 2D to 3D synchronization', { options });
 
       // Sync view if requested
       if (options.syncView) {
         logger.debug('Syncing view state to 3D');
         const center = mapboxInstance.getCenter();
         const viewState: ViewState = {
-          center: [center.lng, center.lat],
+          center: [center.lng, center.lat] as [number, number],
           zoom: mapboxInstance.getZoom(),
           pitch: mapboxInstance.getPitch(),
           bearing: mapboxInstance.getBearing()
@@ -66,7 +68,15 @@ export function useSyncTo3D() {
 
       // Sync layers if requested
       if (options.syncLayers) {
-        logger.debug('Syncing layers to 3D');
+        logger.debug('Syncing layers to 3D', {
+          layerCount: layers.length,
+          layers: layers.map(l => ({
+            id: l.id,
+            name: l.metadata?.name,
+            type: l.metadata?.type,
+            setupStatus: l.setupStatus
+          }))
+        });
         
         // Get visible layers
         const visibleLayers = layers.filter(layer => layer.visible);
@@ -78,13 +88,37 @@ export function useSyncTo3D() {
         // Add each visible layer to Cesium
         for (const layer of visibleLayers) {
           try {
-            const adapter = getLayerAdapter(layer.type);
+            const type = layer.metadata?.type || 'vector';
+            const adapter = getLayerAdapter(type);
             if (!adapter) {
-              logger.warn('No adapter found for layer type', { type: layer.type });
+              logger.warn('No adapter found for layer type', { 
+                layerId: layer.id,
+                type 
+              });
               continue;
             }
 
-            const cesiumLayer = await adapter.to3D(layer);
+            logger.debug('Converting layer to 3D', {
+              layerId: layer.id,
+              name: layer.metadata?.name,
+              type
+            });
+
+            const cesiumLayer = await adapter.to3D({
+              id: layer.id,
+              name: layer.metadata?.name || layer.id,
+              type: type as any,
+              visible: layer.visible,
+              metadata: {
+                sourceType: '3d',
+                geojson: layer.metadata?.properties?.geojson,
+                source2D: layer.metadata?.properties?.source2D,
+                source3D: layer.metadata?.properties?.source3D,
+                style: layer.metadata?.style
+              },
+              selected: false
+            } as SharedLayer);
+
             if (!cesiumLayer) {
               logger.warn('Failed to convert layer to 3D', { layerId: layer.id });
               continue;
@@ -93,13 +127,16 @@ export function useSyncTo3D() {
             // Add the layer to Cesium based on its type
             if (cesiumLayer.dataSource) {
               await viewer.dataSources.add(cesiumLayer.dataSource);
+              logger.debug('Added data source to viewer', { layerId: layer.id });
             } else if (cesiumLayer.tileset) {
               viewer.scene.primitives.add(cesiumLayer.tileset);
+              logger.debug('Added tileset to viewer', { layerId: layer.id });
             } else if (cesiumLayer.imageryProvider) {
               viewer.imageryLayers.addImageryProvider(cesiumLayer.imageryProvider);
+              logger.debug('Added imagery layer to viewer', { layerId: layer.id });
             }
 
-            logger.debug('Added layer to 3D view', { layerId: layer.id });
+            logger.debug('Successfully added layer to 3D view', { layerId: layer.id });
           } catch (error) {
             logger.error('Error syncing layer to 3D', { 
               layerId: layer.id, 

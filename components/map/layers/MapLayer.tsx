@@ -50,7 +50,8 @@ function isGeoJSONSource(source: mapboxgl.AnySourceImpl | undefined): source is 
 
 function isMapStable(map: mapboxgl.Map): boolean {
   try {
-    return map.isStyleLoaded() && !map.isMoving() && !map.isZooming();
+    // Only check if style is loaded
+    return map.isStyleLoaded();
   } catch {
     return false;
   }
@@ -118,6 +119,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       logger.debug(`AddLayerToMap: Attempt ${addAttemptRef.current}/${MAX_ADD_ATTEMPTS}`, { id, sourceId: source.id });
 
       const layerCurrentlyExists = mapboxInstance.getLayer(id);
+      const sourceExists = mapboxInstance.getSource(source.id);
+      const sourceLoaded = sourceExists && mapboxInstance.isSourceLoaded(source.id);
 
       if (layerCurrentlyExists) {
         logger.warn(`AddLayerToMap: Layer ${id} already exists on map. Ensuring global status is complete.`, { id });
@@ -127,13 +130,18 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         return;
       }
 
-      if (!isMapStable(mapboxInstance)) {
-        logger.warn(`AddLayerToMap: Map not stable, retrying...`, { id, attempt: addAttemptRef.current });
+      if (!sourceExists || !sourceLoaded) {
+        logger.warn(`AddLayerToMap: Source not ready, retrying...`, { 
+          id, 
+          attempt: addAttemptRef.current,
+          sourceExists,
+          sourceLoaded 
+        });
         if (addAttemptRef.current < MAX_ADD_ATTEMPTS && isEffectMounted) {
           setTimeout(addLayerToMap, RETRY_DELAY * addAttemptRef.current);
         } else if (isEffectMounted) {
-          logger.error(`AddLayerToMap: Failed to add layer ${id} - map unstable after ${MAX_ADD_ATTEMPTS} attempts`, { id });
-          updateStatus('error', `Map unstable during layer add for ${id}`);
+          logger.error(`AddLayerToMap: Failed to add layer ${id} - source not ready after ${MAX_ADD_ATTEMPTS} attempts`, { id });
+          updateStatus('error', `Source not ready for layer ${id}`);
         }
         return;
       }
@@ -182,73 +190,82 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       if (!isEffectMounted) return;
 
       const sourceId = source.id;
-      let sourceNeedsAdding = !mapboxInstance.getSource(sourceId);
-
-      if (sourceNeedsAdding) {
-        logger.debug(`Add/Remove: Attempting to add source ${sourceId}`, { id });
+      const MAX_RETRIES = 5;
+      let retryCount = 0;
+      
+      const tryAddLayer = async () => {
         try {
-          mapboxInstance.addSource(sourceId, source.data);
-          if(mapboxInstance.getSource(sourceId)) {
-            logger.info(`Add/Remove: Source ${sourceId} added successfully`, { id });
-            sourceAddedInThisEffect = true;
+          // Add a small delay before adding source to ensure map is ready
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          // First check if source already exists
+          if (!mapboxInstance.getSource(sourceId)) {
+            logger.debug(`Add/Remove: Adding source ${sourceId}`, { id });
+            mapboxInstance.addSource(sourceId, source.data);
           } else {
-            logger.error(`Add/Remove: addSource called for ${sourceId} but source not found immediately after.`, { id });
-            updateStatus('error', `Failed to verify source ${sourceId} add`);
-            return;
+            logger.debug(`Add/Remove: Source ${sourceId} already exists`, { id });
           }
+
+          // Wait for source to be loaded
+          await new Promise<void>((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              reject(new Error('Source load timeout'));
+            }, 10000);
+
+            const checkSource = () => {
+              const mapSource = mapboxInstance.getSource(sourceId);
+              if (!mapSource) {
+                setTimeout(checkSource, 100);
+                return;
+              }
+
+              // Check if source is actually loaded
+              if (mapboxInstance.isSourceLoaded(sourceId)) {
+                logger.debug(`Add/Remove: Source ${sourceId} is loaded`, { id });
+                clearTimeout(timeout);
+                sourceAddedInThisEffect = true;
+                resolve();
+              } else {
+                // Listen for the source.load event
+                mapboxInstance.once('sourcedata', (e) => {
+                  if (e.sourceId === sourceId && mapboxInstance.isSourceLoaded(sourceId)) {
+                    logger.debug(`Add/Remove: Source ${sourceId} loaded via event`, { id });
+                    clearTimeout(timeout);
+                    sourceAddedInThisEffect = true;
+                    resolve();
+                  } else {
+                    setTimeout(checkSource, 100);
+                  }
+                });
+              }
+            };
+            checkSource();
+          });
+
+          // Now add the layer
+          logger.debug(`Add/Remove: Source ready, adding layer ${id}`, { sourceId });
+          addLayerToMap();
+          
         } catch (error) {
-          if (error instanceof Error && error.message.includes('already exists')) {
-            logger.warn(`Add/Remove: Source ${sourceId} already exists (race condition)`, { id });
-            sourceAddedInThisEffect = true;
-            if (!mapboxInstance.isSourceLoaded(sourceId)) {
-              logger.debug(`Add/Remove: Source ${sourceId} exists but waiting for load`, { id });
-              mapboxInstance.once('sourcedata', (e) => {
-                if (e.sourceId === sourceId && e.isSourceLoaded && isEffectMounted) {
-                  logger.debug(`Add/Remove: Source ${sourceId} loaded (event after race condition)`, { id });
-                  addLayerToMap();
-                }
-              });
-              return;
-            } else {
-              logger.debug(`Add/Remove: Source ${sourceId} exists and loaded (after race condition)`, { id });
-            }
+          logger.error(`Add/Remove: Error adding source/layer`, { 
+            id, 
+            sourceId,
+            error: error instanceof Error ? error.message : 'Unknown error',
+            retryCount
+          });
+
+          if (retryCount < MAX_RETRIES) {
+            retryCount++;
+            logger.debug(`Add/Remove: Retrying source/layer addition (attempt ${retryCount}/${MAX_RETRIES})`, { id });
+            setTimeout(tryAddLayer, 500 * retryCount); // Exponential backoff
           } else {
-            logger.error(`Add/Remove: Failed to add source ${sourceId}`, {
-              id, error: error instanceof Error ? error.message : error, stack: error instanceof Error ? error.stack : undefined
-            });
-            updateStatus('error', error instanceof Error ? error.message : `Failed adding source ${sourceId}`);
-            return;
+            updateStatus('error', `Failed to add source/layer after ${MAX_RETRIES} attempts: ${error instanceof Error ? error.message : 'Unknown error'}`);
           }
         }
-      } else {
-        logger.debug(`Add/Remove: Source ${sourceId} already exists`, { id });
-        sourceAddedInThisEffect = true;
-      }
+      };
 
-      if (!mapboxInstance.isSourceLoaded(sourceId)) {
-        logger.debug(`Add/Remove: Source ${sourceId} exists, waiting for load`, { id });
-        const handleSourceLoad = (e: mapboxgl.MapSourceDataEvent) => {
-          if (e.sourceId === sourceId && e.isSourceLoaded && isEffectMounted) {
-            logger.debug(`Add/Remove: Source ${sourceId} loaded (event)`, { id });
-            mapboxInstance.off('sourcedata', handleSourceLoad);
-            addLayerToMap();
-          }
-        };
-        mapboxInstance.on('sourcedata', handleSourceLoad);
-        setTimeout(() => {
-          if(isEffectMounted && !mapboxInstance.isSourceLoaded(sourceId)) {
-            logger.error(`Add/Remove: Timeout waiting for source ${sourceId} to load`, { id });
-            if(isEffectMounted) {
-              updateStatus('error', `Timeout waiting for source ${sourceId}`);
-            }
-            mapboxInstance.off('sourcedata', handleSourceLoad);
-          }
-        }, 10000);
-        return;
-      }
-
-      logger.debug(`Add/Remove: Source ${sourceId} exists and is loaded, proceeding to add layer`, { id });
-      addLayerToMap();
+      // Start the process
+      tryAddLayer();
     };
 
     const checkMapAndStart = () => {

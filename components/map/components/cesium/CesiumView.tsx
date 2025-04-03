@@ -128,11 +128,28 @@ export function CesiumView() {
         setCesiumInstance(viewer);
         setViewer(viewer);
         
-        // Wait a frame to ensure everything is ready
-        requestAnimationFrame(() => {
-          setInitialized(true);
-          logger.info('Cesium viewer fully initialized');
+        // Wait for the scene to be completely stable
+        await new Promise<void>((resolve) => {
+          let frameCount = 0;
+          const checkStability = () => {
+            if (viewer.scene.globe.tilesLoaded && !viewer.scene.primitives.isDestroyed()) {
+              frameCount++;
+              if (frameCount >= 10) { // Wait for 10 stable frames
+                logger.debug('Scene stable for 10 frames');
+                resolve();
+                return;
+              }
+            } else {
+              frameCount = 0;
+            }
+            requestAnimationFrame(checkStability);
+          };
+          checkStability();
         });
+
+        // Now we can mark as initialized
+        setInitialized(true);
+        logger.info('Cesium viewer fully initialized and stable');
 
         // Define cleanup function
         cleanup = () => {

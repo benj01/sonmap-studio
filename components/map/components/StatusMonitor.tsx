@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useCesium } from '../context/CesiumContext';
 import { useLayers } from '@/store/layers/hooks';
@@ -29,54 +29,112 @@ interface LayerStatus {
   ready3D: boolean;
 }
 
+interface Status {
+  layerStatuses: Record<string, LayerStatus>;
+  ready2DCount: number;
+  ready3DCount: number;
+}
+
 export function StatusMonitor() {
-  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
-  const { viewer, isInitialized: isCesiumInitialized } = useCesium();
   const { layers } = useLayers();
-  const [layerStatus, setLayerStatus] = useState<Record<string, LayerStatus>>({});
+  const { viewer, isInitialized } = useCesium();
+  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const [status, setStatus] = useState<Status>({
+    layerStatuses: {},
+    ready2DCount: 0,
+    ready3DCount: 0
+  });
 
-  // Check layer readiness
-  useEffect(() => {
-    const checkLayerStatus = () => {
-      const status: Record<string, LayerStatus> = {};
-      
-      layers.forEach(layer => {
-        // Check 2D readiness - a layer is ready in 2D if it's been added to the map
-        const ready2D = layer.setupStatus === 'complete';
+  const checkMapStatus = useCallback(() => {
+    const mapboxReady = !!mapboxInstance;
+    const cesiumReady = !!viewer && isInitialized;
 
-        // Check 3D readiness - for now, we'll consider it ready if it's ready in 2D
-        // This will need to be updated when we implement proper 3D layer handling
-        const ready3D = layer.setupStatus === 'complete';
+    logger.debug('Map status check', {
+      hasMapbox: !!mapboxInstance,
+      hasCesium: !!viewer,
+      cesiumInitialized: isInitialized
+    });
 
-        status[layer.id] = { ready2D, ready3D };
+    return { mapboxReady, cesiumReady };
+  }, [mapboxInstance, viewer, isInitialized]);
 
-        logger.debug('Layer status check', {
-          layerId: layer.id,
-          layerName: layer.metadata?.name,
-          setupStatus: layer.setupStatus,
-          ready2D,
-          ready3D
-        });
+  const checkLayerStatus = useCallback(() => {
+    let hasChanges = false;
+    const newStatuses: Record<string, LayerStatus> = {};
+    let ready2D = 0;
+    let ready3D = 0;
+
+    for (const layer of layers) {
+      const ready2DStatus = layer.setupStatus === 'complete';
+      let ready3DStatus = false;
+
+      if (layer.setupStatus === 'complete' && viewer) {
+        // Check each collection using proper Cesium methods
+        const type = layer.metadata?.type;
+        if (type === 'vector') {
+          // Check dataSources
+          for (let i = 0; i < viewer.dataSources.length; i++) {
+            const ds = viewer.dataSources.get(i);
+            if (ds.name === layer.id) {
+              ready3DStatus = true;
+              break;
+            }
+          }
+        } else if (type === '3d-tiles') {
+          // Check primitives
+          for (let i = 0; i < viewer.scene.primitives.length; i++) {
+            const primitive = viewer.scene.primitives.get(i);
+            if (primitive.name === layer.id) {
+              ready3DStatus = true;
+              break;
+            }
+          }
+        } else if (type === 'imagery') {
+          // For imagery layers, check if any exist
+          ready3DStatus = viewer.imageryLayers.length > 0;
+        }
+      }
+
+      if (ready2DStatus) ready2D++;
+      if (ready3DStatus) ready3D++;
+
+      newStatuses[layer.id] = {
+        ready2D: ready2DStatus,
+        ready3D: ready3DStatus
+      };
+
+      const currentStatus = status.layerStatuses[layer.id];
+      if (!currentStatus || 
+          currentStatus.ready2D !== ready2DStatus || 
+          currentStatus.ready3D !== ready3DStatus) {
+        hasChanges = true;
+      }
+    }
+
+    if (hasChanges || ready2D !== status.ready2DCount || ready3D !== status.ready3DCount) {
+      setStatus({
+        layerStatuses: newStatuses,
+        ready2DCount: ready2D,
+        ready3DCount: ready3D
       });
+    }
+  }, [layers, viewer, status]);
 
-      setLayerStatus(status);
-    };
+  useEffect(() => {
+    const interval = setInterval(() => {
+      checkLayerStatus();
+    }, 1000);
 
-    checkLayerStatus();
-    // Check status every second
-    const interval = setInterval(checkLayerStatus, 1000);
     return () => clearInterval(interval);
-  }, [layers]);
+  }, [checkLayerStatus]);
+
+  const { mapboxReady, cesiumReady } = checkMapStatus();
 
   const getStatusColor = (isReady: boolean) => 
     isReady ? 'text-green-500' : 'text-yellow-500';
 
   const getStatusIcon = (isReady: boolean) =>
     isReady ? '✓' : '⋯';
-
-  // Count ready layers
-  const readyCount2D = Object.values(layerStatus).filter(status => status.ready2D).length;
-  const readyCount3D = Object.values(layerStatus).filter(status => status.ready3D).length;
 
   return (
     <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-md text-sm space-y-2 max-w-md">
@@ -85,17 +143,17 @@ export function StatusMonitor() {
       <div className="space-y-1">
         <div className="flex justify-between">
           <span>2D Map (Mapbox)</span>
-          <span className={getStatusColor(!!mapboxInstance)}>
-            {getStatusIcon(!!mapboxInstance)} {!!mapboxInstance ? 'Ready' : 'Initializing'}
+          <span className={getStatusColor(mapboxReady)}>
+            {getStatusIcon(mapboxReady)} {mapboxReady ? 'Ready' : 'Initializing'}
           </span>
         </div>
 
         <div className="flex justify-between">
           <span>3D Map (Cesium)</span>
-          <span className={getStatusColor(!!viewer && isCesiumInitialized)}>
-            {getStatusIcon(!!viewer && isCesiumInitialized)} {
+          <span className={getStatusColor(cesiumReady)}>
+            {getStatusIcon(cesiumReady)} {
               !viewer ? 'Not initialized' :
-              !isCesiumInitialized ? 'Initializing' :
+              !isInitialized ? 'Initializing' :
               'Ready'
             }
           </span>
@@ -103,22 +161,22 @@ export function StatusMonitor() {
 
         <div className="mt-2">
           <div className="font-medium mb-1">
-            Layers ({layers.length}) - Ready: {readyCount2D} in 2D, {readyCount3D} in 3D
+            Layers ({layers.length}) - Ready: {status.ready2DCount} in 2D, {status.ready3DCount} in 3D
           </div>
           <div className="space-y-1 max-h-32 overflow-y-auto">
             {layers.map(layer => {
-              const status = layerStatus[layer.id] || { ready2D: false, ready3D: false };
+              const layerStatus = status.layerStatuses[layer.id] || { ready2D: false, ready3D: false };
               return (
                 <div key={layer.id} className="flex justify-between text-xs">
                   <span className="truncate" title={layer.metadata?.name}>
                     {layer.metadata?.name} ({layer.setupStatus})
                   </span>
                   <div className="flex gap-2">
-                    <span className={getStatusColor(status.ready2D)} title="2D Status">
-                      2D: {getStatusIcon(status.ready2D)}
+                    <span className={getStatusColor(layerStatus.ready2D)} title="2D Status">
+                      2D: {getStatusIcon(layerStatus.ready2D)}
                     </span>
-                    <span className={getStatusColor(status.ready3D)} title="3D Status">
-                      3D: {getStatusIcon(status.ready3D)}
+                    <span className={getStatusColor(layerStatus.ready3D)} title="3D Status">
+                      3D: {getStatusIcon(layerStatus.ready3D)}
                     </span>
                   </div>
                 </div>

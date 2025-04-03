@@ -81,6 +81,17 @@ export function useAutoZoom() {
       return;
     }
 
+    // Check if the map is currently moving/zooming
+    if (mapboxInstance.isMoving() || mapboxInstance.isZooming()) {
+      logger.debug(SOURCE, 'AutoZoom: Map is moving/zooming, waiting...');
+      mapboxInstance.once('moveend', () => {
+        if (retryCount < MAX_AUTOZOOM_RETRIES - 1) {
+          retryTimeoutRef.current = setTimeout(() => attemptAutoZoom(retryCount + 1), AUTOZOOM_RETRY_DELAY);
+        }
+      });
+      return;
+    }
+
     const visibleLayers = layers.filter(l => l.visible && l.setupStatus === 'complete');
     if (!visibleLayers.length) {
       logger.debug(SOURCE, 'AutoZoom: No visible layers ready for zooming');
