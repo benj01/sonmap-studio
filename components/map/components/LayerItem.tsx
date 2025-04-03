@@ -94,24 +94,25 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   const error = storeError || dataError;
 
   return (
-    <div className={cn('p-4 border rounded-lg bg-background flex items-center gap-4', className)}>
+    <div className={cn('p-2 border rounded-lg bg-background flex items-center gap-2 w-full', className)}>
       <Button
         variant="ghost"
         size="icon"
         onClick={handleVisibilityToggle}
         disabled={!!error}
         title={storeLayer?.visible ? 'Hide layer' : 'Show layer'}
+        className="h-6 w-6 shrink-0"
       >
         {storeLayer?.visible ? (
-          <Eye className="h-4 w-4" />
+          <Eye className="h-3 w-3" />
         ) : (
-          <EyeOff className="h-4 w-4" />
+          <EyeOff className="h-3 w-3" />
         )}
       </Button>
 
       <div className="flex-1 min-w-0">
-        <h4 className="text-sm font-medium truncate">{layer.name}</h4>
-        <p className="text-xs text-muted-foreground truncate">
+        <h4 className="text-xs font-medium truncate">{layer.name}</h4>
+        <p className="text-[10px] text-muted-foreground truncate">
           {data?.features?.length || 0} features
         </p>
       </div>
@@ -122,18 +123,19 @@ export function LayerItem({ layer, className }: LayerItemProps) {
         onClick={handleZoomToLayer}
         disabled={!!error || !storeLayer?.visible}
         title="Zoom to layer"
+        className="h-6 w-6 shrink-0"
       >
-        <Maximize2 className="h-4 w-4" />
+        <Maximize2 className="h-3 w-3" />
       </Button>
 
       {error ? (
         <Button
           variant="ghost"
           size="icon"
-          className="text-destructive"
+          className="text-destructive h-6 w-6 shrink-0"
           title={error instanceof Error ? error.message : 'Layer error'}
         >
-          <AlertCircle className="h-4 w-4" />
+          <AlertCircle className="h-3 w-3" />
         </Button>
       ) : (
         <Button
@@ -141,8 +143,9 @@ export function LayerItem({ layer, className }: LayerItemProps) {
           size="icon"
           title="Layer settings"
           onClick={() => setSettingsOpen(true)}
+          className="h-6 w-6 shrink-0"
         >
-          <Settings className="h-4 w-4" />
+          <Settings className="h-3 w-3" />
         </Button>
       )}
 

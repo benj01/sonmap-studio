@@ -133,23 +133,31 @@ export function MapContainer({
 
   return (
     <div ref={containerRef} className="relative w-full h-full min-h-[600px]">
-      <div className="absolute inset-0 grid grid-cols-2 gap-4 p-4">
-        <div className="relative w-full h-full min-h-[400px]">
-          <MapView accessToken={accessToken} style={style} />
-        </div>
-        <div className="relative w-full h-full min-h-[400px]">
-          <CesiumView />
-        </div>
-      </div>
-      
-      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-        <LayerPanel>
-          <div className="flex flex-col gap-2">
-            <LayerList />
-            <SyncTo3DButton />
-            <ResetButton />
+      <div className="absolute inset-0 flex flex-col gap-8 p-4">
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-between items-center px-2">
+            <h2 className="text-lg font-semibold">2D Map View</h2>
+            <div className="flex gap-2">
+              <SyncTo3DButton />
+              <ResetButton />
+            </div>
           </div>
-        </LayerPanel>
+          <div className="relative w-full h-1/2 min-h-[400px]">
+            <div className="absolute left-0 top-0 z-10 h-full">
+              <LayerPanel>
+                <LayerList />
+              </LayerPanel>
+            </div>
+            <MapView accessToken={accessToken} style={style} />
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <h2 className="text-lg font-semibold px-2">3D Map View</h2>
+          <div className="relative w-full h-1/2 min-h-[400px]">
+            <CesiumView />
+          </div>
+        </div>
       </div>
     </div>
   );
