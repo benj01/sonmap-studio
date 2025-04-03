@@ -92,95 +92,35 @@ export function useAutoZoom() {
       return;
     }
 
+    // Filter layers based on the status set by MapLayer
     const visibleLayers = layers.filter(l => l.visible && l.setupStatus === 'complete');
+
     if (!visibleLayers.length) {
-      logger.debug(SOURCE, 'AutoZoom: No visible layers ready for zooming');
+      logger.debug(SOURCE, 'AutoZoom: No visible layers have setupStatus === "complete" yet.');
       return;
     }
 
-    const map = mapboxInstance;
-    const requiredSourceIds = new Set(visibleLayers.map(l => `${l.id}-source`));
-
-    // Check if all required sources are loaded using BOTH methods
-    const sourceStates = Array.from(requiredSourceIds).map(sourceId => {
-      // Check 1: Has the event listener already confirmed it?
-      const eventLoaded = loadedSourcesRef.current.has(sourceId);
-      
-      // Check 2: Does Mapbox synchronously say it's loaded right now?
-      let mapboxLoaded = false;
-      let sourceExists = map.getSource(sourceId);
-      
-      if (sourceExists) {
-        try {
-          mapboxLoaded = map.isSourceLoaded(sourceId);
-        } catch (e) {
-          // isSourceLoaded can throw if the source was just removed
-          logger.warn(SOURCE, 'Error checking isSourceLoaded', { sourceId, error: e });
-          sourceExists = undefined; // Treat as non-existent if check throws
-        }
-      }
-
-      // Consider ready if EITHER check passes
-      const isReady = eventLoaded || mapboxLoaded;
-
-      // Determine reason for logging
-      let reason = 'not_found';
-      if (sourceExists) {
-        if (isReady) reason = 'loaded';
-        else reason = 'loading'; // Exists but not loaded by either check yet
-      }
-
-      // Add newly confirmed sources via isSourceLoaded to our ref for future checks
-      if (mapboxLoaded && !eventLoaded) {
-        logger.debug(SOURCE, 'Source confirmed loaded via isSourceLoaded', { sourceId });
-        loadedSourcesRef.current.add(sourceId);
-      }
-
-      return {
-        sourceId,
-        ready: isReady,
-        sourceExists: !!sourceExists,
-        reason,
-        eventLoaded,
-        mapboxLoaded
-      };
-    });
-
-    const allSourcesReady = sourceStates.every(state => state.ready);
-
-    if (!allSourcesReady) {
-      logger.warn(SOURCE, 'AutoZoom: Not all sources ready yet', {
-        attempt: retryCount + 1,
-        maxRetries: MAX_AUTOZOOM_RETRIES,
-        sourceStates,
-        totalWaitTime: (retryCount + 1) * AUTOZOOM_RETRY_DELAY
-      });
-
-      if (retryCount < MAX_AUTOZOOM_RETRIES - 1) {
-        retryTimeoutRef.current = setTimeout(() => attemptAutoZoom(retryCount + 1), AUTOZOOM_RETRY_DELAY);
-      } else {
-        logger.error(SOURCE, 'AutoZoom failed: Max retries exceeded waiting for sources', {
-          sourceStates,
-          totalWaitTime: MAX_AUTOZOOM_RETRIES * AUTOZOOM_RETRY_DELAY
-        });
-      }
-      return;
-    }
-
-    // All sources are ready, proceed with bounds calculation
-    logger.debug(SOURCE, 'AutoZoom: All required sources are loaded, calculating bounds', {
+    // Proceed directly to bounds calculation
+    logger.debug(SOURCE, 'AutoZoom: Found layers with setupStatus complete. Calculating bounds.', {
       visibleLayerCount: visibleLayers.length,
       visibleLayerIds: visibleLayers.map(l => l.id),
-      loadedSources: Array.from(loadedSourcesRef.current)
     });
 
+    const map = mapboxInstance;
     const bounds = new mapboxgl.LngLatBounds();
     let hasValidBounds = false;
     let totalCoordCount = 0;
 
     visibleLayers.forEach(layer => {
+      // Derive source ID based on convention
       const sourceId = `${layer.id}-source`;
       const source = map.getSource(sourceId);
+
+      // Add a check here to ensure the source *actually* exists now
+      if (!source) {
+        logger.warn(SOURCE, `AutoZoom: Source ${sourceId} not found for completed layer ${layer.id}. Skipping bounds calculation for this layer.`);
+        return; // Skip this layer if source is missing unexpectedly
+      }
 
       if (isGeoJSONSource(source)) {
         const data = source._data;
@@ -285,6 +225,16 @@ export function useAutoZoom() {
 
   // Main effect to trigger autozoom check
   useEffect(() => {
+    // Log the state values *every time* the effect runs
+    logger.debug(SOURCE, 'Main effect triggered', {
+      hasMap: !!mapboxInstance,
+      mapStatus,
+      areLayersReady,
+      layerCount: layers.length,
+      completeLayerIds: layers.filter(l => l.setupStatus === 'complete').map(l => l.id),
+      processedLayers: processedLayersRef.current
+    });
+
     if (mapboxInstance && mapStatus === 'ready' && areLayersReady) {
       const currentVisibleLayers = layers
         .filter(l => l.visible && l.setupStatus === 'complete')
@@ -292,21 +242,27 @@ export function useAutoZoom() {
         .sort()
         .join(',');
 
+      logger.debug(SOURCE, 'Checking conditions to trigger autoZoom', {
+        conditionsMet: true,
+        currentVisibleLayers,
+        processedLayers: processedLayersRef.current,
+        isDifferent: currentVisibleLayers !== processedLayersRef.current
+      });
+
       if (currentVisibleLayers !== processedLayersRef.current) {
-        logger.debug(SOURCE, 'AutoZoom: Triggering check due to map readiness or layer change', {
-          previousLayers: processedLayersRef.current,
-          currentLayers: currentVisibleLayers,
-          mapStatus,
-          areLayersReady
-        });
+        logger.info(SOURCE, 'Conditions met and layers changed! Triggering attemptAutoZoom.');
         processedLayersRef.current = currentVisibleLayers;
         loadedSourcesRef.current = new Set();
-        logger.debug(SOURCE, 'Resetting loadedSources ref due to layer change');
-        attemptAutoZoom(); // Start the check
+        attemptAutoZoom();
       } else {
-        logger.debug(SOURCE, 'AutoZoom: No relevant layer changes detected', { currentLayers: currentVisibleLayers });
+        logger.debug(SOURCE, 'Conditions met, but layers haven\'t changed since last processed.');
       }
     } else {
+      logger.debug(SOURCE, 'Conditions NOT met to trigger autoZoom', {
+        hasMap: !!mapboxInstance,
+        mapStatus,
+        areLayersReady
+      });
       // Reset state when map is not ready
       if (processedLayersRef.current !== '') {
         logger.debug(SOURCE, 'AutoZoom: Map or layers not ready, resetting state', {

@@ -53,12 +53,12 @@ export class LogManager {
     this.sourceFilters.set('LayerPanel', LogLevel.WARN); // Quieten panel renders
     this.sourceFilters.set('MapLayers', LogLevel.WARN);  // Quieten MapLayers renders
 
-    // Hooks and Layer Components - Raise level significantly
-    this.sourceFilters.set('useAutoZoom', LogLevel.WARN); // Change from DEBUG to WARN (or ERROR to only see failures)
-    this.sourceFilters.set('layerHooks', LogLevel.WARN);
+    // Hooks and Layer Components - Enable DEBUG for debugging
+    this.sourceFilters.set('useAutoZoom', LogLevel.DEBUG); // Enable detailed logging
+    this.sourceFilters.set('layerHooks', LogLevel.DEBUG); // Enable for useAreInitialLayersReady etc.
     this.sourceFilters.set('useLayerData', LogLevel.WARN);
     this.sourceFilters.set('useMapbox', LogLevel.WARN);
-    this.sourceFilters.set('MapLayer', LogLevel.WARN); // Change from DEBUG/INFO to WARN (only see errors/cleanup issues)
+    this.sourceFilters.set('MapLayer', LogLevel.DEBUG); // Enable detailed logging
   }
 
   /**

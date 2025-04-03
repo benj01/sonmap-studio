@@ -79,6 +79,9 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   const { layer: layerState, updateStatus } = useLayer(originalLayerId);
   const { isVisible } = useLayerVisibility(originalLayerId);
 
+  // Add Strict Mode cleanup guard
+  const strictModeCleanupGuardRef = useRef(true);
+
   // Add detailed logging for component state
   logger.info(`MapLayer component RENDERING/MOUNTING`, { 
     id, 
@@ -156,66 +159,75 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     let sourceLoadTimeoutId: NodeJS.Timeout | null = null;
     let sourceLoadListener: ((e: MapSourceDataEvent) => void) | null = null;
 
+    // Reset the guard at the start of each effect run
+    strictModeCleanupGuardRef.current = true;
+
     const cleanup = () => {
       logger.info(`Effect ADD/REMOVE CLEANUP START`, { id, sourceId: source.id, sourceAddedLocally, layerAddedLocally });
       isEffectMounted = false;
-      if (idleListener && mapboxInstance && !mapboxInstance._removed) {
-        try { mapboxInstance.off('idle', idleListener); } catch(e) {}
-      }
-      if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
-      if (sourceLoadListener && mapboxInstance && !mapboxInstance._removed) {
-        try { mapboxInstance.off('sourcedata', sourceLoadListener); } catch(e) {}
-      }
 
-      if (mapboxInstance && !mapboxInstance._removed && mapboxInstance.getCanvas()) {
-        const map = mapboxInstance;
-        logger.debug(`Cleanup: Performing map operations for ${id}`);
-
-        let removeSourceAttemptAllowed = sourceAddedLocally;
-
-        // --- Layer Removal FIRST ---
-        if (layerAddedLocally) {
-          if (map.getLayer(id)) {
-            try {
-              logger.info(`Cleanup: Removing layer ${id} (added locally)`, { id });
-              map.removeLayer(id);
-            } catch (e) {
-              logger.error(`Cleanup: Error removing layer ${id}`, { id, error: e });
-              removeSourceAttemptAllowed = false;
-            }
-          } else {
-            logger.debug(`Cleanup: Layer ${id} marked added locally but already removed.`, { id });
-          }
-        } else {
-          logger.debug(`Cleanup: Skipping layer removal for ${id} (not added locally)`, { id });
-        }
-
-        // --- Source Removal Check/Attempt SECOND (No Delay) ---
-        if (removeSourceAttemptAllowed) {
-          if (map.getSource(source.id)) {
-            try {
-              const style = map.getStyle();
-              const layersUsingSource = (style?.layers || []).filter(l => l.id !== id && l?.source === source.id);
-              logger.debug(`Cleanup: Checking source ${source.id} usage immediately`, { id, layersUsingSource: layersUsingSource.map(l=>l.id) });
-
-              if (layersUsingSource.length === 0) {
-                logger.info(`Cleanup: Removing source ${source.id} (added locally, no other users)`, { id });
-                map.removeSource(source.id);
-              } else {
-                logger.debug(`Cleanup: Keeping source ${source.id} (added locally, used by others: ${layersUsingSource.map(l=>l.id).join(', ')})`, { id });
-              }
-            } catch (e) {
-              logger.error(`Cleanup: Error checking/removing source ${source.id}`, { id, error: e });
-            }
-          } else {
-            logger.debug(`Cleanup: Source ${source.id} marked added locally but already removed.`, { id });
-          }
-        } else {
-          logger.debug(`Cleanup: Skipping source removal for ${source.id}`, { id, sourceAddedLocally, removeSourceAttemptAllowed });
-        }
+      // --- Strict Mode Guard ---
+      if (strictModeCleanupGuardRef.current && process.env.NODE_ENV === 'development') {
+        logger.debug(`Cleanup: Strict mode first unmount detected for ${id}. Skipping map operations.`);
+        strictModeCleanupGuardRef.current = false; // Toggle guard
       } else {
-        logger.warn(`Cleanup: Skipped map operations for ${id} (Map invalid)`, { id, hasMap: !!mapboxInstance, removed: mapboxInstance?._removed });
+        // This is either production, or the second/real unmount in development
+        logger.debug(`Cleanup: Proceeding with 'real' cleanup or production cleanup for ${id}.`);
+        if (mapboxInstance && !mapboxInstance._removed && mapboxInstance.getCanvas()) {
+          const map = mapboxInstance;
+          let removeSourceAttemptAllowed = sourceAddedLocally;
+
+          // --- Layer Removal FIRST ---
+          if (layerAddedLocally) {
+            if (map.getLayer(id)) {
+              try {
+                logger.info(`Cleanup: Removing layer ${id} (added locally)`, { id });
+                map.removeLayer(id);
+              } catch (e) {
+                logger.error(`Cleanup: Error removing layer ${id}`, { id, error: e });
+                removeSourceAttemptAllowed = false;
+              }
+            } else {
+              logger.debug(`Cleanup: Layer ${id} marked added locally but already removed.`, { id });
+            }
+          } else {
+            logger.debug(`Cleanup: Skipping layer removal for ${id} (not added locally)`, { id });
+          }
+
+          // --- Source Removal Check/Attempt SECOND ---
+          if (removeSourceAttemptAllowed) {
+            if (map.getSource(source.id)) {
+              try {
+                const style = map.getStyle();
+                const layersUsingSource = (style?.layers || []).filter(l => l.id !== id && l?.source === source.id);
+                logger.debug(`Cleanup: Checking source ${source.id} usage immediately`, { id, layersUsingSource: layersUsingSource.map(l=>l.id) });
+
+                if (layersUsingSource.length === 0) {
+                  logger.info(`Cleanup: Removing source ${source.id} (added locally, no other users)`, { id });
+                  map.removeSource(source.id);
+                } else {
+                  logger.debug(`Cleanup: Keeping source ${source.id} (added locally, used by others: ${layersUsingSource.map(l=>l.id).join(', ')})`, { id });
+                }
+              } catch (e) {
+                logger.error(`Cleanup: Error checking/removing source ${source.id}`, { id, error: e });
+              }
+            } else {
+              logger.debug(`Cleanup: Source ${source.id} marked added locally but already removed.`, { id });
+            }
+          } else {
+            logger.debug(`Cleanup: Skipping source removal for ${source.id}`, { id, sourceAddedLocally, removeSourceAttemptAllowed });
+          }
+        } else {
+          logger.warn(`Cleanup: Skipped map operations for ${id} (Map invalid)`, { id, hasMap: !!mapboxInstance, removed: mapboxInstance?._removed });
+        }
       }
+
+      // --- Listener/Timeout Cleanup (ALWAYS happens) ---
+      logger.debug(`Cleanup: Cleaning up listeners/timeouts for ${id}`);
+      if (idleListener && mapboxInstance && !mapboxInstance._removed) { try { mapboxInstance.off('idle', idleListener); } catch(e) {} }
+      if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
+      if (sourceLoadListener && mapboxInstance && !mapboxInstance._removed) { try { mapboxInstance.off('sourcedata', sourceLoadListener); } catch(e) {} }
+
       logger.info(`Effect ADD/REMOVE CLEANUP END`, { id });
     };
 

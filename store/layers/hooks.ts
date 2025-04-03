@@ -208,6 +208,12 @@ export const useAreInitialLayersReady = () => {
 
   // Memoize the readiness check
   const areLayersReady = useMemo(() => {
+    logger.debug('HOOK MEMO: Checking layer readiness', {
+      isMapReady,
+      isInitialLoadComplete,
+      layerCount: Object.keys(layers).length
+    });
+
     if (!isMapReady || !isInitialLoadComplete) {
       logger.debug('Layers not ready - map or initial load incomplete', {
         isMapReady,
@@ -224,7 +230,8 @@ export const useAreInitialLayersReady = () => {
 
     const allLayersReady = layerIds.every(id => {
       const layer = layers[id];
-      const isReady = layer.setupStatus === 'complete';
+      // Consider both 'complete' and 'error' as final states
+      const isReady = layer.setupStatus === 'complete' || layer.setupStatus === 'error';
       if (!isReady) {
         logger.debug(`Layer ${id} not ready`, {
           setupStatus: layer.setupStatus,
