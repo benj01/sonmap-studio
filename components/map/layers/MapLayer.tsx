@@ -63,8 +63,9 @@ function isMapStable(map: mapboxgl.Map): boolean {
 
 function isMapIdle(map: mapboxgl.Map): boolean {
   try {
-    // Let's also simplify this for now, maybe zooming/moving checks were too strict
-    return map.isStyleLoaded() && !map.isMoving(); // Only check moving, allow zooming
+    // Only check if the style is loaded and the map is not moving
+    // This is more lenient than before and should allow style updates more often
+    return map.isStyleLoaded() && !map.isMoving();
   } catch (error) {
     logger.warn(`isMapIdle check failed`, { error });
     return false;
@@ -401,7 +402,17 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   useEffect(() => {
     if (!mapboxInstance || !isMapIdle(mapboxInstance)) {
       logger.debug(`Style update skipped for ${id}`, {
-        id, hasMap: !!mapboxInstance, mapIdle: mapboxInstance ? isMapIdle(mapboxInstance): false
+        id, 
+        hasMap: !!mapboxInstance, 
+        mapIdle: mapboxInstance ? isMapIdle(mapboxInstance): false,
+        mapState: mapboxInstance ? {
+          isStyleLoaded: mapboxInstance.isStyleLoaded(),
+          isMoving: mapboxInstance.isMoving(),
+          isZooming: mapboxInstance.isZooming(),
+          isRotating: mapboxInstance.isRotating()
+        } : null,
+        layerStyleRef: layerStyleRef.current,
+        newLayer: layer
       });
       return;
     }
@@ -410,21 +421,60 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     const layerExists = map.getLayer(id);
 
     if (!layerExists) {
-      logger.debug(`Style update skipped for ${id} - layer not found on map`, { id });
+      logger.debug(`Style update skipped for ${id} - layer not found on map`, { 
+        id,
+        availableLayers: map.getStyle()?.layers?.map(l => l.id) || [],
+        layerStyleRef: layerStyleRef.current,
+        newLayer: layer
+      });
       return;
     }
 
-    if (!isEqual(layerStyleRef.current, layer)) {
-      logger.info(`Effect UPDATE_STYLE: Detected style change for layer ${id}`, { id });
+    // Compare paint properties directly
+    const currentPaint = layerStyleRef.current.paint || {};
+    const newPaint = layer.paint || {};
+    const paintChanged = Object.keys(newPaint).some(key => 
+      !isEqual((currentPaint as Record<string, any>)[key], (newPaint as Record<string, any>)[key])
+    ) || Object.keys(currentPaint).some(key => 
+      !(key in newPaint)
+    );
+
+    // Compare layout properties directly (excluding visibility)
+    const currentLayout = { ...(layerStyleRef.current.layout || {}) };
+    const newLayout = { ...(layer.layout || {}) };
+    delete currentLayout.visibility;
+    delete newLayout.visibility;
+    const layoutChanged = !isEqual(currentLayout, newLayout);
+
+    logger.debug(`Style update check for ${id}`, {
+      id,
+      paintChanged,
+      layoutChanged,
+      currentPaint,
+      newPaint,
+      currentLayout,
+      newLayout
+    });
+
+    if (paintChanged || layoutChanged) {
+      logger.info(`Effect UPDATE_STYLE: Detected style change for layer ${id}`, { 
+        id,
+        paintChanged,
+        layoutChanged
+      });
 
       const previousLayer = layerStyleRef.current;
       layerStyleRef.current = layer;
 
       try {
-        if (!isEqual(previousLayer.paint, layer.paint)) {
+        if (paintChanged) {
           Object.entries(layer.paint || {}).forEach(([key, value]) => {
             if (value !== undefined && !isEqual((previousLayer.paint as any)?.[key], value)) {
-              logger.debug(`Setting paint property for ${id}`, { key, value });
+              logger.debug(`Setting paint property for ${id}`, { 
+                key, 
+                value,
+                previousValue: (previousLayer.paint as any)?.[key]
+              });
               map.setPaintProperty(id, key as any, value);
             }
           });
@@ -442,7 +492,11 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         if (!isEqual(previousLayout, currentLayout)) {
           Object.entries(currentLayout || {}).forEach(([key, value]) => {
             if (value !== undefined && !isEqual((previousLayout as any)?.[key], value)) {
-              logger.debug(`Setting layout property for ${id}`, { key, value });
+              logger.debug(`Setting layout property for ${id}`, { 
+                key, 
+                value,
+                previousValue: (previousLayout as any)?.[key]
+              });
               map.setLayoutProperty(id, key as any, value);
             }
           });
@@ -454,19 +508,29 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         }
 
         if (!isEqual(previousLayer.filter, layer.filter)) {
-          logger.debug(`Setting filter for ${id}`, { filter: layer.filter });
+          logger.debug(`Setting filter for ${id}`, { 
+            filter: layer.filter,
+            previousFilter: previousLayer.filter
+          });
           map.setFilter(id, layer.filter || null);
         }
 
         if (previousLayer.minzoom !== layer.minzoom || previousLayer.maxzoom !== layer.maxzoom) {
-          logger.debug(`Setting zoom range for ${id}`, { minzoom: layer.minzoom, maxzoom: layer.maxzoom });
+          logger.debug(`Setting zoom range for ${id}`, { 
+            minzoom: layer.minzoom, 
+            maxzoom: layer.maxzoom,
+            previousMinzoom: previousLayer.minzoom,
+            previousMaxzoom: previousLayer.maxzoom
+          });
           map.setLayerZoomRange(id, layer.minzoom ?? 0, layer.maxzoom ?? 24);
         }
 
         logger.info(`Effect UPDATE_STYLE: Style updated for ${id}`);
       } catch (error) {
         logger.error(`Effect UPDATE_STYLE: Error updating style for ${id}`, {
-          id, error: error instanceof Error ? error.message : error
+          id, 
+          error: error instanceof Error ? error.message : error,
+          stack: error instanceof Error ? error.stack : undefined
         });
       }
     }

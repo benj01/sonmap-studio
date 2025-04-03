@@ -166,7 +166,11 @@ export class LogManager {
       'Error processing',
       'Error importing',
       'Error transforming',
-      'Error loading files'
+      'Error loading files',
+      'Style update',
+      'Effect UPDATE_STYLE',
+      'Setting paint property',
+      'Setting layout property'
     ];
 
     // In development, treat all logs as potentially duplicated due to strict mode
@@ -174,6 +178,10 @@ export class LogManager {
       const now = Date.now();
       const lastLog = this.rateLimits.get(key);
       if (lastLog && now - lastLog < this.RATE_LIMIT_MS) {
+        // Skip rate limiting for important patterns
+        if (importantPatterns.some(pattern => key.includes(pattern))) {
+          return false;
+        }
         return true;
       }
       this.rateLimits.set(key, now);
