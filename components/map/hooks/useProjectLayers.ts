@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import createClient from '@/utils/supabase/client';
 import { useLayerStore } from '@/store/layers/layerStore';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
@@ -66,8 +66,16 @@ export function useProjectLayers(projectId: string) {
   const supabase = createClient();
   const { addLayer, setInitialLoadComplete } = useLayerStore();
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const mountCount = useRef(0);
 
   useEffect(() => {
+    // Skip first mount in development due to strict mode
+    if (process.env.NODE_ENV === 'development' && mountCount.current === 0) {
+      mountCount.current += 1;
+      logger.debug('Skipping first mount in development');
+      return;
+    }
+
     let isMounted = true;
     let loadedLayers = new Set<string>();
 
@@ -199,43 +207,23 @@ export function useProjectLayers(projectId: string) {
 
         logger.info('Successfully loaded all project layers', {
           projectId,
-          fileCount: importedFiles.length,
-          loadedLayerCount: loadedLayers.size,
-          loadedLayerIds: Array.from(loadedLayers)
+          layerCount: loadedLayers.size,
+          layerIds: Array.from(loadedLayers)
         });
-
-        // Only set initial load complete if we're still mounted
-        if (isMounted) {
-          setInitialLoadComplete(true);
-        }
-
+        setInitialLoadComplete(true);
       } catch (error) {
-        logger.error('Error loading project layers', { 
-          error: error instanceof Error ? error.message : error,
-          stack: error instanceof Error ? error.stack : undefined,
-          projectId 
-        });
-        // Even on error, mark initial load as complete if we're still mounted
-        if (isMounted) {
-          setInitialLoadComplete(true);
-        }
+        logger.error('Error loading project layers', { error });
+        setInitialLoadComplete(true);
       }
     }
 
-    if (projectId) {
-      logger.info('Project ID provided, starting layer load', { projectId });
-      loadProjectLayers();
-    } else {
-      logger.error('No project ID provided, skipping layer load');
-      setInitialLoadComplete(true);
-    }
+    loadProjectLayers();
 
     return () => {
-      logger.info('Cleaning up project layers', { projectId });
       isMounted = false;
-      setInitialLoadComplete(false);
+      mountCount.current += 1;
     };
-  }, [projectId, addLayer, setInitialLoadComplete]);
+  }, [projectId, addLayer, setInitialLoadComplete, supabase]);
 
   return {
     // Return any necessary values or functions

@@ -143,7 +143,7 @@ export function MapView({ accessToken, style }: MapViewProps) {
             return;
           }
 
-          // Add a small delay to ensure the style is stable
+          // Use requestAnimationFrame for minimal delay to ensure style is stable
           requestAnimationFrame(() => {
             logger.info(SOURCE, 'Base map style loaded and stable');
             setMapboxStatus('ready');
