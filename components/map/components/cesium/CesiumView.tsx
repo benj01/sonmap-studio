@@ -5,6 +5,7 @@ import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
+import { useCesium } from '../../context/CesiumContext';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'CesiumView';
@@ -27,16 +28,39 @@ const logger = {
 
 export function CesiumView() {
   const cesiumContainer = useRef<HTMLDivElement>(null);
+  const viewerRef = useRef<Cesium.Viewer | null>(null);
   const { setCesiumInstance } = useMapInstanceStore();
   const { viewState3D, setViewState3D } = useViewStateStore();
+  const { setViewer, setInitialized } = useCesium();
+  const initializationAttempted = useRef(false);
 
   useEffect(() => {
     const container = cesiumContainer.current;
-    if (!container) return;
+    if (!container) {
+      logger.warn('Container ref not available');
+      return;
+    }
+
+    // Skip if already attempted initialization
+    if (initializationAttempted.current) {
+      logger.debug('Initialization already attempted, skipping');
+      return;
+    }
+
+    initializationAttempted.current = true;
+    let cleanup: (() => void) | undefined;
 
     const initializeViewer = async () => {
       try {
+        logger.debug('Starting Cesium viewer initialization');
+        
+        // First set initialized to false to show we're starting
+        setInitialized(false);
+        
         const terrainProvider = await Cesium.createWorldTerrainAsync();
+        logger.debug('Terrain provider created');
+        
+        // Create viewer
         const viewer = new Cesium.Viewer(container, {
           terrainProvider,
           animation: false,
@@ -48,6 +72,28 @@ export function CesiumView() {
           sceneModePicker: false,
           timeline: false
         });
+
+        // Wait for the scene to load
+        await new Promise<void>((resolve) => {
+          if (viewer.scene.globe.tilesLoaded) {
+            logger.debug('Scene already loaded');
+            resolve();
+          } else {
+            const loadHandler = () => {
+              if (viewer.scene.globe.tilesLoaded) {
+                logger.debug('Scene loaded');
+                viewer.scene.globe.tileLoadProgressEvent.removeEventListener(loadHandler);
+                resolve();
+              }
+            };
+            viewer.scene.globe.tileLoadProgressEvent.addEventListener(loadHandler);
+          }
+        });
+
+        logger.debug('First frame rendered');
+
+        // Store viewer reference
+        viewerRef.current = viewer;
 
         // Set initial camera position
         viewer.camera.setView({
@@ -78,22 +124,45 @@ export function CesiumView() {
           });
         });
 
+        // Update global state
         setCesiumInstance(viewer);
+        setViewer(viewer);
+        
+        // Wait a frame to ensure everything is ready
+        requestAnimationFrame(() => {
+          setInitialized(true);
+          logger.info('Cesium viewer fully initialized');
+        });
 
-        return () => {
-          if (!viewer.isDestroyed()) {
+        // Define cleanup function
+        cleanup = () => {
+          logger.debug('Running cleanup for Cesium viewer');
+          if (viewer && !viewer.isDestroyed()) {
             viewer.destroy();
+            viewerRef.current = null;
             setCesiumInstance(null);
+            setViewer(null);
+            setInitialized(false);
+            initializationAttempted.current = false;
             logger.info('Cesium viewer destroyed');
           }
         };
       } catch (error) {
         logger.error('Error initializing Cesium viewer', error);
+        setInitialized(false);
+        initializationAttempted.current = false;
       }
     };
 
     initializeViewer();
-  }, []);
+
+    // Return cleanup function
+    return () => {
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, []); // Empty dependency array since we only want to initialize once
 
   return (
     <div className="relative w-full h-full">

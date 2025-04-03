@@ -1,8 +1,11 @@
 'use client';
 
+import { useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
-import { useViewStateStore } from '@/store/view/viewStateStore';
+import { useSyncTo3D } from '../hooks/useSyncTo3D';
+import { useCesium } from '../context/CesiumContext';
+import { useSharedLayers } from '../context/SharedLayerContext';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'SyncTo3DButton';
@@ -25,44 +28,88 @@ const logger = {
 
 export function SyncTo3DButton() {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
-  const { setViewState3D } = useViewStateStore();
+  const { viewer, isInitialized } = useCesium();
+  const { layers } = useSharedLayers();
+  const { syncTo3D, isLoading } = useSyncTo3D();
 
-  const handleSync = () => {
-    if (!mapboxInstance) {
-      logger.warn('Cannot sync to 3D view: Mapbox instance not available');
+  // Check if all layers are ready
+  const areLayersReady = useCallback(() => {
+    if (!layers.length) return false;
+
+    // Check if all layers have their required metadata
+    return layers.every(layer => {
+      const isReady = layer.metadata.sourceType === '2d' 
+        ? !!layer.metadata.source2D 
+        : !!layer.metadata.source3D;
+      
+      if (!isReady) {
+        logger.debug('Layer not ready', { 
+          layerId: layer.id, 
+          sourceType: layer.metadata.sourceType,
+          hasSource: layer.metadata.sourceType === '2d' 
+            ? !!layer.metadata.source2D 
+            : !!layer.metadata.source3D
+        });
+      }
+      return isReady;
+    });
+  }, [layers]);
+
+  // Check if all map instances are ready
+  const isMapReady = useCallback(() => {
+    const isReady = !!mapboxInstance && !!viewer && isInitialized;
+    if (!isReady) {
+      logger.debug('Map instances not ready', {
+        hasMapbox: !!mapboxInstance,
+        hasCesium: !!viewer,
+        isInitialized
+      });
+    }
+    return isReady;
+  }, [mapboxInstance, viewer, isInitialized]);
+
+  const handleSync = useCallback(async () => {
+    if (!isMapReady() || !areLayersReady()) {
+      logger.warn('Cannot sync: Not all prerequisites are ready', {
+        isMapReady: isMapReady(),
+        areLayersReady: areLayersReady()
+      });
       return;
     }
 
     try {
-      const center = mapboxInstance.getCenter();
-      const zoom = mapboxInstance.getZoom();
-
-      // Convert zoom level to height (rough approximation)
-      const height = Math.pow(2, 20 - zoom) * 1000;
-
-      setViewState3D({
-        latitude: center.lat,
-        longitude: center.lng,
-        height
-      });
-
-      logger.info('Synced 2D view to 3D', {
-        latitude: center.lat,
-        longitude: center.lng,
-        height
-      });
+      await syncTo3D({ syncView: true, syncLayers: true });
+      logger.info('Successfully synced to 3D view');
     } catch (error) {
-      logger.error('Error syncing to 3D view', error);
+      logger.error('Failed to sync to 3D view', error);
     }
-  };
+  }, [syncTo3D, isMapReady, areLayersReady]);
+
+  const isButtonDisabled = isLoading || !isMapReady() || !areLayersReady();
 
   return (
     <Button
       variant="outline"
+      size="sm"
       onClick={handleSync}
-      disabled={!mapboxInstance}
+      disabled={isButtonDisabled}
+      className="flex items-center gap-2"
     >
-      Sync to 3D
+      {isLoading ? (
+        <>
+          <span className="animate-spin">⟳</span>
+          <span>Syncing...</span>
+        </>
+      ) : (
+        <>
+          <span>Sync to 3D</span>
+          {isButtonDisabled && !isLoading && (
+            <span className="text-xs text-muted-foreground">
+              (Waiting for map and layers to be ready)
+            </span>
+          )}
+        </>
+      )}
     </Button>
   );
 } 

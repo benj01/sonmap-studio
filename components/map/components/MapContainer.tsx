@@ -11,6 +11,7 @@ import { SyncTo3DButton } from './SyncTo3DButton';
 import { ResetButton } from './ResetButton';
 import { useProjectLayers } from '../hooks/useProjectLayers';
 import { LayerList } from './LayerList';
+import { StatusMonitor } from './StatusMonitor';
 
 const SOURCE = 'MapContainer';
 const logManager = LogManager.getInstance();
@@ -149,6 +150,9 @@ export function MapContainer({
               </LayerPanel>
             </div>
             <MapView accessToken={accessToken} style={style} />
+          </div>
+          <div className="px-2">
+            <StatusMonitor />
           </div>
         </div>
 

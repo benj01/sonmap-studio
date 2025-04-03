@@ -1,8 +1,9 @@
-import { SharedLayer } from '../context/SharedLayerContext';
-import { CesiumLayer } from '../hooks/useCesiumLayers';
-import { LogManager } from '@/core/logging/log-manager';
+'use client';
+
 import * as Cesium from 'cesium';
+import { SharedLayer, VectorLayerStyle, TilesetStyle, ImageryStyle, TerrainStyle } from '../context/SharedLayerContext';
 import { geoJsonToCesium } from './data-converters';
+import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'LayerAdapters';
 const logManager = LogManager.getInstance();
@@ -22,231 +23,228 @@ const logger = {
   }
 };
 
-export interface LayerAdapter {
-  to2D: (layer: SharedLayer) => any;
-  to3D: (layer: SharedLayer) => Promise<CesiumLayer>;
-  from2D: (layer: any) => SharedLayer;
-  from3D: (layer: CesiumLayer) => SharedLayer;
-}
-
-export interface SharedLayer {
+export interface CesiumLayer {
   id: string;
   name: string;
-  type: string;
+  type: 'vector' | '3d-tiles' | 'imagery' | 'terrain';
   visible: boolean;
-  metadata: {
-    sourceType?: '2d' | '3d';
-    geojson?: any;
-    source2D?: any;
-    source3D?: any;
-    style?: {
-      paint?: Record<string, any>;
-      layout?: Record<string, any>;
-    };
-  };
-  selected: boolean;
+  source: any;
+  dataSource?: Cesium.DataSource;
+  imageryProvider?: Cesium.ImageryProvider;
+  tileset?: Cesium.Cesium3DTileset;
+  options?: any;
 }
 
-// Adapter for vector/GeoJSON layers
-export const vectorAdapter: LayerAdapter = {
-  to2D: (layer: SharedLayer) => {
-    logger.debug('Converting vector layer to 2D', { layerId: layer.id });
-    return {
-      id: layer.id,
-      type: 'geojson',
-      source: {
-        type: 'geojson',
-        data: layer.metadata.geojson
-      },
-      paint: layer.metadata.style?.paint || {},
-      layout: layer.metadata.style?.layout || {}
-    };
-  },
+interface LayerAdapter {
+  to2D: (layer: SharedLayer) => any;
+  to3D: (layer: SharedLayer) => Promise<CesiumLayer>;
+}
 
-  to3D: async (layer: SharedLayer) => {
-    logger.debug('Converting vector layer to 3D', { 
-      layerId: layer.id,
-      hasGeojson: !!layer.metadata.geojson
-    });
-
-    if (!layer.metadata.geojson) {
-      throw new Error('No GeoJSON data available for conversion');
-    }
-
-    try {
-      // Convert GeoJSON to Cesium DataSource
-      const dataSource = await geoJsonToCesium(layer.metadata.geojson, {
-        strokeColor: layer.metadata.style?.paint?.['line-color'] || '#1E88E5',
-        strokeWidth: layer.metadata.style?.paint?.['line-width'] || 3,
-        fillColor: layer.metadata.style?.paint?.['fill-color'] || '#1E88E5',
-        fillOpacity: layer.metadata.style?.paint?.['fill-opacity'] || 0.5,
-        clampToGround: true
-      });
-
+const adapters: Record<string, LayerAdapter> = {
+  vector: {
+    to2D: (layer: SharedLayer) => {
+      logger.debug('Converting vector layer to 2D', { layerId: layer.id });
+      const style = layer.metadata.style as VectorLayerStyle;
       return {
         id: layer.id,
-        name: layer.name,
-        type: 'vector',
-        visible: layer.visible,
-        source: dataSource,
-        dataSource: dataSource
+        type: 'geojson',
+        source: {
+          type: 'geojson',
+          data: layer.metadata.geojson
+        },
+        paint: style?.paint || {},
+        layout: style?.layout || {}
       };
-    } catch (error) {
-      logger.error('Error converting vector layer to 3D', { 
-        layerId: layer.id,
-        error 
-      });
-      throw error;
+    },
+    to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
+      logger.debug('Converting vector layer to 3D', { layerId: layer.id });
+      
+      if (!layer.metadata.geojson) {
+        throw new Error('No GeoJSON data available for conversion');
+      }
+
+      try {
+        const style = layer.metadata.style as VectorLayerStyle;
+        const dataSource = await geoJsonToCesium(layer.metadata.geojson, {
+          strokeColor: style?.paint?.['line-color'] || '#1E88E5',
+          strokeWidth: style?.paint?.['line-width'] || 3,
+          fillColor: style?.paint?.['fill-color'] || '#1E88E5',
+          fillOpacity: style?.paint?.['fill-opacity'] || 0.5,
+          clampToGround: true
+        });
+
+        return {
+          id: layer.id,
+          name: layer.name,
+          type: 'vector',
+          visible: layer.visible,
+          source: dataSource,
+          dataSource
+        };
+      } catch (error) {
+        logger.error('Error converting vector layer to 3D', { layerId: layer.id, error });
+        throw error;
+      }
     }
   },
+  '3d-tiles': {
+    to2D: (layer: SharedLayer) => {
+      logger.warn('3D Tiles cannot be converted to 2D', { layerId: layer.id });
+      throw new Error('3D Tiles cannot be converted to 2D');
+    },
+    to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
+      logger.debug('Converting 3D tiles layer', { layerId: layer.id });
+      
+      if (!layer.metadata.source3D) {
+        throw new Error('No 3D source data available for conversion');
+      }
 
-  from2D: (layer: any) => {
-    return {
-      id: layer.id,
-      name: layer.name || layer.id,
-      type: 'vector',
-      visible: true,
-      metadata: {
-        sourceType: '2d',
-        geojson: layer.source.data,
-        style: {
-          paint: layer.paint,
-          layout: layer.layout
+      try {
+        const style = layer.metadata.style as TilesetStyle;
+        const tileset = await Cesium.Cesium3DTileset.fromUrl(layer.metadata.source3D as string, {
+          maximumScreenSpaceError: style?.maximumScreenSpaceError || 16,
+          modelMatrix: style?.modelMatrix,
+          show: style?.show !== undefined ? style.show : true
+        });
+
+        // Apply custom styling if specified
+        if (style?.color || style?.opacity !== undefined) {
+          const color = Cesium.Color.fromCssColorString(style.color || '#FFFFFF');
+          if (style.opacity !== undefined) {
+            color.alpha = style.opacity;
+          }
+
+          tileset.style = new Cesium.Cesium3DTileStyle({
+            color: `color('${color.toCssColorString()}', ${color.alpha})`,
+            show: style.show !== undefined ? style.show.toString() : 'true'
+          });
         }
-      },
-      selected: false
-    };
-  },
 
-  from3D: (layer: CesiumLayer) => {
-    return {
-      id: layer.id,
-      name: layer.name,
-      type: 'vector',
-      visible: layer.visible,
-      metadata: {
-        sourceType: '3d',
-        source3D: layer.dataSource,
-        style: layer.options?.style
-      },
-      selected: false
-    };
+        // Apply color blending if specified
+        if (style?.colorBlendMode) {
+          const blendMode = style.colorBlendMode.toUpperCase();
+          switch (blendMode) {
+            case 'HIGHLIGHT':
+              tileset.colorBlendMode = Cesium.Cesium3DTileColorBlendMode.HIGHLIGHT;
+              break;
+            case 'MIX':
+              tileset.colorBlendMode = Cesium.Cesium3DTileColorBlendMode.MIX;
+              break;
+            case 'REPLACE':
+              tileset.colorBlendMode = Cesium.Cesium3DTileColorBlendMode.REPLACE;
+              break;
+            default:
+              logger.warn('Invalid color blend mode', { mode: style.colorBlendMode });
+          }
+
+          if (style.colorBlendAmount !== undefined) {
+            tileset.colorBlendAmount = style.colorBlendAmount;
+          }
+        }
+
+        return {
+          id: layer.id,
+          name: layer.name,
+          type: '3d-tiles',
+          visible: layer.visible,
+          source: tileset,
+          tileset
+        };
+      } catch (error) {
+        logger.error('Error converting 3D tiles layer', { layerId: layer.id, error });
+        throw error;
+      }
+    }
+  },
+  imagery: {
+    to2D: (layer: SharedLayer) => {
+      logger.debug('Converting imagery layer to 2D', { layerId: layer.id });
+      const style = layer.metadata.style as ImageryStyle;
+      return {
+        id: layer.id,
+        type: 'raster',
+        source: {
+          type: 'raster',
+          tiles: [layer.metadata.source2D],
+          tileSize: style?.tileWidth || 256
+        },
+        paint: {}
+      };
+    },
+    to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
+      logger.debug('Converting imagery layer to 3D', { layerId: layer.id });
+      
+      if (!layer.metadata.source3D) {
+        throw new Error('No imagery source data available for conversion');
+      }
+
+      try {
+        const style = layer.metadata.style as ImageryStyle;
+        const imageryProvider = new Cesium.UrlTemplateImageryProvider({
+          url: layer.metadata.source3D as string,
+          minimumLevel: style?.minimumLevel,
+          maximumLevel: style?.maximumLevel,
+          tileWidth: style?.tileWidth || 256,
+          tileHeight: style?.tileHeight || 256,
+          credit: style?.credit
+        });
+
+        return {
+          id: layer.id,
+          name: layer.name,
+          type: 'imagery',
+          visible: layer.visible,
+          source: imageryProvider,
+          imageryProvider
+        };
+      } catch (error) {
+        logger.error('Error converting imagery layer to 3D', { layerId: layer.id, error });
+        throw error;
+      }
+    }
+  },
+  terrain: {
+    to2D: (layer: SharedLayer) => {
+      logger.warn('Terrain cannot be converted to 2D', { layerId: layer.id });
+      throw new Error('Terrain cannot be converted to 2D');
+    },
+    to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
+      logger.debug('Converting terrain layer', { layerId: layer.id });
+      
+      if (!layer.metadata.source3D) {
+        throw new Error('No terrain source data available for conversion');
+      }
+
+      try {
+        const style = layer.metadata.style as TerrainStyle;
+        const terrainProvider = await Cesium.CesiumTerrainProvider.fromUrl(
+          layer.metadata.source3D as string,
+          {
+            requestVertexNormals: style?.requestVertexNormals || true,
+            requestWaterMask: style?.requestWaterMask || false,
+            requestMetadata: style?.requestMetadata || true
+          }
+        );
+
+        return {
+          id: layer.id,
+          name: layer.name,
+          type: 'terrain',
+          visible: layer.visible,
+          source: terrainProvider
+        };
+      } catch (error) {
+        logger.error('Error converting terrain layer', { layerId: layer.id, error });
+        throw error;
+      }
+    }
   }
 };
 
-// Adapter for 3D Tiles layers
-export const tilesetAdapter: LayerAdapter = {
-  to2D: (layer: SharedLayer) => {
-    logger.warn('3D Tiles cannot be converted to 2D', { layerId: layer.id });
-    throw new Error('3D Tiles cannot be converted to 2D');
-  },
-
-  to3D: async (layer: SharedLayer) => {
-    if (!layer.metadata.source3D) {
-      logger.warn('No 3D source data available for conversion', { layerId: layer.id });
-      throw new Error('No 3D source data available for conversion');
-    }
-    return {
-      id: layer.id,
-      name: layer.name,
-      type: '3d-tiles',
-      visible: layer.visible,
-      source: layer.metadata.source3D,
-      tileset: layer.metadata.source3D
-    };
-  },
-
-  from2D: (layer: any) => {
-    logger.warn('Cannot create 3D Tiles layer from 2D data', { layerId: layer.id });
-    throw new Error('Cannot create 3D Tiles layer from 2D data');
-  },
-
-  from3D: (layer: CesiumLayer) => {
-    return {
-      id: layer.id,
-      name: layer.name,
-      type: '3d-tiles',
-      visible: layer.visible,
-      metadata: {
-        sourceType: '3d',
-        source3D: layer.tileset,
-        style: layer.options?.style
-      },
-      selected: false
-    };
-  }
-};
-
-// Adapter for imagery layers
-export const imageryAdapter: LayerAdapter = {
-  to2D: (layer: SharedLayer) => {
-    if (!layer.metadata.source2D) {
-      logger.warn('No 2D source data available for conversion', { layerId: layer.id });
-      throw new Error('No 2D source data available for conversion');
-    }
-    return layer.metadata.source2D;
-  },
-
-  to3D: async (layer: SharedLayer) => {
-    if (!layer.metadata.source3D) {
-      logger.warn('No 3D source data available for conversion', { layerId: layer.id });
-      throw new Error('No 3D source data available for conversion');
-    }
-    return {
-      id: layer.id,
-      name: layer.name,
-      type: 'imagery',
-      visible: layer.visible,
-      source: layer.metadata.source3D,
-      imageryProvider: layer.metadata.source3D
-    };
-  },
-
-  from2D: (layer: any) => {
-    return {
-      id: layer.id,
-      name: layer.name || layer.id,
-      type: 'imagery',
-      visible: true,
-      metadata: {
-        sourceType: '2d',
-        source2D: layer,
-        style: layer.style
-      },
-      selected: false
-    };
-  },
-
-  from3D: (layer: CesiumLayer) => {
-    return {
-      id: layer.id,
-      name: layer.name,
-      type: 'imagery',
-      visible: layer.visible,
-      metadata: {
-        sourceType: '3d',
-        source3D: layer.imageryProvider,
-        style: layer.options?.style
-      },
-      selected: false
-    };
-  }
-};
-
-// Map of layer types to their adapters
-export const layerAdapters: Record<string, LayerAdapter> = {
-  geojson: vectorAdapter,
-  vector: vectorAdapter,
-  '3d-tiles': tilesetAdapter,
-  imagery: imageryAdapter
-};
-
-// Helper function to get the appropriate adapter for a layer type
-export function getLayerAdapter(type: string): LayerAdapter {
-  const adapter = layerAdapters[type];
+export function getLayerAdapter(type: string): LayerAdapter | undefined {
+  const adapter = adapters[type];
   if (!adapter) {
     logger.warn('No adapter found for layer type', { type });
-    return vectorAdapter; // Default to vector adapter
   }
   return adapter;
 } 
