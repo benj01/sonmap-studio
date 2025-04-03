@@ -68,6 +68,9 @@ export function useProjectLayers(projectId: string) {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
 
   useEffect(() => {
+    let isMounted = true;
+    let loadedLayers = new Set<string>();
+
     async function loadProjectLayers() {
       try {
         logger.info('Starting to load project layers', { projectId });
@@ -78,7 +81,7 @@ export function useProjectLayers(projectId: string) {
           .select('*')
           .eq('project_id', projectId)
           .eq('is_imported', true)
-          .not('import_metadata', 'is', null);  // Ensure it has import metadata
+          .not('import_metadata', 'is', null);
 
         if (filesError) {
           logger.error('Error fetching imported files', { error: filesError });
@@ -86,8 +89,8 @@ export function useProjectLayers(projectId: string) {
         }
 
         if (!importedFiles?.length) {
-          logger.error('No imported files found for project', { projectId });
-          setInitialLoadComplete(true); // Mark as complete even if no files
+          logger.info('No imported files found for project', { projectId });
+          setInitialLoadComplete(true);
           return;
         }
 
@@ -100,9 +103,6 @@ export function useProjectLayers(projectId: string) {
             collectionId: f.import_metadata?.collection_id
           }))
         });
-
-        let totalLayers = 0;
-        let loadedLayers = 0;
 
         // Process each imported file
         for (const importedFile of importedFiles) {
@@ -154,11 +154,14 @@ export function useProjectLayers(projectId: string) {
             layers: collections.layers.map(l => ({ id: l.id, name: l.name, type: l.type }))
           });
 
-          totalLayers += collections.layers.length;
-
           // Add each layer to the store
-          collections.layers.forEach((layer: ProjectLayer, index) => {
-            logger.info(`Adding layer ${index + 1}/${collections.layers.length} to store`, {
+          for (const layer of collections.layers as ProjectLayer[]) {
+            if (!isMounted) {
+              logger.info('Component unmounted, stopping layer loading');
+              return;
+            }
+
+            logger.info(`Adding layer to store`, {
               layerId: layer.id,
               name: layer.name,
               type: layer.type,
@@ -190,20 +193,21 @@ export function useProjectLayers(projectId: string) {
               }
             );
 
-            // Remove premature status update - let MapLayer handle it
-            loadedLayers++;
-          });
+            loadedLayers.add(layer.id);
+          }
         }
 
         logger.info('Successfully loaded all project layers', {
           projectId,
           fileCount: importedFiles.length,
-          totalLayers,
-          loadedLayers
+          loadedLayerCount: loadedLayers.size,
+          loadedLayerIds: Array.from(loadedLayers)
         });
 
-        // Set initial load complete after all layers are processed
-        setInitialLoadComplete(true);
+        // Only set initial load complete if we're still mounted
+        if (isMounted) {
+          setInitialLoadComplete(true);
+        }
 
       } catch (error) {
         logger.error('Error loading project layers', { 
@@ -211,8 +215,10 @@ export function useProjectLayers(projectId: string) {
           stack: error instanceof Error ? error.stack : undefined,
           projectId 
         });
-        // Even on error, mark initial load as complete to prevent infinite loading state
-        setInitialLoadComplete(true);
+        // Even on error, mark initial load as complete if we're still mounted
+        if (isMounted) {
+          setInitialLoadComplete(true);
+        }
       }
     }
 
@@ -226,8 +232,8 @@ export function useProjectLayers(projectId: string) {
 
     return () => {
       logger.info('Cleaning up project layers', { projectId });
+      isMounted = false;
       setInitialLoadComplete(false);
-      // TODO: Add cleanup logic to remove layers when project changes
     };
   }, [projectId, addLayer, setInitialLoadComplete]);
 

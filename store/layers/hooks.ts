@@ -4,6 +4,7 @@ import { layerSelectors } from './layerStore';
 import type { Layer, LayerMetadata } from './types';
 import { LogManager } from '@/core/logging/log-manager';
 import { shallow } from 'zustand/shallow';
+import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 
 const SOURCE = 'layerHooks';
 const logManager = LogManager.getInstance();
@@ -189,4 +190,62 @@ export const useLayerVisibility = (layerId: string) => {
     isVisible: layer?.visible ?? false,
     setVisibility
   };
+};
+
+// Layer readiness tracking
+export const useAreInitialLayersReady = () => {
+  logger.debug('HOOK RUN: useAreInitialLayersReady');
+  
+  // Get map readiness state
+  const isMapReady = useMapInstanceStore((state: { mapInstances: { mapbox: { instance: any; status: string } } }) => 
+    state.mapInstances.mapbox.instance !== null && 
+    state.mapInstances.mapbox.status === 'ready'
+  );
+
+  // Get all layers and their setup status
+  const layers = useLayerStore((state: LayerStore) => state.layers.byId);
+  const isInitialLoadComplete = useLayerStore((state: LayerStore) => state.isInitialLoadComplete);
+
+  // Memoize the readiness check
+  const areLayersReady = useMemo(() => {
+    if (!isMapReady || !isInitialLoadComplete) {
+      logger.debug('Layers not ready - map or initial load incomplete', {
+        isMapReady,
+        isInitialLoadComplete
+      });
+      return false;
+    }
+
+    const layerIds = Object.keys(layers);
+    if (layerIds.length === 0) {
+      logger.debug('No layers to check for readiness');
+      return true; // No layers means we're ready
+    }
+
+    const allLayersReady = layerIds.every(id => {
+      const layer = layers[id];
+      const isReady = layer.setupStatus === 'complete';
+      if (!isReady) {
+        logger.debug(`Layer ${id} not ready`, {
+          setupStatus: layer.setupStatus,
+          error: layer.error
+        });
+      }
+      return isReady;
+    });
+
+    logger.debug('Layer readiness check complete', {
+      layerCount: layerIds.length,
+      allLayersReady,
+      layerStatuses: layerIds.map(id => ({
+        id,
+        setupStatus: layers[id].setupStatus,
+        error: layers[id].error
+      }))
+    });
+
+    return allLayersReady;
+  }, [isMapReady, isInitialLoadComplete, layers]);
+
+  return areLayersReady;
 }; 

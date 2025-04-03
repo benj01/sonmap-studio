@@ -5,6 +5,7 @@ import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useLayers } from '@/store/layers/hooks';
 import { useLogger } from '@/core/logging/LoggerContext';
 import type { Layer } from '@/store/layers/types';
+import { useAreInitialLayersReady } from '@/store/layers/hooks';
 
 const SOURCE = 'useAutoZoom';
 
@@ -19,13 +20,15 @@ function isGeoJSONSource(source: mapboxgl.AnySourceImpl | undefined): source is 
   return !!source && 'setData' in source && typeof (source as any).setData === 'function';
 }
 
-export function useAutoZoom(isMapReady: boolean) {
+export function useAutoZoom() {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const mapStatus = useMapInstanceStore(state => state.mapInstances.mapbox.status);
   const { layers } = useLayers();
   const logger = useLogger();
   const processedLayersRef = useRef<string>('');
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const loadedSourcesRef = useRef<Set<string>>(new Set());
+  const areLayersReady = useAreInitialLayersReady();
 
   // Cleanup timeout on unmount
   useEffect(() => {
@@ -68,8 +71,13 @@ export function useAutoZoom(isMapReady: boolean) {
       retryTimeoutRef.current = null;
     }
 
-    if (!isMapReady || !mapboxInstance) {
-      logger.debug(SOURCE, 'AutoZoom: Map instance not ready', { isMapReady, hasMap: !!mapboxInstance, retryCount });
+    if (!mapboxInstance || mapStatus !== 'ready' || !areLayersReady) {
+      logger.debug(SOURCE, 'AutoZoom: Map or layers not ready', { 
+        hasMap: !!mapboxInstance,
+        mapStatus,
+        areLayersReady,
+        retryCount 
+      });
       return;
     }
 
@@ -262,11 +270,11 @@ export function useAutoZoom(isMapReady: boolean) {
     } else {
       logger.warn(SOURCE, 'AutoZoom: No valid bounds found', { totalCoordCount });
     }
-  }, [isMapReady, mapboxInstance, layers, logger]);
+  }, [mapboxInstance, mapStatus, layers, areLayersReady, logger]);
 
   // Main effect to trigger autozoom check
   useEffect(() => {
-    if (isMapReady && mapboxInstance) {
+    if (mapboxInstance && mapStatus === 'ready' && areLayersReady) {
       const currentVisibleLayers = layers
         .filter(l => l.visible && l.setupStatus === 'complete')
         .map(l => l.id)
@@ -277,7 +285,8 @@ export function useAutoZoom(isMapReady: boolean) {
         logger.debug(SOURCE, 'AutoZoom: Triggering check due to map readiness or layer change', {
           previousLayers: processedLayersRef.current,
           currentLayers: currentVisibleLayers,
-          mapReady: isMapReady
+          mapStatus,
+          areLayersReady
         });
         processedLayersRef.current = currentVisibleLayers;
         loadedSourcesRef.current = new Set();
@@ -289,7 +298,11 @@ export function useAutoZoom(isMapReady: boolean) {
     } else {
       // Reset state when map is not ready
       if (processedLayersRef.current !== '') {
-        logger.debug(SOURCE, 'AutoZoom: Map not ready, resetting state');
+        logger.debug(SOURCE, 'AutoZoom: Map or layers not ready, resetting state', {
+          hasMap: !!mapboxInstance,
+          mapStatus,
+          areLayersReady
+        });
         processedLayersRef.current = '';
         loadedSourcesRef.current = new Set();
         if (retryTimeoutRef.current) {
@@ -298,5 +311,5 @@ export function useAutoZoom(isMapReady: boolean) {
         }
       }
     }
-  }, [isMapReady, mapboxInstance, layers, attemptAutoZoom, logger]);
+  }, [mapboxInstance, mapStatus, layers, areLayersReady, attemptAutoZoom, logger]);
 } 

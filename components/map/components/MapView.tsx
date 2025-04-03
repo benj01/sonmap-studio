@@ -25,8 +25,8 @@ export function MapView({ accessToken, style }: MapViewProps) {
   const [isMapReady, setIsMapReady] = useState(false);
   const logger = useLogger();
 
-  // Pass readiness state to useAutoZoom
-  useAutoZoom(isMapReady);
+  // Initialize useAutoZoom without passing isMapReady
+  useAutoZoom();
 
   useEffect(() => {
     if (mapContainer.current) {

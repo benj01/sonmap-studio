@@ -7,6 +7,7 @@ import { useMemo, memo, useRef } from 'react';
 import type { Layer } from '@/store/layers/types';
 import isEqual from 'lodash/isEqual';
 import { useLayerStore } from '@/store/layers/layerStore';
+import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 
 const SOURCE = 'MapLayers';
 const logManager = LogManager.getInstance();
@@ -134,13 +135,15 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
 
   const { data, loading, error } = useLayerData(layer.id);
 
-  // Process and validate features - moved inside useMemo to maintain hook order
   const { processedFeatureCollection, isValid } = useMemo(() => {
     if (loading || error || !data?.features?.length) {
+      logger.debug('LayerRenderer: Skipping processing - loading, error, or no features', {
+        layerId: layer.id, loading, hasError: !!error, featureCount: data?.features?.length ?? 0
+      });
       return { processedFeatureCollection: null, isValid: false };
     }
 
-    logger.info('Processing features for layer', {
+    logger.info('LayerRenderer: Processing features for layer', {
       layerId: layer.id,
       originalFeatureCount: data.features.length
     });
@@ -150,9 +153,13 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
       .filter((f): f is Feature<Geometry> => f !== null);
 
     if (!processedFeatures.length) {
-      logger.warn('No valid features after processing', { layerId: layer.id });
+      logger.warn('LayerRenderer: No valid features after processing', { layerId: layer.id });
       return { processedFeatureCollection: null, isValid: false };
     }
+
+    logger.debug('LayerRenderer: Features processed successfully', {
+      layerId: layer.id, processedCount: processedFeatures.length
+    });
 
     return {
       processedFeatureCollection: {
@@ -163,19 +170,17 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
     };
   }, [data?.features, layer.id, loading, error]);
 
-  // Extract layer styles from metadata - memoize with stable dependencies
   const { styles, baseLayerId } = useMemo(() => {
     const paint = layer.metadata?.style?.paint || {};
     const baseId = layer.id.replace(/-line$|-fill$|-circle$/, '');
-    
-    logger.debug('Extracting layer styles', {
+
+    logger.debug('LayerRenderer: Extracting layer styles', {
       layerId: layer.id,
       baseId,
       existingPaint: paint,
       geometryType: layer.metadata?.type
     });
 
-    // Extract specific paint properties with granular defaults
     const styles = {
       fillLayer: {
         paint: {
@@ -200,7 +205,7 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
       }
     };
 
-    logger.debug('Extracted styles', {
+    logger.debug('LayerRenderer: Extracted styles', {
       layerId: layer.id,
       baseId,
       styles,
@@ -210,9 +215,8 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
     return { styles, baseLayerId: baseId };
   }, [layer.id, layer.metadata?.style?.paint]);
 
-  // Early return if no valid data
   if (!isValid || !processedFeatureCollection) {
-    logger.debug('Skipping layer render - invalid data', {
+    logger.debug('LayerRenderer: Skipping render - invalid data or collection', {
       layerId: layer.id,
       isValid,
       hasFeatures: !!processedFeatureCollection
@@ -220,7 +224,7 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
     return null;
   }
 
-  logger.debug('Creating GeoJSONLayer with styles', {
+  logger.debug('LayerRenderer: Creating GeoJSONLayer with styles', {
     layerId: layer.id,
     baseLayerId,
     hasStyle: !!layer.metadata?.style,
@@ -239,12 +243,9 @@ const LayerRenderer = memo(({ layer }: { layer: Layer }) => {
     />
   );
 }, (prevProps, nextProps) => {
-  // Compare only essential properties
   const idChanged = prevProps.layer.id !== nextProps.layer.id;
   const visibilityChanged = prevProps.layer.visible !== nextProps.layer.visible;
-  // Compare style object references first (fastest)
   const styleRefChanged = prevProps.layer.metadata?.style !== nextProps.layer.metadata?.style;
-  // Only do deep compare if refs are different
   const styleContentChanged = styleRefChanged && !isEqual(
     prevProps.layer.metadata?.style,
     nextProps.layer.metadata?.style
@@ -267,31 +268,35 @@ export function MapLayers() {
   const renderCount = useRef(0);
   renderCount.current += 1;
 
-  logger.debug('MapLayers render start', {
-    renderCount: renderCount.current,
-    timestamp: new Date().toISOString()
-  });
-
-  // Select primitive state parts with stable selectors
+  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const mapStatus = useMapInstanceStore(state => state.mapInstances.mapbox.status);
   const allIds = useLayerStore(state => state.layers.allIds);
   const byId = useLayerStore(state => state.layers.byId);
   const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
 
-  // Memoize the layers array creation
+  logger.debug('MapLayers render start', {
+    renderCount: renderCount.current,
+    timestamp: new Date().toISOString(),
+    mapStatus,
+    isInitialLoadComplete
+  });
+
   const layers = useMemo(() => {
     logger.debug('MapLayers: Computing layers array', {
       renderCount: renderCount.current,
-      allIdsCount: allIds.length
+      allIdsCount: allIds.length,
+      mapStatus,
+      isInitialLoadComplete
     });
     return allIds.map(id => byId[id]);
-  }, [allIds, byId]);
+  }, [allIds, byId, mapStatus, isInitialLoadComplete]);
 
-  // Memoize the valid layers array
   const validLayers = useMemo(() => {
     logger.debug('MapLayers computing validLayers', {
       renderCount: renderCount.current,
       inputLayerCount: layers.length,
       isInitialLoadComplete,
+      mapStatus,
       layerIds: layers.map(l => l.id),
       layerStates: layers.map(l => ({
         id: l.id,
@@ -300,9 +305,18 @@ export function MapLayers() {
         setupStatus: l.setupStatus
       }))
     });
-    
+
+    if (!mapboxInstance || mapStatus !== 'ready' || !isInitialLoadComplete) {
+      logger.debug('MapLayers: Skipping validLayers computation - map/initialLoad not ready', {
+        hasMap: !!mapboxInstance,
+        mapStatus,
+        isInitialLoadComplete
+      });
+      return [];
+    }
+
     const valid = layers.filter(layer => layer.metadata);
-    
+
     logger.debug('MapLayers computed validLayers', {
       renderCount: renderCount.current,
       validLayerCount: valid.length,
@@ -314,21 +328,22 @@ export function MapLayers() {
         setupStatus: l.setupStatus
       }))
     });
-    
-    return valid;
-  }, [layers, isInitialLoadComplete]);
 
-  // Memoize the layer renderers
+    return valid;
+  }, [layers, isInitialLoadComplete, mapStatus, mapboxInstance]);
+
   const layerRenderers = useMemo(() => {
-    if (!isInitialLoadComplete) {
-      logger.debug('MapLayers: Initial load not complete, deferring renderer creation', {
+    if (validLayers.length === 0) {
+      logger.debug('MapLayers: No valid layers to render or conditions not met', {
         renderCount: renderCount.current,
-        layerCount: validLayers.length
+        validLayerCount: validLayers.length,
+        mapStatus,
+        isInitialLoadComplete
       });
       return null;
     }
 
-    logger.debug('MapLayers: Initial load complete, creating renderers', {
+    logger.debug('MapLayers: Creating renderers', {
       renderCount: renderCount.current,
       layerCount: validLayers.length,
       layerIds: validLayers.map(l => l.id)
@@ -337,27 +352,16 @@ export function MapLayers() {
     return validLayers.map((layer) => (
       <LayerRenderer key={layer.id} layer={layer} />
     ));
-  }, [validLayers, isInitialLoadComplete]);
+  }, [validLayers]);
 
   logger.debug('MapLayers render complete', {
     renderCount: renderCount.current,
     layerCount: layers.length,
     validLayerCount: validLayers.length,
     isInitialLoadComplete,
-    layers: validLayers.map(l => ({
-      id: l.id,
-      hasMetadata: !!l.metadata,
-      visible: l.visible,
-      setupStatus: l.setupStatus
-    }))
+    mapStatus,
+    hasRenderers: !!layerRenderers
   });
-
-  if (!isInitialLoadComplete) {
-    logger.debug('MapLayers: Skipping render - initial load not complete', {
-      renderCount: renderCount.current
-    });
-    return null;
-  }
 
   return <>{layerRenderers}</>;
 } 
