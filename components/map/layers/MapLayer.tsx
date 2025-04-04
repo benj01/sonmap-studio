@@ -180,12 +180,24 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       // Preserve previous state if this is a Strict Mode remount
       sourceAdded: isRemount ? initStateRef.current.sourceAdded : false,
       sourceLoaded: isRemount ? initStateRef.current.sourceLoaded : false,
-      layerAdded: isRemount ? initStateRef.current.layerAdded : false
+      layerAdded: isRemount ? initStateRef.current.layerAdded : false,
+      // Always reset the attempt counter on mount to avoid inflation
+      sourceLoadAttempts: 0,
+      // Clear error state on new mount
+      sourceLoadError: undefined,
+      lastSourceDataEvent: undefined
     };
 
     // Update Strict Mode guard state
     if (isStrictMode && strictModeCleanupGuardRef.current.isFirstMount) {
       strictModeCleanupGuardRef.current.isFirstMount = false;
+    }
+    
+    // Set initial status to pending at mount time, but only on first mount and if not already pending
+    // This reduces the number of status updates to prevent re-render loops
+    if (mountCount.current === 1 && layerState?.setupStatus !== 'pending') {
+      logger.info(`Setting initial layer status to pending`, { id, previousStatus: layerState?.setupStatus });
+      updateStatus('pending');
     }
     
     logger.info(`MapLayer MOUNTED effect #${mountCount.current}`, { 
@@ -274,7 +286,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           hasLayerAdd: !!pendingOpsRef.current.layerAdd,
           timeoutCount: pendingOpsRef.current.timeoutIds.size,
           listenerCount: pendingOpsRef.current.listeners.size
-        }
+        },
+        layerState: layerState?.setupStatus
       });
       isEffectMounted = false;
 
@@ -293,6 +306,17 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       // Handle Strict Mode cleanup
       if (isStrictMode && isFirstMount) {
         logger.debug(`Cleanup: Strict mode first unmount detected for ${id}. Skipping map operations.`);
+        
+        // For Strict Mode first unmount, preserve the status if we had a pending operation
+        // This helps ensure the status remains pending across the remount
+        if (layerState?.setupStatus === 'pending' && !initStateRef.current.layerAdded) {
+          logger.debug(`Cleanup: Preserving pending status during Strict Mode first unmount for ${id}`);
+        } else if (initStateRef.current.layerAdded && layerState?.setupStatus !== 'complete') {
+          // If the layer was added but status isn't complete, update it now
+          logger.info(`Cleanup: Setting status to complete during Strict Mode first unmount for ${id}`);
+          updateStatus('complete');
+        }
+        
         return;
       }
 
@@ -308,9 +332,23 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               logger.info(`Cleanup: Removing layer ${id} (added locally)`, { id });
               map.removeLayer(id);
               initStateRef.current.layerAdded = false;
+
+              // During final cleanup, if we're removing the layer, update status
+              // to reflect that resources are being cleaned up
+              // Only do this if we're in a real unmount (not Strict Mode cleanup)
+              // and only if we're not in development mode to avoid update loops
+              if (!isStrictMode && mountCount.current > 2 && process.env.NODE_ENV !== 'development') {
+                logger.debug(`Cleanup: Updating status during real cleanup for ${id}`);
+                updateStatus('pending', `Cleaning up layer ${id}`);
+              }
             } catch (e) {
               logger.error(`Cleanup: Error removing layer ${id}`, { id, error: e });
               removeSourceAttemptAllowed = false;
+              
+              // Only update status to error if this is a "real" unmount
+              if (!isStrictMode || mountCount.current > 2) {
+                updateStatus('error', `Error removing layer: ${e instanceof Error ? e.message : String(e)}`);
+              }
             }
           }
         }
@@ -330,12 +368,31 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               }
             } catch (e) {
               logger.error(`Cleanup: Error removing source ${source.id}`, { id, error: e });
+              
+              // Only update status to error if this is a "real" unmount
+              if (!isStrictMode || mountCount.current > 2) {
+                updateStatus('error', `Error removing source: ${e instanceof Error ? e.message : String(e)}`);
+              }
             }
           }
         }
       }
 
-      logger.info(`Effect ADD/REMOVE CLEANUP END`, { id });
+      // Final cleanup status synchronization
+      // Only run on real unmount (not during Strict Mode cycles)
+      // and only in production to avoid update loops during development
+      if (!isStrictMode && mountCount.current > 2 && process.env.NODE_ENV !== 'development') {
+        if (layerState?.setupStatus === 'pending') {
+          logger.debug(`Cleanup: Setting final cleanup status for ${id}`);
+          updateStatus('pending', 'Component unmounted');
+        }
+      }
+
+      logger.info(`Effect ADD/REMOVE CLEANUP END`, { 
+        id, 
+        layerState: layerState?.setupStatus,
+        finalInitState: initStateRef.current
+      });
     };
 
     const proceedToAddLayer = (map: mapboxgl.Map) => {
@@ -344,41 +401,76 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       try {
         if (!map.getLayer(id)) {
           if (!layerConfigRef.current) {
-            logger.error(`Add/Remove: Layer config ref is not set for ${id}! Cannot add layer.`, { id });
-            updateStatus('error', `Internal error: Layer config missing for ${id}`);
+            const errorMsg = `Internal error: Layer config missing for ${id}`;
+            logger.error(`Add/Remove: ${errorMsg}`, { id });
+            initStateRef.current.lastError = errorMsg;
+            updateStatus('error', errorMsg);
             return;
           }
-          logger.info(`Add/Remove: Adding layer ${id}`, { id, layerConfig: { type: layerConfigRef.current.type, layout: layerConfigRef.current.layout } });
+
+          logger.info(`Add/Remove: Adding layer ${id}`, { 
+            id, 
+            layerConfig: { 
+              type: layerConfigRef.current.type, 
+              layout: layerConfigRef.current.layout 
+            }
+          });
+
+          // Add the layer
           map.addLayer(layerConfigRef.current, beforeId);
           layerAddedLocally = true;
+          initStateRef.current.layerAdded = true;
 
+          // Verify layer was added successfully
           if (!map.getLayer(id)) {
-            logger.error(`Add/Remove: Layer ${id} not found immediately after addLayer call!`, { id });
-            updateStatus('error', `Failed to verify layer ${id} after adding`);
+            const errorMsg = `Failed to verify layer ${id} after adding`;
+            logger.error(`Add/Remove: ${errorMsg}`, { id });
+            initStateRef.current.lastError = errorMsg;
+            updateStatus('error', errorMsg);
             return;
-          } else {
-            logger.info(`Add/Remove: Successfully added source/layer ${id}`, { id });
-            updateStatus('complete');
-            return;
-          }
+          } 
+          
+          // Layer successfully added
+          logger.info(`Add/Remove: Successfully added source/layer ${id}`, { 
+            id,
+            initState: initStateRef.current
+          });
+          initStateRef.current.lastError = undefined;
+          updateStatus('complete');
+          return;
         } else {
+          // Layer already exists
           logger.warn(`Add/Remove: Layer ${id} already exists. Assuming success.`, { id });
           layerAddedLocally = false;
-          if(layerState?.setupStatus !== 'complete') updateStatus('complete');
+          initStateRef.current.layerAdded = true;
+          initStateRef.current.lastError = undefined;
+          if(layerState?.setupStatus !== 'complete') {
+            logger.info(`Updating layer status to complete for existing layer ${id}`, {
+              previousStatus: layerState?.setupStatus
+            });
+            updateStatus('complete');
+          }
           return;
         }
       } catch (error: any) {
+        const errorMsg = error.message || `Unknown error adding layer ${id}`;
         logger.error(`Add/Remove: Error adding layer ${id}`, {
           id,
-          error: error.message || error,
+          error: errorMsg,
           stack: error.stack,
           sourceAddedLocally,
           layerAddedLocally
         });
-        if (!error.message?.includes('already exists') && isEffectMounted) {
-          updateStatus('error', error.message || `Failed adding layer ${id}`);
-        } else if (isEffectMounted && error.message?.includes('already exists')) {
-          if(layerState?.setupStatus !== 'complete') updateStatus('complete');
+        
+        initStateRef.current.lastError = errorMsg;
+        
+        if (!errorMsg.includes('already exists') && isEffectMounted) {
+          updateStatus('error', errorMsg);
+        } else if (isEffectMounted && errorMsg.includes('already exists')) {
+          initStateRef.current.layerAdded = true;
+          if(layerState?.setupStatus !== 'complete') {
+            updateStatus('complete');
+          }
         }
       }
     };
@@ -394,11 +486,18 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       logger.debug(`Checking source ${sourceId} state before adding layer ${id}`, {
         initState: initStateRef.current,
         sourceExists,
-        isSourceLoaded: sourceExists && map.isSourceLoaded(sourceId)
+        isSourceLoaded: sourceExists && map.isSourceLoaded(sourceId),
+        layerState: layerState?.setupStatus
       });
 
       // Track source load attempt
       initStateRef.current.sourceLoadAttempts++;
+      
+      // Update status to reflect we're waiting for the source
+      // ONLY do this on first attempt to avoid a potential re-render loop
+      if (layerState?.setupStatus === 'pending' && initStateRef.current.sourceLoadAttempts === 1) {
+        updateStatus('pending', `Loading source ${sourceId}`);
+      }
 
       const proceedWithSourceLoad = () => {
         if (sourceExists && map.isSourceLoaded(sourceId)) {
@@ -408,6 +507,9 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           proceedToAddLayer(map);
         } else {
           logger.debug(`Source ${sourceId} not loaded yet. Waiting for sourcedata event...`);
+          
+          // Don't update status here to avoid potential re-render loops
+          // The initial pending status is enough to indicate we're working
 
           if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
           if (sourceLoadListener) try { map.off('sourcedata', sourceLoadListener); } catch(e) {}
@@ -425,7 +527,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             if (e.sourceId === sourceId && e.isSourceLoaded && e.dataType === 'source') {
               logger.info(`'sourcedata' event confirmed source ${sourceId} loaded for ${id}`, {
                 sourceLoadAttempts: initStateRef.current.sourceLoadAttempts,
-                event: e
+                event: e,
+                layerState: layerState?.setupStatus
               });
               
               if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
@@ -434,6 +537,10 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               
               initStateRef.current.sourceLoaded = true;
               initStateRef.current.sourceLoadError = undefined;
+              
+              // No need to update status here, just proceed to add the layer
+              // This avoids potential re-render loops
+              
               proceedToAddLayer(map);
             }
           };
@@ -452,7 +559,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             logger.error(timeoutError, {
               sourceId,
               initState: initStateRef.current,
-              lastSourceDataEvent: initStateRef.current.lastSourceDataEvent
+              lastSourceDataEvent: initStateRef.current.lastSourceDataEvent,
+              layerState: layerState?.setupStatus
             });
 
             if (sourceLoadListener) {
@@ -467,6 +575,10 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               logger.info(`Source ${sourceId} loaded after timeout check`);
               initStateRef.current.sourceLoaded = true;
               initStateRef.current.sourceLoadError = undefined;
+              
+              // No need to update status here, just proceed to add the layer
+              // This avoids potential re-render loops
+              
               proceedToAddLayer(map);
             } else {
               initStateRef.current.sourceLoadError = timeoutError;
@@ -481,19 +593,29 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
 
       // If source exists, proceed with load check
       if (sourceExists) {
+        // No status update needed here to avoid re-render loops
         proceedWithSourceLoad();
       } else {
+        // Only update status once at the beginning of the process
+        if (layerState?.setupStatus === 'pending' && initStateRef.current.sourceLoadAttempts === 1) {
+          updateStatus('pending', `Adding source ${sourceId}`);
+        }
+        
         // Try to add the source first
         try {
           logger.info(`Adding source ${sourceId}`, { id });
           map.addSource(sourceId, sourceSpecRef.current);
           sourceAddedLocally = true;
           initStateRef.current.sourceAdded = true;
+          
+          // No status update needed here to avoid re-render loops
+          
           proceedWithSourceLoad();
         } catch (error: any) {
           const errorMsg = error?.message || 'Unknown error adding source';
           logger.error(`Error adding source ${sourceId}`, { id, error: errorMsg });
           initStateRef.current.sourceLoadError = errorMsg;
+          initStateRef.current.lastError = errorMsg;
           updateStatus('error', `Failed adding source ${sourceId}: ${errorMsg}`);
         }
       }
