@@ -80,6 +80,9 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   // Track component mount cycles for Strict Mode analysis
   const mountCount = useRef(0);
   const isStrictModeRender = useRef(false);
+  
+  // Track if the layer has been successfully set up in the current mount cycle
+  const setupCompletedRef = useRef(false);
 
   // Add initialization state tracking
   const initStateRef = useRef<{
@@ -154,6 +157,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   });
 
   const mountedRef = useRef(true);
+  // Add unmounting tracking
+  const isUnmountingRef = useRef(false);
   const layerStyleRef = useRef(layer);
   const sourceDataRef = useRef(source.data.data);
   const sourceSpecRef = useRef(source.data);
@@ -166,12 +171,26 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     }
   } as FillLayerSpecification | LineLayerSpecification | CircleLayerSpecification);
 
+  // Track when component is actually unmounting
+  useEffect(() => {
+    // Reset unmounting flag on mount
+    isUnmountingRef.current = false;
+    
+    return () => {
+      // Set unmounting flag on cleanup
+      isUnmountingRef.current = true;
+    };
+  }, []);
+
   // Track initial mount and Strict Mode remount
   useEffect(() => {
     mountCount.current++;
     const isStrictMode = process.env.NODE_ENV === 'development';
     const isRemount = mountCount.current === 2;
     isStrictModeRender.current = isRemount && isStrictMode;
+    
+    // Reset the setup completed flag on each mount
+    setupCompletedRef.current = false;
     
     // Update initialization state for new mount cycle
     initStateRef.current = {
@@ -267,6 +286,16 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     let sourceLoadTimeoutId: NodeJS.Timeout | null = null;
     let sourceLoadListener: ((e: MapSourceDataEvent) => void) | null = null;
 
+    // Skip redundant processing if the layer is already complete in this mount cycle
+    if (setupCompletedRef.current || (layerState?.setupStatus === 'complete' && initStateRef.current.layerAdded)) {
+      logger.debug(`Skipping add/remove effect run for ${id} - already complete.`, {
+        setupCompleted: setupCompletedRef.current,
+        layerStatus: layerState?.setupStatus,
+        initState: initStateRef.current
+      });
+      return;
+    }
+
     // Reset the guard at the start of each effect run
     const isStrictMode = process.env.NODE_ENV === 'development';
     const isFirstMount = strictModeCleanupGuardRef.current.isFirstMount;
@@ -287,7 +316,9 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           timeoutCount: pendingOpsRef.current.timeoutIds.size,
           listenerCount: pendingOpsRef.current.listeners.size
         },
-        layerState: layerState?.setupStatus
+        layerState: layerState?.setupStatus,
+        isUnmounting: isUnmountingRef.current,
+        setupCompleted: setupCompletedRef.current
       });
       isEffectMounted = false;
 
@@ -325,11 +356,19 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         const map = mapboxInstance;
         let removeSourceAttemptAllowed = sourceAddedLocally && initStateRef.current.sourceAdded;
 
-        // Remove layer first if we added it
-        if (layerAddedLocally && initStateRef.current.layerAdded) {
+        // Only remove layer if the component is actually unmounting OR if setup never completed
+        // Do NOT remove if setup completed and we're just cleaning up between effect runs
+        const shouldRemoveLayer = (isUnmountingRef.current || !setupCompletedRef.current) && layerAddedLocally && initStateRef.current.layerAdded;
+
+        // Remove layer first if we added it AND we should remove it now
+        if (shouldRemoveLayer) {
           if (map.getLayer(id)) {
             try {
-              logger.info(`Cleanup: Removing layer ${id} (added locally)`, { id });
+              logger.info(`Cleanup: Removing layer ${id} (shouldRemoveLayer=true)`, { 
+                id, 
+                isUnmounting: isUnmountingRef.current, 
+                setupCompleted: setupCompletedRef.current 
+              });
               map.removeLayer(id);
               initStateRef.current.layerAdded = false;
 
@@ -346,15 +385,25 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               removeSourceAttemptAllowed = false;
               
               // Only update status to error if this is a "real" unmount
-              if (!isStrictMode || mountCount.current > 2) {
+              if (!isStrictMode && mountCount.current > 2 && process.env.NODE_ENV !== 'development') {
                 updateStatus('error', `Error removing layer: ${e instanceof Error ? e.message : String(e)}`);
               }
             }
+          } else {
+            logger.debug(`Cleanup: Layer ${id} marked for removal but already removed.`, { id });
           }
+        } else {
+          // Log why removal is skipped
+          logger.debug(`Cleanup: Skipping layer removal for ${id}`, { 
+            id, 
+            isUnmounting: isUnmountingRef.current,
+            setupCompleted: setupCompletedRef.current, 
+            layerAddedLocally
+          });
         }
 
         // Then attempt source removal if allowed
-        if (removeSourceAttemptAllowed) {
+        if (removeSourceAttemptAllowed && isUnmountingRef.current) {
           if (map.getSource(source.id)) {
             try {
               const style = map.getStyle();
@@ -370,11 +419,18 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
               logger.error(`Cleanup: Error removing source ${source.id}`, { id, error: e });
               
               // Only update status to error if this is a "real" unmount
-              if (!isStrictMode || mountCount.current > 2) {
+              if (!isStrictMode && mountCount.current > 2 && process.env.NODE_ENV !== 'development') {
                 updateStatus('error', `Error removing source: ${e instanceof Error ? e.message : String(e)}`);
               }
             }
           }
+        } else {
+          logger.debug(`Cleanup: Skipping source removal for ${source.id}`, { 
+            id, 
+            sourceAddedLocally, 
+            removeSourceAttemptAllowed,
+            isUnmounting: isUnmountingRef.current 
+          });
         }
       }
 
@@ -391,7 +447,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       logger.info(`Effect ADD/REMOVE CLEANUP END`, { 
         id, 
         layerState: layerState?.setupStatus,
-        finalInitState: initStateRef.current
+        finalInitState: initStateRef.current,
+        isUnmounting: isUnmountingRef.current
       });
     };
 
@@ -436,6 +493,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             initState: initStateRef.current
           });
           initStateRef.current.lastError = undefined;
+          // Mark the setup as completed for this mount cycle
+          setupCompletedRef.current = true;
           updateStatus('complete');
           return;
         } else {
@@ -444,6 +503,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           layerAddedLocally = false;
           initStateRef.current.layerAdded = true;
           initStateRef.current.lastError = undefined;
+          // Mark the setup as completed for this mount cycle
+          setupCompletedRef.current = true;
           if(layerState?.setupStatus !== 'complete') {
             logger.info(`Updating layer status to complete for existing layer ${id}`, {
               previousStatus: layerState?.setupStatus
@@ -468,6 +529,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           updateStatus('error', errorMsg);
         } else if (isEffectMounted && errorMsg.includes('already exists')) {
           initStateRef.current.layerAdded = true;
+          // Mark the setup as completed for this mount cycle
+          setupCompletedRef.current = true;
           if(layerState?.setupStatus !== 'complete') {
             updateStatus('complete');
           }
