@@ -73,25 +73,84 @@ function isMapIdle(map: mapboxgl.Map): boolean {
 }
 
 export function MapLayer({ id, source, layer, initialVisibility = true, beforeId }: MapLayerProps) {
-  console.log(`MapLayer RENDER START for id: ${id}`);
+  // Add render cycle tracking
+  const renderCount = useRef(0);
+  renderCount.current++;
+
+  // Track component mount cycles for Strict Mode analysis
+  const mountCount = useRef(0);
+  const isStrictModeRender = useRef(false);
+
+  // Add initialization state tracking
+  const initStateRef = useRef<{
+    sourceAdded: boolean;
+    sourceLoaded: boolean;
+    layerAdded: boolean;
+    mountCycle: number;
+    sourceLoadAttempts: number;
+    sourceLoadError?: string;
+    lastSourceDataEvent?: {
+      timestamp: number;
+      isSourceLoaded: boolean;
+      dataType: string;
+    };
+    lastError?: string;
+  }>({
+    sourceAdded: false,
+    sourceLoaded: false,
+    layerAdded: false,
+    mountCycle: 0,
+    sourceLoadAttempts: 0
+  });
+
+  // Track async operations
+  const pendingOpsRef = useRef<{
+    sourceAdd?: Promise<void>;
+    sourceLoad?: Promise<void>;
+    layerAdd?: Promise<void>;
+    cleanup?: Promise<void>;
+    timeoutIds: Set<NodeJS.Timeout>;
+    listeners: Set<{
+      type: 'sourcedata' | 'idle';
+      handler: (e: any) => void;
+    }>;
+  }>({
+    timeoutIds: new Set(),
+    listeners: new Set()
+  });
+
+  // Enhanced Strict Mode cleanup guard
+  const strictModeCleanupGuardRef = useRef({
+    isFirstMount: true,
+    isFirstCleanup: true,
+    pendingOperations: false
+  });
+
+  logger.info(`MapLayer RENDER START #${renderCount.current}`, {
+    id,
+    mountCount: mountCount.current,
+    isStrictModeRender: isStrictModeRender.current,
+    timestamp: new Date().toISOString()
+  });
+
   const mapboxInstance = useMapboxInstance();
-  console.log(`MapLayer after useMapboxInstance for id: ${id}, hasMap: ${!!mapboxInstance}`);
   const originalLayerId = id.replace(/-fill$|-line$|-circle$/, '');
   const { layer: layerState, updateStatus } = useLayer(originalLayerId);
   const { isVisible } = useLayerVisibility(originalLayerId);
 
-  // Add Strict Mode cleanup guard
-  const strictModeCleanupGuardRef = useRef(true);
-
   // Add detailed logging for component state
-  logger.info(`MapLayer component RENDERING/MOUNTING`, { 
-    id, 
+  logger.info(`MapLayer component STATE`, { 
+    id,
+    renderCount: renderCount.current,
+    mountCount: mountCount.current,
+    isStrictModeRender: isStrictModeRender.current,
     sourceId: source.id,
     hasMap: !!mapboxInstance,
     mapStable: mapboxInstance ? isMapStable(mapboxInstance) : false,
     mapIdle: mapboxInstance ? isMapIdle(mapboxInstance) : false,
     layerState: layerState?.setupStatus,
-    isVisible
+    isVisible,
+    timestamp: new Date().toISOString()
   });
 
   const mountedRef = useRef(true);
@@ -106,6 +165,65 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       ...layer.layout
     }
   } as FillLayerSpecification | LineLayerSpecification | CircleLayerSpecification);
+
+  // Track initial mount and Strict Mode remount
+  useEffect(() => {
+    mountCount.current++;
+    const isStrictMode = process.env.NODE_ENV === 'development';
+    const isRemount = mountCount.current === 2;
+    isStrictModeRender.current = isRemount && isStrictMode;
+    
+    // Update initialization state for new mount cycle
+    initStateRef.current = {
+      ...initStateRef.current,
+      mountCycle: mountCount.current,
+      // Preserve previous state if this is a Strict Mode remount
+      sourceAdded: isRemount ? initStateRef.current.sourceAdded : false,
+      sourceLoaded: isRemount ? initStateRef.current.sourceLoaded : false,
+      layerAdded: isRemount ? initStateRef.current.layerAdded : false
+    };
+
+    // Update Strict Mode guard state
+    if (isStrictMode && strictModeCleanupGuardRef.current.isFirstMount) {
+      strictModeCleanupGuardRef.current.isFirstMount = false;
+    }
+    
+    logger.info(`MapLayer MOUNTED effect #${mountCount.current}`, { 
+      id,
+      renderCount: renderCount.current,
+      mountCount: mountCount.current,
+      isStrictModeRender: isStrictModeRender.current,
+      sourceId: source.id,
+      hasMap: !!mapboxInstance,
+      mapStable: mapboxInstance ? isMapStable(mapboxInstance) : false,
+      mapIdle: mapboxInstance ? isMapIdle(mapboxInstance) : false,
+      initState: initStateRef.current,
+      timestamp: new Date().toISOString()
+    });
+
+    return () => {
+      const isStrictModeFirstCleanup = isStrictMode && strictModeCleanupGuardRef.current.isFirstCleanup;
+      
+      logger.info(`MapLayer UNMOUNTING effect #${mountCount.current}`, { 
+        id,
+        renderCount: renderCount.current,
+        mountCount: mountCount.current,
+        isStrictModeRender: isStrictModeRender.current,
+        isStrictModeFirstCleanup,
+        sourceId: source.id,
+        hasMap: !!mapboxInstance,
+        mapStable: mapboxInstance ? isMapStable(mapboxInstance) : false,
+        mapIdle: mapboxInstance ? isMapIdle(mapboxInstance) : false,
+        initState: initStateRef.current,
+        hasPendingOps: !!pendingOpsRef.current.sourceAdd || !!pendingOpsRef.current.layerAdd,
+        timestamp: new Date().toISOString()
+      });
+
+      if (isStrictModeFirstCleanup) {
+        strictModeCleanupGuardRef.current.isFirstCleanup = false;
+      }
+    };
+  }, [id, source.id, mapboxInstance]);
 
   useEffect(() => {
     layerStyleRef.current = layer;
@@ -127,29 +245,6 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     logger.debug("Updated layerConfigRef", { id });
   }, [id, source.id]);
 
-  // Add mount/unmount logging
-  useEffect(() => {
-    console.log(`MapLayer MOUNTED effect for id: ${id}`);
-    logger.info(`MapLayer component MOUNTED`, { 
-      id, 
-      sourceId: source.id,
-      hasMap: !!mapboxInstance,
-      mapStable: mapboxInstance ? isMapStable(mapboxInstance) : false,
-      mapIdle: mapboxInstance ? isMapIdle(mapboxInstance) : false
-    });
-
-    return () => {
-      console.log(`MapLayer UNMOUNTING effect for id: ${id}`);
-      logger.info(`MapLayer component UNMOUNTING`, { 
-        id, 
-        sourceId: source.id,
-        hasMap: !!mapboxInstance,
-        mapStable: mapboxInstance ? isMapStable(mapboxInstance) : false,
-        mapIdle: mapboxInstance ? isMapIdle(mapboxInstance) : false
-      });
-    };
-  }, [id, source.id, mapboxInstance]);
-
   useEffect(() => {
     logger.info(`Effect ADD/REMOVE START`, { id, sourceId: source.id });
     mountedRef.current = true;
@@ -161,73 +256,84 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     let sourceLoadListener: ((e: MapSourceDataEvent) => void) | null = null;
 
     // Reset the guard at the start of each effect run
-    strictModeCleanupGuardRef.current = true;
-
+    const isStrictMode = process.env.NODE_ENV === 'development';
+    const isFirstMount = strictModeCleanupGuardRef.current.isFirstMount;
+    
     const cleanup = () => {
-      logger.info(`Effect ADD/REMOVE CLEANUP START`, { id, sourceId: source.id, sourceAddedLocally, layerAddedLocally });
+      logger.info(`Effect ADD/REMOVE CLEANUP START`, { 
+        id, 
+        sourceId: source.id, 
+        sourceAddedLocally, 
+        layerAddedLocally,
+        initState: initStateRef.current,
+        isStrictMode,
+        isFirstMount,
+        pendingOps: {
+          hasSourceAdd: !!pendingOpsRef.current.sourceAdd,
+          hasSourceLoad: !!pendingOpsRef.current.sourceLoad,
+          hasLayerAdd: !!pendingOpsRef.current.layerAdd,
+          timeoutCount: pendingOpsRef.current.timeoutIds.size,
+          listenerCount: pendingOpsRef.current.listeners.size
+        }
+      });
       isEffectMounted = false;
 
-      // --- Strict Mode Guard ---
-      if (strictModeCleanupGuardRef.current && process.env.NODE_ENV === 'development') {
+      // Clear all timeouts and listeners
+      pendingOpsRef.current.timeoutIds.forEach(id => clearTimeout(id));
+      pendingOpsRef.current.timeoutIds.clear();
+      pendingOpsRef.current.listeners.forEach(listener => {
+        try {
+          if (mapboxInstance && !mapboxInstance._removed) {
+            mapboxInstance.off(listener.type, listener.handler);
+          }
+        } catch (e) {}
+      });
+      pendingOpsRef.current.listeners.clear();
+
+      // Handle Strict Mode cleanup
+      if (isStrictMode && isFirstMount) {
         logger.debug(`Cleanup: Strict mode first unmount detected for ${id}. Skipping map operations.`);
-        strictModeCleanupGuardRef.current = false; // Toggle guard
-      } else {
-        // This is either production, or the second/real unmount in development
-        logger.debug(`Cleanup: Proceeding with 'real' cleanup or production cleanup for ${id}.`);
-        if (mapboxInstance && !mapboxInstance._removed && mapboxInstance.getCanvas()) {
-          const map = mapboxInstance;
-          let removeSourceAttemptAllowed = sourceAddedLocally;
-
-          // --- Layer Removal FIRST ---
-          if (layerAddedLocally) {
-            if (map.getLayer(id)) {
-              try {
-                logger.info(`Cleanup: Removing layer ${id} (added locally)`, { id });
-                map.removeLayer(id);
-              } catch (e) {
-                logger.error(`Cleanup: Error removing layer ${id}`, { id, error: e });
-                removeSourceAttemptAllowed = false;
-              }
-            } else {
-              logger.debug(`Cleanup: Layer ${id} marked added locally but already removed.`, { id });
-            }
-          } else {
-            logger.debug(`Cleanup: Skipping layer removal for ${id} (not added locally)`, { id });
-          }
-
-          // --- Source Removal Check/Attempt SECOND ---
-          if (removeSourceAttemptAllowed) {
-            if (map.getSource(source.id)) {
-              try {
-                const style = map.getStyle();
-                const layersUsingSource = (style?.layers || []).filter(l => l.id !== id && l?.source === source.id);
-                logger.debug(`Cleanup: Checking source ${source.id} usage immediately`, { id, layersUsingSource: layersUsingSource.map(l=>l.id) });
-
-                if (layersUsingSource.length === 0) {
-                  logger.info(`Cleanup: Removing source ${source.id} (added locally, no other users)`, { id });
-                  map.removeSource(source.id);
-                } else {
-                  logger.debug(`Cleanup: Keeping source ${source.id} (added locally, used by others: ${layersUsingSource.map(l=>l.id).join(', ')})`, { id });
-                }
-              } catch (e) {
-                logger.error(`Cleanup: Error checking/removing source ${source.id}`, { id, error: e });
-              }
-            } else {
-              logger.debug(`Cleanup: Source ${source.id} marked added locally but already removed.`, { id });
-            }
-          } else {
-            logger.debug(`Cleanup: Skipping source removal for ${source.id}`, { id, sourceAddedLocally, removeSourceAttemptAllowed });
-          }
-        } else {
-          logger.warn(`Cleanup: Skipped map operations for ${id} (Map invalid)`, { id, hasMap: !!mapboxInstance, removed: mapboxInstance?._removed });
-        }
+        return;
       }
 
-      // --- Listener/Timeout Cleanup (ALWAYS happens) ---
-      logger.debug(`Cleanup: Cleaning up listeners/timeouts for ${id}`);
-      if (idleListener && mapboxInstance && !mapboxInstance._removed) { try { mapboxInstance.off('idle', idleListener); } catch(e) {} }
-      if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
-      if (sourceLoadListener && mapboxInstance && !mapboxInstance._removed) { try { mapboxInstance.off('sourcedata', sourceLoadListener); } catch(e) {} }
+      // Proceed with actual cleanup if this is not a Strict Mode first cleanup
+      if (mapboxInstance && !mapboxInstance._removed && mapboxInstance.getCanvas()) {
+        const map = mapboxInstance;
+        let removeSourceAttemptAllowed = sourceAddedLocally && initStateRef.current.sourceAdded;
+
+        // Remove layer first if we added it
+        if (layerAddedLocally && initStateRef.current.layerAdded) {
+          if (map.getLayer(id)) {
+            try {
+              logger.info(`Cleanup: Removing layer ${id} (added locally)`, { id });
+              map.removeLayer(id);
+              initStateRef.current.layerAdded = false;
+            } catch (e) {
+              logger.error(`Cleanup: Error removing layer ${id}`, { id, error: e });
+              removeSourceAttemptAllowed = false;
+            }
+          }
+        }
+
+        // Then attempt source removal if allowed
+        if (removeSourceAttemptAllowed) {
+          if (map.getSource(source.id)) {
+            try {
+              const style = map.getStyle();
+              const layersUsingSource = (style?.layers || []).filter(l => l.id !== id && l?.source === source.id);
+              
+              if (layersUsingSource.length === 0) {
+                logger.info(`Cleanup: Removing source ${source.id} (added locally, no other users)`, { id });
+                map.removeSource(source.id);
+                initStateRef.current.sourceAdded = false;
+                initStateRef.current.sourceLoaded = false;
+              }
+            } catch (e) {
+              logger.error(`Cleanup: Error removing source ${source.id}`, { id, error: e });
+            }
+          }
+        }
+      }
 
       logger.info(`Effect ADD/REMOVE CLEANUP END`, { id });
     };
@@ -280,40 +386,116 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     const checkSourceAndAddLayer = (map: mapboxgl.Map) => {
       if (!isEffectMounted) return;
       const sourceId = source.id;
-      logger.debug(`Checking source ${sourceId} state before adding layer ${id}`);
+      
+      // Ensure we have a boolean for source existence
+      const mapSource = map.getSource(sourceId);
+      const sourceExists = mapSource !== undefined;
+      
+      logger.debug(`Checking source ${sourceId} state before adding layer ${id}`, {
+        initState: initStateRef.current,
+        sourceExists,
+        isSourceLoaded: sourceExists && map.isSourceLoaded(sourceId)
+      });
 
-      if (map.isSourceLoaded(sourceId)) {
-        logger.debug(`Source ${sourceId} is already loaded.`);
-        proceedToAddLayer(map);
-      } else {
-        logger.debug(`Source ${sourceId} not loaded yet. Waiting for sourcedata event...`);
+      // Track source load attempt
+      initStateRef.current.sourceLoadAttempts++;
 
-        if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
-        if (sourceLoadListener) try { map.off('sourcedata', sourceLoadListener); } catch(e) {}
+      const proceedWithSourceLoad = () => {
+        if (sourceExists && map.isSourceLoaded(sourceId)) {
+          logger.debug(`Source ${sourceId} is already loaded.`);
+          initStateRef.current.sourceLoaded = true;
+          initStateRef.current.sourceLoadError = undefined;
+          proceedToAddLayer(map);
+        } else {
+          logger.debug(`Source ${sourceId} not loaded yet. Waiting for sourcedata event...`);
 
-        sourceLoadListener = (e: MapSourceDataEvent) => {
-          if (e.sourceId === sourceId && e.isSourceLoaded && e.dataType === 'source' && isEffectMounted) {
-            logger.info(`'sourcedata' event confirmed source ${sourceId} loaded for ${id}`);
-            if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
-            try { map.off('sourcedata', sourceLoadListener!); } catch(e) {}
-            sourceLoadListener = null;
-            proceedToAddLayer(map);
-          }
-        };
-
-        map.on('sourcedata', sourceLoadListener);
-
-        sourceLoadTimeoutId = setTimeout(() => {
-          if (!isEffectMounted) return;
-          logger.error(`Timeout waiting for source ${sourceId} to load for layer ${id}`);
+          if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
           if (sourceLoadListener) try { map.off('sourcedata', sourceLoadListener); } catch(e) {}
-          sourceLoadListener = null;
-          if (map.getSource(sourceId) && map.isSourceLoaded(sourceId)) {
-            proceedToAddLayer(map);
-          } else {
-            updateStatus('error', `Timeout waiting for source ${sourceId}`);
-          }
-        }, 5000);
+
+          sourceLoadListener = (e: MapSourceDataEvent) => {
+            if (!isEffectMounted) return;
+
+            // Track all sourcedata events
+            initStateRef.current.lastSourceDataEvent = {
+              timestamp: Date.now(),
+              isSourceLoaded: Boolean(e.isSourceLoaded),
+              dataType: e.dataType
+            };
+
+            if (e.sourceId === sourceId && e.isSourceLoaded && e.dataType === 'source') {
+              logger.info(`'sourcedata' event confirmed source ${sourceId} loaded for ${id}`, {
+                sourceLoadAttempts: initStateRef.current.sourceLoadAttempts,
+                event: e
+              });
+              
+              if (sourceLoadTimeoutId) clearTimeout(sourceLoadTimeoutId);
+              try { map.off('sourcedata', sourceLoadListener!); } catch(e) {}
+              sourceLoadListener = null;
+              
+              initStateRef.current.sourceLoaded = true;
+              initStateRef.current.sourceLoadError = undefined;
+              proceedToAddLayer(map);
+            }
+          };
+
+          // Add listener to pendingOpsRef for cleanup
+          pendingOpsRef.current.listeners.add({
+            type: 'sourcedata',
+            handler: sourceLoadListener
+          });
+          map.on('sourcedata', sourceLoadListener);
+
+          sourceLoadTimeoutId = setTimeout(() => {
+            if (!isEffectMounted) return;
+            
+            const timeoutError = `Timeout waiting for source ${sourceId} to load after ${initStateRef.current.sourceLoadAttempts} attempts`;
+            logger.error(timeoutError, {
+              sourceId,
+              initState: initStateRef.current,
+              lastSourceDataEvent: initStateRef.current.lastSourceDataEvent
+            });
+
+            if (sourceLoadListener) {
+              try { map.off('sourcedata', sourceLoadListener); } catch(e) {}
+              sourceLoadListener = null;
+            }
+
+            // Check one last time
+            const finalSource = map.getSource(sourceId);
+            const isLoaded = finalSource !== undefined && map.isSourceLoaded(sourceId);
+            if (isLoaded) {
+              logger.info(`Source ${sourceId} loaded after timeout check`);
+              initStateRef.current.sourceLoaded = true;
+              initStateRef.current.sourceLoadError = undefined;
+              proceedToAddLayer(map);
+            } else {
+              initStateRef.current.sourceLoadError = timeoutError;
+              updateStatus('error', timeoutError);
+            }
+          }, 5000);
+
+          // Add timeout to pendingOpsRef for cleanup
+          pendingOpsRef.current.timeoutIds.add(sourceLoadTimeoutId);
+        }
+      };
+
+      // If source exists, proceed with load check
+      if (sourceExists) {
+        proceedWithSourceLoad();
+      } else {
+        // Try to add the source first
+        try {
+          logger.info(`Adding source ${sourceId}`, { id });
+          map.addSource(sourceId, sourceSpecRef.current);
+          sourceAddedLocally = true;
+          initStateRef.current.sourceAdded = true;
+          proceedWithSourceLoad();
+        } catch (error: any) {
+          const errorMsg = error?.message || 'Unknown error adding source';
+          logger.error(`Error adding source ${sourceId}`, { id, error: errorMsg });
+          initStateRef.current.sourceLoadError = errorMsg;
+          updateStatus('error', `Failed adding source ${sourceId}: ${errorMsg}`);
+        }
       }
     };
 
@@ -323,7 +505,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
         return;
       }
       logger.info(`Initializing layer ${id} after map idle.`);
-      const map = mapboxInstance;
+        const map = mapboxInstance;
       const sourceId = source.id;
 
       try {
@@ -354,7 +536,7 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       if (!map.isMoving()) {
         logger.debug(`Map is idle for ${id}. Initializing layer now.`);
         initializeLayer();
-      } else {
+              } else {
         logger.debug(`Map not idle for ${id}. Waiting for 'idle' event.`);
         idleListener = () => {
           logger.info(`'idle' event received for ${id}.`);
@@ -371,10 +553,10 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             }
           }
         }, 100);
-      }
-    } else {
+        }
+      } else {
       logger.warn(`Effect ADD/REMOVE: No map instance available yet for ${id}.`);
-    }
+      }
 
     return cleanup;
   }, [mapboxInstance, id, source.id, beforeId, updateStatus, layerState?.setupStatus]);
@@ -568,6 +750,11 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     }
   }, [mapboxInstance, id, isVisible]);
 
-  console.log(`MapLayer RENDER END for id: ${id}`);
+  logger.info(`MapLayer RENDER END #${renderCount.current}`, {
+    id,
+    mountCount: mountCount.current,
+    isStrictModeRender: isStrictModeRender.current,
+    timestamp: new Date().toISOString()
+  });
   return null;
 }
