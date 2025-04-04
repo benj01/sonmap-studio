@@ -257,9 +257,6 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   }, [id, source.id, mapboxInstance]);
 
   useEffect(() => {
-    layerStyleRef.current = layer;
-  }, [layer]);
-  useEffect(() => {
     sourceDataRef.current = source.data.data;
     sourceSpecRef.current = source.data;
   }, [source.data]);
@@ -785,8 +782,8 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       logger.debug(`Style update skipped for ${id} - layer not found on map`, { 
         id,
         availableLayers: map.getStyle()?.layers?.map(l => l.id) || [],
-        layerStyleRef: layerStyleRef.current,
-        newLayer: layer
+        layerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint),
+        newLayerPaint: JSON.stringify(layer.paint)
       });
       return;
     }
@@ -831,6 +828,15 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       return;
     }
 
+    // Log the style comparison before any checks
+    logger.debug(`Style update triggered for ${id}`, {
+      layerId: id,
+      currentRefState: JSON.stringify(layerStyleRef.current),
+      newLayerState: JSON.stringify(layer),
+      areSame: layerStyleRef.current === layer,
+      timestamp: new Date().toISOString()
+    });
+
     applyStyleUpdates(map);
   }, [mapboxInstance, id, layer, setupCompletedRef.current]);
 
@@ -838,9 +844,86 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
   const applyStyleUpdates = useCallback((map: mapboxgl.Map) => {
     if (!map || !map.getLayer(id)) return;
 
+    // Don't compare to layerStyleRef here as it might have been updated somewhere else
+    // Instead, verify the actual map state by comparing layer.paint with what's already on the map
+    try {
+      // Perform a preliminary check to log what the map currently has
+      const mapLayerId = id;
+      const mapLayerCurrentPaint: Record<string, any> = {};
+      const mapLayerCurrentLayout: Record<string, any> = {};
+      
+      // Safely extract current paint values directly from the map
+      if (layer.paint) {
+        Object.keys(layer.paint).forEach(key => {
+          try {
+            mapLayerCurrentPaint[key] = map.getPaintProperty(mapLayerId, key as any);
+          } catch (e) {
+            mapLayerCurrentPaint[key] = undefined;
+          }
+        });
+      }
+      
+      // Safely extract current layout values directly from the map
+      if (layer.layout) {
+        Object.keys(layer.layout).forEach(key => {
+          if (key !== 'visibility') {
+            try {
+              mapLayerCurrentLayout[key] = map.getLayoutProperty(mapLayerId, key as any);
+            } catch (e) {
+              mapLayerCurrentLayout[key] = undefined;
+            }
+          }
+        });
+      }
+      
+      logger.debug(`Current map state for ${id} style properties`, {
+        mapLayerId,
+        mapLayerCurrentPaint,
+        mapLayerCurrentLayout,
+        newLayerPaint: layer.paint,
+        newLayerLayout: layer.layout
+      });
+    } catch (error) {
+      logger.error(`Error reading current map style properties for ${id}`, { 
+        error: error instanceof Error ? error.message : error 
+      });
+    }
+
+    // Log raw style values for debugging
+    logger.debug(`Style Update Raw Values for ${id}`, {
+      layerId: id,
+      newLayerPropPaint: JSON.stringify(layer.paint),
+      layerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint),
+      newLayerPropLayout: JSON.stringify(layer.layout),
+      layerStyleRefLayout: JSON.stringify(layerStyleRef.current.layout),
+      newLayerPropFilter: JSON.stringify(layer.filter),
+      layerStyleRefFilter: JSON.stringify(layerStyleRef.current.filter),
+      newLayerPropMinZoom: layer.minzoom,
+      layerStyleRefMinZoom: layerStyleRef.current.minzoom,
+      newLayerPropMaxZoom: layer.maxzoom,
+      layerStyleRefMaxZoom: layerStyleRef.current.maxzoom,
+      layerStyleRefUpdateMissing: !layerStyleRef.current
+    });
+
     // Compare paint properties directly
     const currentPaint = layerStyleRef.current.paint || {};
     const newPaint = layer.paint || {};
+    
+    // Log individual paint property comparisons
+    Object.keys({...currentPaint, ...newPaint}).forEach(key => {
+      const currentValue = (currentPaint as Record<string, any>)[key];
+      const newValue = (newPaint as Record<string, any>)[key];
+      logger.debug(`Paint property comparison for ${id} - ${key}`, {
+        property: key,
+        currentValue,
+        newValue,
+        isEqual: isEqual(currentValue, newValue),
+        typeofCurrent: typeof currentValue,
+        typeofNew: typeof newValue,
+        isUndefined: newValue === undefined
+      });
+    });
+    
     const paintChanged = Object.keys(newPaint).some(key => 
       !isEqual((currentPaint as Record<string, any>)[key], (newPaint as Record<string, any>)[key])
     ) || Object.keys(currentPaint).some(key => 
@@ -852,6 +935,22 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     const newLayout = { ...(layer.layout || {}) };
     delete currentLayout.visibility;
     delete newLayout.visibility;
+    
+    // Log individual layout property comparisons
+    Object.keys({...currentLayout, ...newLayout}).forEach(key => {
+      const currentValue = (currentLayout as Record<string, any>)[key];
+      const newValue = (newLayout as Record<string, any>)[key];
+      logger.debug(`Layout property comparison for ${id} - ${key}`, {
+        property: key,
+        currentValue,
+        newValue,
+        isEqual: isEqual(currentValue, newValue),
+        typeofCurrent: typeof currentValue,
+        typeofNew: typeof newValue,
+        isUndefined: newValue === undefined
+      });
+    });
+    
     const layoutChanged = !isEqual(currentLayout, newLayout);
 
     // Compare other properties
@@ -860,12 +959,23 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
       layerStyleRef.current.minzoom !== layer.minzoom || 
       layerStyleRef.current.maxzoom !== layer.maxzoom;
 
-    logger.debug(`Style update check for ${id}`, {
+    logger.debug(`Style update check RESULT for ${id}`, {
       id,
       paintChanged,
       layoutChanged,
       filterChanged,
-      zoomRangeChanged
+      zoomRangeChanged,
+      // Include the actual calculated values to verify how they're determined
+      paintChangeDetection: {
+        keysInNewPaint: Object.keys(newPaint),
+        keysInCurrentPaint: Object.keys(currentPaint),
+        hasAnyDifferentKey: Object.keys(newPaint).some(key => 
+          !isEqual((currentPaint as Record<string, any>)[key], (newPaint as Record<string, any>)[key])
+        ),
+        anyKeyRemoved: Object.keys(currentPaint).some(key => 
+          !(key in newPaint)
+        )
+      }
     });
 
     if (paintChanged || layoutChanged || filterChanged || zoomRangeChanged) {
@@ -980,9 +1090,15 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           }
         }
 
-        // Update the layerStyleRef after all updates have been applied
-        layerStyleRef.current = { ...layer };
-        logger.info(`Style update completed for ${id}`);
+        // Update the layerStyleRef AFTER all updates have been applied
+        // and create a deep copy to prevent reference issues
+        layerStyleRef.current = {
+          ...JSON.parse(JSON.stringify(layer))
+        };
+        
+        logger.info(`Style update completed for ${id} - layerStyleRef updated`, {
+          updatedLayerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint)
+        });
       } catch (error) {
         logger.error(`Error during style update for ${id}`, {
           id, 
