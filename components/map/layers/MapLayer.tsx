@@ -763,167 +763,131 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     }
   }, [mapboxInstance, id, source.id, source.data]);
 
-  useEffect(() => {
-    if (!mapboxInstance) {
-      logger.debug(`Style update skipped for ${id} - no map instance`, { id });
-      return;
-    }
+  // Add debounce utility
+  const debounce = useCallback((fn: Function, ms = 100) => {
+    let timeoutId: NodeJS.Timeout;
+    return function(this: any, ...args: any[]) {
+      clearTimeout(timeoutId);
+      timeoutId = setTimeout(() => fn.apply(this, args), ms);
+    };
+  }, []);
 
-    // Skip style updates during layer initialization
-    if (!setupCompletedRef.current) {
-      logger.debug(`Style update skipped for ${id} - setup not completed yet`, { id });
-      return;
-    }
-
-    const map = mapboxInstance;
-    const layerExists = map.getLayer(id);
-
-    if (!layerExists) {
-      logger.debug(`Style update skipped for ${id} - layer not found on map`, { 
-        id,
-        availableLayers: map.getStyle()?.layers?.map(l => l.id) || [],
-        layerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint),
-        newLayerPaint: JSON.stringify(layer.paint)
-      });
-      return;
-    }
-
-    // Defer style updates if the map is not in an idle state
-    // But set a flag to apply them when it becomes idle
-    if (!isMapIdle(map)) {
-      logger.debug(`Style update deferred for ${id} - map not idle`, {
-        id, 
-        mapState: {
-          isStyleLoaded: map.isStyleLoaded(),
-          isMoving: map.isMoving(),
-          isZooming: map.isZooming(),
-          isRotating: map.isRotating()
-        }
-      });
-
-      // Set up a one-time idle listener to apply styles when map becomes idle
-      const applyStylesOnIdle = () => {
-        logger.debug(`Applying deferred style updates for ${id} after map idle`);
-        
-        // Check again if everything is still valid
-        if (mountedRef.current && map && !map._removed && map.getLayer(id)) {
-          // Call this effect again when map is idle
-          applyStyleUpdates(map);
-        }
-      };
-
-      // Use a single idle listener and clean it up properly
-      const idleListener = () => {
-        applyStylesOnIdle();
-        map.off('idle', idleListener);
-      };
-      
-      // Add listener to pendingOpsRef for cleanup
-      pendingOpsRef.current.listeners.add({
-        type: 'idle',
-        handler: idleListener
-      });
-      
-      map.once('idle', idleListener);
-      return;
-    }
-
-    // Log the style comparison before any checks
-    logger.debug(`Style update triggered for ${id}`, {
-      layerId: id,
-      currentRefState: JSON.stringify(layerStyleRef.current),
-      newLayerState: JSON.stringify(layer),
-      areSame: layerStyleRef.current === layer,
-      timestamp: new Date().toISOString()
-    });
-
-    applyStyleUpdates(map);
-  }, [mapboxInstance, id, layer, setupCompletedRef.current]);
+  // Add production mode check
+  const isDevelopment = process.env.NODE_ENV === 'development';
 
   // Helper function to apply style updates
   const applyStyleUpdates = useCallback((map: mapboxgl.Map) => {
     if (!map || !map.getLayer(id)) return;
 
-    // Don't compare to layerStyleRef here as it might have been updated somewhere else
-    // Instead, verify the actual map state by comparing layer.paint with what's already on the map
-    try {
-      // Perform a preliminary check to log what the map currently has
-      const mapLayerId = id;
-      const mapLayerCurrentPaint: Record<string, any> = {};
-      const mapLayerCurrentLayout: Record<string, any> = {};
-      
-      // Safely extract current paint values directly from the map
-      if (layer.paint) {
-        Object.keys(layer.paint).forEach(key => {
-          try {
-            mapLayerCurrentPaint[key] = map.getPaintProperty(mapLayerId, key as any);
-          } catch (e) {
-            mapLayerCurrentPaint[key] = undefined;
-          }
-        });
-      }
-      
-      // Safely extract current layout values directly from the map
-      if (layer.layout) {
-        Object.keys(layer.layout).forEach(key => {
-          if (key !== 'visibility') {
+    // Track update success/failure
+    const updateResults = {
+      layout: { success: true, error: null as Error | null },
+      paint: { success: true, error: null as Error | null },
+      filter: { success: true, error: null as Error | null },
+      zoomRange: { success: true, error: null as Error | null }
+    };
+
+    // Get current and new style values
+    const currentPaint = layerStyleRef.current?.paint || {};
+    const newPaint = layer.paint || {};
+    const currentLayout = layerStyleRef.current?.layout || {};
+    const newLayout = layer.layout || {};
+
+    // Only log detailed diagnostics in development
+    if (isDevelopment) {
+      // Don't compare to layerStyleRef here as it might have been updated somewhere else
+      // Instead, verify the actual map state by comparing layer.paint with what's already on the map
+      try {
+        // Perform a preliminary check to log what the map currently has
+        const mapLayerId = id;
+        const mapLayerCurrentPaint: Record<string, any> = {};
+        const mapLayerCurrentLayout: Record<string, any> = {};
+        
+        // Safely extract current paint values directly from the map
+        if (layer.paint) {
+          Object.keys(layer.paint).forEach(key => {
             try {
-              mapLayerCurrentLayout[key] = map.getLayoutProperty(mapLayerId, key as any);
+              mapLayerCurrentPaint[key] = map.getPaintProperty(mapLayerId, key as any);
             } catch (e) {
-              mapLayerCurrentLayout[key] = undefined;
+              mapLayerCurrentPaint[key] = undefined;
             }
-          }
+          });
+        }
+        
+        // Safely extract current layout values directly from the map
+        if (layer.layout) {
+          Object.keys(layer.layout).forEach(key => {
+            if (key !== 'visibility') {
+              try {
+                mapLayerCurrentLayout[key] = map.getLayoutProperty(mapLayerId, key as any);
+              } catch (e) {
+                mapLayerCurrentLayout[key] = undefined;
+              }
+            }
+          });
+        }
+        
+        logger.debug(`Current map state for ${id} style properties`, {
+          mapLayerId,
+          mapLayerCurrentPaint,
+          mapLayerCurrentLayout,
+          newLayerPaint: layer.paint,
+          newLayerLayout: layer.layout
+        });
+      } catch (error) {
+        logger.error(`Error reading current map style properties for ${id}`, { 
+          error: error instanceof Error ? error.message : error 
         });
       }
-      
-      logger.debug(`Current map state for ${id} style properties`, {
-        mapLayerId,
-        mapLayerCurrentPaint,
-        mapLayerCurrentLayout,
-        newLayerPaint: layer.paint,
-        newLayerLayout: layer.layout
+
+      // Log raw style values for debugging
+      logger.debug(`Style Update Raw Values for ${id}`, {
+        layerId: id,
+        newLayerPropPaint: JSON.stringify(layer.paint),
+        layerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint),
+        newLayerPropLayout: JSON.stringify(layer.layout),
+        layerStyleRefLayout: JSON.stringify(layerStyleRef.current.layout),
+        newLayerPropFilter: JSON.stringify(layer.filter),
+        layerStyleRefFilter: JSON.stringify(layerStyleRef.current.filter),
+        newLayerPropMinZoom: layer.minzoom,
+        layerStyleRefMinZoom: layerStyleRef.current.minzoom,
+        newLayerPropMaxZoom: layer.maxzoom,
+        layerStyleRefMaxZoom: layerStyleRef.current.maxzoom,
+        layerStyleRefUpdateMissing: !layerStyleRef.current
       });
-    } catch (error) {
-      logger.error(`Error reading current map style properties for ${id}`, { 
-        error: error instanceof Error ? error.message : error 
+
+      // Log individual paint property comparisons
+      Object.keys({...currentPaint, ...newPaint}).forEach(key => {
+        const currentValue = (currentPaint as Record<string, any>)[key];
+        const newValue = (newPaint as Record<string, any>)[key];
+        logger.debug(`Paint property comparison for ${id} - ${key}`, {
+          property: key,
+          currentValue,
+          newValue,
+          isEqual: isEqual(currentValue, newValue),
+          typeofCurrent: typeof currentValue,
+          typeofNew: typeof newValue,
+          isUndefined: newValue === undefined
+        });
+      });
+
+      // Log individual layout property comparisons
+      Object.keys({...currentLayout, ...newLayout}).forEach(key => {
+        const currentValue = (currentLayout as Record<string, any>)[key];
+        const newValue = (newLayout as Record<string, any>)[key];
+        logger.debug(`Layout property comparison for ${id} - ${key}`, {
+          property: key,
+          currentValue,
+          newValue,
+          isEqual: isEqual(currentValue, newValue),
+          typeofCurrent: typeof currentValue,
+          typeofNew: typeof newValue,
+          isUndefined: newValue === undefined
+        });
       });
     }
 
-    // Log raw style values for debugging
-    logger.debug(`Style Update Raw Values for ${id}`, {
-      layerId: id,
-      newLayerPropPaint: JSON.stringify(layer.paint),
-      layerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint),
-      newLayerPropLayout: JSON.stringify(layer.layout),
-      layerStyleRefLayout: JSON.stringify(layerStyleRef.current.layout),
-      newLayerPropFilter: JSON.stringify(layer.filter),
-      layerStyleRefFilter: JSON.stringify(layerStyleRef.current.filter),
-      newLayerPropMinZoom: layer.minzoom,
-      layerStyleRefMinZoom: layerStyleRef.current.minzoom,
-      newLayerPropMaxZoom: layer.maxzoom,
-      layerStyleRefMaxZoom: layerStyleRef.current.maxzoom,
-      layerStyleRefUpdateMissing: !layerStyleRef.current
-    });
-
     // Compare paint properties directly
-    const currentPaint = layerStyleRef.current.paint || {};
-    const newPaint = layer.paint || {};
-    
-    // Log individual paint property comparisons
-    Object.keys({...currentPaint, ...newPaint}).forEach(key => {
-      const currentValue = (currentPaint as Record<string, any>)[key];
-      const newValue = (newPaint as Record<string, any>)[key];
-      logger.debug(`Paint property comparison for ${id} - ${key}`, {
-        property: key,
-        currentValue,
-        newValue,
-        isEqual: isEqual(currentValue, newValue),
-        typeofCurrent: typeof currentValue,
-        typeofNew: typeof newValue,
-        isUndefined: newValue === undefined
-      });
-    });
-    
     const paintChanged = Object.keys(newPaint).some(key => 
       !isEqual((currentPaint as Record<string, any>)[key], (newPaint as Record<string, any>)[key])
     ) || Object.keys(currentPaint).some(key => 
@@ -931,26 +895,6 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
     );
 
     // Compare layout properties directly (excluding visibility)
-    const currentLayout = { ...(layerStyleRef.current.layout || {}) };
-    const newLayout = { ...(layer.layout || {}) };
-    delete currentLayout.visibility;
-    delete newLayout.visibility;
-    
-    // Log individual layout property comparisons
-    Object.keys({...currentLayout, ...newLayout}).forEach(key => {
-      const currentValue = (currentLayout as Record<string, any>)[key];
-      const newValue = (newLayout as Record<string, any>)[key];
-      logger.debug(`Layout property comparison for ${id} - ${key}`, {
-        property: key,
-        currentValue,
-        newValue,
-        isEqual: isEqual(currentValue, newValue),
-        typeofCurrent: typeof currentValue,
-        typeofNew: typeof newValue,
-        isUndefined: newValue === undefined
-      });
-    });
-    
     const layoutChanged = !isEqual(currentLayout, newLayout);
 
     // Compare other properties
@@ -1010,16 +954,18 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             Object.keys(previousLayout || {}).forEach(key => {
               if ((currentLayout as any)?.[key] === undefined) {
                 logger.debug(`Resetting layout property to default for ${id}`, { key });
-                // Setting to undefined allows Mapbox to use the default value
                 map.setLayoutProperty(id, key as any, undefined);
               }
             });
             
             logger.debug(`Layout properties updated for ${id}`);
           } catch (error) {
+            updateResults.layout.success = false;
+            updateResults.layout.error = error instanceof Error ? error : new Error(String(error));
             logger.error(`Error updating layout properties for ${id}`, {
               id, 
-              error: error instanceof Error ? error.message : error
+              error: updateResults.layout.error.message,
+              stack: updateResults.layout.error.stack
             });
             // Continue with other updates even if layout update fails
           }
@@ -1039,16 +985,18 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             Object.keys(previousLayer.paint || {}).forEach(key => {
               if ((layer.paint as any)?.[key] === undefined) {
                 logger.debug(`Resetting paint property to default for ${id}`, { key });
-                // Setting to undefined allows Mapbox to use the default value
                 map.setPaintProperty(id, key as any, undefined);
               }
             });
             
             logger.debug(`Paint properties updated for ${id}`);
           } catch (error) {
+            updateResults.paint.success = false;
+            updateResults.paint.error = error instanceof Error ? error : new Error(String(error));
             logger.error(`Error updating paint properties for ${id}`, {
               id, 
-              error: error instanceof Error ? error.message : error
+              error: updateResults.paint.error.message,
+              stack: updateResults.paint.error.stack
             });
             // Continue with other updates even if paint update fails
           }
@@ -1064,9 +1012,12 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             map.setFilter(id, layer.filter || null);
             logger.debug(`Filter updated for ${id}`);
           } catch (error) {
+            updateResults.filter.success = false;
+            updateResults.filter.error = error instanceof Error ? error : new Error(String(error));
             logger.error(`Error updating filter for ${id}`, {
               id, 
-              error: error instanceof Error ? error.message : error
+              error: updateResults.filter.error.message,
+              stack: updateResults.filter.error.stack
             });
             // Continue with other updates even if filter update fails
           }
@@ -1082,9 +1033,12 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
             map.setLayerZoomRange(id, layer.minzoom ?? 0, layer.maxzoom ?? 24);
             logger.debug(`Zoom range updated for ${id}`);
           } catch (error) {
+            updateResults.zoomRange.success = false;
+            updateResults.zoomRange.error = error instanceof Error ? error : new Error(String(error));
             logger.error(`Error updating zoom range for ${id}`, {
               id, 
-              error: error instanceof Error ? error.message : error
+              error: updateResults.zoomRange.error.message,
+              stack: updateResults.zoomRange.error.stack
             });
             // Continue with other updates even if zoom range update fails
           }
@@ -1096,20 +1050,124 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           ...JSON.parse(JSON.stringify(layer))
         };
         
-        logger.info(`Style update completed for ${id} - layerStyleRef updated`, {
-          updatedLayerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint)
-        });
+        // Log the overall update results
+        const allSuccessful = Object.values(updateResults).every(r => r.success);
+        if (allSuccessful) {
+          logger.info(`Style update completed successfully for ${id}`, {
+            updatedLayerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint)
+          });
+        } else {
+          const failedUpdates = Object.entries(updateResults)
+            .filter(([_, result]) => !result.success)
+            .map(([type, result]) => ({
+              type,
+              error: result.error?.message
+            }));
+          
+          logger.warn(`Style update completed with partial failures for ${id}`, {
+            failedUpdates,
+            updatedLayerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint)
+          });
+          
+          // Update layer status to reflect partial failure
+          if (layerState?.setupStatus === 'complete') {
+            updateStatus('error', `Style update failed for: ${failedUpdates.map(f => f.type).join(', ')}`);
+          }
+        }
       } catch (error) {
+        const errorObj = error instanceof Error ? error : new Error(String(error));
         logger.error(`Error during style update for ${id}`, {
           id, 
-          error: error instanceof Error ? error.message : error,
-          stack: error instanceof Error ? error.stack : undefined
+          error: errorObj.message,
+          stack: errorObj.stack
         });
+        
+        // Update layer status to reflect complete failure
+        if (layerState?.setupStatus === 'complete') {
+          updateStatus('error', `Style update failed: ${errorObj.message}`);
+        }
       }
     } else {
       logger.debug(`No style changes detected for ${id}`);
     }
-  }, [id, layer]);
+  }, [id, layer, layerState?.setupStatus, updateStatus]);
+
+  // Create debounced style update function
+  const debouncedStyleUpdate = useMemo(() => 
+    debounce((map: mapboxgl.Map) => {
+      logger.debug(`Debounced style update triggered for ${id}`);
+      applyStyleUpdates(map);
+    }, 100)
+  , [id, debounce, applyStyleUpdates]);
+
+  // Update the style update effect to use debouncing
+  useEffect(() => {
+    if (!mapboxInstance) {
+      logger.debug(`Style update skipped for ${id} - no map instance`, { id });
+      return;
+    }
+
+    // Skip style updates during layer initialization
+    if (!setupCompletedRef.current) {
+      logger.debug(`Style update skipped for ${id} - setup not completed yet`, { id });
+      return;
+    }
+
+    const map = mapboxInstance;
+    const layerExists = map.getLayer(id);
+
+    if (!layerExists) {
+      logger.debug(`Style update skipped for ${id} - layer not found on map`, { 
+        id,
+        availableLayers: map.getStyle()?.layers?.map(l => l.id) || [],
+        layerStyleRefPaint: JSON.stringify(layerStyleRef.current.paint),
+        newLayerPaint: JSON.stringify(layer.paint)
+      });
+      return;
+    }
+
+    // Defer style updates if the map is not in an idle state
+    if (!isMapIdle(map)) {
+      logger.debug(`Style update deferred for ${id} - map not idle`, {
+        id, 
+        mapState: {
+          isStyleLoaded: map.isStyleLoaded(),
+          isMoving: map.isMoving(),
+          isZooming: map.isZooming(),
+          isRotating: map.isRotating()
+        }
+      });
+
+      // Set up a one-time idle listener to apply styles when map becomes idle
+      const applyStylesOnIdle = () => {
+        logger.debug(`Applying deferred style updates for ${id} after map idle`);
+        
+        // Check again if everything is still valid
+        if (mountedRef.current && map && !map._removed && map.getLayer(id)) {
+          // Use debounced update when map becomes idle
+          debouncedStyleUpdate(map);
+        }
+      };
+
+      // Use a single idle listener and clean it up properly
+      const idleListener = () => {
+        applyStylesOnIdle();
+        map.off('idle', idleListener);
+      };
+      
+      // Add listener to pendingOpsRef for cleanup
+      pendingOpsRef.current.listeners.add({
+        type: 'idle',
+        handler: idleListener
+      });
+      
+      map.once('idle', idleListener);
+      return;
+    }
+
+    // Use debounced update for direct style changes
+    debouncedStyleUpdate(map);
+  }, [mapboxInstance, id, layer, setupCompletedRef.current, debouncedStyleUpdate]);
 
   useEffect(() => {
     if (!mapboxInstance) {
