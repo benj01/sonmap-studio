@@ -158,9 +158,9 @@ export const MapContainer = memo(function MapContainer({
 
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col">
-      <div className="flex-1 flex flex-col gap-8 p-4">
-        <div className="basis-[45%] flex flex-col gap-2 min-h-[400px]">
-          <div className="flex justify-between items-center px-2">
+      <div className="flex-1 flex flex-col gap-20 p-4">
+        <section className="h-[400px] flex flex-col gap-2">
+          <div className="flex justify-between items-center px-2 mb-2">
             <h2 className="text-lg font-semibold">2D Map View</h2>
             <div className="flex gap-2">
               <SyncTo3DButton />
@@ -175,19 +175,19 @@ export const MapContainer = memo(function MapContainer({
             </div>
             <MapView accessToken={accessToken} style={style} />
           </div>
-        </div>
+        </section>
 
-        <div className="basis-[55%] flex flex-col gap-2 min-h-[400px]">
-          <div className="flex justify-between items-center px-2">
+        <section className="h-[400px] flex flex-col gap-2 mt-4">
+          <div className="flex justify-between items-center px-2 mb-4">
             <h2 className="text-lg font-semibold">3D Map View</h2>
           </div>
           <div className="relative flex-1">
             <CesiumViewWithProvider />
           </div>
-        </div>
+        </section>
       </div>
 
-      <div className="flex-none p-4 border-t bg-background">
+      <div className="flex-none p-4 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <StatusMonitor />
       </div>
     </div>
