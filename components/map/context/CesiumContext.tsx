@@ -2,10 +2,13 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback, useRef } from 'react';
 import * as Cesium from 'cesium';
-import { LogManager } from '@/core/logging/log-manager';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 const SOURCE = 'CesiumContext';
 const logManager = LogManager.getInstance();
+
+// Configure logging for CesiumContext
+logManager.setComponentLogLevel(SOURCE, LogLevel.INFO);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -43,39 +46,39 @@ interface CesiumProviderProps {
 }
 
 export function CesiumProvider({ children }: CesiumProviderProps) {
-  const [viewer, setViewerState] = useState<Cesium.Viewer | null>(null);
+  const viewerRef = useRef<Cesium.Viewer | null>(null);
   const [isInitialized, setIsInitializedState] = useState(false);
-  const mountCount = useRef(0);
-  const renderCount = useRef(0);
-  const isUnmounting = useRef(false);
+  const isMountedRef = useRef(false);
+  const mountCountRef = useRef(0);
+  const renderCountRef = useRef(0);
 
   // Track render cycles
-  renderCount.current++;
+  renderCountRef.current++;
   logger.info('CesiumContext: Render', {
-    renderCount: renderCount.current,
-    mountCount: mountCount.current,
-    hasViewer: !!viewer,
+    renderCount: renderCountRef.current,
+    mountCount: mountCountRef.current,
+    hasViewer: !!viewerRef.current,
     isInitialized,
     timestamp: new Date().toISOString()
   });
 
   // Memoize the setter functions to ensure stable references
   const setViewer = useCallback((newViewer: Cesium.Viewer | null) => {
-    if (isUnmounting.current) {
-      logger.warn('CesiumContext: Ignoring setViewer during unmount');
+    if (!isMountedRef.current) {
+      logger.debug('CesiumContext: Ignoring setViewer during unmount');
       return;
     }
     logger.info('CesiumContext: Setting viewer', {
       hasNewViewer: !!newViewer,
-      hasPreviousViewer: !!viewer,
+      hasPreviousViewer: !!viewerRef.current,
       timestamp: new Date().toISOString()
     });
-    setViewerState(newViewer);
-  }, [viewer]);
+    viewerRef.current = newViewer;
+  }, []);
 
   const setInitialized = useCallback((initialized: boolean) => {
-    if (isUnmounting.current) {
-      logger.warn('CesiumContext: Ignoring setInitialized during unmount');
+    if (!isMountedRef.current) {
+      logger.debug('CesiumContext: Ignoring setInitialized during unmount');
       return;
     }
     logger.info('CesiumContext: Setting initialization state', {
@@ -88,42 +91,56 @@ export function CesiumProvider({ children }: CesiumProviderProps) {
 
   // Memoize the context value to prevent unnecessary re-renders
   const contextValue = useMemo(() => ({
-    viewer,
+    viewer: viewerRef.current,
     isInitialized,
     setViewer,
     setInitialized
-  }), [viewer, isInitialized, setViewer, setInitialized]);
+  }), [isInitialized, setViewer, setInitialized]);
 
   // Log provider lifecycle
   useEffect(() => {
-    mountCount.current++;
-    isUnmounting.current = false;
+    mountCountRef.current++;
+    isMountedRef.current = true;
     logger.info('CesiumContext: Provider mounted', {
-      mountCount: mountCount.current,
-      renderCount: renderCount.current,
-      hasViewer: !!viewer,
+      mountCount: mountCountRef.current,
+      renderCount: renderCountRef.current,
+      hasViewer: !!viewerRef.current,
       isInitialized,
       timestamp: new Date().toISOString()
     });
     
     return () => {
-      isUnmounting.current = true;
+      isMountedRef.current = false;
       logger.info('CesiumContext: Provider unmounting', {
-        mountCount: mountCount.current,
-        renderCount: renderCount.current,
-        hasViewer: !!viewer,
+        mountCount: mountCountRef.current,
+        renderCount: renderCountRef.current,
+        hasViewer: !!viewerRef.current,
         isInitialized,
         timestamp: new Date().toISOString()
       });
       
-      // Only destroy the viewer if this is the final unmount
-      if (viewer && !viewer.isDestroyed() && mountCount.current > 1) {
-        logger.info('CesiumContext: Destroying Cesium viewer on provider unmount');
-        viewer.destroy();
-      }
-      setIsInitializedState(false);
+      // Use queueMicrotask to ensure this runs after potential remount effects
+      queueMicrotask(() => {
+        // Only destroy if we're still unmounted (not a Strict Mode remount)
+        // and if we have a viewer instance
+        if (!isMountedRef.current && viewerRef.current && !viewerRef.current.isDestroyed()) {
+          logger.info('CesiumContext: Destroying Cesium viewer on final unmount');
+          try {
+            viewerRef.current.destroy();
+            viewerRef.current = null;
+          } catch (error) {
+            logger.error('CesiumContext: Error destroying viewer', { error });
+          }
+        } else {
+          logger.debug('CesiumContext: Skipping viewer destruction', {
+            isMounted: isMountedRef.current,
+            hasViewer: !!viewerRef.current,
+            isDestroyed: viewerRef.current?.isDestroyed()
+          });
+        }
+      });
     };
-  }, [viewer, isInitialized]);
+  }, []); // Empty dependency array - only run on mount/unmount
 
   return (
     <CesiumContext.Provider value={contextValue}>

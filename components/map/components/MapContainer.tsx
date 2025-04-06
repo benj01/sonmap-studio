@@ -5,14 +5,13 @@ import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { LogManager } from '@/core/logging/log-manager';
 import { MapView } from './MapView';
-import { CesiumView } from './cesium/CesiumView';
 import { LayerPanel } from './LayerPanel';
 import { SyncTo3DButton } from './SyncTo3DButton';
 import { ResetButton } from './ResetButton';
 import { useProjectLayers } from '../hooks/useProjectLayers';
 import { LayerList } from './LayerList';
 import { StatusMonitor } from './StatusMonitor';
-import { CesiumProvider } from '../context/CesiumContext';
+import { CesiumViewWithProvider } from './cesium/CesiumViewWithProvider';
 
 const SOURCE = 'MapContainer';
 const logManager = LogManager.getInstance();
@@ -82,13 +81,6 @@ export const MapContainer = memo(function MapContainer({
     timestamp: new Date().toISOString()
   });
 
-  // Memoize the CesiumProvider to prevent unnecessary remounts
-  const cesiumProvider = useMemo(() => (
-    <CesiumProvider>
-      <CesiumView />
-    </CesiumProvider>
-  ), []); // Empty dependency array since CesiumProvider is stable
-
   // Log mount/unmount cycles
   useEffect(() => {
     mountCount.current++;
@@ -110,9 +102,6 @@ export const MapContainer = memo(function MapContainer({
         right: rect.right
       });
     }
-
-    // Increment mount count
-    mountCount.current += 1;
 
     logger.debug('MapContainer effect starting', {
       mountCount: mountCount.current,
@@ -194,7 +183,7 @@ export const MapContainer = memo(function MapContainer({
         <div className="flex flex-col gap-2">
           <h2 className="text-lg font-semibold px-2">3D Map View</h2>
           <div className="relative w-full h-1/2 min-h-[400px]">
-            {cesiumProvider}
+            <CesiumViewWithProvider />
           </div>
         </div>
       </div>
@@ -206,8 +195,19 @@ export const MapContainer = memo(function MapContainer({
     prevProps.accessToken === nextProps.accessToken &&
     prevProps.style === nextProps.style &&
     prevProps.projectId === nextProps.projectId &&
-    JSON.stringify(prevProps.initialViewState2D) === JSON.stringify(nextProps.initialViewState2D) &&
-    JSON.stringify(prevProps.initialViewState3D) === JSON.stringify(nextProps.initialViewState3D);
+    // Compare view states using shallow comparison of their properties
+    (!prevProps.initialViewState2D && !nextProps.initialViewState2D) ||
+    (prevProps.initialViewState2D?.latitude === nextProps.initialViewState2D?.latitude &&
+     prevProps.initialViewState2D?.longitude === nextProps.initialViewState2D?.longitude &&
+     prevProps.initialViewState2D?.zoom === nextProps.initialViewState2D?.zoom &&
+     prevProps.initialViewState2D?.bearing === nextProps.initialViewState2D?.bearing &&
+     prevProps.initialViewState2D?.pitch === nextProps.initialViewState2D?.pitch) &&
+    (!prevProps.initialViewState3D && !nextProps.initialViewState3D) ||
+    (prevProps.initialViewState3D?.latitude === nextProps.initialViewState3D?.latitude &&
+     prevProps.initialViewState3D?.longitude === nextProps.initialViewState3D?.longitude &&
+     prevProps.initialViewState3D?.height === nextProps.initialViewState3D?.height &&
+     prevProps.initialViewState3D?.heading === nextProps.initialViewState3D?.heading &&
+     prevProps.initialViewState3D?.pitch === nextProps.initialViewState3D?.pitch);
 
   logger.debug('MapContainer: Props comparison', {
     propsEqual,

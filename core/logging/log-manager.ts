@@ -42,23 +42,26 @@ export class LogManager {
     // Core functionality - INFO/WARN is usually good
     this.sourceFilters.set('Auth', LogLevel.WARN);
     this.sourceFilters.set('FileManager', LogLevel.WARN);
-    this.sourceFilters.set('ImportManager', LogLevel.INFO); // Keep INFO for import status
+    this.sourceFilters.set('ImportManager', LogLevel.INFO);
 
-    // UI components - Raise level for less noise during normal operation
-    this.sourceFilters.set('MapView', LogLevel.INFO); // Keep INFO for load events
+    // Map components - Focus on lifecycle events
+    this.sourceFilters.set('MapContainer', LogLevel.INFO);
+    this.sourceFilters.set('CesiumContext', LogLevel.INFO);
+    this.sourceFilters.set('CesiumView', LogLevel.INFO);
+    this.sourceFilters.set('MapView', LogLevel.WARN);
     this.sourceFilters.set('LayerList', LogLevel.WARN);
     this.sourceFilters.set('LayerItem', LogLevel.WARN);
     this.sourceFilters.set('MapContext', LogLevel.WARN);
     this.sourceFilters.set('Toolbar', LogLevel.WARN);
-    this.sourceFilters.set('LayerPanel', LogLevel.WARN); // Quieten panel renders
-    this.sourceFilters.set('MapLayers', LogLevel.WARN);  // Quieten MapLayers renders
+    this.sourceFilters.set('LayerPanel', LogLevel.WARN);
+    this.sourceFilters.set('MapLayers', LogLevel.WARN);
 
     // Hooks and Layer Components - Enable DEBUG for debugging
-    this.sourceFilters.set('useAutoZoom', LogLevel.DEBUG); // Enable detailed logging
-    this.sourceFilters.set('layerHooks', LogLevel.DEBUG); // Enable for useAreInitialLayersReady etc.
+    this.sourceFilters.set('useAutoZoom', LogLevel.DEBUG);
+    this.sourceFilters.set('layerHooks', LogLevel.DEBUG);
     this.sourceFilters.set('useLayerData', LogLevel.WARN);
     this.sourceFilters.set('useMapbox', LogLevel.WARN);
-    this.sourceFilters.set('MapLayer', LogLevel.DEBUG); // Enable detailed logging
+    this.sourceFilters.set('MapLayer', LogLevel.DEBUG);
   }
 
   /**
@@ -150,7 +153,18 @@ export class LogManager {
       'Geometry cleaned',
       'Geometry repaired',
       'Found self-intersections',
-      'Preview coordinate transformation'
+      'Preview coordinate transformation',
+      // Add Cesium-specific noisy patterns
+      'Container state check',
+      'Terrain provider created',
+      'Viewer state check',
+      'Scene loading status',
+      'Initial camera position',
+      'Global state updates',
+      'Style update',
+      'Effect UPDATE_STYLE',
+      'Setting paint property',
+      'Setting layout property'
     ];
 
     // Never rate limit these important messages
@@ -167,10 +181,18 @@ export class LogManager {
       'Error importing',
       'Error transforming',
       'Error loading files',
-      'Style update',
-      'Effect UPDATE_STYLE',
-      'Setting paint property',
-      'Setting layout property'
+      // Add Cesium-specific important patterns
+      'CesiumContext: Provider mounted',
+      'CesiumContext: Provider unmounting',
+      'CesiumContext: Setting viewer',
+      'CesiumContext: Setting initialization state',
+      'CesiumView: Starting initialization process',
+      'CesiumView: Creating Cesium viewer',
+      'CesiumView: Viewer created successfully',
+      'CesiumView: Waiting for scene stability',
+      'CesiumView: Scene stable for 10 frames',
+      'CesiumView: Setting initialization state to true',
+      'CesiumView: Cesium viewer fully initialized and stable'
     ];
 
     // In development, treat all logs as potentially duplicated due to strict mode

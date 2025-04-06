@@ -6,10 +6,13 @@ import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { useCesium } from '../../context/CesiumContext';
-import { LogManager } from '@/core/logging/log-manager';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 const SOURCE = 'CesiumView';
 const logManager = LogManager.getInstance();
+
+// Configure logging for CesiumView
+logManager.setComponentLogLevel(SOURCE, LogLevel.INFO);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -46,7 +49,7 @@ export function CesiumView() {
   useEffect(() => {
     const container = cesiumContainer.current;
     if (!container) {
-      logger.warn('Container ref not available');
+      logger.debug('Container ref not available');
       return;
     }
 
@@ -68,7 +71,7 @@ export function CesiumView() {
         setInitialized(false);
         
         // Log container state
-        logger.info('CesiumView: Container state check', {
+        logger.debug('CesiumView: Container state check', {
           hasContainer: !!container,
           containerDimensions: container ? {
             width: container.clientWidth,
@@ -77,9 +80,9 @@ export function CesiumView() {
         });
 
         // Create terrain provider
-        logger.info('CesiumView: Creating terrain provider');
+        logger.debug('CesiumView: Creating terrain provider');
         const terrainProvider = await Cesium.createWorldTerrainAsync();
-        logger.info('CesiumView: Terrain provider created successfully');
+        logger.debug('CesiumView: Terrain provider created successfully');
         
         // Create viewer
         logger.info('CesiumView: Creating Cesium viewer');
@@ -97,7 +100,7 @@ export function CesiumView() {
         logger.info('CesiumView: Viewer created successfully');
 
         // Log viewer state
-        logger.info('CesiumView: Viewer state check', {
+        logger.debug('CesiumView: Viewer state check', {
           hasScene: !!viewer.scene,
           hasGlobe: !!viewer.scene?.globe,
           hasCamera: !!viewer.camera,
@@ -105,15 +108,15 @@ export function CesiumView() {
         });
 
         // Wait for the scene to load
-        logger.info('CesiumView: Waiting for scene to load');
+        logger.debug('CesiumView: Waiting for scene to load');
         await new Promise<void>((resolve) => {
           if (viewer.scene.globe.tilesLoaded) {
-            logger.info('CesiumView: Scene already loaded');
+            logger.debug('CesiumView: Scene already loaded');
             resolve();
           } else {
             const loadHandler = () => {
               if (viewer.scene.globe.tilesLoaded) {
-                logger.info('CesiumView: Scene loaded via event');
+                logger.debug('CesiumView: Scene loaded via event');
                 viewer.scene.globe.tileLoadProgressEvent.removeEventListener(loadHandler);
                 resolve();
               }
@@ -122,13 +125,13 @@ export function CesiumView() {
           }
         });
 
-        logger.info('CesiumView: First frame rendered');
+        logger.debug('CesiumView: First frame rendered');
 
         // Store viewer reference
         viewerRef.current = viewer;
 
         // Set initial camera position
-        logger.info('CesiumView: Setting initial camera position', { viewState3D });
+        logger.debug('CesiumView: Setting initial camera position', { viewState3D });
         viewer.camera.setView({
           destination: Cesium.Cartesian3.fromDegrees(
             viewState3D.longitude,
@@ -158,7 +161,7 @@ export function CesiumView() {
         });
 
         // Update global state
-        logger.info('CesiumView: Updating global state');
+        logger.debug('CesiumView: Updating global state');
         setCesiumInstance(viewer);
         setViewer(viewer);
         
@@ -169,14 +172,17 @@ export function CesiumView() {
           const checkStability = () => {
             if (viewer.scene.globe.tilesLoaded && !viewer.scene.primitives.isDestroyed()) {
               frameCount++;
-              logger.info(`CesiumView: Stable frame ${frameCount}/10`);
-              if (frameCount >= 10) {
+              if (frameCount === 1) {
                 logger.info('CesiumView: Scene stable for 10 frames');
+              }
+              if (frameCount >= 10) {
                 resolve();
                 return;
               }
             } else {
-              logger.info('CesiumView: Scene not stable, resetting frame count');
+              if (frameCount > 0) {
+                logger.debug('CesiumView: Scene not stable, resetting frame count');
+              }
               frameCount = 0;
             }
             requestAnimationFrame(checkStability);
