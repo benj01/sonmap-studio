@@ -31,8 +31,17 @@ export function CesiumView() {
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const { setCesiumInstance } = useMapInstanceStore();
   const { viewState3D, setViewState3D } = useViewStateStore();
-  const { setViewer, setInitialized } = useCesium();
+  const { setViewer, setInitialized, isInitialized: contextInitialized } = useCesium();
   const initializationAttempted = useRef(false);
+
+  // Log context state changes
+  useEffect(() => {
+    logger.info('CesiumView: Context state changed', {
+      contextInitialized,
+      hasViewer: !!viewerRef.current,
+      timestamp: new Date().toISOString()
+    });
+  }, [contextInitialized]);
 
   useEffect(() => {
     const container = cesiumContainer.current;
@@ -52,15 +61,28 @@ export function CesiumView() {
 
     const initializeViewer = async () => {
       try {
-        logger.debug('Starting Cesium viewer initialization');
+        logger.info('CesiumView: Starting initialization process');
         
         // First set initialized to false to show we're starting
+        logger.info('CesiumView: Setting initialization state to false');
         setInitialized(false);
         
+        // Log container state
+        logger.info('CesiumView: Container state check', {
+          hasContainer: !!container,
+          containerDimensions: container ? {
+            width: container.clientWidth,
+            height: container.clientHeight
+          } : null
+        });
+
+        // Create terrain provider
+        logger.info('CesiumView: Creating terrain provider');
         const terrainProvider = await Cesium.createWorldTerrainAsync();
-        logger.debug('Terrain provider created');
+        logger.info('CesiumView: Terrain provider created successfully');
         
         // Create viewer
+        logger.info('CesiumView: Creating Cesium viewer');
         const viewer = new Cesium.Viewer(container, {
           terrainProvider,
           animation: false,
@@ -72,16 +94,26 @@ export function CesiumView() {
           sceneModePicker: false,
           timeline: false
         });
+        logger.info('CesiumView: Viewer created successfully');
+
+        // Log viewer state
+        logger.info('CesiumView: Viewer state check', {
+          hasScene: !!viewer.scene,
+          hasGlobe: !!viewer.scene?.globe,
+          hasCamera: !!viewer.camera,
+          terrainProvider: !!viewer.terrainProvider
+        });
 
         // Wait for the scene to load
+        logger.info('CesiumView: Waiting for scene to load');
         await new Promise<void>((resolve) => {
           if (viewer.scene.globe.tilesLoaded) {
-            logger.debug('Scene already loaded');
+            logger.info('CesiumView: Scene already loaded');
             resolve();
           } else {
             const loadHandler = () => {
               if (viewer.scene.globe.tilesLoaded) {
-                logger.debug('Scene loaded');
+                logger.info('CesiumView: Scene loaded via event');
                 viewer.scene.globe.tileLoadProgressEvent.removeEventListener(loadHandler);
                 resolve();
               }
@@ -90,12 +122,13 @@ export function CesiumView() {
           }
         });
 
-        logger.debug('First frame rendered');
+        logger.info('CesiumView: First frame rendered');
 
         // Store viewer reference
         viewerRef.current = viewer;
 
         // Set initial camera position
+        logger.info('CesiumView: Setting initial camera position', { viewState3D });
         viewer.camera.setView({
           destination: Cesium.Cartesian3.fromDegrees(
             viewState3D.longitude,
@@ -125,21 +158,25 @@ export function CesiumView() {
         });
 
         // Update global state
+        logger.info('CesiumView: Updating global state');
         setCesiumInstance(viewer);
         setViewer(viewer);
         
         // Wait for the scene to be completely stable
+        logger.info('CesiumView: Waiting for scene stability');
         await new Promise<void>((resolve) => {
           let frameCount = 0;
           const checkStability = () => {
             if (viewer.scene.globe.tilesLoaded && !viewer.scene.primitives.isDestroyed()) {
               frameCount++;
-              if (frameCount >= 10) { // Wait for 10 stable frames
-                logger.debug('Scene stable for 10 frames');
+              logger.info(`CesiumView: Stable frame ${frameCount}/10`);
+              if (frameCount >= 10) {
+                logger.info('CesiumView: Scene stable for 10 frames');
                 resolve();
                 return;
               }
             } else {
+              logger.info('CesiumView: Scene not stable, resetting frame count');
               frameCount = 0;
             }
             requestAnimationFrame(checkStability);
@@ -148,12 +185,13 @@ export function CesiumView() {
         });
 
         // Now we can mark as initialized
+        logger.info('CesiumView: Setting initialization state to true');
         setInitialized(true);
-        logger.info('Cesium viewer fully initialized and stable');
+        logger.info('CesiumView: Cesium viewer fully initialized and stable');
 
         // Define cleanup function
         cleanup = () => {
-          logger.debug('Running cleanup for Cesium viewer');
+          logger.info('CesiumView: Running cleanup for Cesium viewer');
           if (viewer && !viewer.isDestroyed()) {
             viewer.destroy();
             viewerRef.current = null;
@@ -161,11 +199,14 @@ export function CesiumView() {
             setViewer(null);
             setInitialized(false);
             initializationAttempted.current = false;
-            logger.info('Cesium viewer destroyed');
+            logger.info('CesiumView: Cesium viewer destroyed');
           }
         };
       } catch (error) {
-        logger.error('Error initializing Cesium viewer', error);
+        logger.error('CesiumView: Error initializing Cesium viewer', {
+          error: error instanceof Error ? error.message : 'Unknown error',
+          stack: error instanceof Error ? error.stack : undefined
+        });
         setInitialized(false);
         initializationAttempted.current = false;
       }

@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useMemo, useCallback, useRef } from 'react';
 import * as Cesium from 'cesium';
 import { LogManager } from '@/core/logging/log-manager';
 
@@ -43,28 +43,87 @@ interface CesiumProviderProps {
 }
 
 export function CesiumProvider({ children }: CesiumProviderProps) {
-  const [viewer, setViewer] = useState<Cesium.Viewer | null>(null);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [viewer, setViewerState] = useState<Cesium.Viewer | null>(null);
+  const [isInitialized, setIsInitializedState] = useState(false);
+  const mountCount = useRef(0);
+  const renderCount = useRef(0);
+  const isUnmounting = useRef(false);
 
-  useEffect(() => {
-    // Don't automatically set initialized here anymore
-    // Let the CesiumView component control this
-    
-    return () => {
-      // Clean up Cesium resources when the provider unmounts
-      if (viewer && !viewer.isDestroyed()) {
-        viewer.destroy();
-      }
-      setIsInitialized(false);
-    };
+  // Track render cycles
+  renderCount.current++;
+  logger.info('CesiumContext: Render', {
+    renderCount: renderCount.current,
+    mountCount: mountCount.current,
+    hasViewer: !!viewer,
+    isInitialized,
+    timestamp: new Date().toISOString()
+  });
+
+  // Memoize the setter functions to ensure stable references
+  const setViewer = useCallback((newViewer: Cesium.Viewer | null) => {
+    if (isUnmounting.current) {
+      logger.warn('CesiumContext: Ignoring setViewer during unmount');
+      return;
+    }
+    logger.info('CesiumContext: Setting viewer', {
+      hasNewViewer: !!newViewer,
+      hasPreviousViewer: !!viewer,
+      timestamp: new Date().toISOString()
+    });
+    setViewerState(newViewer);
   }, [viewer]);
 
-  const contextValue = {
+  const setInitialized = useCallback((initialized: boolean) => {
+    if (isUnmounting.current) {
+      logger.warn('CesiumContext: Ignoring setInitialized during unmount');
+      return;
+    }
+    logger.info('CesiumContext: Setting initialization state', {
+      newState: initialized,
+      previousState: isInitialized,
+      timestamp: new Date().toISOString()
+    });
+    setIsInitializedState(initialized);
+  }, [isInitialized]);
+
+  // Memoize the context value to prevent unnecessary re-renders
+  const contextValue = useMemo(() => ({
     viewer,
     isInitialized,
     setViewer,
-    setInitialized: setIsInitialized,
-  };
+    setInitialized
+  }), [viewer, isInitialized, setViewer, setInitialized]);
+
+  // Log provider lifecycle
+  useEffect(() => {
+    mountCount.current++;
+    isUnmounting.current = false;
+    logger.info('CesiumContext: Provider mounted', {
+      mountCount: mountCount.current,
+      renderCount: renderCount.current,
+      hasViewer: !!viewer,
+      isInitialized,
+      timestamp: new Date().toISOString()
+    });
+    
+    return () => {
+      isUnmounting.current = true;
+      logger.info('CesiumContext: Provider unmounting', {
+        mountCount: mountCount.current,
+        renderCount: renderCount.current,
+        hasViewer: !!viewer,
+        isInitialized,
+        timestamp: new Date().toISOString()
+      });
+      
+      // Only destroy the viewer if this is the final unmount
+      if (viewer && !viewer.isDestroyed() && mountCount.current > 1) {
+        logger.info('CesiumContext: Destroying Cesium viewer on provider unmount');
+        viewer.destroy();
+      }
+      setIsInitializedState(false);
+    };
+  }, [viewer, isInitialized]);
 
   return (
     <CesiumContext.Provider value={contextValue}>

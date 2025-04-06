@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, memo, useMemo } from 'react';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { LogManager } from '@/core/logging/log-manager';
@@ -12,6 +12,7 @@ import { ResetButton } from './ResetButton';
 import { useProjectLayers } from '../hooks/useProjectLayers';
 import { LayerList } from './LayerList';
 import { StatusMonitor } from './StatusMonitor';
+import { CesiumProvider } from '../context/CesiumContext';
 
 const SOURCE = 'MapContainer';
 const logManager = LogManager.getInstance();
@@ -51,7 +52,8 @@ export interface MapContainerProps {
   projectId?: string;
 }
 
-export function MapContainer({
+// Memoize the MapContainer component with a custom comparison function
+export const MapContainer = memo(function MapContainer({
   accessToken,
   style,
   initialViewState2D,
@@ -61,10 +63,41 @@ export function MapContainer({
   const containerRef = useRef<HTMLDivElement>(null);
   const { cleanup } = useMapInstanceStore();
   const { setViewState2D, setViewState3D } = useViewStateStore();
+  const renderCount = useRef(0);
   const mountCount = useRef(0);
   useProjectLayers(projectId || '');
 
+  // Log render and mount cycles
+  renderCount.current++;
+  logger.info('MapContainer: Render', {
+    renderCount: renderCount.current,
+    mountCount: mountCount.current,
+    props: {
+      hasAccessToken: !!accessToken,
+      hasStyle: !!style,
+      hasInitialViewState2D: !!initialViewState2D,
+      hasInitialViewState3D: !!initialViewState3D,
+      hasProjectId: !!projectId
+    },
+    timestamp: new Date().toISOString()
+  });
+
+  // Memoize the CesiumProvider to prevent unnecessary remounts
+  const cesiumProvider = useMemo(() => (
+    <CesiumProvider>
+      <CesiumView />
+    </CesiumProvider>
+  ), []); // Empty dependency array since CesiumProvider is stable
+
+  // Log mount/unmount cycles
   useEffect(() => {
+    mountCount.current++;
+    logger.info('MapContainer: Mounted', { 
+      mountCount: mountCount.current,
+      renderCount: renderCount.current,
+      timestamp: new Date().toISOString()
+    });
+
     // Log container dimensions
     if (containerRef.current) {
       const rect = containerRef.current.getBoundingClientRect();
@@ -117,8 +150,10 @@ export function MapContainer({
     }
 
     return () => {
-      logger.debug('MapContainer cleanup called', {
-        mountCount: mountCount.current
+      logger.info('MapContainer: Unmounting', { 
+        mountCount: mountCount.current,
+        renderCount: renderCount.current,
+        timestamp: new Date().toISOString()
       });
 
       // Only cleanup on final unmount in development
@@ -159,10 +194,38 @@ export function MapContainer({
         <div className="flex flex-col gap-2">
           <h2 className="text-lg font-semibold px-2">3D Map View</h2>
           <div className="relative w-full h-1/2 min-h-[400px]">
-            <CesiumView />
+            {cesiumProvider}
           </div>
         </div>
       </div>
     </div>
   );
-}
+}, (prevProps, nextProps) => {
+  // Custom comparison function for memo
+  const propsEqual = 
+    prevProps.accessToken === nextProps.accessToken &&
+    prevProps.style === nextProps.style &&
+    prevProps.projectId === nextProps.projectId &&
+    JSON.stringify(prevProps.initialViewState2D) === JSON.stringify(nextProps.initialViewState2D) &&
+    JSON.stringify(prevProps.initialViewState3D) === JSON.stringify(nextProps.initialViewState3D);
+
+  logger.debug('MapContainer: Props comparison', {
+    propsEqual,
+    prevProps: {
+      hasAccessToken: !!prevProps.accessToken,
+      hasStyle: !!prevProps.style,
+      hasInitialViewState2D: !!prevProps.initialViewState2D,
+      hasInitialViewState3D: !!prevProps.initialViewState3D,
+      hasProjectId: !!prevProps.projectId
+    },
+    nextProps: {
+      hasAccessToken: !!nextProps.accessToken,
+      hasStyle: !!nextProps.style,
+      hasInitialViewState2D: !!nextProps.initialViewState2D,
+      hasInitialViewState3D: !!nextProps.initialViewState3D,
+      hasProjectId: !!nextProps.projectId
+    }
+  });
+
+  return propsEqual;
+});
