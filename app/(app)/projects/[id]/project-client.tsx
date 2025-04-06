@@ -164,17 +164,17 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
         </TabsList>
         <TabsContent value="map" className="space-y-4 h-[calc(100vh-12rem)]">
           <Card className="h-full flex flex-col">
-            <CardHeader>
+            <CardHeader className="flex-shrink-0">
               <CardTitle>Map View</CardTitle>
               <CardDescription>
                 Visualize your project data on the map. Toggle between 2D and 3D views using the control in the top right.
               </CardDescription>
             </CardHeader>
-            <CardContent className="flex-1 relative">
+            <CardContent className="flex-1 p-0 overflow-auto">
               <div 
                 ref={mapContainerRef}
                 className={cn(
-                  "absolute inset-0 rounded-lg overflow-hidden",
+                  "h-full rounded-lg",
                   activeTab === 'map' ? 'block' : 'hidden'
                 )}
               >

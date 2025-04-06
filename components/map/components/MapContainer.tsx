@@ -157,9 +157,9 @@ export const MapContainer = memo(function MapContainer({
   }, [cleanup, setViewState2D, setViewState3D, initialViewState2D, initialViewState3D]);
 
   return (
-    <div ref={containerRef} className="relative w-full h-full min-h-[600px]">
-      <div className="absolute inset-0 flex flex-col gap-8 p-4">
-        <div className="flex flex-col gap-2">
+    <div ref={containerRef} className="w-full h-full flex flex-col">
+      <div className="flex-1 flex flex-col gap-8 p-4">
+        <div className="basis-[45%] flex flex-col gap-2 min-h-[400px]">
           <div className="flex justify-between items-center px-2">
             <h2 className="text-lg font-semibold">2D Map View</h2>
             <div className="flex gap-2">
@@ -167,7 +167,7 @@ export const MapContainer = memo(function MapContainer({
               <ResetButton />
             </div>
           </div>
-          <div className="relative w-full h-1/2 min-h-[400px]">
+          <div className="relative flex-1">
             <div className="absolute left-0 top-0 z-10 h-full">
               <LayerPanel>
                 <LayerList />
@@ -175,17 +175,20 @@ export const MapContainer = memo(function MapContainer({
             </div>
             <MapView accessToken={accessToken} style={style} />
           </div>
-          <div className="px-2">
-            <StatusMonitor />
-          </div>
         </div>
 
-        <div className="flex flex-col gap-2">
-          <h2 className="text-lg font-semibold px-2">3D Map View</h2>
-          <div className="relative w-full h-1/2 min-h-[400px]">
+        <div className="basis-[55%] flex flex-col gap-2 min-h-[400px]">
+          <div className="flex justify-between items-center px-2">
+            <h2 className="text-lg font-semibold">3D Map View</h2>
+          </div>
+          <div className="relative flex-1">
             <CesiumViewWithProvider />
           </div>
         </div>
+      </div>
+
+      <div className="flex-none p-4 border-t bg-background">
+        <StatusMonitor />
       </div>
     </div>
   );

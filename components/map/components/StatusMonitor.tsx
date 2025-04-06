@@ -39,6 +39,7 @@ export function StatusMonitor() {
   const { layers } = useLayers();
   const { viewer, isInitialized } = useCesium();
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [status, setStatus] = useState<Status>({
     layerStatuses: {},
     ready2DCount: 0,
@@ -137,58 +138,73 @@ export function StatusMonitor() {
     isReady ? '✓' : '⋯';
 
   return (
-    <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded-md text-sm space-y-2 max-w-md">
-      <h3 className="font-semibold mb-2">System Status</h3>
+    <div className="bg-gray-100 dark:bg-gray-800 rounded-md text-sm">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="w-full p-3 flex justify-between items-center hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md transition-colors"
+      >
+        <div className="font-semibold flex items-center gap-2">
+          <span>System Status</span>
+          <span className={`${getStatusColor(mapboxReady && cesiumReady)}`}>
+            {getStatusIcon(mapboxReady && cesiumReady)}
+          </span>
+        </div>
+        <span className="text-gray-500">
+          {isExpanded ? '▼' : '▶'}
+        </span>
+      </button>
       
-      <div className="space-y-1">
-        <div className="flex justify-between">
-          <span>2D Map (Mapbox)</span>
-          <span className={getStatusColor(mapboxReady)}>
-            {getStatusIcon(mapboxReady)} {mapboxReady ? 'Ready' : 'Initializing'}
-          </span>
-        </div>
+      {isExpanded && (
+        <div className="p-3 space-y-2 border-t dark:border-gray-700">
+          <div className="space-y-1">
+            <div className="flex justify-between">
+              <span>2D Map (Mapbox)</span>
+              <span className={getStatusColor(mapboxReady)}>
+                {getStatusIcon(mapboxReady)} {mapboxReady ? 'Ready' : 'Initializing'}
+              </span>
+            </div>
 
-        <div className="flex justify-between">
-          <span>3D Map (Cesium)</span>
-          <span className={getStatusColor(cesiumReady)}>
-            {getStatusIcon(cesiumReady)} {
-              !viewer ? 'Not initialized' :
-              !isInitialized ? 'Initializing' :
-              'Ready'
-            }
-          </span>
-        </div>
+            <div className="flex justify-between">
+              <span>3D Map (Cesium)</span>
+              <span className={getStatusColor(cesiumReady)}>
+                {getStatusIcon(cesiumReady)} {
+                  !viewer ? 'Not initialized' :
+                  !isInitialized ? 'Initializing' :
+                  'Ready'
+                }
+              </span>
+            </div>
 
-        <div className="mt-2">
-          <div className="font-medium mb-1">
-            Layers ({layers.length}) - Ready: {status.ready2DCount} in 2D, {status.ready3DCount} in 3D
-          </div>
-          <div className="space-y-1 max-h-32 overflow-y-auto">
-            {layers.map(layer => {
-              const layerStatus = status.layerStatuses[layer.id] || { ready2D: false, ready3D: false };
-              return (
-                <div key={layer.id} className="flex justify-between text-xs">
-                  <span className="truncate" title={layer.metadata?.name}>
-                    {layer.metadata?.name} ({layer.setupStatus})
-                  </span>
-                  <div className="flex gap-2">
-                    <span className={getStatusColor(layerStatus.ready2D)} title="2D Status">
-                      2D: {getStatusIcon(layerStatus.ready2D)}
+            <div className="font-medium mb-1 mt-3">
+              Layers ({layers.length}) - Ready: {status.ready2DCount} in 2D, {status.ready3DCount} in 3D
+            </div>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {layers.map(layer => {
+                const layerStatus = status.layerStatuses[layer.id] || { ready2D: false, ready3D: false };
+                return (
+                  <div key={layer.id} className="flex justify-between text-xs">
+                    <span className="truncate" title={layer.metadata?.name}>
+                      {layer.metadata?.name} ({layer.setupStatus})
                     </span>
-                    <span className={getStatusColor(layerStatus.ready3D)} title="3D Status">
-                      3D: {getStatusIcon(layerStatus.ready3D)}
-                    </span>
+                    <div className="flex gap-2">
+                      <span className={getStatusColor(layerStatus.ready2D)} title="2D Status">
+                        2D: {getStatusIcon(layerStatus.ready2D)}
+                      </span>
+                      <span className={getStatusColor(layerStatus.ready3D)} title="3D Status">
+                        3D: {getStatusIcon(layerStatus.ready3D)}
+                      </span>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="text-xs text-gray-500 mt-2">
+            Status updates every second
           </div>
         </div>
-      </div>
-
-      <div className="text-xs text-gray-500 mt-2">
-        Status updates every second
-      </div>
+      )}
     </div>
   );
 } 
