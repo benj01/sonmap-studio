@@ -34,16 +34,19 @@ export interface SyncOptions {
 
 export function useSyncTo3D() {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
-  const { viewer, isInitialized } = useCesium();
+  const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
+  const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
+  const isInitialized = !!cesiumInstance && cesiumStatus === 'ready';
   const { layers } = useLayers();
   const { syncViews } = useViewSync();
   const [isLoading, setIsLoading] = useState(false);
 
   const syncTo3D = useCallback(async (options: SyncOptions = { syncView: true, syncLayers: true }) => {
-    if (!mapboxInstance || !viewer || !isInitialized) {
+    if (!mapboxInstance || !cesiumInstance || !isInitialized) {
       logger.warn('Cannot sync: Map instances not available', {
         hasMapbox: !!mapboxInstance,
-        hasCesium: !!viewer,
+        hasCesium: !!cesiumInstance,
+        cesiumStatus,
         isInitialized
       });
       return;
@@ -63,7 +66,7 @@ export function useSyncTo3D() {
           pitch: mapboxInstance.getPitch(),
           bearing: mapboxInstance.getBearing()
         };
-        await syncViews('2d', viewState, mapboxInstance, viewer);
+        await syncViews('2d', viewState, mapboxInstance, cesiumInstance);
       }
 
       // Sync layers if requested
@@ -82,8 +85,8 @@ export function useSyncTo3D() {
         const visibleLayers = layers.filter(layer => layer.visible);
         
         // Clear existing layers in Cesium
-        viewer.dataSources.removeAll();
-        viewer.scene.primitives.removeAll();
+        cesiumInstance.dataSources.removeAll();
+        cesiumInstance.scene.primitives.removeAll();
         
         // Add each visible layer to Cesium
         for (const layer of visibleLayers) {
@@ -126,13 +129,13 @@ export function useSyncTo3D() {
 
             // Add the layer to Cesium based on its type
             if (cesiumLayer.dataSource) {
-              await viewer.dataSources.add(cesiumLayer.dataSource);
+              await cesiumInstance.dataSources.add(cesiumLayer.dataSource);
               logger.debug('Added data source to viewer', { layerId: layer.id });
             } else if (cesiumLayer.tileset) {
-              viewer.scene.primitives.add(cesiumLayer.tileset);
+              cesiumInstance.scene.primitives.add(cesiumLayer.tileset);
               logger.debug('Added tileset to viewer', { layerId: layer.id });
             } else if (cesiumLayer.imageryProvider) {
-              viewer.imageryLayers.addImageryProvider(cesiumLayer.imageryProvider);
+              cesiumInstance.imageryLayers.addImageryProvider(cesiumLayer.imageryProvider);
               logger.debug('Added imagery layer to viewer', { layerId: layer.id });
             }
 
@@ -153,7 +156,7 @@ export function useSyncTo3D() {
     } finally {
       setIsLoading(false);
     }
-  }, [mapboxInstance, viewer, isInitialized, layers, syncViews]);
+  }, [mapboxInstance, cesiumInstance, isInitialized, layers, syncViews, cesiumStatus]);
 
   return { syncTo3D, isLoading };
 } 

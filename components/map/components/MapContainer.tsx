@@ -64,6 +64,7 @@ export const MapContainer = memo(function MapContainer({
   const { setViewState2D, setViewState3D } = useViewStateStore();
   const renderCount = useRef(0);
   const mountCount = useRef(0);
+  const shouldRenderChildren = useRef(false);
   useProjectLayers(projectId || '');
 
   // Log render and mount cycles
@@ -71,6 +72,7 @@ export const MapContainer = memo(function MapContainer({
   logger.info('MapContainer: Render', {
     renderCount: renderCount.current,
     mountCount: mountCount.current,
+    shouldRenderChildren: shouldRenderChildren.current,
     props: {
       hasAccessToken: !!accessToken,
       hasStyle: !!style,
@@ -81,7 +83,6 @@ export const MapContainer = memo(function MapContainer({
     timestamp: new Date().toISOString()
   });
 
-  // Log mount/unmount cycles
   useEffect(() => {
     mountCount.current++;
     logger.info('MapContainer: Mounted', { 
@@ -90,30 +91,14 @@ export const MapContainer = memo(function MapContainer({
       timestamp: new Date().toISOString()
     });
 
-    // Log container dimensions
-    if (containerRef.current) {
-      const rect = containerRef.current.getBoundingClientRect();
-      logger.debug('MapContainer dimensions', {
-        width: rect.width,
-        height: rect.height,
-        top: rect.top,
-        left: rect.left,
-        bottom: rect.bottom,
-        right: rect.right
-      });
-    }
-
-    logger.debug('MapContainer effect starting', {
-      mountCount: mountCount.current,
-      hasInitialState2D: !!initialViewState2D,
-      hasInitialState3D: !!initialViewState3D
-    });
-
     // Skip first mount in development due to strict mode
     if (process.env.NODE_ENV === 'development' && mountCount.current === 1) {
       logger.debug('Skipping first mount in development');
       return;
     }
+
+    // Allow child components to render after the first mount cycle
+    shouldRenderChildren.current = true;
 
     // Set initial view states if provided
     if (initialViewState2D) {
@@ -148,43 +133,52 @@ export const MapContainer = memo(function MapContainer({
       // Only cleanup on final unmount in development
       if (process.env.NODE_ENV === 'development' && mountCount.current <= 2) {
         logger.debug('Cleanup skipped - not final unmount');
+        shouldRenderChildren.current = false;
         return;
       }
 
       cleanup();
+      shouldRenderChildren.current = false;
       logger.info('Map container cleanup complete');
     };
   }, [cleanup, setViewState2D, setViewState3D, initialViewState2D, initialViewState3D]);
 
+  // Only render children after the first mount cycle in development
+  const shouldRender = process.env.NODE_ENV === 'production' || shouldRenderChildren.current;
+
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col">
       <div className="flex-1 flex flex-col gap-20 p-4">
-        <section className="h-[400px] flex flex-col gap-2">
-          <div className="flex justify-between items-center px-2 mb-2">
-            <h2 className="text-lg font-semibold">2D Map View</h2>
-            <div className="flex gap-2">
-              <SyncTo3DButton />
-              <ResetButton />
-            </div>
-          </div>
-          <div className="relative flex-1">
-            <div className="absolute left-0 top-0 z-10 h-full">
-              <LayerPanel>
-                <LayerList />
-              </LayerPanel>
-            </div>
-            <MapView accessToken={accessToken} style={style} />
-          </div>
-        </section>
+        {shouldRender && (
+          <>
+            <section className="h-[400px] flex flex-col gap-2">
+              <div className="flex justify-between items-center px-2 mb-2">
+                <h2 className="text-lg font-semibold">2D Map View</h2>
+                <div className="flex gap-2">
+                  <SyncTo3DButton />
+                  <ResetButton />
+                </div>
+              </div>
+              <div className="relative flex-1">
+                <div className="absolute left-0 top-0 z-10 h-full">
+                  <LayerPanel>
+                    <LayerList />
+                  </LayerPanel>
+                </div>
+                <MapView accessToken={accessToken} style={style} />
+              </div>
+            </section>
 
-        <section className="h-[400px] flex flex-col gap-2 mt-4">
-          <div className="flex justify-between items-center px-2 mb-4">
-            <h2 className="text-lg font-semibold">3D Map View</h2>
-          </div>
-          <div className="relative flex-1">
-            <CesiumViewWithProvider />
-          </div>
-        </section>
+            <section className="h-[400px] flex flex-col gap-2 mt-4">
+              <div className="flex justify-between items-center px-2 mb-4">
+                <h2 className="text-lg font-semibold">3D Map View</h2>
+              </div>
+              <div className="relative flex-1">
+                <CesiumViewWithProvider />
+              </div>
+            </section>
+          </>
+        )}
       </div>
 
       <div className="flex-none p-4 border-t bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">

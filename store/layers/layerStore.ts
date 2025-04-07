@@ -4,6 +4,7 @@ import { shallow } from 'zustand/shallow';
 import { useCallback, useMemo } from 'react';
 import type { Layer, LayerMetadata } from './types';
 import { isEqual } from 'lodash';
+import type { FeatureCollection } from 'geojson';
 
 const SOURCE = 'layerStore';
 const logManager = LogManager.getInstance();
@@ -42,6 +43,7 @@ export interface LayerStore {
   handleFileDeleted: (fileId: string) => void;
   updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => void;
   setInitialLoadComplete: (complete: boolean) => void;
+  setLayerGeoJsonData: (layerId: string, geojsonData: FeatureCollection | null) => void;
   reset: () => void;
 }
 
@@ -387,6 +389,65 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     logger.debug('ACTION START: setInitialLoadComplete', { complete });
     set({ isInitialLoadComplete: complete });
     logger.debug('ACTION END: setInitialLoadComplete', { complete });
+  },
+
+  setLayerGeoJsonData: (layerId, geojsonData) => {
+    logger.debug('ACTION START: setLayerGeoJsonData', { layerId, hasData: !!geojsonData });
+    set((state) => {
+      const layer = state.layers.byId[layerId];
+      if (!layer) {
+        logger.warn('ACTION SKIP: setLayerGeoJsonData - layer not found', { layerId });
+        return state;
+      }
+
+      // Get current metadata or create new one
+      const currentMetadata = layer.metadata || {
+        name: layerId,
+        type: 'vector',
+        properties: {}
+      };
+
+      // Check if data is identical
+      if (isEqual(currentMetadata.properties?.geojson, geojsonData)) {
+        logger.debug('ACTION SKIP: setLayerGeoJsonData - GeoJSON data is already the same', { layerId });
+        return state;
+      }
+
+      // Create new metadata object immutably
+      const newMetadata: LayerMetadata = {
+        ...currentMetadata,
+        properties: {
+          ...currentMetadata.properties,
+          geojson: geojsonData
+        }
+      };
+
+      // Create new layer object with updated metadata
+      const newLayer: Layer = {
+        ...layer,
+        metadata: newMetadata
+      };
+
+      logger.debug('ACTION END: setLayerGeoJsonData', { 
+        layerId,
+        hasGeojson: !!geojsonData,
+        featureCount: geojsonData?.features?.length
+      });
+
+      return {
+        layers: {
+          ...state.layers,
+          byId: {
+            ...state.layers.byId,
+            [layerId]: newLayer
+          },
+          metadata: {
+            ...state.layers.metadata,
+            [layerId]: newMetadata
+          }
+        }
+      };
+    });
   },
 
   reset: () => {

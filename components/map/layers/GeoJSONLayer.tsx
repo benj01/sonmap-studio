@@ -4,6 +4,7 @@ import { LogManager } from '@/core/logging/log-manager';
 import type { Feature, Geometry } from 'geojson';
 import { useMemo, useEffect } from 'react';
 import { useLayerStore } from '@/store/layers/layerStore';
+import { useLayer } from '@/store/layers/layerStore';
 
 const SOURCE = 'GeoJSONLayer';
 const logManager = LogManager.getInstance();
@@ -87,6 +88,10 @@ export function GeoJSONLayer({
   initialVisibility = true,
   beforeId,
 }: GeoJSONLayerProps) {
+  // Get store instance
+  const store = useLayerStore.getState();
+  const { layer: layerState } = useLayer(id);
+
   // Memoize geometry analysis
   const geometryTypes = useMemo(() => {
     if (!data?.features?.length) {
@@ -117,7 +122,7 @@ export function GeoJSONLayer({
     } satisfies GeoJSONSourceSpecification,
   }), [id, data]);
 
-  // Add effect to analyze geometry types and update layer style
+  // Add effect to store GeoJSON data and update layer status
   useEffect(() => {
     if (!data?.features?.length) {
       logger.warn('No features in data for geometry analysis', { id });
@@ -131,10 +136,38 @@ export function GeoJSONLayer({
       featureCount: data.features.length
     });
 
-    // Update layer style with geometry types
+    // Get store instance
     const store = useLayerStore.getState();
+
+    // Store the GeoJSON data
+    store.setLayerGeoJsonData(id, data);
+
+    // Update layer style with geometry types
     store.updateLayerStyle(id, {}, geometryTypes);
-  }, [id, data]);
+
+    // Log successful GeoJSON storage
+    logger.info('GeoJSON data stored for layer', {
+      id,
+      featureCount: data.features.length,
+      geometryTypes
+    });
+
+    // Set layer status to complete if it's in 'adding' state
+    // This indicates that MapLayer has finished its setup
+    if (layerState?.setupStatus === 'adding') {
+      logger.info('Setting vector layer status to complete after GeoJSON data stored', {
+        id,
+        previousStatus: layerState.setupStatus
+      });
+      store.updateLayerStatus(id, 'complete');
+    } else {
+      logger.debug('Not updating layer status - layer not in adding state', {
+        id,
+        currentStatus: layerState?.setupStatus
+      });
+    }
+
+  }, [id, data, layerState?.setupStatus]);
 
   // Memoize layer specifications
   const fillLayerSpec = useMemo(() => {

@@ -19,6 +19,7 @@ const logger = {
 
 export const CesiumViewWithProvider = React.memo(() => {
   logger.debug('CesiumViewWithProvider: Render');
+
   return (
     <CesiumProvider>
       <CesiumView />

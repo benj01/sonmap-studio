@@ -492,7 +492,19 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           initStateRef.current.lastError = undefined;
           // Mark the setup as completed for this mount cycle
           setupCompletedRef.current = true;
-          updateStatus('complete');
+
+          // For vector layers, set status to 'adding' instead of 'complete'
+          // Let GeoJSONLayer set it to 'complete' after storing GeoJSON data
+          const isVectorLayer = layerState?.metadata?.type === 'vector';
+          if (isVectorLayer) {
+            logger.info(`Vector layer ${id} added to map, waiting for GeoJSON data`, {
+              id,
+              sourceId: source.id
+            });
+            updateStatus('adding');
+          } else {
+            updateStatus('complete');
+          }
           return;
         } else {
           // Layer already exists
@@ -502,7 +514,20 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           initStateRef.current.lastError = undefined;
           // Mark the setup as completed for this mount cycle
           setupCompletedRef.current = true;
-          if(layerState?.setupStatus !== 'complete') {
+
+          // For vector layers, set status to 'adding' instead of 'complete'
+          // Let GeoJSONLayer set it to 'complete' after storing GeoJSON data
+          const isVectorLayer = layerState?.metadata?.type === 'vector';
+          if (isVectorLayer) {
+            if (layerState?.setupStatus !== 'adding' && layerState?.setupStatus !== 'complete') {
+              logger.info(`Existing vector layer ${id}, waiting for GeoJSON data`, {
+                id,
+                sourceId: source.id,
+                currentStatus: layerState?.setupStatus
+              });
+              updateStatus('adding');
+            }
+          } else if (layerState?.setupStatus !== 'complete') {
             logger.info(`Updating layer status to complete for existing layer ${id}`, {
               previousStatus: layerState?.setupStatus
             });
@@ -528,7 +553,20 @@ export function MapLayer({ id, source, layer, initialVisibility = true, beforeId
           initStateRef.current.layerAdded = true;
           // Mark the setup as completed for this mount cycle
           setupCompletedRef.current = true;
-          if(layerState?.setupStatus !== 'complete') {
+
+          // For vector layers, set status to 'adding' instead of 'complete'
+          // Let GeoJSONLayer set it to 'complete' after storing GeoJSON data
+          const isVectorLayer = layerState?.metadata?.type === 'vector';
+          if (isVectorLayer) {
+            if (layerState?.setupStatus !== 'adding' && layerState?.setupStatus !== 'complete') {
+              logger.info(`Existing vector layer ${id} (from error), waiting for GeoJSON data`, {
+                id,
+                sourceId: source.id,
+                currentStatus: layerState?.setupStatus
+              });
+              updateStatus('adding');
+            }
+          } else if (layerState?.setupStatus !== 'complete') {
             updateStatus('complete');
           }
         }
