@@ -47,18 +47,34 @@ export function CesiumView() {
   const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
   const initializationAttempted = useRef(false);
   const initialSyncPerformed = useRef(false);
+  const mountCount = useRef(0);
 
   // Effect for Viewer Initialization
   useEffect(() => {
+    mountCount.current++;
     const container = cesiumContainer.current;
+    
+    // In development, skip first mount due to StrictMode
+    if (process.env.NODE_ENV === 'development' && mountCount.current === 1) {
+      logger.debug('Skipping first mount in development mode');
+      return;
+    }
+
     if (!container || initializationAttempted.current) {
       return;
     }
+
     initializationAttempted.current = true;
     let viewer: Cesium.Viewer | null = null;
 
     const initializeViewer = async () => {
       try {
+        // Check if we already have a valid instance
+        if (cesiumInstance && !cesiumInstance.isDestroyed()) {
+          logger.debug('Valid Cesium instance already exists, skipping initialization');
+          return;
+        }
+        
         logger.info('CesiumView: Starting initialization process');
         setCesiumStatus('initializing');
         initialSyncPerformed.current = false;
