@@ -67,12 +67,30 @@ export function useProjectLayers(projectId: string) {
   const { addLayer, setInitialLoadComplete } = useLayerStore();
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const mountCount = useRef(0);
+  const isInitialized = useRef(false);
+  const currentProjectId = useRef(projectId);
 
   useEffect(() => {
     // Skip first mount in development due to strict mode
     if (process.env.NODE_ENV === 'development' && mountCount.current === 0) {
       mountCount.current += 1;
       logger.debug('Skipping first mount in development');
+      return;
+    }
+
+    // Reset initialization if projectId changes
+    if (currentProjectId.current !== projectId) {
+      logger.info('Project ID changed, resetting initialization', {
+        oldProjectId: currentProjectId.current,
+        newProjectId: projectId
+      });
+      isInitialized.current = false;
+      currentProjectId.current = projectId;
+    }
+
+    // Skip if already initialized for this project
+    if (isInitialized.current) {
+      logger.debug('Project layers already initialized for this project');
       return;
     }
 
@@ -99,6 +117,7 @@ export function useProjectLayers(projectId: string) {
         if (!importedFiles?.length) {
           logger.info('No imported files found for project', { projectId });
           setInitialLoadComplete(true);
+          isInitialized.current = true;
           return;
         }
 
@@ -211,9 +230,11 @@ export function useProjectLayers(projectId: string) {
           layerIds: Array.from(loadedLayers)
         });
         setInitialLoadComplete(true);
+        isInitialized.current = true;
+        logger.info('Project layers initialization complete', { projectId });
       } catch (error) {
         logger.error('Error loading project layers', { error });
-        setInitialLoadComplete(true);
+        isInitialized.current = false;
       }
     }
 
@@ -221,11 +242,10 @@ export function useProjectLayers(projectId: string) {
 
     return () => {
       isMounted = false;
-      mountCount.current += 1;
     };
-  }, [projectId, addLayer, setInitialLoadComplete, supabase]);
+  }, [projectId, addLayer, setInitialLoadComplete]);
 
   return {
-    // Return any necessary values or functions
+    isInitialized: isInitialized.current
   };
 } 

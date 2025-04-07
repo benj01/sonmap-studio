@@ -64,8 +64,11 @@ export const MapContainer = memo(function MapContainer({
   const { setViewState2D, setViewState3D } = useViewStateStore();
   const renderCount = useRef(0);
   const mountCount = useRef(0);
-  const shouldRenderChildren = useRef(false);
-  useProjectLayers(projectId || '');
+  const shouldRenderChildren = useRef(process.env.NODE_ENV === 'production');
+  const projectLayersInitialized = useRef(false);
+
+  // Call useProjectLayers at the top level
+  const { isInitialized } = useProjectLayers(projectId || '');
 
   // Log render and mount cycles
   renderCount.current++;
@@ -73,6 +76,8 @@ export const MapContainer = memo(function MapContainer({
     renderCount: renderCount.current,
     mountCount: mountCount.current,
     shouldRenderChildren: shouldRenderChildren.current,
+    projectLayersInitialized: projectLayersInitialized.current,
+    isInitialized,
     props: {
       hasAccessToken: !!accessToken,
       hasStyle: !!style,
@@ -91,14 +96,17 @@ export const MapContainer = memo(function MapContainer({
       timestamp: new Date().toISOString()
     });
 
-    // Skip first mount in development due to strict mode
-    if (process.env.NODE_ENV === 'development' && mountCount.current === 1) {
-      logger.debug('Skipping first mount in development');
-      return;
+    // In development, wait for the second mount (after Strict Mode)
+    // In production, render immediately
+    if (process.env.NODE_ENV === 'development') {
+      if (mountCount.current === 2) {
+        shouldRenderChildren.current = true;
+        logger.debug('Development: Second mount - enabling child rendering');
+      }
+    } else {
+      shouldRenderChildren.current = true;
+      logger.debug('Production: First mount - enabling child rendering');
     }
-
-    // Allow child components to render after the first mount cycle
-    shouldRenderChildren.current = true;
 
     // Set initial view states if provided
     if (initialViewState2D) {
@@ -130,16 +138,17 @@ export const MapContainer = memo(function MapContainer({
         timestamp: new Date().toISOString()
       });
 
-      // Only cleanup on final unmount in development
-      if (process.env.NODE_ENV === 'development' && mountCount.current <= 2) {
-        logger.debug('Cleanup skipped - not final unmount');
+      // Only cleanup and disable children on final unmount
+      const isFinalUnmount = process.env.NODE_ENV === 'production' || mountCount.current > 2;
+      
+      if (isFinalUnmount) {
+        cleanup();
         shouldRenderChildren.current = false;
-        return;
+        projectLayersInitialized.current = false;
+        logger.info('Map container final cleanup complete');
+      } else {
+        logger.debug('Cleanup skipped - not final unmount');
       }
-
-      cleanup();
-      shouldRenderChildren.current = false;
-      logger.info('Map container cleanup complete');
     };
   }, [cleanup, setViewState2D, setViewState3D, initialViewState2D, initialViewState3D]);
 
