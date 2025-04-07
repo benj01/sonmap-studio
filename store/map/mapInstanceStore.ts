@@ -28,7 +28,8 @@ interface NormalizedMapInstanceState {
   };
   cesium: {
     instance: any | null;
-    status: 'initializing' | 'ready' | 'error';
+    instanceId: string | null;
+    status: 'initializing' | 'ready' | 'error' | 'destroyed';
     error?: string;
   };
 }
@@ -39,7 +40,7 @@ interface MapInstanceStore {
   
   // Actions
   setMapboxInstance: (instance: MapboxMap | null) => void;
-  setCesiumInstance: (instance: any | null) => void;
+  setCesiumInstance: (instance: any | null, instanceId?: string) => void;
   setMapboxStatus: (status: NormalizedMapInstanceState['mapbox']['status'], error?: string) => void;
   setCesiumStatus: (status: NormalizedMapInstanceState['cesium']['status'], error?: string) => void;
   cleanup: () => void;
@@ -53,13 +54,20 @@ const initialState: NormalizedMapInstanceState = {
   },
   cesium: {
     instance: null,
+    instanceId: null,
     status: 'initializing'
   }
 };
 
 export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
   // Initial state
-  mapInstances: initialState,
+  mapInstances: {
+    ...initialState,
+    cesium: {
+      ...initialState.cesium,
+      instanceId: null
+    }
+  },
 
   // Actions
   setMapboxInstance: (instance) => {
@@ -80,15 +88,19 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
     });
   },
 
-  setCesiumInstance: (instance) => {
+  setCesiumInstance: (instance, instanceId) => {
     set((state) => {
       const updatedCesium = {
         ...state.mapInstances.cesium,
         instance,
+        instanceId: instance ? instanceId || null : null,
         status: instance ? 'ready' as const : 'initializing' as const
       };
 
-      logger.debug('Cesium instance set', { hasInstance: !!instance });
+      logger.debug('Cesium instance set', { 
+        hasInstance: !!instance,
+        instanceId: updatedCesium.instanceId
+      });
       return {
         mapInstances: {
           ...state.mapInstances,
@@ -142,7 +154,9 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
         state.mapInstances.mapbox.instance.remove();
       }
       if (state.mapInstances.cesium.instance && 
-          (state.mapInstances.cesium.status === 'error' || state.mapInstances.cesium.instance._removed)) {
+          (state.mapInstances.cesium.status === 'error' || 
+           state.mapInstances.cesium.status === 'destroyed' || 
+           state.mapInstances.cesium.instance._removed)) {
         state.mapInstances.cesium.instance.destroy();
       }
 
@@ -151,7 +165,9 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
         mapInstances: {
           ...state.mapInstances,
           mapbox: state.mapInstances.mapbox.instance?._removed ? initialState.mapbox : state.mapInstances.mapbox,
-          cesium: state.mapInstances.cesium.instance?._removed ? initialState.cesium : state.mapInstances.cesium
+          cesium: state.mapInstances.cesium.instance?._removed ? 
+            { ...initialState.cesium, instanceId: null } : 
+            state.mapInstances.cesium
         }
       };
     });

@@ -35,6 +35,7 @@ const logger = {
 export function CesiumView() {
   const cesiumContainer = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
+  const viewerInstanceId = useRef<string | null>(null);
   const { setCesiumInstance, setCesiumStatus } = useMapInstanceStore();
   const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
@@ -62,13 +63,21 @@ export function CesiumView() {
         setCesiumStatus('initializing');
         initialSyncPerformed.current = false;
 
+        // Generate new instance ID
+        viewerInstanceId.current = `cesium-viewer-${Date.now()}`;
+        logger.debug('CesiumView: Generated new viewer instance ID', { 
+          instanceId: viewerInstanceId.current 
+        });
+
         // Create terrain provider
         logger.debug('CesiumView: Creating terrain provider');
         const terrainProvider = await getTerrainProvider();
         logger.debug('CesiumView: Terrain provider created successfully');
         
         // Create viewer
-        logger.info('CesiumView: Creating Cesium viewer');
+        logger.info('CesiumView: Creating Cesium viewer', { 
+          instanceId: viewerInstanceId.current 
+        });
         viewer = new Cesium.Viewer(container, {
           terrainProvider,
           ...getCesiumDefaults()
@@ -105,40 +114,66 @@ export function CesiumView() {
         logger.info('CesiumView: Waiting for scene stability');
         await viewer.scene.requestRender();
 
-        logger.info('CesiumView: Setting instance and status');
-        setCesiumInstance(viewer);
+        logger.info('CesiumView: Setting instance and status', {
+          instanceId: viewerInstanceId.current
+        });
+        setCesiumInstance(viewer, viewerInstanceId.current);
         setCesiumStatus('ready');
         logger.info('CesiumView: Cesium viewer initialized and state updated');
 
       } catch (error) {
         logger.error('CesiumView: Error initializing Cesium viewer', {
+          instanceId: viewerInstanceId.current,
           error: error instanceof Error ? error.message : 'Unknown error',
           stack: error instanceof Error ? error.stack : undefined
         });
         setCesiumStatus('error', error instanceof Error ? error.message : 'Unknown error');
         initializationAttempted.current = false;
+        viewerInstanceId.current = null;
       }
     };
 
     initializeViewer();
 
     return () => {
-      logger.info('CesiumView: Running cleanup for Cesium viewer');
+      logger.info('CesiumView: Running cleanup for Cesium viewer', {
+        instanceId: viewerInstanceId.current
+      });
+      
+      // First set status to destroyed to prevent any operations during cleanup
+      setCesiumStatus('destroyed');
+      
       if (viewer && !viewer.isDestroyed()) {
-        viewer.destroy();
+        try {
+          viewer.destroy();
+          logger.info('CesiumView: Viewer destroyed successfully', {
+            instanceId: viewerInstanceId.current
+          });
+        } catch (error) {
+          logger.error('CesiumView: Error destroying viewer', {
+            instanceId: viewerInstanceId.current,
+            error: error instanceof Error ? error.message : 'Unknown error'
+          });
+        }
       }
+      
       viewerRef.current = null;
       setCesiumInstance(null);
-      setCesiumStatus('initializing');
       initializationAttempted.current = false;
       initialSyncPerformed.current = false;
-      logger.info('CesiumView: Cesium viewer destroyed and state reset');
+      viewerInstanceId.current = null;
+      
+      logger.info('CesiumView: Cleanup complete');
     };
   }, []);
 
   // Effect for Triggering Sync based on State Changes AND Layer Data Readiness
   useEffect(() => {
-    // Check if layers that need syncing are actually ready
+    // Don't attempt sync if viewer is destroyed or destroying
+    if (cesiumStatus === 'destroyed') {
+      return;
+    }
+
     const visibleLayers = layers.filter(l => l.visible);
     const vectorLayersToSync = visibleLayers.filter(l => (l.metadata?.type || 'vector') === 'vector');
     
@@ -155,6 +190,7 @@ export function CesiumView() {
 
     const canSync =
       cesiumInstance &&
+      !cesiumInstance.isDestroyed() &&
       cesiumStatus === 'ready' &&
       mapboxStatus === 'ready' &&
       isInitialLoadComplete &&
@@ -164,6 +200,7 @@ export function CesiumView() {
 
     if (canSync) {
       logger.info('CesiumView: All conditions met for initial layer sync to 3D view', {
+        instanceId: viewerInstanceId.current,
         layerCount: vectorLayersToSync.length,
         layerDetails: layerReadinessDetails,
         cesiumStatus,
@@ -172,15 +209,21 @@ export function CesiumView() {
       });
       
       initialSyncPerformed.current = true;
-      syncTo3D({ syncView: true, syncLayers: true })
+      syncTo3D({ 
+        syncView: true, 
+        syncLayers: true,
+        viewerInstanceId: viewerInstanceId.current 
+      })
         .then(() => {
           logger.info('CesiumView: Initial layer sync complete', {
+            instanceId: viewerInstanceId.current,
             layerCount: vectorLayersToSync.length,
             layerDetails: layerReadinessDetails
           });
         })
         .catch((error) => {
           logger.error('CesiumView: Initial layer sync failed', {
+            instanceId: viewerInstanceId.current,
             error: error instanceof Error ? error.message : error,
             layerCount: vectorLayersToSync.length,
             layerDetails: layerReadinessDetails
@@ -188,10 +231,11 @@ export function CesiumView() {
           initialSyncPerformed.current = false;
         });
     } else {
-      // Use warn level to ensure visibility
       logger.warn('CesiumView: Sync conditions not met', {
         conditions: {
           hasCesiumInstance: !!cesiumInstance,
+          isDestroyed: cesiumInstance?.isDestroyed(),
+          instanceId: viewerInstanceId.current,
           cesiumStatus,
           mapboxStatus,
           isInitialLoadComplete,
