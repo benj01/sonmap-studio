@@ -70,32 +70,26 @@ export function StatusMonitor() {
       const ready2DStatus = layer.setupStatus === 'complete';
       let ready3DStatus = false;
 
-      if (layer.setupStatus === 'complete' && cesiumInstance) {
-        // Check each collection using proper Cesium methods
-        const type = layer.metadata?.type;
-        if (type === 'vector') {
-          // Check dataSources
-          for (let i = 0; i < cesiumInstance.dataSources.length; i++) {
-            const ds = cesiumInstance.dataSources.get(i);
-            if (ds.name === layer.id) {
-              ready3DStatus = true;
-              break;
-            }
-          }
-        } else if (type === '3d-tiles') {
-          // Check primitives
-          for (let i = 0; i < cesiumInstance.scene.primitives.length; i++) {
-            const primitive = cesiumInstance.scene.primitives.get(i);
-            if (primitive.name === layer.id) {
-              ready3DStatus = true;
-              break;
-            }
-          }
-        } else if (type === 'imagery') {
-          // For imagery layers, check if any exist
-          ready3DStatus = cesiumInstance.imageryLayers.length > 0;
-        }
+      // For vector layers, check if they have both complete status and GeoJSON data
+      if (layer.metadata?.type === 'vector') {
+        ready3DStatus = layer.setupStatus === 'complete' && !!layer.metadata?.properties?.geojson;
+      } else if (layer.metadata?.type === '3d-tiles') {
+        // For 3D tiles, just check setup status
+        ready3DStatus = layer.setupStatus === 'complete';
+      } else if (layer.metadata?.type === 'imagery') {
+        // For imagery, just check setup status
+        ready3DStatus = layer.setupStatus === 'complete';
       }
+
+      logger.debug('Layer status check', {
+        layerId: layer.id,
+        name: layer.metadata?.name,
+        type: layer.metadata?.type,
+        setupStatus: layer.setupStatus,
+        hasGeoJson: !!layer.metadata?.properties?.geojson,
+        ready2D: ready2DStatus,
+        ready3D: ready3DStatus
+      });
 
       if (ready2DStatus) ready2D++;
       if (ready3DStatus) ready3D++;
@@ -114,13 +108,23 @@ export function StatusMonitor() {
     }
 
     if (hasChanges || ready2D !== status.ready2DCount || ready3D !== status.ready3DCount) {
+      logger.info('Status update', {
+        ready2DCount: ready2D,
+        ready3DCount: ready3D,
+        layerStatuses: Object.entries(newStatuses).map(([id, status]) => ({
+          id,
+          ready2D: status.ready2D,
+          ready3D: status.ready3D
+        }))
+      });
+
       setStatus({
         layerStatuses: newStatuses,
         ready2DCount: ready2D,
         ready3DCount: ready3D
       });
     }
-  }, [layers, cesiumInstance, status]);
+  }, [layers, status]);
 
   useEffect(() => {
     const interval = setInterval(() => {

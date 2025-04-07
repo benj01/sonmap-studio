@@ -28,7 +28,8 @@ const logger = {
 
 export function SyncTo3DButton() {
   const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
-  const { viewer, isInitialized } = useCesium();
+  const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
+  const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
   const { layers } = useLayers();
   const { syncTo3D, isLoading } = useSyncTo3D();
 
@@ -41,12 +42,29 @@ export function SyncTo3DButton() {
 
     // Check if all layers have their required data
     const allReady = layers.every(layer => {
+      // For vector layers, check both setup status and GeoJSON data
+      if (layer.metadata?.type === 'vector') {
+        const isReady = layer.setupStatus === 'complete' && !!layer.metadata?.properties?.geojson;
+        
+        if (!isReady) {
+          logger.debug('Vector layer not ready', { 
+            layerId: layer.id, 
+            name: layer.metadata?.name,
+            setupStatus: layer.setupStatus,
+            hasGeoJson: !!layer.metadata?.properties?.geojson
+          });
+        }
+        return isReady;
+      }
+
+      // For other layer types, just check setup status
       const isReady = layer.setupStatus === 'complete';
       
       if (!isReady) {
         logger.debug('Layer not ready', { 
           layerId: layer.id, 
           name: layer.metadata?.name,
+          type: layer.metadata?.type,
           setupStatus: layer.setupStatus
         });
       }
@@ -55,7 +73,14 @@ export function SyncTo3DButton() {
 
     logger.debug('Layer readiness check', {
       totalLayers: layers.length,
-      allReady
+      allReady,
+      layerDetails: layers.map(layer => ({
+        id: layer.id,
+        name: layer.metadata?.name,
+        type: layer.metadata?.type,
+        setupStatus: layer.setupStatus,
+        hasGeoJson: layer.metadata?.type === 'vector' ? !!layer.metadata?.properties?.geojson : 'N/A'
+      }))
     });
 
     return allReady;
@@ -63,17 +88,17 @@ export function SyncTo3DButton() {
 
   // Check if all map instances are ready
   const isMapReady = useCallback(() => {
-    const isReady = !!mapboxInstance && !!viewer && isInitialized;
+    const isReady = !!mapboxInstance && !!cesiumInstance && cesiumStatus === 'ready';
     
     logger.debug('Map readiness check', {
       hasMapbox: !!mapboxInstance,
-      hasCesium: !!viewer,
-      isInitialized,
+      hasCesium: !!cesiumInstance,
+      cesiumStatus,
       isReady
     });
     
     return isReady;
-  }, [mapboxInstance, viewer, isInitialized]);
+  }, [mapboxInstance, cesiumInstance, cesiumStatus]);
 
   const handleSync = useCallback(async () => {
     if (!isMapReady() || !areLayersReady()) {
