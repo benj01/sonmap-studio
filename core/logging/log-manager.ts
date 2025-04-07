@@ -45,7 +45,7 @@ export class LogManager {
     this.sourceFilters.set('ImportManager', LogLevel.INFO);
 
     // Map components - Focus on lifecycle events
-    this.sourceFilters.set('MapContainer', LogLevel.INFO);
+    this.sourceFilters.set('MapContainer', LogLevel.WARN);
     this.sourceFilters.set('CesiumContext', LogLevel.INFO);
     this.sourceFilters.set('CesiumView', LogLevel.INFO);
     this.sourceFilters.set('MapView', LogLevel.WARN);
@@ -56,12 +56,19 @@ export class LogManager {
     this.sourceFilters.set('LayerPanel', LogLevel.WARN);
     this.sourceFilters.set('MapLayers', LogLevel.WARN);
 
-    // Hooks and Layer Components - Enable DEBUG for debugging
-    this.sourceFilters.set('useAutoZoom', LogLevel.DEBUG);
-    this.sourceFilters.set('layerHooks', LogLevel.DEBUG);
+    // Cesium-specific components - More granular control
+    this.sourceFilters.set('CesiumCamera', LogLevel.WARN);
+    this.sourceFilters.set('CesiumScene', LogLevel.WARN);
+    this.sourceFilters.set('CesiumTerrain', LogLevel.WARN);
+    this.sourceFilters.set('CesiumImagery', LogLevel.WARN);
+    this.sourceFilters.set('CesiumPrimitives', LogLevel.WARN);
+
+    // Hooks and Layer Components - Reduced from DEBUG to WARN
+    this.sourceFilters.set('useAutoZoom', LogLevel.WARN);
+    this.sourceFilters.set('layerHooks', LogLevel.WARN);
     this.sourceFilters.set('useLayerData', LogLevel.WARN);
     this.sourceFilters.set('useMapbox', LogLevel.WARN);
-    this.sourceFilters.set('MapLayer', LogLevel.DEBUG);
+    this.sourceFilters.set('MapLayer', LogLevel.WARN);
   }
 
   /**
@@ -154,7 +161,8 @@ export class LogManager {
       'Geometry repaired',
       'Found self-intersections',
       'Preview coordinate transformation',
-      // Add Cesium-specific noisy patterns
+      
+      // Cesium-specific noisy patterns
       'Container state check',
       'Terrain provider created',
       'Viewer state check',
@@ -164,7 +172,24 @@ export class LogManager {
       'Style update',
       'Effect UPDATE_STYLE',
       'Setting paint property',
-      'Setting layout property'
+      'Setting layout property',
+      // New Cesium-specific noisy patterns
+      'Camera position update',
+      'Scene render',
+      'Frame render',
+      'Terrain tile loading',
+      'Imagery tile loading',
+      'Layer visibility change',
+      'Primitive update',
+      'Entity update',
+      'Property change',
+      'View state update',
+      'Scene mode change',
+      'Camera move',
+      'Camera zoom',
+      'Camera rotate',
+      'Camera tilt',
+      'Camera pan'
     ];
 
     // Never rate limit these important messages
@@ -181,7 +206,8 @@ export class LogManager {
       'Error importing',
       'Error transforming',
       'Error loading files',
-      // Add Cesium-specific important patterns
+      
+      // Cesium-specific important patterns
       'CesiumContext: Provider mounted',
       'CesiumContext: Provider unmounting',
       'CesiumContext: Setting viewer',
@@ -192,7 +218,22 @@ export class LogManager {
       'CesiumView: Waiting for scene stability',
       'CesiumView: Scene stable for 10 frames',
       'CesiumView: Setting initialization state to true',
-      'CesiumView: Cesium viewer fully initialized and stable'
+      'CesiumView: Cesium viewer fully initialized and stable',
+      // New Cesium-specific important patterns
+      'CesiumView: Error initializing Cesium viewer',
+      'CesiumView: Error creating terrain provider',
+      'CesiumView: Error setting camera position',
+      'CesiumView: Error updating view state',
+      'CesiumView: Scene initialization failed',
+      'CesiumView: Terrain provider error',
+      'CesiumView: Imagery provider error',
+      'CesiumView: Entity creation failed',
+      'CesiumView: Primitive creation failed',
+      'CesiumView: Camera control error',
+      'CesiumView: Scene render error',
+      'CesiumView: Memory allocation error',
+      'CesiumView: WebGL context lost',
+      'CesiumView: Resource loading failed'
     ];
 
     // In development, treat all logs as potentially duplicated due to strict mode
