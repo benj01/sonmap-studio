@@ -37,8 +37,9 @@ interface Status {
 
 export function StatusMonitor() {
   const { layers } = useLayers();
-  const { viewer, isInitialized } = useCesium();
-  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
+  const mapboxStatus = useMapInstanceStore(state => state.mapInstances.mapbox.status);
+  const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
+  const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const [isExpanded, setIsExpanded] = useState(false);
   const [status, setStatus] = useState<Status>({
     layerStatuses: {},
@@ -47,17 +48,17 @@ export function StatusMonitor() {
   });
 
   const checkMapStatus = useCallback(() => {
-    const mapboxReady = !!mapboxInstance;
-    const cesiumReady = !!viewer && isInitialized;
+    const mapboxReady = mapboxStatus === 'ready';
+    const cesiumReady = cesiumStatus === 'ready';
 
     logger.debug('Map status check', {
-      hasMapbox: !!mapboxInstance,
-      hasCesium: !!viewer,
-      cesiumInitialized: isInitialized
+      mapboxStatus,
+      cesiumStatus,
+      hasCesium: !!cesiumInstance
     });
 
     return { mapboxReady, cesiumReady };
-  }, [mapboxInstance, viewer, isInitialized]);
+  }, [mapboxStatus, cesiumStatus, cesiumInstance]);
 
   const checkLayerStatus = useCallback(() => {
     let hasChanges = false;
@@ -69,13 +70,13 @@ export function StatusMonitor() {
       const ready2DStatus = layer.setupStatus === 'complete';
       let ready3DStatus = false;
 
-      if (layer.setupStatus === 'complete' && viewer) {
+      if (layer.setupStatus === 'complete' && cesiumInstance) {
         // Check each collection using proper Cesium methods
         const type = layer.metadata?.type;
         if (type === 'vector') {
           // Check dataSources
-          for (let i = 0; i < viewer.dataSources.length; i++) {
-            const ds = viewer.dataSources.get(i);
+          for (let i = 0; i < cesiumInstance.dataSources.length; i++) {
+            const ds = cesiumInstance.dataSources.get(i);
             if (ds.name === layer.id) {
               ready3DStatus = true;
               break;
@@ -83,8 +84,8 @@ export function StatusMonitor() {
           }
         } else if (type === '3d-tiles') {
           // Check primitives
-          for (let i = 0; i < viewer.scene.primitives.length; i++) {
-            const primitive = viewer.scene.primitives.get(i);
+          for (let i = 0; i < cesiumInstance.scene.primitives.length; i++) {
+            const primitive = cesiumInstance.scene.primitives.get(i);
             if (primitive.name === layer.id) {
               ready3DStatus = true;
               break;
@@ -92,7 +93,7 @@ export function StatusMonitor() {
           }
         } else if (type === 'imagery') {
           // For imagery layers, check if any exist
-          ready3DStatus = viewer.imageryLayers.length > 0;
+          ready3DStatus = cesiumInstance.imageryLayers.length > 0;
         }
       }
 
@@ -119,7 +120,7 @@ export function StatusMonitor() {
         ready3DCount: ready3D
       });
     }
-  }, [layers, viewer, status]);
+  }, [layers, cesiumInstance, status]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -136,6 +137,18 @@ export function StatusMonitor() {
 
   const getStatusIcon = (isReady: boolean) =>
     isReady ? '✓' : '⋯';
+
+  const getStatusText = (status: 'initializing' | 'ready' | 'error', error?: string) => {
+    switch (status) {
+      case 'ready':
+        return 'Ready';
+      case 'error':
+        return error || 'Error';
+      case 'initializing':
+      default:
+        return 'Initializing';
+    }
+  };
 
   return (
     <div className="bg-gray-100 dark:bg-gray-800 rounded-md text-sm">
@@ -160,18 +173,14 @@ export function StatusMonitor() {
             <div className="flex justify-between">
               <span>2D Map (Mapbox)</span>
               <span className={getStatusColor(mapboxReady)}>
-                {getStatusIcon(mapboxReady)} {mapboxReady ? 'Ready' : 'Initializing'}
+                {getStatusIcon(mapboxReady)} {getStatusText(mapboxStatus)}
               </span>
             </div>
 
             <div className="flex justify-between">
               <span>3D Map (Cesium)</span>
               <span className={getStatusColor(cesiumReady)}>
-                {getStatusIcon(cesiumReady)} {
-                  !viewer ? 'Not initialized' :
-                  !isInitialized ? 'Initializing' :
-                  'Ready'
-                }
+                {getStatusIcon(cesiumReady)} {getStatusText(cesiumStatus)}
               </span>
             </div>
 
