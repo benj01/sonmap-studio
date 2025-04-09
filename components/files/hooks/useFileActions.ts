@@ -3,6 +3,7 @@ import { createClient } from '@/utils/supabase/client';
 import { ProjectFile, FileUploadResult } from '../types';
 import { LogManager } from '@/core/logging/log-manager';
 import { useFileEventStore } from '@/store/fileEventStore';
+import { useLayers } from '@/store/layers/hooks';
 
 interface UseFileActionsProps {
   projectId: string;
@@ -34,6 +35,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
   const [isLoading, setIsLoading] = useState(false);
   const supabase = createClient();
   const emitFileEvent = useFileEventStore(state => state.emitFileEvent);
+  const { handleFileDeleted } = useLayers();
 
   const refreshProjectStorage = useCallback(async () => {
     try {
@@ -561,17 +563,21 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       // Refresh storage usage after successful deletion
       await refreshProjectStorage();
 
+      // Notify layer store about the deletion
+      handleFileDeleted(fileId);
+
       // Emit file deletion event
       emitFileEvent({
         type: 'delete',
         fileId: fileToDelete.id
       });
 
+      onSuccess?.();
     } catch (error) {
       logger.error('File deletion failed', error);
       throw error;
     }
-  }, [projectId, refreshProjectStorage, emitFileEvent]);
+  }, [projectId, refreshProjectStorage, emitFileEvent, handleFileDeleted]);
 
   const handleDownload = useCallback(async (fileId: string) => {
     setIsLoading(true);
