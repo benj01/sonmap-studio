@@ -1440,6 +1440,38 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: projects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.projects (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    description text,
+    storage_used bigint DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid,
+    updated_by uuid
+);
+
+--
+-- Name: project_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    name text NOT NULL,
+    size bigint NOT NULL,
+    type text NOT NULL,
+    uploaded_by uuid,
+    is_imported boolean DEFAULT false,
+    import_metadata jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+--
 -- Name: feature_collections; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1452,21 +1484,59 @@ CREATE TABLE public.feature_collections (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+--
+-- Name: layers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.layers (
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY, -- <<< ADD PRIMARY KEY HERE
+    collection_id uuid NOT NULL REFERENCES public.feature_collections(id) ON DELETE CASCADE, -- Ensure feature_collections is created before this
+    name text NOT NULL,
+    type text NOT NULL,
+    properties jsonb DEFAULT '{}'::jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
 
 --
 -- Name: geo_features; Type: TABLE; Schema: public; Owner: -
 --
-
 CREATE TABLE public.geo_features (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    layer_id uuid NOT NULL,
-    geometry extensions.geometry(GeometryZ,4326) NOT NULL, -- MODIFIED
+    id uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    layer_id uuid NOT NULL REFERENCES public.layers(id) ON DELETE CASCADE,
+    collection_id uuid REFERENCES public.feature_collections(id) ON DELETE SET NULL,
     properties jsonb DEFAULT '{}'::jsonb,
-    srid integer NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT valid_geometry CHECK (extensions.st_isvalid(geometry)) -- MODIFIED
+    srid integer, -- Target SRID context for reference
+
+    -- FINAL Height/Geometry Columns:
+    geometry_2d geometry(Geometry, 4326), -- Correct column name
+    base_elevation_ellipsoidal double precision,
+    object_height double precision,
+    height_mode text,
+    height_source text,
+    vertical_datum_source text,
+
+    -- Other columns
+    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+    updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Add Indexes using the correct column name
+CREATE INDEX idx_geo_features_layer_id ON public.geo_features USING btree (layer_id);
+CREATE INDEX idx_geo_features_collection_id ON public.geo_features USING btree (collection_id);
+CREATE INDEX idx_geo_features_geometry_2d ON public.geo_features USING gist (geometry_2d); -- Use gist on geometry_2d
+CREATE INDEX idx_geo_features_base_elevation ON public.geo_features(base_elevation_ellipsoidal);
+
+-- Add Comments using the correct column name
+COMMENT ON COLUMN public.geo_features.geometry_2d IS 'The WGS84 2D footprint of the feature'; -- Correct comment target
+COMMENT ON COLUMN public.geo_features.base_elevation_ellipsoidal IS 'The calculated WGS84 ellipsoidal height (meters)';
+COMMENT ON COLUMN public.geo_features.object_height IS 'The height of the object itself (meters), relative to its base';
+COMMENT ON COLUMN public.geo_features.height_mode IS 'Defines how base_elevation_ellipsoidal relates to the ground (e.g., absolute_ellipsoidal)';
+COMMENT ON COLUMN public.geo_features.height_source IS 'Source of the base height info before transformation (e.g., z_coord, attribute:H_MEAN)';
+COMMENT ON COLUMN public.geo_features.vertical_datum_source IS 'Original vertical datum of the height source (e.g., LHN95, WGS84)';
+
+-- Ensure the trigger function exists before creating the trigger
+CREATE TRIGGER update_geo_features_updated_at BEFORE UPDATE ON public.geo_features FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 
 
 --
@@ -1503,18 +1573,50 @@ ALTER SEQUENCE public.import_logs_id_seq OWNED BY public.import_logs.id;
 
 
 --
--- Name: layers; Type: TABLE; Schema: public; Owner: -
+-- Name: projects; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.layers (
+CREATE TABLE public.projects (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
-    collection_id uuid NOT NULL,
     name text NOT NULL,
+    description text,
+    storage_used bigint DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by uuid,
+    updated_by uuid
+);
+
+--
+-- Name: project_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.project_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_id uuid NOT NULL,
+    name text NOT NULL,
+    size bigint NOT NULL,
     type text NOT NULL,
-    properties jsonb DEFAULT '{}'::jsonb,
+    uploaded_by uuid,
+    is_imported boolean DEFAULT false,
+    import_metadata jsonb DEFAULT '{}'::jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+--
+-- Name: feature_collections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.feature_collections (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    project_file_id uuid NOT NULL,
+    name text NOT NULL,
+    description text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
 
 
 --
@@ -1531,30 +1633,6 @@ CREATE TABLE public.profiles (
 
 
 --
--- Name: project_files; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.project_files (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    project_id uuid NOT NULL,
-    name text NOT NULL,
-    file_type text NOT NULL,
-    size bigint NOT NULL,
-    storage_path text NOT NULL,
-    uploaded_by uuid,
-    uploaded_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
-    metadata jsonb DEFAULT '{}'::jsonb,
-    source_file_id uuid,
-    is_imported boolean DEFAULT false,
-    import_metadata jsonb,
-    is_shapefile_component boolean DEFAULT false,
-    main_file_id uuid,
-    component_type text,
-    CONSTRAINT project_files_component_type_check CHECK ((component_type = ANY (ARRAY['shp'::text, 'shx'::text, 'dbf'::text, 'prj'::text, 'qmd'::text])))
-);
-
-
---
 -- Name: project_members; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1565,24 +1643,6 @@ CREATE TABLE public.project_members (
     invited_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
     joined_at timestamp with time zone,
     CONSTRAINT project_members_role_check CHECK ((role = ANY (ARRAY['viewer'::text, 'editor'::text, 'admin'::text])))
-);
-
-
---
--- Name: projects; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.projects (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    description text,
-    status public.project_status DEFAULT 'active'::public.project_status NOT NULL,
-    created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
-    updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
-    owner_id uuid NOT NULL,
-    storage_used bigint DEFAULT 0 NOT NULL,
-    last_accessed_at timestamp with time zone,
-    metadata jsonb DEFAULT '{}'::jsonb
 );
 
 

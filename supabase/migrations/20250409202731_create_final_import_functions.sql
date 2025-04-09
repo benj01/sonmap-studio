@@ -1,4 +1,3 @@
--- Migration: 20240409000008_fix_plv8_await.sql
 
 -- Drop the existing transform function if it exists (handling potential signature changes)
 DROP FUNCTION IF EXISTS public.transform_swiss_coords_swisstopo(float, float, float);
