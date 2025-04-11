@@ -45,7 +45,6 @@ export function LoginForm() {
   })
 
   const onSubmit = async (data: FormValues) => {
-    logger.debug('LoginForm', 'Login form submission started', data.email)
     setIsSubmitting(true)
     setFormError(null)
 
@@ -60,9 +59,6 @@ export function LoginForm() {
         setFormError(authError.message)
         return
       }
-
-      logger.debug('LoginForm', 'Login successful')
-      // The AuthProvider will handle the modal state and redirect
     } catch (err) {
       logger.error('LoginForm', 'Unexpected error during login', err)
       setFormError('An unexpected error occurred')

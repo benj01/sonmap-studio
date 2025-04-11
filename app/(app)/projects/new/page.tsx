@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/components/providers/auth-provider'
 import { Database } from '@/types/supabase'
 import { LoadingState } from '@/components/shared/loading-state'
+import { useLogger } from '../../../../core/logging/LoggerContext'
 
 type ProjectInsert = Database['public']['Tables']['projects']['Insert']
 
@@ -26,6 +27,7 @@ export default function NewProjectPage() {
     description: ''
   })
   const [hasRedirected, setHasRedirected] = useState(false)
+  const logger = useLogger()
 
   useEffect(() => {
     console.log('Project page auth state:', { initialized, isLoading, hasUser: !!user })
@@ -82,7 +84,7 @@ export default function NewProjectPage() {
         .single()
 
       if (projectError) {
-        console.error('Project creation error:', projectError)
+        logger.error('NewProjectPage', 'Project creation error', projectError)
         throw projectError
       }
 
@@ -98,7 +100,7 @@ export default function NewProjectPage() {
         })
 
       if (memberError) {
-        console.error('Member creation error:', memberError)
+        logger.error('NewProjectPage', 'Member creation error', memberError)
         throw memberError
       }
 
@@ -111,7 +113,7 @@ export default function NewProjectPage() {
       // Navigate to the dashboard
       router.push('/dashboard')
     } catch (error) {
-      console.error('Error creating project:', error)
+      logger.error('NewProjectPage', 'Error creating project', error)
       toast({
         title: "Error",
         description: "Failed to create project. Please try again.",

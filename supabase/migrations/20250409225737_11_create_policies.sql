@@ -213,11 +213,10 @@ CREATE POLICY geo_features_manage_policy ON public.geo_features
 
 
 -- Policies for public.project_members (Using specific names)
+-- Option 1: Only allow users to see their own membership directly
 CREATE POLICY project_members_select_policy ON public.project_members
     FOR SELECT TO authenticated USING (
         (user_id = auth.uid()) -- User can see their own memberships
-        OR
-        (EXISTS ( SELECT 1 FROM public.projects p WHERE p.id = project_members.project_id AND p.owner_id = auth.uid())) -- Owner can see all members
     );
 
 CREATE POLICY project_members_insert_policy ON public.project_members

@@ -64,23 +64,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // Handle specific auth events
       if (event === 'SIGNED_IN') {
         // Close all modals immediately
-        logger.debug('AuthProvider', 'Closing all modals after sign in')
         closeAllModals()
         
         // Only handle redirect if we're on the sign-in page or if there's a redirect parameter
         const isAuthPage = window.location.pathname.includes('/auth-pages/')
         const hasRedirect = searchParams.get('redirect')
         
-        logger.debug('AuthProvider', 'Sign in event details', {
-          isAuthPage,
-          hasRedirect,
-          currentPath: window.location.pathname
-        })
-        
         if (isAuthPage || hasRedirect) {
           // Prevent multiple redirects in dev mode
           if (isRedirecting.current) {
-            logger.debug('AuthProvider', 'Already redirecting, skipping')
             return
           }
           
@@ -96,8 +88,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               isRedirecting.current = false
             }, 1000)
           }
-        } else {
-          logger.debug('AuthProvider', 'No redirect needed after sign in')
         }
       } else if (event === 'SIGNED_OUT') {
         logger.info('AuthProvider', 'User signed out, redirecting to sign-in')

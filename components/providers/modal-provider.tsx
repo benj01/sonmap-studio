@@ -37,14 +37,12 @@ export function ModalProvider() {
     <>
       {Object.entries(MODAL_COMPONENTS).map(([id, { title, component: ModalComponent }]) => {
         const isOpen = modals[id as ModalId] || false
-        logger.debug('ModalProvider', `Modal state for ${id}`, isOpen)
 
         return (
           <Dialog
             key={id}
             open={isOpen}
             onOpenChange={(open) => {
-              logger.debug('ModalProvider', `Modal open state change for ${id}`, open)
               !open && toggleModal(id as ModalId)
             }}
           >

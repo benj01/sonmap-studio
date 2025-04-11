@@ -12,6 +12,7 @@ import { Plus } from "lucide-react"
 import { ProjectCard } from '@/components/dashboard/project-card'
 import { DashboardStats as DashboardStatsComponent } from '@/components/dashboard/dashboard-stats'
 import { EmptyState } from '@/components/dashboard/empty-state'
+import { useLogger } from '../../../core/logging/LoggerContext'
 
 type ProjectRow = Database['public']['Tables']['projects']['Row']
 type ProjectStatus = 'active' | 'archived' | 'deleted'
@@ -42,6 +43,8 @@ export default function DashboardPage() {
     collaborators: 0
   })
 
+  const logger = useLogger()
+
   useEffect(() => {
     const fetchData = async () => {
       if (!user) return
@@ -64,7 +67,7 @@ export default function DashboardPage() {
           .order('created_at', { ascending: false })
 
         if (projectsError) {
-          console.error('Error fetching projects:', projectsError)
+          logger.error('DashboardPage', 'Error fetching projects', projectsError)
           return
         }
 
@@ -99,7 +102,7 @@ export default function DashboardPage() {
           collaborators
         })
       } catch (error) {
-        console.error('Error fetching projects:', error)
+        logger.error('DashboardPage', 'Error fetching projects', error)
       } finally {
         setLoading(false)
       }
@@ -124,7 +127,7 @@ export default function DashboardPage() {
       .eq('id', projectId)
 
     if (error) {
-      console.error('Error deleting project:', error)
+      logger.error('DashboardPage', 'Error deleting project', error)
     } else {
       // Refresh the projects list
       const { data: projects } = await supabase

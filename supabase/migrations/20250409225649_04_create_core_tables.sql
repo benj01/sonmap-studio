@@ -8,6 +8,8 @@ CREATE TABLE public.projects (
     owner_id uuid NOT NULL, -- FK to auth.users added later
     name text NOT NULL,
     description text,
+    status text DEFAULT 'active'::text, -- Example type and default
+    metadata jsonb DEFAULT '{}'::jsonb, -- Example type and default
     storage_used bigint DEFAULT 0 NOT NULL, -- Added NOT NULL based on default
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
