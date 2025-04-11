@@ -55,3 +55,13 @@ GRANT USAGE, SELECT ON SEQUENCE public.import_logs_id_seq TO service_role; -- Al
 
 -- Grant usage on PostGIS functions within the extensions schema (if needed)
 GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA extensions TO authenticated, service_role; -- Grant execute on PostGIS/plv8 functions
+
+-- Grants for Supabase Storage
+GRANT USAGE ON SCHEMA storage TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE storage.objects TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE storage.buckets TO authenticated; -- Grant SELECT is needed to find the bucket, INSERT might be needed depending on bucket creation flow
+
+-- You might also need grants for service_role if your backend functions interact with storage
+GRANT USAGE ON SCHEMA storage TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE storage.objects TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE storage.buckets TO service_role;

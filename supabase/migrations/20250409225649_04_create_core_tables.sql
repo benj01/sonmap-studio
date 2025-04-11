@@ -34,17 +34,20 @@ CREATE TABLE public.project_files (
     project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
     name text NOT NULL,
     size bigint NOT NULL,
-    type text NOT NULL, -- e.g., 'Shapefile', 'GeoJSON', 'Companion'
-    storage_path text UNIQUE, -- Added UNIQUE constraint as paths should be unique
-    uploaded_by uuid, -- FK to auth.users added later
+ -- type text NOT NULL, -- Rename or replace with file_type?
+    file_type text, -- Match live DB INSERT (assuming it's storing MIME type)
+    storage_path text UNIQUE,
+    uploaded_by uuid,
+    uploaded_at timestamp with time zone DEFAULT now() NOT NULL, -- <<< ADD THIS
+    metadata jsonb DEFAULT '{}'::jsonb, -- <<< ADD THIS (potentially)
     is_imported boolean DEFAULT false NOT NULL,
-    import_metadata jsonb DEFAULT '{}'::jsonb,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    source_file_id uuid, -- Self-ref FK added later
-    main_file_id uuid,   -- Self-ref FK added later
+    import_metadata jsonb DEFAULT '{}'::jsonb, -- Keep this if needed alongside metadata
+    created_at timestamp with time zone DEFAULT now() NOT NULL, -- Keep default timestamps
+    updated_at timestamp with time zone DEFAULT now() NOT NULL, -- Keep default timestamps
+    source_file_id uuid,
+    main_file_id uuid,
     is_shapefile_component boolean DEFAULT false NOT NULL,
-    component_type text -- e.g., 'shp', 'shx', 'dbf', 'prj'
+    component_type text
 );
 COMMENT ON TABLE public.project_files IS 'Stores information about uploaded files, including main data files and companions.';
 COMMENT ON COLUMN public.project_files.component_type IS 'Type of component if part of a multi-file format like Shapefile (e.g., shp, dbf, prj)';
