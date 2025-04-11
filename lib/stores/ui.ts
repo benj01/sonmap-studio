@@ -8,6 +8,8 @@ export interface UIState {
   setTheme: (theme: Theme) => void;
   modals: Record<ModalId, boolean>;
   toggleModal: (modalId: ModalId) => void;
+  closeModal: (modalId: ModalId) => void;
+  closeAllModals: () => void;
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -22,6 +24,20 @@ export const useUIStore = create<UIState>((set) => ({
       modals: {
         ...state.modals,
         [modalId]: !state.modals[modalId],
+      },
+    })),
+  closeModal: (modalId) =>
+    set((state) => ({
+      modals: {
+        ...state.modals,
+        [modalId]: false,
+      },
+    })),
+  closeAllModals: () =>
+    set((state) => ({
+      modals: {
+        login: false,
+        register: false,
       },
     })),
 }));

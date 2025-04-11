@@ -120,11 +120,11 @@ DECLARE
   -- Feature Processing Variables
   v_feature JSONB;
   v_properties JSONB;
-  v_raw_geometry extensions.GEOMETRY;
-  v_cleaned_geometry extensions.GEOMETRY;
-  v_validated_geometry extensions.GEOMETRY;
-  v_geometry_2d extensions.GEOMETRY;
-  v_representative_point extensions.GEOMETRY;
+  v_raw_geometry GEOMETRY;
+  v_cleaned_geometry GEOMETRY;
+  v_validated_geometry GEOMETRY;
+  v_geometry_2d GEOMETRY;
+  v_representative_point GEOMETRY;
   lv95_easting FLOAT;
   lv95_northing FLOAT;
 
@@ -217,31 +217,31 @@ BEGIN
       BEGIN -- Start block for individual feature processing
 
         -- 1. Parse geometry
-        v_raw_geometry := extensions.ST_GeomFromGeoJSON(v_feature->'geometry');
+        v_raw_geometry := ST_GeomFromGeoJSON(v_feature->'geometry');
         IF v_raw_geometry IS NULL THEN
           RAISE WARNING 'ST_GeomFromGeoJSON returned NULL for feature index %. Skipping.', i;
           v_notices := v_notices || jsonb_build_object('level', 'error', 'message', format('Failed to parse geometry for feature index %s. Skipping.', i), 'details', jsonb_build_object('feature_index', i, 'geometry_json', v_feature->'geometry'));
           v_failed_count := v_failed_count + 1; CONTINUE;
         END IF;
-        v_raw_geometry := extensions.ST_SetSRID(v_raw_geometry, p_source_srid);
+        v_raw_geometry := ST_SetSRID(v_raw_geometry, p_source_srid);
 
         -- 2. Clean and Validate geometry
-        v_cleaned_geometry := extensions.ST_RemoveRepeatedPoints(v_raw_geometry, 0.0);
-        IF NOT extensions.ST_Equals(v_cleaned_geometry, v_raw_geometry) THEN v_cleaned_count := v_cleaned_count + 1; END IF;
+        v_cleaned_geometry := ST_RemoveRepeatedPoints(v_raw_geometry, 0.0);
+        IF NOT ST_Equals(v_cleaned_geometry, v_raw_geometry) THEN v_cleaned_count := v_cleaned_count + 1; END IF;
 
-        IF NOT extensions.ST_IsValid(v_cleaned_geometry) THEN
-           RAISE NOTICE 'Feature index % invalid geometry, attempting repair. Reason: %', i, extensions.ST_IsValidReason(v_cleaned_geometry);
+        IF NOT ST_IsValid(v_cleaned_geometry) THEN
+           RAISE NOTICE 'Feature index % invalid geometry, attempting repair. Reason: %', i, ST_IsValidReason(v_cleaned_geometry);
           BEGIN
-            v_validated_geometry := extensions.ST_CollectionExtract(extensions.ST_MakeValid(extensions.ST_Buffer(v_cleaned_geometry, 0.0)), extensions.ST_Dimension(v_cleaned_geometry) + 1);
-            IF v_validated_geometry IS NULL OR extensions.ST_IsEmpty(v_validated_geometry) OR NOT extensions.ST_IsValid(v_validated_geometry) THEN
+            v_validated_geometry := ST_CollectionExtract(ST_MakeValid(ST_Buffer(v_cleaned_geometry, 0.0)), ST_Dimension(v_cleaned_geometry) + 1);
+            IF v_validated_geometry IS NULL OR ST_IsEmpty(v_validated_geometry) OR NOT ST_IsValid(v_validated_geometry) THEN
                RAISE WARNING 'Failed to repair invalid geometry for feature index %. Skipping.', i; v_failed_count := v_failed_count + 1;
-               v_feature_errors := v_feature_errors || jsonb_build_object('feature_index', i, 'error', 'Failed to repair invalid geometry', 'invalid_reason', extensions.ST_IsValidReason(v_cleaned_geometry));
+               v_feature_errors := v_feature_errors || jsonb_build_object('feature_index', i, 'error', 'Failed to repair invalid geometry', 'invalid_reason', ST_IsValidReason(v_cleaned_geometry));
                CONTINUE;
             END IF;
             v_repaired_count := v_repaired_count + 1; RAISE NOTICE 'Feature index % geometry repaired.', i;
           EXCEPTION WHEN OTHERS THEN
              RAISE WARNING 'Exception during geometry repair for feature index %: %. Skipping.', i, SQLERRM; v_failed_count := v_failed_count + 1;
-             v_feature_errors := v_feature_errors || jsonb_build_object('feature_index', i, 'error', 'Exception during geometry repair: ' || SQLERRM, 'error_state', SQLSTATE, 'invalid_reason', extensions.ST_IsValidReason(v_cleaned_geometry));
+             v_feature_errors := v_feature_errors || jsonb_build_object('feature_index', i, 'error', 'Exception during geometry repair: ' || SQLERRM, 'error_state', SQLSTATE, 'invalid_reason', ST_IsValidReason(v_cleaned_geometry));
              CONTINUE;
           END;
         ELSE
@@ -251,12 +251,12 @@ BEGIN
         -- 3. Extract Height Information (from validated geometry in original SRID)
         v_vertical_datum_source := CASE WHEN p_source_srid = 2056 THEN 'LHN95' WHEN p_source_srid = 4326 THEN 'WGS84' ELSE 'EPSG:' || p_source_srid::TEXT END;
 
-        IF extensions.ST_Is3D(v_validated_geometry) THEN
+        IF ST_Is3D(v_validated_geometry) THEN
           v_height_source := 'z_coord (failed extraction)';
           BEGIN
-            IF extensions.GeometryType(v_validated_geometry) = 'POINT' THEN v_lhn95_height := extensions.ST_Z(v_validated_geometry); v_height_source := 'z_coord';
-            ELSIF extensions.GeometryType(v_validated_geometry) LIKE '%LINESTRING' THEN v_lhn95_height := extensions.ST_Z(extensions.ST_StartPoint(v_validated_geometry)); v_height_source := 'z_coord';
-            ELSIF extensions.GeometryType(v_validated_geometry) LIKE '%POLYGON' THEN v_lhn95_height := extensions.ST_Z(extensions.ST_PointN(extensions.ST_ExteriorRing(v_validated_geometry), 1)); v_height_source := 'z_coord';
+            IF GeometryType(v_validated_geometry) = 'POINT' THEN v_lhn95_height := ST_Z(v_validated_geometry); v_height_source := 'z_coord';
+            ELSIF GeometryType(v_validated_geometry) LIKE '%LINESTRING' THEN v_lhn95_height := ST_Z(ST_StartPoint(v_validated_geometry)); v_height_source := 'z_coord';
+            ELSIF GeometryType(v_validated_geometry) LIKE '%POLYGON' THEN v_lhn95_height := ST_Z(ST_PointN(ST_ExteriorRing(v_validated_geometry), 1)); v_height_source := 'z_coord';
             END IF;
           EXCEPTION WHEN OTHERS THEN RAISE WARNING 'Could not extract Z coordinate for feature index %: %', i, SQLERRM; v_lhn95_height := NULL;
           END;
@@ -278,13 +278,13 @@ BEGIN
         -- 4. Get Representative Point (in original SRID) for API call if needed
         IF p_source_srid = 2056 AND v_lhn95_height IS NOT NULL THEN
             BEGIN
-                v_representative_point := extensions.ST_PointOnSurface(v_validated_geometry);
+                v_representative_point := ST_PointOnSurface(v_validated_geometry);
                 IF v_representative_point IS NULL THEN
                    RAISE WARNING 'Could not get representative point (ST_PointOnSurface failed) for feature index %. Using centroid.', i;
-                   v_representative_point := extensions.ST_Centroid(v_validated_geometry);
+                   v_representative_point := ST_Centroid(v_validated_geometry);
                 END IF;
-                lv95_easting := extensions.ST_X(v_representative_point);
-                lv95_northing := extensions.ST_Y(v_representative_point);
+                lv95_easting := ST_X(v_representative_point);
+                lv95_northing := ST_Y(v_representative_point);
             EXCEPTION WHEN OTHERS THEN
                 RAISE WARNING 'Exception getting representative point for feature index %: %. Cannot transform height.', i, SQLERRM; lv95_easting := NULL; lv95_northing := NULL;
             END;
@@ -292,13 +292,13 @@ BEGIN
 
         -- 5. Transform Footprint to WGS84 2D (EPSG:4326)
         BEGIN
-          v_geometry_2d := extensions.ST_Force2D(extensions.ST_Transform(v_validated_geometry, 4326));
+          v_geometry_2d := ST_Force2D(ST_Transform(v_validated_geometry, 4326));
         EXCEPTION WHEN OTHERS THEN
            RAISE WARNING 'Exception during ST_Transform for feature index %: %. Skipping.', i, SQLERRM; v_failed_count := v_failed_count + 1;
            v_feature_errors := v_feature_errors || jsonb_build_object('feature_index', i, 'error', 'Exception during ST_Transform: ' || SQLERRM, 'error_state', SQLSTATE);
            CONTINUE;
         END;
-        IF v_geometry_2d IS NULL OR extensions.ST_IsEmpty(v_geometry_2d) THEN
+        IF v_geometry_2d IS NULL OR ST_IsEmpty(v_geometry_2d) THEN
           RAISE WARNING 'ST_Transform resulted in NULL or empty geometry for feature index %. Skipping.', i; v_failed_count := v_failed_count + 1;
           v_feature_errors := v_feature_errors || jsonb_build_object('feature_index', i, 'error', 'ST_Transform resulted in NULL or empty geometry');
           CONTINUE;

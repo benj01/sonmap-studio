@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { LoginForm } from '@/components/auth/auth-forms/login-form'
 import { RegisterForm } from '@/components/auth/auth-forms/register-form'
+import { LogManager } from '@/core/logging/log-manager'
 
 type ModalConfig = {
   title: string
@@ -26,6 +27,8 @@ const MODAL_COMPONENTS: Record<ModalId, ModalConfig> = {
   },
 }
 
+const logger = LogManager.getInstance()
+
 export function ModalProvider() {
   const modals = useUIStore(state => state.modals)
   const toggleModal = useUIStore(state => state.toggleModal)
@@ -34,12 +37,16 @@ export function ModalProvider() {
     <>
       {Object.entries(MODAL_COMPONENTS).map(([id, { title, component: ModalComponent }]) => {
         const isOpen = modals[id as ModalId] || false
+        logger.debug('ModalProvider', `Modal state for ${id}`, isOpen)
 
         return (
           <Dialog
             key={id}
             open={isOpen}
-            onOpenChange={(open) => !open && toggleModal(id as ModalId)}
+            onOpenChange={(open) => {
+              logger.debug('ModalProvider', `Modal open state change for ${id}`, open)
+              !open && toggleModal(id as ModalId)
+            }}
           >
             <DialogContent aria-describedby="modal-description">
               <DialogHeader>

@@ -40,7 +40,9 @@ export class LogManager {
    */
   public configureDefaultSources() {
     // Core functionality - INFO/WARN is usually good
-    this.sourceFilters.set('Auth', LogLevel.WARN);
+    this.sourceFilters.set('Auth', LogLevel.DEBUG);
+    this.sourceFilters.set('LoginForm', LogLevel.DEBUG);
+    this.sourceFilters.set('ModalProvider', LogLevel.DEBUG);
     this.sourceFilters.set('FileManager', LogLevel.WARN);
     this.sourceFilters.set('ImportManager', LogLevel.INFO);
 

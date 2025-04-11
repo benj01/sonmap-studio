@@ -19,6 +19,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
+import { LogManager } from '@/core/logging/log-manager'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -27,11 +28,12 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>
 
+const logger = LogManager.getInstance()
+
 export function LoginForm() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
-  const { toggleModal } = useUIStore()
   const supabase = createClient()
 
   const form = useForm<FormValues>({
@@ -43,6 +45,7 @@ export function LoginForm() {
   })
 
   const onSubmit = async (data: FormValues) => {
+    logger.debug('LoginForm', 'Login form submission started', data.email)
     setIsSubmitting(true)
     setFormError(null)
 
@@ -53,13 +56,15 @@ export function LoginForm() {
       })
 
       if (authError) {
+        logger.error('LoginForm', 'Login failed', authError.message)
         setFormError(authError.message)
         return
       }
 
-      // Close the login modal after successful login
-      toggleModal('login')
+      logger.debug('LoginForm', 'Login successful')
+      // The AuthProvider will handle the modal state and redirect
     } catch (err) {
+      logger.error('LoginForm', 'Unexpected error during login', err)
       setFormError('An unexpected error occurred')
     } finally {
       setIsSubmitting(false)
