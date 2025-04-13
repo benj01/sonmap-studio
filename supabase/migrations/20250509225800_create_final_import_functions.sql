@@ -251,7 +251,7 @@ BEGIN
         -- 3. Extract Height Information (from validated geometry in original SRID)
         v_vertical_datum_source := CASE WHEN p_source_srid = 2056 THEN 'LHN95' WHEN p_source_srid = 4326 THEN 'WGS84' ELSE 'EPSG:' || p_source_srid::TEXT END;
 
-        IF ST_Is3D(v_validated_geometry) THEN
+        IF ST_CoordDim(v_validated_geometry) >= 3 THEN
           v_height_source := 'z_coord (failed extraction)';
           BEGIN
             IF GeometryType(v_validated_geometry) = 'POINT' THEN v_lhn95_height := ST_Z(v_validated_geometry); v_height_source := 'z_coord';

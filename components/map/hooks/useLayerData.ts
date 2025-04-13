@@ -3,6 +3,8 @@
 import { useEffect, useState, useRef } from 'react';
 import createClient from '@/utils/supabase/client';
 import { LogManager } from '@/core/logging/log-manager';
+import { useLayerStore } from '@/store/layers/layerStore';
+import type { Feature } from 'geojson';
 
 const SOURCE = 'useLayerData';
 const logManager = LogManager.getInstance();
@@ -244,7 +246,7 @@ export function useLayerData(layerId: string) {
         // Then get the features for this layer with PostGIS geometry
         const { data: features, error: featuresError } = await supabase
           .rpc('get_layer_features', {
-            layer_id: layerId
+            p_layer_id: layerId
           });
 
         // Skip if cleanup started
@@ -263,12 +265,45 @@ export function useLayerData(layerId: string) {
           featureCount: features?.length || 0
         });
 
+        // Process features into GeoJSON
+        const processedFeatures = features?.map((feature: {
+          id: string;
+          geojson: string | GeoJSON.Geometry;
+          properties: Record<string, any>;
+        }) => {
+          try {
+            const geometry = typeof feature.geojson === 'string' 
+              ? JSON.parse(feature.geojson)
+              : feature.geojson;
+
+            if (!validateGeometry(geometry)) {
+              logger.warn('Invalid geometry in feature', { featureId: feature.id });
+              return null;
+            }
+
+            return {
+              type: 'Feature',
+              id: feature.id,
+              geometry,
+              properties: feature.properties || {}
+            } as Feature;
+          } catch (error) {
+            logger.warn('Failed to process feature', { featureId: feature.id, error });
+            return null;
+          }
+        }).filter(Boolean) || [];
+
+        const featureCollection: GeoJSON.FeatureCollection = {
+          type: 'FeatureCollection',
+          features: processedFeatures
+        };
+
         const layerDataWithFeatures: LayerData = {
           id: layerData.id,
           name: layerData.name,
           type: layerData.type,
           properties: layerData.properties || {},
-          features: features || []
+          features: processedFeatures
         };
 
         // Cache the data
@@ -283,8 +318,13 @@ export function useLayerData(layerId: string) {
         logger.info('Layer data cached', {
           layerId,
           name: layerData.name,
-          featureCount: features?.length || 0
+          featureCount: processedFeatures.length
         });
+
+        // Update layer store with GeoJSON data
+        const layerStore = useLayerStore.getState();
+        layerStore.setLayerGeoJsonData(layerId, featureCollection);
+        layerStore.updateLayerStatus(layerId, 'complete');
 
         if (mounted.current) {
           setData(layerDataWithFeatures);
