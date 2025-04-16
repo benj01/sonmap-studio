@@ -8,6 +8,7 @@ import type {
   CreateImportSessionParams
 } from '@/types/geo-import';
 import { createLogger } from '@/utils/logger';
+import { generatePreview as generatePreviewDataset } from '@/core/processors/preview-generator';
 
 const supabase = createClient();
 const logger = createLogger('GeoImport');
@@ -64,11 +65,22 @@ export function useGeoImport() {
       throw new Error('Dataset is empty');
     }
 
-    // TODO: Implement preview generation with:
-    // 1. Feature sampling
-    // 2. Geometry simplification
-    // 3. Preview dataset creation
-    throw new Error('Preview generation not implemented');
+    logger.info('Generating preview dataset', {
+      featureCount: fullDataset.features.length,
+      config
+    });
+
+    try {
+      const previewResult = await generatePreviewDataset(fullDataset, config);
+      logger.info('Preview generation complete', {
+        originalFeatures: fullDataset.features.length,
+        previewFeatures: previewResult.features.length
+      });
+      return previewResult;
+    } catch (error) {
+      logger.error('Failed to generate preview dataset', { error });
+      throw error;
+    }
   }, []);
 
   /**

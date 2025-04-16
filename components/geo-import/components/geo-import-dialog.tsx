@@ -13,7 +13,9 @@ import { LogLevel, LogManager } from '@/core/logging/log-manager';
 import { createClient } from '@/utils/supabase/client';
 import { useToast } from '@/components/ui/use-toast';
 import { GeoImportDialogProps, ImportSession } from '../types';
+import { FullDataset, PreviewDataset, PreviewFeature } from '@/types/geo-import';
 import { logger } from '@/utils/logger';
+import { useGeoImport } from '../hooks/use-geo-import';
 
 const SOURCE = 'GeoImportDialog';
 const supabase = createClient();
@@ -81,6 +83,7 @@ export function GeoImportDialog({
   const [progress, setProgress] = useState(0);
   const [progressMessage, setProgressMessage] = useState('');
   const [currentImportLogId, setCurrentImportLogId] = useState<string | null>(null);
+  const { generatePreview } = useGeoImport();
 
   const memoizedFileInfo = useMemo(() => 
     fileInfo ? {
@@ -133,15 +136,100 @@ export function GeoImportDialog({
       sourceSrid: session.fullDataset?.metadata?.srid,
       bounds: session.fullDataset?.metadata?.bounds
     });
-    setImportSession(session);
-    
-    if (session.fullDataset?.features) {
-      const allFeatureIds = session.fullDataset.features.map(f => f.originalIndex || f.id);
-      setSelectedFeatureIds(allFeatureIds);
-      if (memoizedFileInfo?.name) {
-        processedFiles.add(memoizedFileInfo.name);
+
+    // Check if the necessary data exists from the parser
+    if (session.fullDataset && session.fullDataset.previewFeatures?.length > 0) {
+      try {
+        // Create a temporary dataset object for generatePreview,
+        // using the ALREADY TRANSFORMED previewFeatures from the parser.
+        // This ensures generatePreview works with WGS84 coordinates.
+        const datasetForPreviewGeneration: FullDataset = {
+          ...session.fullDataset, // Keep metadata, sourceFile etc.
+          features: session.fullDataset.previewFeatures, // Use the WGS84 features
+          // Explicitly set the SRID to WGS84 for clarity within generatePreview
+          metadata: {
+            ...session.fullDataset.metadata,
+            srid: 4326, // Reflecting the coordinates being used
+            featureCount: session.fullDataset.previewFeatures.length,
+            geometryTypes: session.fullDataset.metadata?.geometryTypes || [],
+            properties: session.fullDataset.metadata?.properties || []
+          }
+        };
+
+        safeLogger.info('Generating preview dataset from pre-transformed features', {
+          featureCount: datasetForPreviewGeneration.features.length,
+          srid: datasetForPreviewGeneration.metadata?.srid
+        });
+
+        // Generate the final preview dataset (simplification, validation)
+        const finalPreviewResult = await generatePreview(datasetForPreviewGeneration, {
+          maxFeatures: 500,
+          simplificationTolerance: 0.00001,
+          randomSampling: true
+        });
+
+        // Update the session with the original fullDataset and the finalPreviewResult
+        const updatedSession: ImportSession = {
+          ...session,
+          // Keep the original fullDataset (EPSG:2056) for the actual import later
+          fullDataset: session.fullDataset,
+          // Use the newly generated preview (simplified WGS84) for the map
+          previewDataset: finalPreviewResult
+        };
+
+        setImportSession(updatedSession);
+        
+        // Select all features initially (based on original full dataset indices)
+        const allFeatureIds = session.fullDataset.features.map(f => f.originalIndex || f.id);
+        setSelectedFeatureIds(allFeatureIds);
+        
+        if (memoizedFileInfo?.name) {
+          processedFiles.add(memoizedFileInfo.name);
+        }
+        safeLogger.info('Selected all features', { count: allFeatureIds.length });
+
+      } catch (error) {
+        safeLogger.error('Failed to generate preview dataset', { error });
+        
+        // Fallback: Create a minimal PreviewDataset from the parser's WGS84 previewFeatures
+        const fallbackPreviewDataset: PreviewDataset = {
+          sourceFile: session.fullDataset.sourceFile,
+          features: session.fullDataset.previewFeatures.map((f, index) => ({
+            ...f,
+            previewId: index, // Assign a simple previewId
+            originalFeatureIndex: f.originalIndex || f.id, // Ensure mapping
+            properties: {
+              ...f.properties || {},
+              wasRepaired: false,
+              wasCleaned: false
+            }
+          })),
+          metadata: {
+            ...session.fullDataset.metadata,
+            srid: 4326,
+            featureCount: session.fullDataset.previewFeatures.length,
+            geometryTypes: session.fullDataset.metadata?.geometryTypes || [],
+            properties: session.fullDataset.metadata?.properties || [],
+            validationSummary: {
+              featuresWithIssues: 0,
+              totalFeatures: session.fullDataset.previewFeatures.length
+            }
+          }
+        };
+
+        setImportSession({
+          ...session,
+          previewDataset: fallbackPreviewDataset
+        });
+
+        // Still select all features
+        const allFeatureIds = session.fullDataset.features.map(f => f.originalIndex || f.id);
+        setSelectedFeatureIds(allFeatureIds);
       }
-      safeLogger.info('Selected all features', { count: allFeatureIds.length });
+    } else {
+      // Handle cases where parsing might have failed or returned no features
+      safeLogger.warn('Import session created but lacks fullDataset or previewFeatures needed for preview generation');
+      setImportSession(session);
     }
   };
 
@@ -413,8 +501,8 @@ export function GeoImportDialog({
             <CardContent className="p-4 pt-2">
               {importSession?.fullDataset ? (
                 <MapPreview
-                  features={importSession.fullDataset.previewFeatures || []}
-                  bounds={importSession.fullDataset.metadata?.bounds}
+                  features={importSession.previewDataset?.features || []}
+                  bounds={importSession.previewDataset?.metadata?.bounds}
                   onFeaturesSelected={handleFeaturesSelected}
                 />
               ) : (
