@@ -86,9 +86,9 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
                   </CardTitle>
                   <CardDescription className="text-sm">
                     {formatSize(file.size)}
-                    {file.companions?.length > 0 && (
+                    {file.companions && file.companions.length > 0 && (
                       <span className="ml-2">
-                        ({file.companions.length} related {file.companions.length === 1 ? 'file' : 'files'})
+                        ({file.companions?.length} related {file.companions?.length === 1 ? 'file' : 'files'})
                       </span>
                     )}
                   </CardDescription>
@@ -96,10 +96,10 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
               </div>
             </CardHeader>
 
-            {file.companions?.length > 0 && expandedFiles[file.id] && (
+            {file.companions && file.companions.length > 0 && expandedFiles[file.id] && (
               <CardContent className="pb-2">
                 <div className="pl-8 space-y-2 border-l">
-                  {file.companions.map((companion) => (
+                  {file.companions?.map((companion) => (
                     <div key={companion.id} className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50">
                       <FileIcon fileName={companion.name} isMain={false} />
                       <div className="flex-1 min-w-0">
@@ -115,7 +115,7 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
             <CardFooter className="flex justify-between mt-auto pt-4">
               <div className="flex items-center">
                 {file.is_imported && (
-                  <Badge variant="secondary" className="text-xs">
+                  <Badge className="text-xs bg-green-100 text-green-800 border-green-300">
                     Imported
                   </Badge>
                 )}

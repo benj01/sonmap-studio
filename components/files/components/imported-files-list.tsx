@@ -160,9 +160,6 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
                   </p>
                 </CardContent>
                 <CardFooter className="flex justify-between mt-auto pt-4">
-                  <Badge variant="secondary" className="text-xs">
-                    Imported
-                  </Badge>
                   <div className="flex items-center gap-2">
                     {onViewLayer && (
                       <Button
