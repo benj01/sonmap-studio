@@ -3,6 +3,7 @@ import { useWizard } from '../WizardContext';
 import { createClient } from '@/utils/supabase/client';
 import { FileTypeUtil } from '../../../files/utils/file-types';
 import { FileProcessor } from '../../../files/utils/file-processor';
+import { Alert, AlertTitle, AlertDescription } from '../../../ui/alert';
 
 interface FileSelectStepProps {
   onNext: () => void;
@@ -53,7 +54,6 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         `Main file: ${group.mainFile.name}\nCompanions: ${group.companions.map(f => f.name).join(', ') || 'None'}`
       );
       // Upload all files (main + companions)
-      const uploadedFileInfos = [];
       // Helper to wait for DB record
       async function waitForFileRecord(filePath: string, maxAttempts = 10, delayMs = 300) {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -68,37 +68,83 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         }
         throw new Error('File record not found after upload');
       }
-      for (const file of [group.mainFile, ...group.companions]) {
-        const filePath = `uploads/${Date.now()}_${file.name}`;
-        const { data, error } = await supabase.storage
+
+      // 1. Upload and insert main file first
+      const mainFile = group.mainFile;
+      const mainFilePath = `uploads/${Date.now()}_${mainFile.name}`;
+      const { error: mainUploadError } = await supabase.storage
+        .from('project-files')
+        .upload(mainFilePath, mainFile, { upsert: false });
+      if (mainUploadError) {
+        setUploadError(`Failed to upload ${mainFile.name}: ${mainUploadError.message}`);
+        setUploading(false);
+        return;
+      }
+      const { error: mainInsertError } = await supabase
+        .from('project_files')
+        .insert({
+          project_id: projectId,
+          name: mainFile.name,
+          size: mainFile.size,
+          file_type: mainFile.type,
+          storage_path: mainFilePath,
+          is_imported: false,
+          is_shapefile_component: false
+        });
+      if (mainInsertError) {
+        setUploadError(`Failed to insert file record for ${mainFile.name}: ${mainInsertError.message}`);
+        setUploading(false);
+        return;
+      }
+      let mainFileRecord;
+      try {
+        mainFileRecord = await waitForFileRecord(mainFilePath);
+      } catch (waitError) {
+        let errorMsg = 'Unknown error';
+        if (waitError instanceof Error) {
+          errorMsg = waitError.message;
+        } else if (typeof waitError === 'string') {
+          errorMsg = waitError;
+        }
+        setUploadError(`Failed to retrieve file record for ${mainFile.name}: ${errorMsg}`);
+        setUploading(false);
+        return;
+      }
+
+      // 2. Upload and insert companions with main_file_id set
+      const companionFileInfos = [];
+      for (const companion of group.companions) {
+        const companionPath = `uploads/${Date.now()}_${companion.name}`;
+        const { error: compUploadError } = await supabase.storage
           .from('project-files')
-          .upload(filePath, file, { upsert: false });
-        if (error) {
-          setUploadError(`Failed to upload ${file.name}: ${error.message}`);
+          .upload(companionPath, companion, { upsert: false });
+        if (compUploadError) {
+          setUploadError(`Failed to upload ${companion.name}: ${compUploadError.message}`);
           setUploading(false);
           return;
         }
-        // Insert a record into project_files after upload
-        const { error: insertError } = await supabase
+        const ext = companion.name.match(/\.[^.]+$/)?.[0].toLowerCase().replace('.', '') || null;
+        const { error: compInsertError } = await supabase
           .from('project_files')
           .insert({
             project_id: projectId,
-            name: file.name,
-            size: file.size,
-            file_type: file.type,
-            storage_path: filePath,
+            name: companion.name,
+            size: companion.size,
+            file_type: companion.type,
+            storage_path: companionPath,
             is_imported: false,
-            is_shapefile_component: false
+            is_shapefile_component: true,
+            main_file_id: mainFileRecord.id,
+            component_type: ext
           });
-        if (insertError) {
-          setUploadError(`Failed to insert file record for ${file.name}: ${insertError.message}`);
+        if (compInsertError) {
+          setUploadError(`Failed to insert file record for ${companion.name}: ${compInsertError.message}`);
           setUploading(false);
           return;
         }
-        // Wait for project_files DB record to appear
-        let fileRecord;
+        let compFileRecord;
         try {
-          fileRecord = await waitForFileRecord(filePath);
+          compFileRecord = await waitForFileRecord(companionPath);
         } catch (waitError) {
           let errorMsg = 'Unknown error';
           if (waitError instanceof Error) {
@@ -106,21 +152,24 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
           } else if (typeof waitError === 'string') {
             errorMsg = waitError;
           }
-          setUploadError(`Failed to retrieve file record for ${file.name}: ${errorMsg}`);
+          setUploadError(`Failed to retrieve file record for ${companion.name}: ${errorMsg}`);
           setUploading(false);
           return;
         }
-        uploadedFileInfos.push({
-          id: fileRecord.id, // Use the UUID from the DB
-          name: file.name,
-          size: file.size,
-          type: file.type,
+        companionFileInfos.push({
+          id: compFileRecord.id,
+          name: companion.name,
+          size: companion.size,
+          type: companion.type,
         });
       }
       // Set main file info in wizard context
       setFileInfo({
-        ...uploadedFileInfos[0],
-        companions: uploadedFileInfos.slice(1)
+        id: mainFileRecord.id,
+        name: mainFile.name,
+        size: mainFile.size,
+        type: mainFile.type,
+        companions: companionFileInfos
       });
       setUploaded(true);
     } catch (err: any) {
@@ -143,7 +192,25 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         disabled={uploading}
       />
       {uploading && <div className="text-blue-600 text-sm">Uploading...</div>}
-      {uploadError && <div className="text-red-600 text-sm">{uploadError}</div>}
+      {uploadError && (
+        <Alert variant="destructive" className="mb-2">
+          <AlertTitle>Upload Error</AlertTitle>
+          <AlertDescription>{uploadError}</AlertDescription>
+          <button
+            className="mt-2 px-3 py-1 bg-blue-600 text-white rounded"
+            onClick={() => {
+              // Retry: re-trigger file input if files are still selected
+              if (fileInputRef.current && selectedFiles.length > 0) {
+                handleFileChange({ target: { files: selectedFiles } } as any);
+              } else {
+                setUploadError(null);
+              }
+            }}
+          >
+            Retry
+          </button>
+        </Alert>
+      )}
       {fileSummary && <div className="text-sm text-gray-700 whitespace-pre">{fileSummary}</div>}
       <div className="flex gap-2 mt-4">
         {/* No Back button on first step */}

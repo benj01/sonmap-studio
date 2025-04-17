@@ -16,12 +16,14 @@ import { createClient } from '@/utils/supabase/client';
 import { ImportedFilesList, ImportedFilesListRef } from '../imported-files-list';
 import { DeleteConfirmationDialog } from '../delete-confirmation-dialog';
 import { ImportFileInfo } from '@/types/files';
-import { logger } from '@/utils/logger';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { FileProcessor, FileProcessingError } from '../../utils/file-processor';
 import { FileValidator } from '../../utils/validation';
 import { useUserSettings } from '@/hooks/useUserSettings';
 import { toast } from 'react-hot-toast';
 import { UploadErrorDialog } from '../upload-error-dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../../ui/dialog';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 interface FileManagerProps {
   projectId: string;
@@ -42,6 +44,9 @@ interface FileListProps {
 }
 
 const SOURCE = 'FileManager';
+const logManager = LogManager.getInstance();
+const LOG_SOURCE = 'FileManager';
+logManager.setComponentLogLevel(LOG_SOURCE, LogLevel.INFO);
 
 export function FileManager({ projectId, onFilesProcessed, onError }: FileManagerProps) {
   const { isProcessing, error, processFiles, processGroup } = useFileOperations();
@@ -62,24 +67,27 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const importedFilesRef = React.useRef<ImportedFilesListRef>(null);
   const { settings } = useUserSettings();
   const [uploadError, setUploadError] = useState<{ message: string; fileName?: string; fileSize?: number } | null>(null);
+  const [showImportWizard, setShowImportWizard] = useState(false);
+  const [uploadedOpen, setUploadedOpen] = useState(true);
+  const [importedOpen, setImportedOpen] = useState(true);
 
   const loadExistingFiles = useCallback(async () => {
     if (!projectId) {
-      logger.warn(SOURCE, 'No project ID provided');
+      logManager.warn(LOG_SOURCE, 'No project ID provided');
       return;
     }
 
     try {
-      logger.debug(SOURCE, 'Loading existing files', { projectId });
+      logManager.debug(LOG_SOURCE, 'Loading existing files', { projectId });
       const loadedFiles = await loadFiles();
       
       if (!loadedFiles) {
-        logger.warn(SOURCE, 'No files returned from loadFiles', { projectId });
+        logManager.warn(LOG_SOURCE, 'No files returned from loadFiles', { projectId });
         setFiles([]);
         return;
       }
 
-      logger.debug(SOURCE, 'Files loaded', {
+      logManager.debug(LOG_SOURCE, 'Files loaded', {
         projectId,
         totalFiles: loadedFiles.length,
         mainFiles: loadedFiles.filter(f => !f.companions).length,
@@ -87,7 +95,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       });
       setFiles(loadedFiles);
     } catch (error) {
-      logger.error(SOURCE, 'Error loading files', { projectId, error });
+      logManager.error(LOG_SOURCE, 'Error loading files', { projectId, error });
       setFiles([]);
     }
   }, [projectId, loadFiles]);
@@ -101,12 +109,12 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleFileSelect = async (files: FileList) => {
     if (isProcessing) {
-      logger.debug(SOURCE, 'Skipping file selection - already processing');
+      logManager.debug(LOG_SOURCE, 'Skipping file selection - already processing');
       return;
     }
 
     try {
-      logger.debug(SOURCE, 'File selection started', {
+      logManager.debug(LOG_SOURCE, 'File selection started', {
         count: files.length
       });
 
@@ -117,19 +125,19 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       );
 
       if (duplicateFiles.length > 0) {
-        logger.warn(SOURCE, 'Skipping duplicate files', {
+        logManager.warn(LOG_SOURCE, 'Skipping duplicate files', {
           files: duplicateFiles.map(f => f.name)
         });
         onError?.('Some files are already being uploaded. Please wait for them to complete.');
         return;
       }
 
-      logger.debug(SOURCE, 'Processing files', {
+      logManager.debug(LOG_SOURCE, 'Processing files', {
         count: fileArray.length
       });
 
       const groups = await processFiles(fileArray);
-      logger.debug(SOURCE, 'Files processed into groups', {
+      logManager.debug(LOG_SOURCE, 'Files processed into groups', {
         groupCount: groups.length,
         groups: groups.map(group => ({
           mainFile: group.mainFile.name,
@@ -149,7 +157,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         // Process and upload each group sequentially
         for (const group of groups) {
-          logger.debug(SOURCE, 'Processing group', {
+          logManager.debug(LOG_SOURCE, 'Processing group', {
             mainFile: group.mainFile.name,
             companions: group.companions.map(c => c.name)
           });
@@ -158,12 +166,12 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           onFilesProcessed?.(processed);
 
           if (processed.main.isValid !== false) {
-            logger.info(SOURCE, 'Starting upload for valid group', {
+            logManager.info(LOG_SOURCE, 'Starting upload for valid group', {
               mainFile: group.mainFile.name
             });
             await handleUpload(group);
           } else {
-            logger.warn(SOURCE, 'Skipping upload - file validation failed', {
+            logManager.warn(LOG_SOURCE, 'Skipping upload - file validation failed', {
               mainFile: group.mainFile.name,
               error: processed.main.error
             });
@@ -172,10 +180,10 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
           }
         }
       } else {
-        logger.warn(SOURCE, 'No valid file groups found after processing');
+        logManager.warn(LOG_SOURCE, 'No valid file groups found after processing');
       }
     } catch (error) {
-      logger.error(SOURCE, 'File selection failed', { error });
+      logManager.error(LOG_SOURCE, 'File selection failed', { error });
       onError?.(error instanceof Error ? error.message : 'Failed to process files');
     }
   };
@@ -211,7 +219,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const handleImportComplete = async (result: any) => {
     try {
       // Add detailed console logging
-      logger.info(SOURCE, '🎉 Import completed successfully!', {
+      logManager.info(LOG_SOURCE, '🎉 Import completed successfully!', {
         totalImported: result.totalImported,
         totalFailed: result.totalFailed,
         collectionId: result.collectionId,
@@ -227,29 +235,29 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       // This is important because the import process updates the database asynchronously
       setTimeout(async () => {
         try {
-          logger.debug(SOURCE, 'Refreshing file lists after import');
+          logManager.debug(LOG_SOURCE, 'Refreshing file lists after import');
           // Refresh both lists to ensure we have the latest data
           await loadExistingFiles();
           
           // Refresh the imported files list directly using the ref
           if (importedFilesRef.current) {
             await importedFilesRef.current.refreshFiles();
-            logger.debug(SOURCE, 'Imported files list refreshed via ref');
+            logManager.debug(LOG_SOURCE, 'Imported files list refreshed via ref');
           } else {
             // Fallback to key refresh if ref is not available
             setImportedFilesKey(prev => prev + 1);
-            logger.debug(SOURCE, 'Imported files list refreshed via key update');
+            logManager.debug(LOG_SOURCE, 'Imported files list refreshed via key update');
           }
           
-          logger.debug(SOURCE, 'File lists refreshed successfully');
+          logManager.debug(LOG_SOURCE, 'File lists refreshed successfully');
         } catch (refreshError) {
-          logger.error(SOURCE, 'Error refreshing file lists', refreshError);
+          logManager.error(LOG_SOURCE, 'Error refreshing file lists', refreshError);
         }
       }, 1000); // 1 second delay
       
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : 'Failed to complete import';
-      logger.error(SOURCE, '❌ Import completion error:', errorMessage);
+      logManager.error(LOG_SOURCE, '❌ Import completion error:', errorMessage);
       onError?.(errorMessage);
     }
   };
@@ -605,50 +613,110 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     setSelectedFile(file as ImportFileInfo);
   }, []);
 
+  // Use main files as returned from the DB, which already have companions attached
+  const groupedFiles = files.filter(f => !f.main_file_id);
+
+  // Debug logging to verify file grouping
+  useEffect(() => {
+    // Only log when files change
+    if (files && files.length > 0) {
+      logManager.info(LOG_SOURCE, 'Raw files from DB', { files });
+      logManager.info(LOG_SOURCE, 'Grouped files for FileList', { groupedFiles });
+    }
+  }, [files, groupedFiles]);
+
   return (
     <div className="flex flex-col h-full">
+      {/* Top CTA and description */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-2">
+        <div>
+          <h2 className="text-xl font-bold mb-1">Project Files</h2>
+          <p className="text-muted-foreground text-sm">Upload new files and import them into your project using the guided wizard.</p>
+        </div>
+        <Button onClick={() => setShowImportWizard(true)} className="gap-2" size="lg">
+          <Upload className="w-5 h-5" /> Upload & Import
+        </Button>
+      </div>
+
+      {/* Main card */}
       <div className={cn('relative min-h-[200px] rounded-lg border bg-card', {
         'border-primary': isDragging
       })}>
         <div ref={dropZoneRef} className="p-4 space-y-6">
-          {/* Uploaded Files Section */}
+          {/* Uploaded Files Section (Collapsible) */}
           <div>
-            <h3 className="text-lg font-semibold mb-3">Uploaded Files</h3>
-            
-            {/* Upload Progress - Moved above the file list */}
-            {uploadingFiles.length > 0 && (
-              <div className="mb-4">
-                <UploadProgress files={uploadingFiles} />
+            <button
+              className="flex items-center w-full text-left mb-3 group"
+              onClick={() => setUploadedOpen((v) => !v)}
+              type="button"
+            >
+              {uploadedOpen ? (
+                <ChevronDown className="w-4 h-4 mr-2 transition-transform" />
+              ) : (
+                <ChevronRight className="w-4 h-4 mr-2 transition-transform" />
+              )}
+              <span className="text-lg font-semibold">Uploaded Files</span>
+            </button>
+            {uploadedOpen && (
+              <div>
+                {uploadingFiles.length > 0 && (
+                  <div className="mb-4">
+                    <UploadProgress files={uploadingFiles} />
+                  </div>
+                )}
+                {/* Debug log for groupedFiles structure */}
+                {(() => { logManager.debug(LOG_SOURCE, 'RENDER groupedFiles for FileList', { groupedFiles }); return null; })()}
+                <FileList
+                  files={groupedFiles}
+                  onDelete={handleFileDelete}
+                  onImport={handleFileImport}
+                  isLoading={isLoading}
+                />
               </div>
             )}
-            
-            <FileList
-              files={files.filter(f => !f.main_file_id)}
-              onDelete={handleFileDelete}
-              onImport={handleFileImport}
-              isLoading={isLoading}
-            />
           </div>
 
           {/* Divider */}
           <div className="border-t border-border my-2"></div>
 
-          {/* Imported Files Section */}
+          {/* Imported Files Section (Collapsible) */}
           <div className="bg-muted/30 p-4 rounded-lg border border-border">
-            <h3 className="text-lg font-semibold mb-3">Imported Files</h3>
-            <ImportedFilesList
-              ref={importedFilesRef}
-              key={importedFilesKey}
-              projectId={projectId}
-              onViewLayer={handleViewLayer}
-              onDelete={handleFileDelete}
-            />
+            <button
+              className="flex items-center w-full text-left mb-3 group"
+              onClick={() => setImportedOpen((v) => !v)}
+              type="button"
+            >
+              {importedOpen ? (
+                <ChevronDown className="w-4 h-4 mr-2 transition-transform" />
+              ) : (
+                <ChevronRight className="w-4 h-4 mr-2 transition-transform" />
+              )}
+              <span className="text-lg font-semibold">Imported Files</span>
+            </button>
+            {importedOpen && (
+              <ImportedFilesList
+                ref={importedFilesRef}
+                key={importedFilesKey}
+                projectId={projectId}
+                onViewLayer={handleViewLayer}
+                onDelete={handleFileDelete}
+              />
+            )}
           </div>
-
-          {/* Import Wizard replaces legacy dialog */}
-          <ImportWizard projectId={projectId} />
         </div>
       </div>
+
+      {/* Import Wizard Modal */}
+      <Dialog open={showImportWizard} onOpenChange={setShowImportWizard}>
+        <DialogContent className="max-w-[72rem] w-full">
+          <div className="p-4">
+            <DialogHeader className="mb-10">
+              <DialogTitle>Upload & Import Files</DialogTitle>
+            </DialogHeader>
+            <ImportWizard projectId={projectId} />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Error Dialog */}
       <UploadErrorDialog

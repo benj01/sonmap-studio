@@ -34,7 +34,7 @@ export function ImportWizard({ projectId, onClose }: ImportWizardProps) {
 
   return (
     <WizardProvider projectId={projectId}>
-      <div className="w-full max-w-2xl mx-auto p-4">
+      <div className="text-base text-muted-foreground">
         <WizardStepper
           steps={steps.map(s => s.label)}
           currentStep={currentStep}

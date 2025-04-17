@@ -11,17 +11,25 @@ This document outlines the design and implementation plan for a robust, extensib
 - **UI:** Drag-and-drop or file picker for supported formats (GeoJSON, Shapefile, etc.)
 - **Backend:** Store file(s) in project storage, create an import session
 - **Logging:** Log file metadata, upload status
+- **Fully integrated with real upload functionality**
+- **ProjectId is now dynamically passed from the parent component (FileManager)**
+- **File UUID is used for all downstream steps**
+- **After upload, a DB record is inserted and the UUID is retrieved for use in the wizard**
 
 ### **Step 2: Parsing & Initial Analysis**
 - **UI:** Show progress, display detected coordinate system, feature count, geometry types
 - **Backend:** Parse file, assign stable feature IDs, detect SRID, extract metadata
 - **Logging:** Log parse results, detected SRID, feature stats
+- **Parsing logic implemented**
+- **File is downloaded using the correct storage path from the DB, not the UUID**
+- **Robust against storage/DB desync (waits for DB record after upload)**
 
 ### **Step 3: Preview & Feature Selection**
 - **UI:** Map preview (Mapbox, fully interactive), list of features, selection controls (all/none/invert)
 - **Data:** Show a subset (sample) of features for performance
 - **Feature Linking:** Use stable IDs to link preview to original data
 - **Logging:** Log previewed features, selection changes
+- **Implemented**
 
 ### **Step 4: Attribute & Height Mapping**
 - **UI:**
@@ -33,6 +41,7 @@ This document outlines the design and implementation plan for a robust, extensib
   - Suggest likely height fields
   - Allow user override
 - **Logging:** Log mapping choices, preview results
+- **Implemented**
 
 ### **Step 5: Validation & Repair**
 - **UI:**
@@ -43,6 +52,7 @@ This document outlines the design and implementation plan for a robust, extensib
   - Run validation routines
   - Attempt repair (e.g., `ST_MakeValid`, deduplication)
 - **Logging:** Log issues found, repairs applied
+- **Implemented**
 
 ### **Step 6: Transformation & Height Conversion**
 - **UI:**
@@ -52,6 +62,7 @@ This document outlines the design and implementation plan for a robust, extensib
 - **Backend:**
   - Apply transformations (proj4js, PostGIS, SwissTopo API as needed)
 - **Logging:** Log transformation steps, API calls, errors
+- **Implemented**
 
 ### **Step 7: Confirmation & Import**
 - **UI:**
@@ -61,6 +72,7 @@ This document outlines the design and implementation plan for a robust, extensib
   - Submit import job to server
   - Track progress, show real-time status
 - **Logging:** Log import submission, server response, final status
+- **Implemented**
 
 ### **Step 8: Post-Import Review**
 - **UI:**
@@ -69,6 +81,7 @@ This document outlines the design and implementation plan for a robust, extensib
 - **Backend:**
   - Store import logs, errors, and debug info
 - **Logging:** Log post-import review actions
+- **Real backend import integration**
 
 ---
 
@@ -166,14 +179,14 @@ This document outlines the design and implementation plan for a robust, extensib
 ---
 
 ## 8. Progress Tracking
-- [x] Step 1: File Selection & Upload (real upload integrated)
-- [x] Step 2: Parsing & Initial Analysis (real parsing integrated)
-- [x] Step 3: Preview & Feature Selection (real preview/selection integrated, interactive map preview added)
-- [x] Step 4: Attribute & Height Mapping (real mapping integrated)
-- [x] Step 5: Validation & Repair (real validation integrated)
-- [x] Step 6: Transformation & Height Conversion (real options integrated)
-- [x] Step 7: Confirmation & Import (real summary integrated)
-- [x] Step 8: Post-Import Review (real backend import integrated)
+- [x] File selection and upload (with real upload, dynamic projectId, and UUID handling)
+- [x] Parsing and initial analysis (uses correct storage path from DB, robust against storage/DB desync)
+- [x] Feature preview and selection
+- [x] Attribute mapping
+- [x] Validation and repair
+- [x] Transformation
+- [x] Confirmation & import
+- [x] Post-import review (real backend integration)
 
 ---
 

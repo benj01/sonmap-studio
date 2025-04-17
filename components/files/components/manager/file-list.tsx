@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { FileIcon } from '../item/file-icon';
-import { ChevronDown, ChevronRight, Import, Trash2 } from 'lucide-react';
+import { ChevronDown, ChevronRight, Import, Trash2, Info } from 'lucide-react';
 import { ProjectFile } from '../../types';
 import { Button } from '../../../ui/button';
 import { cn } from '../../../../lib/utils';
@@ -19,6 +19,13 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
   const [expandedFiles, setExpandedFiles] = useState<Record<string, boolean>>({});
   const [fileToDelete, setFileToDelete] = useState<ProjectFile | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+
+  // By default, all groups are collapsed
+  useEffect(() => {
+    setExpandedFiles({});
+    // Only run on mount or files change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [files.map(f => f.id).join(",")]);
 
   // Format file size
   const formatSize = (bytes: number) => {
@@ -98,13 +105,24 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
 
             {file.companions && file.companions.length > 0 && expandedFiles[file.id] && (
               <CardContent className="pb-2">
-                <div className="pl-8 space-y-2 border-l">
+                <div
+                  className="pl-8 space-y-2 border-l-2 border-blue-200 bg-blue-50/50 rounded-md relative"
+                  aria-label="Related companion files"
+                >
+                  <div className="flex items-center gap-2 mb-1 text-xs text-blue-700">
+                    <span className="relative group" aria-label="Companion files info">
+                      <Info className="h-4 w-4" aria-hidden="true" />
+                      <span className="absolute left-6 top-0 z-10 hidden group-hover:block bg-white border border-gray-300 text-xs text-gray-800 rounded px-2 py-1 shadow-md w-64">
+                        Companion files are required for certain geodata formats (e.g., Shapefile). They are automatically detected and grouped.
+                      </span>
+                    </span>
+                    <span>Companion files for this dataset</span>
+                  </div>
                   {file.companions?.map((companion) => (
-                    <div key={companion.id} className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50">
-                      <FileIcon fileName={companion.name} isMain={false} />
+                    <div key={companion.id} className="flex items-center gap-1 p-1 rounded-md hover:bg-blue-100">
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-medium truncate">{companion.name}</div>
-                        <div className="text-xs text-muted-foreground">{formatSize(companion.size)}</div>
+                        <div className="text-xs font-medium truncate">{companion.name}</div>
+                        <div className="text-[10px] text-muted-foreground">{formatSize(companion.size)}</div>
                       </div>
                     </div>
                   ))}
@@ -115,7 +133,7 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
             <CardFooter className="flex justify-between mt-auto pt-4">
               <div className="flex items-center">
                 {file.is_imported && (
-                  <Badge className="text-xs bg-green-100 text-green-800 border-green-300">
+                  <Badge className="text-xs bg-green-600 text-white border-green-700">
                     Imported
                   </Badge>
                 )}
