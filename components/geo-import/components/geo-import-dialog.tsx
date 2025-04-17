@@ -503,6 +503,7 @@ export function GeoImportDialog({
                 <MapPreview
                   features={importSession.previewDataset?.features || []}
                   bounds={importSession.previewDataset?.metadata?.bounds}
+                  selectedFeatureIds={selectedFeatureIds}
                   onFeaturesSelected={handleFeaturesSelected}
                 />
               ) : (

@@ -5,19 +5,23 @@ import mapboxgl from 'mapbox-gl';
 import type { AnyLayer, LayerSpecification } from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import type { GeoFeature } from '@/types/geo-import';
-import { LogManager } from '@/core/logging/log-manager';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle } from 'lucide-react';
 
 interface MapPreviewProps {
   features: GeoFeature[];
   bounds?: [number, number, number, number];
+  selectedFeatureIds: number[];
   onFeaturesSelected?: (featureIds: number[]) => void;
   onProgress?: (progress: number) => void;
 }
 
 const SOURCE = 'MapPreview';
 const logManager = LogManager.getInstance();
+
+// Ensure debug logs are shown for this component
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -34,24 +38,35 @@ const logger = {
   }
 };
 
-export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }: MapPreviewProps) {
+export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSelected, onProgress }: MapPreviewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const mapInitialized = useRef(false);
   const [loadedFeatures, setLoadedFeatures] = useState<GeoFeature[]>([]);
-  const [selectedFeatures, setSelectedFeatures] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(true);
   const [validationStats, setValidationStats] = useState<{ total: number; withIssues: number }>({ total: 0, withIssues: 0 });
 
   const handleFeatureClick = (featureId: number) => {
-    if (selectedFeatures.has(featureId)) {
-      selectedFeatures.delete(featureId);
+    const selectedSet = new Set(selectedFeatureIds);
+    if (selectedSet.has(featureId)) {
+      selectedSet.delete(featureId);
       logger.info('Feature deselected', { featureId });
     } else {
-      selectedFeatures.add(featureId);
+      selectedSet.add(featureId);
       logger.info('Feature selected', { featureId });
     }
-    onFeaturesSelected?.(Array.from(selectedFeatures));
+    onFeaturesSelected?.(Array.from(selectedSet));
+  };
+
+  // Select all features
+  const handleSelectAll = () => {
+    const allIds = loadedFeatures.map(f => f.id);
+    onFeaturesSelected?.(allIds);
+  };
+
+  // Deselect all features
+  const handleDeselectAll = () => {
+    onFeaturesSelected?.([]);
   };
 
   useEffect(() => {
@@ -78,6 +93,9 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
       // Add click handlers
       ['preview-fill', 'preview-fill-issues', 'preview-line', 'preview-line-issues', 'preview-point', 'preview-point-issues'].forEach(layerId => {
         map.current?.on('click', layerId, (e) => {
+          if (e.features?.[0]?.properties) {
+            logger.debug('Mapbox click event', { layerId, properties: e.features[0].properties });
+          }
           if (e.features?.[0]?.properties?.id) {
             handleFeatureClick(e.features[0].properties.id);
           }
@@ -93,6 +111,7 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
       return () => {
         logger.debug('Cleaning up map');
         if (map.current) {
+          logger.debug('Map is being removed');
           map.current.remove();
           map.current = null;
         }
@@ -155,27 +174,31 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
         // Create or update source
         const sourceData: GeoJSON.FeatureCollection<GeoJSON.Geometry> = {
           type: 'FeatureCollection',
-          features: loadedFeatures.map(f => ({
-            type: 'Feature',
-            id: f.id,
-            geometry: f.geometry,
-            properties: { 
-              ...f.properties,
+          features: loadedFeatures.map(f => {
+            logger.debug('GeoJSON source feature', { id: f.id, previewId: 'previewId' in f ? f.previewId : undefined, properties: f.properties });
+            return {
+              type: 'Feature',
               id: f.id,
-              'geometry-type': f.geometry.type,
-              hasIssues: f.validation?.hasIssues || false,
-              issues: f.validation?.issues || []
-            }
-          }))
+              geometry: f.geometry,
+              properties: { 
+                ...f.properties,
+                id: f.id,
+                previewId: 'previewId' in f ? f.previewId : undefined,
+                'geometry-type': f.geometry.type,
+                hasIssues: f.validation?.hasIssues || false,
+                issues: f.validation?.issues || []
+              }
+            };
+          })
         };
 
         if (source) {
           source.setData(sourceData);
         } else {
+          logger.debug('addSource called for preview');
           mapInstance.addSource('preview', {
             type: 'geojson',
-            data: sourceData,
-            generateId: true // Let Mapbox handle IDs for better performance
+            data: sourceData
           });
 
           // Add layers for normal features
@@ -288,6 +311,7 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
           // Add all layers
           [...normalLayers, ...issueLayers].forEach(layer => {
             if (!mapInstance.getLayer(layer.id)) {
+              logger.debug('addLayer called', { layerId: layer.id });
               mapInstance.addLayer(layer);
             }
           });
@@ -326,10 +350,14 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
 
         // Update feature states
         loadedFeatures.forEach(feature => {
+          logger.debug('setFeatureState call', { id: feature.id, previewId: 'previewId' in feature ? feature.previewId : undefined, selected: !!selectedFeatureIds.includes(feature.id), feature });
           mapInstance.setFeatureState(
             { source: 'preview', id: feature.id },
-            { selected: selectedFeatures.has(feature.id) }
+            { selected: !!selectedFeatureIds.includes(feature.id) }
           );
+          const state = mapInstance.getFeatureState({ source: 'preview', id: feature.id });
+          logger.debug('getFeatureState result', { id: feature.id, state });
+          mapInstance.triggerRepaint();
         });
 
         // Update bounds only when all features are loaded
@@ -353,7 +381,7 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
     } else {
       map.current.once('load', updateMapData);
     }
-  }, [loadedFeatures, selectedFeatures, bounds, isLoading]);
+  }, [loadedFeatures, selectedFeatureIds, bounds, isLoading]);
 
   return (
     <div className="space-y-2">
@@ -365,7 +393,11 @@ export function MapPreview({ features, bounds, onFeaturesSelected, onProgress }:
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <span>{isLoading ? `Loading... (${loadedFeatures.length}/${features.length})` : `${features.length} features available`}</span>
-          <span>{selectedFeatures.size} features selected</span>
+          <span>{selectedFeatureIds.length} features selected</span>
+        </div>
+        <div className="flex gap-2 mt-2">
+          <button onClick={handleSelectAll} className="px-2 py-1 bg-green-100 rounded text-green-800 border border-green-300 text-xs">Select All</button>
+          <button onClick={handleDeselectAll} className="px-2 py-1 bg-gray-100 rounded text-gray-800 border border-gray-300 text-xs">Deselect All</button>
         </div>
         {validationStats.withIssues > 0 && (
           <Alert>
