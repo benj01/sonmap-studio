@@ -55,6 +55,8 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
   const [loadedFeatures, setLoadedFeatures] = useState<GeoFeature[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [validationStats, setValidationStats] = useState<{ total: number; withIssues: number }>({ total: 0, withIssues: 0 });
+  // Track if we've already fit to initial bounds
+  const didFitInitialBounds = useRef(false);
 
   const handleFeatureClick = (featureId: number) => {
     onFeaturesSelected?.((prev: number[]) => {
@@ -433,12 +435,13 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           mapInstance.triggerRepaint();
         });
 
-        // Update bounds only when all features are loaded
-        if (!isLoading && bounds) {
+        // Only fit bounds once on initial load
+        if (!didFitInitialBounds.current && !isLoading && bounds) {
           mapInstance.fitBounds(
             [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
             { padding: 50, animate: false }
           );
+          didFitInitialBounds.current = true;
         }
       } catch (error) {
         logger.error('Failed to update map data', {
@@ -455,6 +458,11 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
       map.current.once('load', updateMapData);
     }
   }, [loadedFeatures, selectedFeatureIds, bounds, isLoading]);
+
+  // Reset didFitInitialBounds when features or bounds change (e.g. new file)
+  useEffect(() => {
+    didFitInitialBounds.current = false;
+  }, [features, bounds]);
 
   return (
     <div className="space-y-2">
