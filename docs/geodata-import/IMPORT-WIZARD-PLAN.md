@@ -193,4 +193,37 @@ This document outlines the design and implementation plan for a robust, extensib
 **Milestone:**
 - The import step now uses a real backend API call, passing all user choices and selected features. The wizard is now fully production-ready for end-to-end import workflows.
 
-**This document is a living plan. Update as design decisions are made and implementation progresses.** 
+**This document is a living plan. Update as design decisions are made and implementation progresses.**
+
+---
+
+## 9. Legacy Code Removal Checklist
+
+Once the new import wizard is fully adopted and tested, the following legacy files and functions can be safely removed:
+
+### Components
+- `components/geo-import/components/geo-import-dialog.tsx`
+- `components/geo-import/components/file-info-card.tsx` (if not used elsewhere)
+- `components/geo-import/components/import-details-card.tsx` (if not used elsewhere)
+- `components/geo-import/components/map-preview.tsx` (if not used elsewhere)
+- `components/geo-import/components/geo-file-upload.tsx` (if not used by the wizard)
+
+### Types
+- `GeoImportDialogProps` and related types in `components/geo-import/types/index.ts`
+
+### Hooks
+- `useGeoImport` in `components/geo-import/hooks/use-geo-import.ts` (if not used by the wizard)
+
+### Utilities
+- Any helpers/utilities only referenced by the old dialog
+
+### Styles
+- Any CSS/SCSS files only used by the old dialog
+
+### Tests
+- Any test files for the above components
+
+**Note:**  
+Before removal, double-check that none of these are referenced by the new wizard or other parts of the app.
+
+--- 

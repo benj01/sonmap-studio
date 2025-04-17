@@ -26,7 +26,7 @@ export class FileProcessor {
    * @returns Array of file groups
    */
   static async groupFiles(files: File[]): Promise<FileGroup[]> {
-    logger.info('Starting file grouping', {
+    logger.debug('Starting file grouping', {
       fileCount: files.length,
       files: files.map(f => ({ name: f.name, type: f.type }))
     });
@@ -37,7 +37,7 @@ export class FileProcessor {
     // First pass: identify main files
     for (const file of files) {
       if (FileTypeUtil.isMainGeoFile(file.name)) {
-        logger.info('Found main geo file', { 
+        logger.debug('Found main geo file', { 
           fileName: file.name,
           type: FileTypeUtil.getExtension(file.name)
         });
@@ -48,7 +48,7 @@ export class FileProcessor {
         groups.push(group);
         remainingFiles.delete(file);
       } else {
-        logger.info('Skipping non-main file', { fileName: file.name });
+        logger.debug('Skipping non-main file', { fileName: file.name });
       }
     }
 
@@ -57,7 +57,7 @@ export class FileProcessor {
       const config = FileTypeUtil.getConfigForFile(group.mainFile.name);
       const baseFileName = group.mainFile.name.replace(/\.[^.]+$/, '');
       
-      logger.info('Looking for companions', {
+      logger.debug('Looking for companions', {
         mainFile: group.mainFile.name,
         fileType: FileTypeUtil.getExtension(group.mainFile.name),
         config: config?.companionFiles?.map(c => c.extension),
@@ -74,7 +74,7 @@ export class FileProcessor {
           );
 
           if (matchingCompanion) {
-            logger.info('Found matching companion', {
+            logger.debug('Found matching companion', {
               mainFile: group.mainFile.name,
               companion: matchingCompanion.name,
               extension: companionConfig.extension,
@@ -112,7 +112,7 @@ export class FileProcessor {
       }
     }
 
-    logger.info('File grouping complete', {
+    logger.debug('File grouping complete', {
       groupCount: groups.length,
       groups: groups.map(g => ({
         mainFile: g.mainFile.name,

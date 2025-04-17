@@ -621,7 +621,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     // Only log when files change
     if (files && files.length > 0) {
       logManager.info(LOG_SOURCE, 'Raw files from DB', { files });
-      logManager.info(LOG_SOURCE, 'Grouped files for FileList', { groupedFiles });
+      logManager.debug(LOG_SOURCE, 'Grouped files for FileList', { groupedFiles });
     }
   }, [files, groupedFiles]);
 
