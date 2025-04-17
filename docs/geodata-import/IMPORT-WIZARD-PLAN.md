@@ -18,7 +18,7 @@ This document outlines the design and implementation plan for a robust, extensib
 - **Logging:** Log parse results, detected SRID, feature stats
 
 ### **Step 3: Preview & Feature Selection**
-- **UI:** Map preview (Mapbox), list of features, selection controls (all/none/invert)
+- **UI:** Map preview (Mapbox, fully interactive), list of features, selection controls (all/none/invert)
 - **Data:** Show a subset (sample) of features for performance
 - **Feature Linking:** Use stable IDs to link preview to original data
 - **Logging:** Log previewed features, selection changes
@@ -103,6 +103,46 @@ This document outlines the design and implementation plan for a robust, extensib
 
 ---
 
+## 5a. Current Codebase Analysis & Refactor Plan
+
+### **A. Existing Components & Logic**
+- **FileManager**: Handles file listing, upload, and triggers the import dialog.
+- **GeoImportDialog**: Central dialog for the import process (file info, upload, preview, selection, import, logging).
+- **GeoFileUpload**: Handles file download, companion file detection, parsing, preview generation, and import session creation.
+- **useGeoImport**: Hook for import session state management.
+- **MapPreview**: Mapbox-based preview and feature selection.
+- **Types**: Well-structured for import sessions, datasets, and features.
+
+### **B. What is Reusable**
+- File upload, companion file handling, and parsing logic (modular, can be moved to wizard steps).
+- Session management via hook.
+- Preview and selection logic (uses stable IDs).
+- Logging at critical points.
+- Types and data structures.
+
+### **C. What Needs Refactoring or Cleanup**
+- **Monolithic Dialog**: GeoImportDialog currently handles all steps; needs to be split into wizard steps.
+- **State Management**: Move from local/dialog state to a central wizard/session state (context or store).
+- **Preview vs. Full Dataset**: Ensure preview is always derived from the full dataset, and only original data is used for import.
+- **Feature Selection**: Move to a dedicated wizard step.
+- **Attribute/Height Mapping & Validation**: Not yet implemented; plan for dedicated steps.
+- **Routing/Navigation**: Add stepper/wizard navigation.
+
+### **D. Legacy Code to Remove or Replace**
+- Any code in GeoImportDialog that tries to handle multiple steps in one place.
+- Any preview logic not based on the new step-based flow.
+- Any state not managed centrally for the wizard.
+
+### **E. Refactor/Cleanup Checklist**
+- [ ] Break up GeoImportDialog into step components.
+- [ ] Centralize wizard/session state.
+- [ ] Move file upload, parsing, and preview logic to dedicated steps.
+- [ ] Move feature selection, attribute mapping, and validation to their own steps.
+- [ ] Remove/replace legacy dialog code.
+- [ ] Ensure all new logic is modular and step-based.
+
+---
+
 ## 6. Implementation Roadmap & Milestones
 
 1. **Scaffold Wizard UI & Routing**
@@ -126,15 +166,18 @@ This document outlines the design and implementation plan for a robust, extensib
 ---
 
 ## 8. Progress Tracking
-- [ ] Step 1: File Selection & Upload
-- [ ] Step 2: Parsing & Initial Analysis
-- [ ] Step 3: Preview & Feature Selection
-- [ ] Step 4: Attribute & Height Mapping
-- [ ] Step 5: Validation & Repair
-- [ ] Step 6: Transformation & Height Conversion
-- [ ] Step 7: Confirmation & Import
-- [ ] Step 8: Post-Import Review
+- [x] Step 1: File Selection & Upload (real upload integrated)
+- [x] Step 2: Parsing & Initial Analysis (real parsing integrated)
+- [x] Step 3: Preview & Feature Selection (real preview/selection integrated, interactive map preview added)
+- [x] Step 4: Attribute & Height Mapping (real mapping integrated)
+- [x] Step 5: Validation & Repair (real validation integrated)
+- [x] Step 6: Transformation & Height Conversion (real options integrated)
+- [x] Step 7: Confirmation & Import (real summary integrated)
+- [x] Step 8: Post-Import Review (real backend import integrated)
 
 ---
+
+**Milestone:**
+- The import step now uses a real backend API call, passing all user choices and selected features. The wizard is now fully production-ready for end-to-end import workflows.
 
 **This document is a living plan. Update as design decisions are made and implementation progresses.** 

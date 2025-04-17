@@ -7,7 +7,8 @@ import { useFileActions } from '../../hooks/useFileActions';
 import { FileGroup, ProcessedFiles, ProjectFile } from '../../types';
 import { Button } from '../../../ui/button';
 import { UploadProgress } from './upload-progress';
-import { GeoImportDialog } from '../../../geo-import/components/geo-import-dialog';
+// import { GeoImportDialog } from '../../../geo-import/components/geo-import-dialog'; // Legacy dialog
+import { ImportWizard } from '../../../geo-import/wizard/ImportWizard';
 import { FileTypeUtil } from '../../utils/file-types';
 import { Upload } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
@@ -610,8 +611,6 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         'border-primary': isDragging
       })}>
         <div ref={dropZoneRef} className="p-4 space-y-6">
-          <Toolbar onFileSelect={handleFileSelect} isProcessing={isProcessing} />
-          
           {/* Uploaded Files Section */}
           <div>
             <h3 className="text-lg font-semibold mb-3">Uploaded Files</h3>
@@ -646,14 +645,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             />
           </div>
 
-          {/* Import Dialog */}
-          <GeoImportDialog
-            projectId={projectId}
-            open={importDialogOpen}
-            onOpenChange={setImportDialogOpen}
-            onImportComplete={handleImportComplete}
-            fileInfo={selectedFile}
-          />
+          {/* Import Wizard replaces legacy dialog */}
+          <ImportWizard projectId={projectId} />
         </div>
       </div>
 
