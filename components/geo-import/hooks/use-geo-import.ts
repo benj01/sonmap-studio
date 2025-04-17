@@ -2,9 +2,7 @@ import { useState, useCallback } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import type { 
   ImportSession, 
-  FullDataset, 
-  PreviewDataset, 
-  PreviewConfig,
+  FullDataset,
   CreateImportSessionParams
 } from '@/types/geo-import';
 import { createLogger } from '@/utils/logger';
@@ -26,8 +24,7 @@ export function useGeoImport() {
   const createImportSession = useCallback(async (params: CreateImportSessionParams): Promise<ImportSession> => {
     logger.info('Creating import session', {
       fileId: params.fileId,
-      hasFullDataset: !!params.fullDataset,
-      hasPreviewDataset: !!params.previewDataset
+      hasFullDataset: !!params.fullDataset
     });
     
     const now = new Date().toISOString();
@@ -36,7 +33,6 @@ export function useGeoImport() {
       fileId: params.fileId,
       status: params.fullDataset ? 'completed' : 'created',
       fullDataset: params.fullDataset || null,
-      previewDataset: params.previewDataset || null,
       selectedFeatures: [],
       createdAt: now,
       updatedAt: now
@@ -51,36 +47,6 @@ export function useGeoImport() {
     });
     setCurrentSession(session);
     return session;
-  }, []);
-
-  /**
-   * Generates a preview dataset from the full dataset
-   * Applies sampling and geometry simplification based on the provided config
-   */
-  const generatePreview = useCallback(async (
-    fullDataset: FullDataset,
-    config: PreviewConfig = { maxFeatures: 500 }
-  ): Promise<PreviewDataset> => {
-    if (!fullDataset.features.length) {
-      throw new Error('Dataset is empty');
-    }
-
-    logger.info('Generating preview dataset', {
-      featureCount: fullDataset.features.length,
-      config
-    });
-
-    try {
-      const previewResult = await generatePreviewDataset(fullDataset, config);
-      logger.info('Preview generation complete', {
-        originalFeatures: fullDataset.features.length,
-        previewFeatures: previewResult.features.length
-      });
-      return previewResult;
-    } catch (error) {
-      logger.error('Failed to generate preview dataset', { error });
-      throw error;
-    }
   }, []);
 
   /**
@@ -122,7 +88,6 @@ export function useGeoImport() {
   return {
     currentSession,
     createImportSession,
-    generatePreview,
     downloadFile,
     updateSession,
   };

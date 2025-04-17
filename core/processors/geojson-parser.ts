@@ -215,7 +215,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
 
       // Process GeoJSON into FullDataset WITHOUT transforming coordinates
       // This matches the behavior of ShapefileParser
-      const features: GeoFeature[] = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
+      let features: GeoFeature[] = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
         id: index,
         geometry: feature.geometry,
         properties: feature.properties || {},
@@ -224,51 +224,46 @@ export class GeoJsonParser extends BaseGeoDataParser {
 
       logger.info('Skipping coordinate transformation for main features array');
 
-      // For preview, create a copy and transform a subset of features
-      let previewFeatures = features.slice(0, 100);
+      // After features = geojson.features.map(...)
       if (sourceSRID !== 4326) {
         try {
-          logger.info('Transforming coordinates for preview features', {
+          logger.info('Transforming coordinates for all features', {
             fromSrid: sourceSRID,
             toSrid: 4326,
-            featureCount: previewFeatures.length
+            featureCount: features.length
           });
-          
-          previewFeatures = await Promise.all(previewFeatures.map(async feature => ({
+          features = await Promise.all(features.map(async feature => ({
             ...feature,
             geometry: await transformGeometry(feature.geometry, sourceSRID)
           })));
-          
-          logger.info('Preview coordinate transformation complete');
+          logger.info('Coordinate transformation complete');
         } catch (error) {
-          logger.warn('Preview transformation failed', { 
+          logger.warn('Transformation failed, using original geometries', { 
             error,
             srid: sourceSRID,
-            featureCount: previewFeatures.length
+            featureCount: features.length
           });
+          // Do not modify features, just log and continue
         }
       }
 
-      // Calculate metadata using Turf.js
-      const previewFeatureCollection: FeatureCollection = {
+      // Calculate metadata using all features
+      const featureCollection: FeatureCollection = {
         type: 'FeatureCollection',
-        features: previewFeatures.map(f => ({
-          type: 'Feature' as const,
+        features: features.map(f => ({
+          type: 'Feature',
           geometry: f.geometry,
           properties: f.properties || {}
         }))
       };
-      
-      const bbox = turf.bbox(previewFeatureCollection);
+      const bbox = turf.bbox(featureCollection);
       const bounds: [number, number, number, number] = [bbox[0], bbox[1], bbox[2], bbox[3]];
       const geometryTypes = new Set(features.map(f => f.geometry.type));
       const properties = features[0]?.properties ? Object.keys(features[0].properties) : [];
-
       const dataset: FullDataset = {
         sourceFile: options?.filename || 'unknown.geojson',
         fileType: 'geojson',
         features,
-        previewFeatures,
         metadata: {
           featureCount: features.length,
           bounds,

@@ -235,30 +235,25 @@ export class ShapefileParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
-      logger.info('Skipping coordinate transformation for main features array');
-
-      // For preview, transform a subset of features (first 50 features)
-      let previewFeatures = features.slice(0, 50);
       if (this.srid !== undefined && this.srid !== 4326) {
         try {
-          logger.info('Transforming coordinates for preview features', {
+          logger.info('Transforming coordinates for all features', {
             fromSrid: this.srid,
             toSrid: 4326,
-            featureCount: previewFeatures.length
+            featureCount: features.length
           });
-          previewFeatures = await Promise.all(previewFeatures.map(async feature => ({
+          features = await Promise.all(features.map(async feature => ({
             ...feature,
             geometry: await transformGeometry(feature.geometry, this.srid!)
           })));
-          logger.info('Preview coordinate transformation complete');
+          logger.info('Coordinate transformation complete');
         } catch (error) {
-          logger.warn('Preview transformation failed, creating simplified preview', { 
+          logger.warn('Transformation failed, creating simplified fallback', { 
             error,
             srid: this.srid,
-            featureCount: previewFeatures.length
+            featureCount: features.length
           });
-          // Create a simplified preview with valid WGS84 coordinates
-          previewFeatures = features.slice(0, 50).map(f => ({
+          features = features.map(f => ({
             ...f,
             geometry: {
               ...f.geometry,
@@ -268,17 +263,16 @@ export class ShapefileParser extends BaseGeoDataParser {
         }
       }
 
-      // Calculate metadata
-      const previewFeatureCollection: FeatureCollection = {
+      // Calculate metadata using all features
+      const featureCollection: FeatureCollection = {
         type: 'FeatureCollection',
-        features: previewFeatures.map(f => ({
+        features: features.map(f => ({
           type: 'Feature',
           geometry: f.geometry,
           properties: f.properties
         }))
       };
-
-      const bbox = turf.bbox(previewFeatureCollection);
+      const bbox = turf.bbox(featureCollection);
       const bounds: [number, number, number, number] = [bbox[0], bbox[1], bbox[2], bbox[3]];
       const geometryTypes = new Set(features.map(f => f.geometry.type));
       const properties = features[0] ? Object.keys(features[0].properties) : [];
@@ -287,7 +281,6 @@ export class ShapefileParser extends BaseGeoDataParser {
         sourceFile: options?.filename || 'unknown.shp',
         fileType: 'shapefile',
         features,
-        previewFeatures,
         metadata: {
           featureCount: features.length,
           bounds,
