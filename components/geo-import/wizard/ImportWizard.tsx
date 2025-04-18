@@ -26,14 +26,16 @@ const steps = [
 interface ImportWizardProps {
   projectId: string;
   onClose?: () => void;
+  initialFileInfo?: any;
+  initialStep?: number;
 }
 
-export function ImportWizard({ projectId, onClose }: ImportWizardProps) {
-  const [currentStep, setCurrentStep] = useState(0);
+export function ImportWizard({ projectId, onClose, initialFileInfo, initialStep = 0 }: ImportWizardProps) {
+  const [currentStep, setCurrentStep] = useState(initialStep);
   const StepComponent = steps[currentStep].component;
 
   return (
-    <WizardProvider projectId={projectId}>
+    <WizardProvider projectId={projectId} initialFileInfo={initialFileInfo}>
       <div className="text-base text-muted-foreground">
         <WizardStepper
           steps={steps.map(s => s.label)}

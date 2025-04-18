@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 import { createClient } from '@/utils/supabase/client';
 import { FileTypeUtil } from '../../../files/utils/file-types';
@@ -19,6 +19,15 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileSummary, setFileSummary] = useState<string>('');
   const supabase = createClient();
+
+  // Auto-advance if fileInfo is already set (preselected file)
+  useEffect(() => {
+    if (fileInfo && fileInfo.id && fileInfo.name) {
+      onNext();
+    }
+    // Only run on mount or when fileInfo changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileInfo]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];

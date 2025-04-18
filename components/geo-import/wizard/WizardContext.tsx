@@ -38,8 +38,8 @@ export interface WizardState {
 
 const WizardContext = createContext<WizardState | undefined>(undefined);
 
-export function WizardProvider({ projectId, children }: { projectId: string; children: ReactNode }) {
-  const [fileInfo, setFileInfo] = useState<WizardFileInfo | undefined>();
+export function WizardProvider({ projectId, initialFileInfo, children }: { projectId: string; initialFileInfo?: WizardFileInfo; children: ReactNode }) {
+  const [fileInfo, setFileInfo] = useState<WizardFileInfo | undefined>(initialFileInfo);
   const [dataset, setDataset] = useState<WizardDataset | undefined>();
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
   const [heightAttribute, setHeightAttribute] = useState<string | 'z' | ''>('');

@@ -70,6 +70,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   const [showImportWizard, setShowImportWizard] = useState(false);
   const [uploadedOpen, setUploadedOpen] = useState(true);
   const [importedOpen, setImportedOpen] = useState(true);
+  const [importWizardFile, setImportWizardFile] = useState<ImportFileInfo | undefined>();
+  const [importWizardStep, setImportWizardStep] = useState<number>(0);
 
   const loadExistingFiles = useCallback(async () => {
     if (!projectId) {
@@ -206,13 +208,15 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     const file = files.find(f => f.id === fileId);
     if (file) {
       const fileType = FileTypeUtil.getConfigForFile(file.name);
-      setSelectedFile({
+      setImportWizardFile({
         id: file.id,
         name: file.name,
         size: file.size,
-        type: fileType?.mimeType || 'application/octet-stream'
+        type: fileType?.mimeType || 'application/octet-stream',
+        companions: file.companions || []
       });
-      setImportDialogOpen(true);
+      setImportWizardStep(1); // Start at Parse & Analyze
+      setShowImportWizard(true);
     }
   };
 
@@ -713,7 +717,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             <DialogHeader className="mb-10">
               <DialogTitle>Upload & Import Files</DialogTitle>
             </DialogHeader>
-            <ImportWizard projectId={projectId} />
+            <ImportWizard projectId={projectId} initialFileInfo={importWizardFile} initialStep={importWizardStep} />
           </div>
         </DialogContent>
       </Dialog>
