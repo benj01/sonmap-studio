@@ -4,9 +4,11 @@ import { useWizard } from '../WizardContext';
 interface ConfirmStepProps {
   onNext: () => void;
   onBack: () => void;
+  onClose?: () => void;
+  onRefreshFiles?: () => void;
 }
 
-export function ConfirmStep({ onNext, onBack }: ConfirmStepProps) {
+export function ConfirmStep({ onNext, onBack, onClose, onRefreshFiles }: ConfirmStepProps) {
   const {
     fileInfo,
     dataset,

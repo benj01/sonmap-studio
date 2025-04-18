@@ -629,6 +629,18 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
     }
   }, [files, groupedFiles]);
 
+  // Handler to close the import wizard
+  const handleWizardClose = useCallback(() => {
+    setShowImportWizard(false);
+    setImportWizardFile(undefined);
+    setImportWizardStep(0);
+  }, []);
+
+  // Handler to refresh files after import
+  const handleWizardRefreshFiles = useCallback(() => {
+    loadExistingFiles();
+  }, [loadExistingFiles]);
+
   return (
     <div className="flex flex-col h-full">
       {/* Top CTA and description */}
@@ -713,12 +725,14 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       {/* Import Wizard Modal */}
       <Dialog open={showImportWizard} onOpenChange={setShowImportWizard}>
         <DialogContent className="max-w-[72rem] w-full">
-          <div className="p-4">
-            <DialogHeader className="mb-10">
-              <DialogTitle>Upload & Import Files</DialogTitle>
-            </DialogHeader>
-            <ImportWizard projectId={projectId} initialFileInfo={importWizardFile} initialStep={importWizardStep} />
-          </div>
+          <DialogTitle className="sr-only">Upload & Import Files</DialogTitle>
+          <ImportWizard
+            projectId={projectId}
+            initialFileInfo={importWizardFile}
+            initialStep={importWizardStep}
+            onClose={handleWizardClose}
+            onRefreshFiles={handleWizardRefreshFiles}
+          />
         </DialogContent>
       </Dialog>
 

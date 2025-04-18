@@ -5,9 +5,11 @@ import { MapPreview } from '../../components/map-preview';
 interface PreviewStepProps {
   onNext: () => void;
   onBack: () => void;
+  onClose?: () => void;
+  onRefreshFiles?: () => void;
 }
 
-export function PreviewStep({ onNext, onBack }: PreviewStepProps) {
+export function PreviewStep({ onNext, onBack, onClose, onRefreshFiles }: PreviewStepProps) {
   const { dataset, selectedFeatureIds, setSelectedFeatureIds } = useWizard();
   const features = dataset?.features || [];
   const meta = dataset?.metadata || {};
@@ -41,10 +43,6 @@ export function PreviewStep({ onNext, onBack }: PreviewStepProps) {
           )
         }
       />
-      <div className="flex gap-2 mb-2">
-        <button className="px-2 py-1 bg-gray-200 rounded" onClick={handleSelectAll}>Select All</button>
-        <button className="px-2 py-1 bg-gray-200 rounded" onClick={handleDeselectAll}>Deselect All</button>
-      </div>
       <div className="max-h-48 overflow-y-auto border rounded p-2 bg-gray-50">
         {features.map((f: any) => (
           <div key={f.id} className="flex items-center gap-2">

@@ -4,9 +4,11 @@ import { useWizard } from '../WizardContext';
 interface TransformStepProps {
   onNext: () => void;
   onBack: () => void;
+  onClose?: () => void;
+  onRefreshFiles?: () => void;
 }
 
-export function TransformStep({ onNext, onBack }: TransformStepProps) {
+export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: TransformStepProps) {
   const { dataset, targetSrid, setTargetSrid, useSwissTopo, setUseSwissTopo } = useWizard();
   const sourceSrid = dataset?.metadata?.srid || 2056;
   const [localTargetSrid, setLocalTargetSrid] = useState(targetSrid || 4326);

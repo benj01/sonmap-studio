@@ -4,9 +4,11 @@ import { useWizard } from '../WizardContext';
 interface AttributeMappingStepProps {
   onNext: () => void;
   onBack: () => void;
+  onClose?: () => void;
+  onRefreshFiles?: () => void;
 }
 
-export function AttributeMappingStep({ onNext, onBack }: AttributeMappingStepProps) {
+export function AttributeMappingStep({ onNext, onBack, onClose, onRefreshFiles }: AttributeMappingStepProps) {
   const { dataset, heightAttribute, setHeightAttribute } = useWizard();
   const properties: string[] = dataset?.metadata?.properties || [];
   const features = dataset?.features || [];

@@ -11,9 +11,11 @@ function arraysEqual(a: number[], b: number[]) {
 interface ValidationStepProps {
   onNext: () => void;
   onBack: () => void;
+  onClose?: () => void;
+  onRefreshFiles?: () => void;
 }
 
-export function ValidationStep({ onNext, onBack }: ValidationStepProps) {
+export function ValidationStep({ onNext, onBack, onClose, onRefreshFiles }: ValidationStepProps) {
   const { dataset, selectedFeatureIds } = useWizard();
   // Memoize features to avoid unnecessary re-renders
   const features = useMemo(

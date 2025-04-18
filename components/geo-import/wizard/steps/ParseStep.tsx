@@ -12,6 +12,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
   const { fileInfo, setDataset } = useWizard();
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [parseSummary, setParseSummary] = useState<string | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
@@ -19,6 +20,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
       if (!fileInfo?.id || !fileInfo.name) return;
       setParsing(true);
       setError(null);
+      setParseSummary(null);
       try {
         // 1. Query DB for main file record to get storage_path
         const { data: mainFileRecord, error: mainFileError } = await supabase
@@ -64,6 +66,22 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
         const parser = ParserFactory.createParser(fileInfo.name);
         const fullDataset = await parser.parse(arrayBuffer, companionBuffers, { maxFeatures: 10000 });
         setDataset(fullDataset);
+        // Set parse summary
+        const featureCount = fullDataset.features?.length ?? 0;
+        let geometryType = 'unknown';
+        if (fullDataset.metadata) {
+          if (typeof (fullDataset.metadata as any)?.geometryType === 'string') {
+            geometryType = (fullDataset.metadata as any).geometryType;
+          } else if (Array.isArray((fullDataset.metadata as any)?.geometryTypes)) {
+            geometryType = (fullDataset.metadata as any).geometryTypes.join(', ');
+          } else if (typeof (fullDataset.metadata as any)?.geometryTypes === 'string') {
+            geometryType = (fullDataset.metadata as any).geometryTypes;
+          }
+        }
+        const srid = fullDataset.metadata?.srid || 'unknown';
+        setParseSummary(
+          `Parsing completed successfully: ${featureCount} features, geometry type: ${geometryType}, SRID: ${srid}.`
+        );
         setParsing(false);
       } catch (err: any) {
         setError(err.message || 'Parsing failed');
@@ -81,6 +99,11 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
       {!fileInfo?.name && <div className="text-red-600">No file selected.</div>}
       {parsing && <div className="text-blue-600">Parsing file...</div>}
       {error && <div className="text-red-600">{error}</div>}
+      {!parsing && !error && parseSummary && (
+        <div className="text-green-700 bg-green-50 border border-green-200 rounded p-2">
+          {parseSummary}
+        </div>
+      )}
       <div className="flex gap-2 mt-4">
         <button
           className="px-4 py-2 bg-gray-300 text-gray-800 rounded"

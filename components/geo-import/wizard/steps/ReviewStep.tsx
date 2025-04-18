@@ -1,18 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 import { createClient } from '@/utils/supabase/client';
 import { LogManager, LogLevel } from '@/core/logging/log-manager';
+import { useRouter } from 'next/navigation';
+import toast from 'react-hot-toast';
 
 interface ReviewStepProps {
   onNext: () => void;
   onBack: () => void;
+  onClose?: () => void;
+  onRefreshFiles?: () => void;
 }
 
 const LOG_SOURCE = 'GeoImportReviewStep';
 const logManager = LogManager.getInstance();
 logManager.setComponentLogLevel(LOG_SOURCE, LogLevel.DEBUG);
 
-export function ReviewStep({ onBack }: ReviewStepProps) {
+export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps) {
   const {
     fileInfo,
     dataset,
@@ -31,6 +35,18 @@ export function ReviewStep({ onBack }: ReviewStepProps) {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const supabase = createClient();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (result && result.success) {
+      // Show toast and close wizard after short delay
+      toast.success(`Import successful: ${result.imported} features imported.`);
+      if (onRefreshFiles) onRefreshFiles();
+      setTimeout(() => {
+        onClose && onClose();
+      }, 1500);
+    }
+  }, [result, onClose, onRefreshFiles]);
 
   const handleImport = async () => {
     setImporting(true);
@@ -112,6 +128,12 @@ export function ReviewStep({ onBack }: ReviewStepProps) {
     }
   };
 
+  const handleViewOnMap = () => {
+    // Navigate to map view (replace with your actual route)
+    router.push('/map');
+    if (onClose) onClose();
+  };
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Step 8: Post-Import Review</h2>
@@ -157,7 +179,7 @@ export function ReviewStep({ onBack }: ReviewStepProps) {
         </button>
         <button
           className="px-4 py-2 bg-blue-600 text-white rounded"
-          onClick={() => alert('Show imported data on main map (not implemented)')}
+          onClick={handleViewOnMap}
           disabled={!result || !result.success}
         >
           View on Map
