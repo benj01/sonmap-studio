@@ -9,16 +9,14 @@ interface TransformStepProps {
 }
 
 export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: TransformStepProps) {
-  const { dataset, targetSrid, setTargetSrid, useSwissTopo, setUseSwissTopo } = useWizard();
+  const { dataset, setTargetSrid, useSwissTopo, setUseSwissTopo } = useWizard();
   const sourceSrid = dataset?.metadata?.srid || 2056;
-  const [localTargetSrid, setLocalTargetSrid] = useState(targetSrid || 4326);
-  const [localSwissTopo, setLocalSwissTopo] = useState(!!useSwissTopo);
 
   useEffect(() => {
-    setTargetSrid(localTargetSrid);
-    setUseSwissTopo(localSwissTopo);
+    setTargetSrid(4326);
+    setUseSwissTopo(!!useSwissTopo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [localTargetSrid, localSwissTopo]);
+  }, [useSwissTopo]);
 
   return (
     <div className="space-y-4">
@@ -27,12 +25,7 @@ export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: Trans
         <div>Detected source SRID: <span className="font-mono">{sourceSrid}</span></div>
         <div className="mt-2">
           Target SRID:
-          <input
-            type="number"
-            className="ml-2 border rounded px-2 py-1 w-24"
-            value={localTargetSrid}
-            onChange={e => setLocalTargetSrid(Number(e.target.value))}
-          />
+          <span className="ml-2 border rounded px-2 py-1 w-24 bg-gray-100 text-gray-500 cursor-not-allowed">4326</span>
         </div>
       </div>
       {sourceSrid === 2056 && (
@@ -40,8 +33,8 @@ export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: Trans
           <input
             type="checkbox"
             id="swisstopo"
-            checked={localSwissTopo}
-            onChange={e => setLocalSwissTopo(e.target.checked)}
+            checked={useSwissTopo}
+            onChange={e => setUseSwissTopo(e.target.checked)}
           />
           <label htmlFor="swisstopo" className="text-sm">Use SwissTopo API for height conversion</label>
         </div>
@@ -56,7 +49,6 @@ export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: Trans
         <button
           className="px-4 py-2 bg-blue-600 text-white rounded"
           onClick={onNext}
-          disabled={!localTargetSrid}
         >
           Next
         </button>

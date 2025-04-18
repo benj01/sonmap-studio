@@ -46,6 +46,9 @@ export function WizardProvider({ projectId, initialFileInfo, children }: { proje
   const [targetSrid, setTargetSrid] = useState<number>(4326);
   const [useSwissTopo, setUseSwissTopo] = useState<boolean>(false);
 
+  // Override setTargetSrid to always set 4326
+  const setTargetSridFixed = () => setTargetSrid(4326);
+
   return (
     <WizardContext.Provider value={{
       projectId,
@@ -53,7 +56,8 @@ export function WizardProvider({ projectId, initialFileInfo, children }: { proje
       dataset, setDataset,
       selectedFeatureIds, setSelectedFeatureIds,
       heightAttribute, setHeightAttribute,
-      targetSrid, setTargetSrid,
+      targetSrid,
+      setTargetSrid: setTargetSridFixed,
       useSwissTopo, setUseSwissTopo
     }}>
       {children}
