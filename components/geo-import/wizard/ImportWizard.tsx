@@ -9,6 +9,9 @@ import { ValidationStep } from './steps/ValidationStep';
 import { TransformStep } from './steps/TransformStep';
 import { ConfirmStep } from './steps/ConfirmStep';
 import { ReviewStep } from './steps/ReviewStep';
+import { createLogger } from '@/utils/logger';
+
+const logger = createLogger('ImportWizard');
 
 const steps = [
   { label: 'Select File', component: FileSelectStep },
@@ -30,6 +33,8 @@ interface ImportWizardProps {
 }
 
 export function ImportWizard({ projectId, onClose, initialFileInfo, initialStep = 0, onRefreshFiles }: ImportWizardProps) {
+  logger.info('ImportWizard loaded');
+  logger.info('Import wizard component initialization started');
   const [currentStep, setCurrentStep] = useState(initialStep);
   const StepComponent = steps[currentStep].component;
 

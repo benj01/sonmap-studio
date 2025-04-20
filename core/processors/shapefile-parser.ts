@@ -162,6 +162,24 @@ export class ShapefileParser extends BaseGeoDataParser {
     options?: ParserOptions,
     onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
+    // CRITICAL DEBUG LOGS FOR TRANSFORMATION ISSUE - Using logger instead of console.log
+    logManager.debug(SOURCE, "🔍 TRANSFORMATION DEBUG: Received options", { 
+      options,
+      optionsJSON: JSON.stringify(options, null, 2) 
+    });
+    
+    const shouldTransform = options?.transformCoordinates !== false;
+    logManager.debug(SOURCE, "🚨 TRANSFORMATION DEBUG: shouldTransform calculation", { 
+      shouldTransform,
+      transformCoordinatesOptionValue: options?.transformCoordinates,
+      calculationLogic: "options?.transformCoordinates !== false" 
+    });
+    
+    // Create simple stack trace
+    const stackTrace = new Error().stack?.split('\n').slice(1, 5).join('\n');
+    logManager.debug(SOURCE, "📞 TRANSFORMATION DEBUG: Callstack", { stackTrace });
+    // --- END OF CRITICAL DEBUG LOGS ---
+
     try {
       logger.info('Starting parse operation', {
         mainFileSize: mainFile.byteLength,
@@ -208,6 +226,15 @@ export class ShapefileParser extends BaseGeoDataParser {
         featureCount: geojson.features.length
       });
 
+      // CRITICAL DEBUG LOG - Display sample coordinates from first feature
+      if (geojson.features.length > 0) {
+        const firstFeature = geojson.features[0];
+        const coords = getCoordinates(firstFeature.geometry);
+        logManager.debug(SOURCE, '📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
+        logManager.debug(SOURCE, '   First feature geometry type', { geometryType: firstFeature.geometry.type });
+      }
+      // --- END OF CRITICAL DEBUG LOG ---
+
       // If still no SRID, try to detect from coordinates
       if (!this.srid && geojson.features.length > 0) {
         const firstFeature = geojson.features[0];
@@ -241,7 +268,19 @@ export class ShapefileParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
-      if (this.srid !== undefined && this.srid !== 4326) {
+      if (shouldTransform && this.srid !== undefined && this.srid !== 4326) {
+        // CRITICAL DEBUG LOG FOR TRANSFORMATION ISSUE
+        logManager.debug(SOURCE, '🔄 ENTERING TRANSFORMATION block', {
+          shouldTransform,
+          srid: this.srid,
+          transformCondition: {
+            shouldTransform,
+            srid: this.srid, 
+            isSridNot4326: this.srid !== 4326, 
+            allConditionsMet: shouldTransform && this.srid !== undefined && this.srid !== 4326
+          }
+        });
+        // --- END OF CRITICAL DEBUG LOG ---
         try {
           logger.info('Transforming coordinates for all features', {
             fromSrid: this.srid,
@@ -267,6 +306,17 @@ export class ShapefileParser extends BaseGeoDataParser {
             }
           }));
         }
+      } else {
+        // CRITICAL DEBUG LOG FOR TRANSFORMATION ISSUE
+        logManager.debug(SOURCE, '⛔ SKIPPING TRANSFORMATION block', {
+          reasons: {
+            shouldTransform,
+            srid: this.srid,
+            isSridUndefined: this.srid === undefined,
+            isSridAlreadyWGS84: this.srid === 4326
+          }
+        });
+        // --- END OF CRITICAL DEBUG LOG ---
       }
 
       // Calculate metadata using all features

@@ -1,88 +1,92 @@
 DROP FUNCTION IF EXISTS public.transform_swiss_coords_swisstopo(float, float, float);
 
--- Create the corrected transform_swiss_coords_swisstopo function (NO AWAIT)
+-- Enhanced logging version (see comment for verbosity)
 CREATE OR REPLACE FUNCTION public.transform_swiss_coords_swisstopo(
   easting_lv95 float,
   northing_lv95 float,
   lhn95_height float
 ) RETURNS jsonb
 LANGUAGE plv8
-STABLE -- Use STABLE as it depends on external service but is deterministic for same inputs within transaction
+STABLE
 AS $$
   const besselEndpoint = 'https://geodesy.geo.admin.ch/reframe/lhn95tobessel';
   const wgs84Endpoint = 'https://geodesy.geo.admin.ch/reframe/lv95towgs84';
+  const MAX_LOG_BODY_LENGTH = 250;
+  const truncate = (str, len) => (str && str.length > len) ? str.substring(0, len) + '...' : (str || '');
 
-  // Basic input validation
   if (easting_lv95 === null || northing_lv95 === null || lhn95_height === null ||
       typeof easting_lv95 !== 'number' || typeof northing_lv95 !== 'number' || typeof lhn95_height !== 'number') {
-    plv8.elog(WARNING, `Invalid input to transform_swiss_coords_swisstopo: E=${easting_lv95}, N=${northing_lv95}, H=${lhn95_height}`);
+    plv8.elog(WARNING, `[SwissTopo] Invalid input: E=${easting_lv95}, N=${northing_lv95}, H=${lhn95_height}`);
     return null;
   }
-
+  plv8.elog(DEBUG, `[SwissTopo] Function called with E=${easting_lv95}, N=${northing_lv95}, H=${lhn95_height}`);
   try {
-    // Step 1: Transform LHN95 to Bessel Ellipsoidal Height
-    const besselResponse = plv8.fetch(
-      `${besselEndpoint}?easting=${easting_lv95}&northing=${northing_lv95}&altitude=${lhn95_height}&format=json`
-    );
-
-    if (!besselResponse.ok) {
-      let errorBody = '';
-      try { errorBody = besselResponse.text(); } catch(e) { /* ignore */ }
-      plv8.elog(WARNING, `Failed to transform height to Bessel: ${besselResponse.status} ${besselResponse.statusText}. Endpoint: ${besselEndpoint} Body: ${errorBody}`);
+    const besselUrl = `${besselEndpoint}?easting=${easting_lv95}&northing=${northing_lv95}&altitude=${lhn95_height}&format=json`;
+    plv8.elog(DEBUG, `[SwissTopo] Requesting Bessel: ${besselUrl}`);
+    const besselResponse = plv8.fetch(besselUrl);
+    let besselBodyText = '';
+    try { besselBodyText = besselResponse.text(); } catch (e) {
+      plv8.elog(WARNING, `[SwissTopo] Failed to read Bessel response body. Status: ${besselResponse.status} ${besselResponse.statusText}. Error: ${e.message}`);
       return null;
     }
-
-    const besselResult = besselResponse.json();
-
+    plv8.elog(DEBUG, `[SwissTopo] Bessel API response: ${besselResponse.status} ${besselResponse.statusText}. Body: ${truncate(besselBodyText, MAX_LOG_BODY_LENGTH)}`);
+    if (!besselResponse.ok) {
+      plv8.elog(WARNING, `[SwissTopo] Failed Bessel API call. Status: ${besselResponse.status} ${besselResponse.statusText}. URL: ${besselUrl}. Body: ${besselBodyText}`);
+      return null;
+    }
+    let besselResult;
+    try { besselResult = JSON.parse(besselBodyText); } catch(e) {
+      plv8.elog(WARNING, `[SwissTopo] Failed to parse Bessel JSON response. Status: ${besselResponse.status}. Error: ${e.message}. Body: ${besselBodyText}`);
+      return null;
+    }
     if (!besselResult || besselResult.altitude === undefined || besselResult.altitude === null) {
-       plv8.elog(WARNING, `Bessel API response missing altitude. Response: ${JSON.stringify(besselResult)}`);
-       return null;
+      plv8.elog(WARNING, `[SwissTopo] Bessel API response missing altitude. Response: ${JSON.stringify(besselResult)}`);
+      return null;
     }
     const besselHeight = parseFloat(besselResult.altitude);
     if (isNaN(besselHeight)) {
-       plv8.elog(WARNING, `Failed to parse Bessel height from API response: ${besselResult.altitude}`);
-       return null;
-    }
-
-    // Step 2: Transform LV95 + Bessel Height to WGS84
-    const wgs84Response = plv8.fetch(
-      `${wgs84Endpoint}?easting=${easting_lv95}&northing=${northing_lv95}&altitude=${besselHeight}&format=json`
-    );
-
-    if (!wgs84Response.ok) {
-      let errorBody = '';
-      try { errorBody = wgs84Response.text(); } catch(e) { /* ignore */ }
-      plv8.elog(WARNING, `Failed to transform coordinates to WGS84: ${wgs84Response.status} ${wgs84Response.statusText}. Endpoint: ${wgs84Endpoint} Body: ${errorBody}`);
+      plv8.elog(WARNING, `[SwissTopo] Failed to parse Bessel height from API response: ${besselResult.altitude}`);
       return null;
     }
-
-    const wgs84Result = wgs84Response.json();
-
+    plv8.elog(DEBUG, `[SwissTopo] Parsed Bessel Height: ${besselHeight}`);
+    const wgs84Url = `${wgs84Endpoint}?easting=${easting_lv95}&northing=${northing_lv95}&altitude=${besselHeight}&format=json`;
+    plv8.elog(DEBUG, `[SwissTopo] Requesting WGS84: ${wgs84Url}`);
+    const wgs84Response = plv8.fetch(wgs84Url);
+    let wgs84BodyText = '';
+    try { wgs84BodyText = wgs84Response.text(); } catch(e) {
+      plv8.elog(WARNING, `[SwissTopo] Failed to read WGS84 response body. Status: ${wgs84Response.status} ${wgs84Response.statusText}. Error: ${e.message}`);
+      return null;
+    }
+    plv8.elog(DEBUG, `[SwissTopo] WGS84 API response: ${wgs84Response.status} ${wgs84Response.statusText}. Body: ${truncate(wgs84BodyText, MAX_LOG_BODY_LENGTH)}`);
+    if (!wgs84Response.ok) {
+      plv8.elog(WARNING, `[SwissTopo] Failed WGS84 API call. Status: ${wgs84Response.status} ${wgs84Response.statusText}. URL: ${wgs84Url}. Body: ${wgs84BodyText}`);
+      return null;
+    }
+    let wgs84Result;
+    try { wgs84Result = JSON.parse(wgs84BodyText); } catch(e) {
+      plv8.elog(WARNING, `[SwissTopo] Failed to parse WGS84 JSON response. Status: ${wgs84Response.status}. Error: ${e.message}. Body: ${wgs84BodyText}`);
+      return null;
+    }
     if (!wgs84Result || wgs84Result.easting === undefined || wgs84Result.easting === null ||
         wgs84Result.northing === undefined || wgs84Result.northing === null ||
         wgs84Result.altitude === undefined || wgs84Result.altitude === null) {
-      plv8.elog(WARNING, `WGS84 API response missing expected fields. Response: ${JSON.stringify(wgs84Result)}`);
+      plv8.elog(WARNING, `[SwissTopo] WGS84 API response missing expected fields. Response: ${JSON.stringify(wgs84Result)}`);
       return null;
     }
-
     const lon = parseFloat(wgs84Result.easting);
     const lat = parseFloat(wgs84Result.northing);
     const ellHeight = parseFloat(wgs84Result.altitude);
-
     if (isNaN(lon) || isNaN(lat) || isNaN(ellHeight)) {
-       plv8.elog(WARNING, `Failed to parse WGS84 results from API. Lon: ${wgs84Result.easting}, Lat: ${wgs84Result.northing}, Height: ${wgs84Result.altitude}`);
-       return null;
+      plv8.elog(WARNING, `[SwissTopo] Failed to parse WGS84 results from API. Lon: ${wgs84Result.easting}, Lat: ${wgs84Result.northing}, Height: ${wgs84Result.altitude}`);
+      return null;
     }
-
-    // Return as a valid JSON string that plpgsql can cast to jsonb
-    return JSON.stringify({
-      lon: lon,
-      lat: lat,
-      ell_height: ellHeight
-    });
+    const resultJson = { lon: lon, lat: lat, ell_height: ellHeight };
+    plv8.elog(INFO, `[SwissTopo] Success: LV95 (${easting_lv95},${northing_lv95},${lhn95_height}) -> WGS84 (${lon},${lat},${ellHeight})`);
+    plv8.elog(DEBUG, `[SwissTopo] Parsed output: ${JSON.stringify(resultJson)}`);
+    return resultJson;
   } catch (error) {
-    plv8.elog(ERROR, 'Error in transform_swiss_coords_swisstopo: ' + (error.message || error) + (error.stack ? '\nStack: ' + error.stack : ''));
-    return null; // Return null on error
+    plv8.elog(ERROR, '[SwissTopo] Error in transform_swiss_coords_swisstopo: ' + (error.message || error) + (error.stack ? '\nStack: ' + error.stack : ''));
+    return null;
   }
 $$;
 
@@ -151,10 +155,12 @@ DECLARE
   v_start_time TIMESTAMPTZ;
 
 BEGIN
+  RAISE LOG '[IMPORT_FUNC] Starting execution for project_file_id: %', p_project_file_id;
   -- Get total feature count and log start
   v_total_features := jsonb_array_length(p_features);
   v_batch_count := CEIL(v_total_features::float / p_batch_size);
   v_current_batch := 0;
+  RAISE LOG '[IMPORT_FUNC] Total features: %, Batch Count: %, Batch Size: %', v_total_features, v_batch_count, p_batch_size;
 
   RAISE NOTICE 'Starting import of % features with Source SRID % into Target SRID % in % batches of size %',
     v_total_features, p_source_srid, p_target_srid, v_batch_count, p_batch_size;
@@ -188,15 +194,11 @@ BEGIN
   FOR v_current_batch IN 0..v_batch_count-1 LOOP
     v_batch_start := v_current_batch * p_batch_size;
     v_batch_end := LEAST(v_batch_start + p_batch_size, v_total_features);
-
-    RAISE NOTICE 'Processing batch % of % (features % to %)',
+    RAISE LOG 'Processing batch % of % (features % to %)',
       v_current_batch + 1, v_batch_count, v_batch_start, v_batch_end - 1;
-    v_notices := v_notices || jsonb_build_object(
-      'level', 'info', 'message', format('Processing batch %s of %s', v_current_batch + 1, v_batch_count),
-      'details', jsonb_build_object('batch_number', v_current_batch + 1, 'total_batches', v_batch_count, 'start_index', v_batch_start, 'end_index', v_batch_end - 1)
-    );
 
     FOR i IN v_batch_start..v_batch_end-1 LOOP
+      RAISE LOG '[IMPORT_FUNC] Processing feature index %', i;
       v_start_time := clock_timestamp();
       v_feature := p_features->i;
       v_properties := COALESCE(v_feature->'properties', '{}'::jsonb);
@@ -225,6 +227,9 @@ BEGIN
         END IF;
         v_raw_geometry := ST_SetSRID(v_raw_geometry, p_source_srid);
 
+        -- Before ST_SetSRID
+        RAISE LOG '[Feature %] Raw geometry before ST_SetSRID: %', i, substring(ST_AsText(v_raw_geometry) from 1 for 200) || CASE WHEN length(ST_AsText(v_raw_geometry)) > 200 THEN '...' ELSE '' END;
+
         -- 2. Clean and Validate geometry
         v_cleaned_geometry := ST_RemoveRepeatedPoints(v_raw_geometry, 0.0);
         IF NOT ST_Equals(v_cleaned_geometry, v_raw_geometry) THEN v_cleaned_count := v_cleaned_count + 1; END IF;
@@ -247,6 +252,9 @@ BEGIN
         ELSE
           v_validated_geometry := v_cleaned_geometry;
         END IF;
+
+        -- After cleaning/validation
+        RAISE LOG '[Feature %] Geometry after cleaning/validation: %', i, substring(ST_AsText(v_validated_geometry) from 1 for 200) || CASE WHEN length(ST_AsText(v_validated_geometry)) > 200 THEN '...' ELSE '' END;
 
         -- 3. Extract Height Information (from validated geometry in original SRID)
         v_vertical_datum_source := CASE WHEN p_source_srid = 2056 THEN 'LHN95' WHEN p_source_srid = 4326 THEN 'WGS84' ELSE 'EPSG:' || p_source_srid::TEXT END;
@@ -304,6 +312,9 @@ BEGIN
           CONTINUE;
         END IF;
 
+        -- Before ST_Transform
+        RAISE LOG '[Feature %] Geometry before ST_Transform (SRID: %): %', i, ST_SRID(v_validated_geometry), substring(ST_AsText(v_validated_geometry) from 1 for 200) || CASE WHEN length(ST_AsText(v_validated_geometry)) > 200 THEN '...' ELSE '' END;
+
         -- 6. Calculate WGS84 Ellipsoidal Height via API if applicable
         IF p_source_srid = 2056 AND v_lhn95_height IS NOT NULL AND lv95_easting IS NOT NULL AND lv95_northing IS NOT NULL THEN
           RAISE NOTICE 'Calling Swisstopo API for feature index % (E:%, N:%, H:%)', i, lv95_easting, lv95_northing, v_lhn95_height;
@@ -321,10 +332,16 @@ BEGIN
             RAISE NOTICE 'Feature index % has height % from source % but datum % not configured for transformation.', i, v_lhn95_height, v_height_source, v_vertical_datum_source;
         END IF;
 
+        -- After ST_Transform
+        RAISE LOG '[Feature %] Geometry after ST_Transform (SRID: %): %', i, ST_SRID(v_geometry_2d), substring(ST_AsText(v_geometry_2d) from 1 for 200) || CASE WHEN length(ST_AsText(v_geometry_2d)) > 200 THEN '...' ELSE '' END;
+
         -- 7. Insert feature with calculated values
         INSERT INTO public.geo_features ( layer_id, collection_id, properties, srid, geometry_2d, base_elevation_ellipsoidal, object_height, height_mode, height_source, vertical_datum_source )
         VALUES ( v_layer_id, v_collection_id, v_properties, p_target_srid, v_geometry_2d, v_base_elevation_ellipsoidal, v_object_height, v_height_mode, v_height_source, v_vertical_datum_source );
         v_imported_count := v_imported_count + 1;
+
+        -- On successful transformation
+        RAISE LOG '[Feature %] Transformation success: Source SRID % -> Target SRID %, Sample: %', i, p_source_srid, 4326, substring(ST_AsText(ST_PointN(ST_GeometryN(v_geometry_2d, 1), 1)) from 1 for 200) || CASE WHEN length(ST_AsText(ST_PointN(ST_GeometryN(v_geometry_2d, 1), 1))) > 200 THEN '...' ELSE '' END;
 
       EXCEPTION WHEN OTHERS THEN
         v_failed_count := v_failed_count + 1; RAISE WARNING '[Feature % Error] % (State: %)', i, SQLERRM, SQLSTATE;
@@ -343,5 +360,6 @@ BEGIN
 
   -- Return results
   RETURN QUERY SELECT v_collection_id, v_layer_id, v_imported_count, v_failed_count, v_debug_info;
+  RAISE LOG '[IMPORT_FUNC] Finishing execution. Imported: %, Failed: %', v_imported_count, v_failed_count;
 END;
 $$;

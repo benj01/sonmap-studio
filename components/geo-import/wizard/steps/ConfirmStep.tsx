@@ -1,5 +1,9 @@
 import React from 'react';
 import { useWizard } from '../WizardContext';
+import { LogManager } from '@/core/logging/log-manager';
+
+const SOURCE = 'ConfirmStep';
+const logManager = LogManager.getInstance();
 
 interface ConfirmStepProps {
   onNext: () => void;
@@ -12,15 +16,27 @@ export function ConfirmStep({ onNext, onBack, onClose, onRefreshFiles }: Confirm
   const {
     fileInfo,
     dataset,
+    importDataset,
     heightAttribute,
     targetSrid,
     useSwissTopo,
     selectedFeatureIds,
   } = useWizard();
+  
+  const datasetForImport = importDataset || dataset;
   const fileName = fileInfo?.name || '(none)';
   const featureCount = selectedFeatureIds.length;
   const heightAttr = heightAttribute === 'z' ? 'Z Coordinate' : heightAttribute;
-  const sourceSrid = dataset?.metadata?.srid || 2056;
+  const sourceSrid = datasetForImport?.metadata?.srid || 2056;
+  
+  logManager.debug(SOURCE, 'Confirm step data', {
+    hasPreviewDataset: !!dataset,
+    previewSrid: dataset?.metadata?.srid,
+    hasImportDataset: !!importDataset,
+    importSrid: importDataset?.metadata?.srid,
+    displayingSrid: sourceSrid,
+    usingDataset: importDataset ? 'importDataset' : 'dataset'
+  });
 
   return (
     <div className="space-y-4">

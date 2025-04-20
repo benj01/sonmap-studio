@@ -13,6 +13,7 @@ import { ProjectCard } from '@/components/dashboard/project-card'
 import { DashboardStats as DashboardStatsComponent } from '@/components/dashboard/dashboard-stats'
 import { EmptyState } from '@/components/dashboard/empty-state'
 import { useLogger } from '../../../core/logging/LoggerContext'
+import { useVerifyUserExistence } from '@/components/shared/hooks/useVerifyUserExistence'
 
 type ProjectRow = Database['public']['Tables']['projects']['Row']
 type ProjectStatus = 'active' | 'archived' | 'deleted'
@@ -34,6 +35,7 @@ interface ProjectMemberCount {
 export default function DashboardPage() {
   const router = useRouter()
   const { user, initialized } = useAuth()
+  const { isVerifying } = useVerifyUserExistence()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
   const [stats, setStats] = useState({
@@ -42,7 +44,6 @@ export default function DashboardPage() {
     totalStorage: 0,
     collaborators: 0
   })
-
   const logger = useLogger()
 
   useEffect(() => {
@@ -110,6 +111,10 @@ export default function DashboardPage() {
 
     fetchData()
   }, [user])
+
+  if (isVerifying) {
+    return <LoadingState text="Verifying your account..." />
+  }
 
   if (!initialized || loading) {
     return <LoadingState text="Loading your dashboard..." />

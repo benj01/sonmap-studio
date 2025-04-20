@@ -23,38 +23,34 @@ const supabase = createClient();
 // Configure logger to output to console and set debug level
 logger.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
-// Create safe logging wrapper
+// Create a safe logger that won't throw if any parameters are missing
 const safeLogger = {
-  info: (message: string, data?: any) => {
-    try {
-      const safeData = data ? JSON.parse(JSON.stringify(data)) : undefined;
-      logger.info(SOURCE, message, safeData);
-    } catch (err) {
-      logger.info(SOURCE, message, { error: 'Data contained circular references' });
-    }
-  },
-  warn: (message: string, error?: any) => {
-    try {
-      const safeError = error ? JSON.parse(JSON.stringify(error)) : undefined;
-      logger.warn(SOURCE, message, safeError);
-    } catch (err) {
-      logger.warn(SOURCE, message, { error: 'Error object contained circular references' });
-    }
-  },
-  error: (message: string, error?: any) => {
-    try {
-      const safeError = error ? JSON.parse(JSON.stringify(error)) : undefined;
-      logger.error(SOURCE, message, safeError);
-    } catch (err) {
-      logger.error(SOURCE, message, { error: 'Error object contained circular references' });
-    }
-  },
   debug: (message: string, data?: any) => {
     try {
-      const safeData = data ? JSON.parse(JSON.stringify(data)) : undefined;
-      logger.debug(SOURCE, message, safeData);
-    } catch (err) {
-      logger.debug(SOURCE, message, { error: 'Data contained circular references' });
+      logger.debug(SOURCE, message, data);
+    } catch (error) {
+      console.error('Error logging debug message:', error);
+    }
+  },
+  info: (message: string, data?: any) => {
+    try {
+      logger.info(SOURCE, message, data);
+    } catch (error) {
+      console.error('Error logging info message:', error);
+    }
+  },
+  warn: (message: string, data?: any) => {
+    try {
+      logger.warn(SOURCE, message, data);
+    } catch (error) {
+      console.error('Error logging warning message:', error);
+    }
+  },
+  error: (message: string, data?: any) => {
+    try {
+      logger.error(SOURCE, message, data);
+    } catch (error) {
+      console.error('Error logging error message:', error);
     }
   }
 };
@@ -75,6 +71,7 @@ export function GeoImportDialog({
   onImportComplete,
   fileInfo
 }: GeoImportDialogProps) {
+  safeLogger.info('GeoImportDialog component loaded');
   const { toast } = useToast();
   const [isProcessing, setIsProcessing] = useState(false);
   const [importSession, setImportSession] = useState<ImportSession | null>(null);
@@ -367,7 +364,8 @@ export function GeoImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[800px] max-h-[90vh] overflow-hidden flex flex-col">
+      <DialogContent className="max-w-4xl w-full">
+        <div style={{background:'#fee2e2',color:'#991b1b',padding:'4px',fontWeight:'bold'}}>LEGACY DIALOG ACTIVE</div>
         <DialogHeader className="pb-2">
           <DialogTitle>Import Geodata</DialogTitle>
           <DialogDescription>

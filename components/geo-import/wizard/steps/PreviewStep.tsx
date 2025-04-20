@@ -1,6 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 import { MapPreview } from '../../components/map-preview';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
+
+const SOURCE = 'PreviewStep';
+const logManager = LogManager.getInstance();
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 interface PreviewStepProps {
   onNext: () => void;
@@ -13,6 +18,46 @@ export function PreviewStep({ onNext, onBack, onClose, onRefreshFiles }: Preview
   const { dataset, selectedFeatureIds, setSelectedFeatureIds } = useWizard();
   const features = dataset?.features || [];
   const meta = dataset?.metadata || {};
+
+  // Log received dataset coordinates for debugging
+  useEffect(() => {
+    if (dataset?.features && dataset.features.length > 0) {
+      const firstFeature = dataset.features[0];
+      const firstGeometry = firstFeature?.geometry;
+      
+      logManager.debug(SOURCE, 'Received dataset for preview', { 
+        srid: dataset.metadata?.srid,
+        featureCount: dataset.features.length,
+        firstFeatureGeometryType: firstGeometry?.type
+      });
+      
+      // Log sample coordinates based on geometry type
+      if (firstGeometry) {
+        if (firstGeometry.type === 'Point' && 'coordinates' in firstGeometry) {
+          logManager.debug(SOURCE, 'First point coordinates', { 
+            coordinates: firstGeometry.coordinates 
+          });
+        } 
+        else if ((firstGeometry.type === 'LineString' || firstGeometry.type === 'MultiPoint') && 
+                 'coordinates' in firstGeometry) {
+          logManager.debug(SOURCE, 'First line/multipoint coordinates (first 3 points)', { 
+            coordinates: firstGeometry.coordinates.slice(0, 3) 
+          });
+        }
+        else if ((firstGeometry.type === 'Polygon' || firstGeometry.type === 'MultiLineString') && 
+                 'coordinates' in firstGeometry) {
+          logManager.debug(SOURCE, 'First polygon/multiline coordinates (first ring, first 3 points)', { 
+            coordinates: firstGeometry.coordinates[0]?.slice(0, 3) 
+          });
+        }
+        else if (firstGeometry.type === 'MultiPolygon' && 'coordinates' in firstGeometry) {
+          logManager.debug(SOURCE, 'First multipolygon coordinates (first polygon, first ring, first 3 points)', { 
+            coordinates: firstGeometry.coordinates[0]?.[0]?.slice(0, 3) 
+          });
+        }
+      }
+    }
+  }, [dataset]); // Re-run when dataset changes
 
   const handleToggle = (id: number) => {
     setSelectedFeatureIds(

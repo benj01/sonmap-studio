@@ -4,6 +4,9 @@ import { createClient } from '@/utils/supabase/client';
 import { FileTypeUtil } from '../../../files/utils/file-types';
 import { FileProcessor } from '../../../files/utils/file-processor';
 import { Alert, AlertTitle, AlertDescription } from '../../../ui/alert';
+import { createLogger } from '@/utils/logger';
+
+const logger = createLogger('FileSelectStep');
 
 interface FileSelectStepProps {
   onNext: () => void;
@@ -11,6 +14,7 @@ interface FileSelectStepProps {
 }
 
 export function FileSelectStep({ onNext }: FileSelectStepProps) {
+  logger.info('FileSelectStep loaded');
   const { fileInfo, setFileInfo, projectId } = useWizard();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);

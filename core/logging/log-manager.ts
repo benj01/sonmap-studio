@@ -46,6 +46,12 @@ export class LogManager {
     this.sourceFilters.set('FileManager', LogLevel.WARN);
     this.sourceFilters.set('ImportManager', LogLevel.INFO);
 
+    // Import Wizard components - Enable debug logging
+    this.sourceFilters.set('ImportWizard', LogLevel.DEBUG);
+    this.sourceFilters.set('FileSelectStep', LogLevel.DEBUG);
+    this.sourceFilters.set('GeoFileUpload', LogLevel.DEBUG);
+    this.sourceFilters.set('GeoImportDialog', LogLevel.DEBUG);
+
     // Map components - Focus on lifecycle events
     this.sourceFilters.set('MapContainer', LogLevel.WARN);
     this.sourceFilters.set('CesiumContext', LogLevel.INFO);

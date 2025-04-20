@@ -20,6 +20,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
   const {
     fileInfo,
     dataset,
+    importDataset,
     selectedFeatureIds,
     heightAttribute,
     targetSrid,
@@ -56,8 +57,14 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       // Get auth token if needed
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('No authentication token available');
-      // Prepare features to import
-      const features = (dataset?.features || []).filter((f: any) => selectedFeatureIds.includes(f.id));
+      
+      // IMPORTANT: Use importDataset instead of dataset for the import payload
+      // This ensures original (untransformed) coordinates are sent to the backend
+      const datasetForImport = importDataset || dataset;
+      
+      // Prepare features to import (using original coordinates)
+      const features = (datasetForImport?.features || []).filter((f: any) => selectedFeatureIds.includes(f.id));
+      
       // Prepare payload (include collectionName as required by backend)
       const payload = {
         projectFileId: fileInfo?.id,
@@ -66,13 +73,41 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
           ...f,
           height: heightAttribute === 'z' ? f.geometry?.coordinates?.[2] : f.properties?.[heightAttribute],
         })),
-        sourceSrid: dataset?.metadata?.srid || 2056,
+        sourceSrid: datasetForImport?.metadata?.srid || 2056,
         targetSrid,
         useSwissTopo,
         heightAttribute,
       };
+      
+      // Log both datasets to confirm the correct one is being used
+      logManager.info(LOG_SOURCE, 'Available datasets', {
+        hasPreviewDataset: !!dataset,
+        previewDatasetSrid: dataset?.metadata?.srid,
+        hasImportDataset: !!importDataset,
+        importDatasetSrid: importDataset?.metadata?.srid,
+        usingDataset: importDataset ? 'importDataset' : 'dataset',
+        selectedSrid: payload.sourceSrid
+      });
+      
       // Log the payload
-      logManager.info(LOG_SOURCE, 'Import payload', payload);
+      logManager.info(LOG_SOURCE, 'Import payload', {
+        projectFileId: payload.projectFileId,
+        collectionName: payload.collectionName,
+        featureCount: payload.features.length,
+        sourceSrid: payload.sourceSrid,
+        targetSrid: payload.targetSrid,
+        // Show sample of first feature's coordinates
+        features: payload.features.length > 0 
+          ? [{ 
+              id: payload.features[0].id, 
+              geometry: { 
+                type: payload.features[0].geometry.type,
+                coordinates: JSON.stringify(payload.features[0].geometry.coordinates).substring(0, 100) + '...' 
+              }
+            }] 
+          : []
+      });
+      
       // Check for missing required parameters
       if (!payload.projectFileId || !payload.collectionName || !payload.features.length || !payload.sourceSrid || !payload.targetSrid) {
         const missing = {

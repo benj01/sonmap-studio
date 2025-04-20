@@ -6,9 +6,9 @@ BEFORE UPDATE ON public.projects
 FOR EACH ROW EXECUTE FUNCTION public.update_updated_at(); -- Use consolidated function
 
 -- Trigger on profiles table (typically handled by Supabase auth trigger, but ensure if needed)
--- CREATE TRIGGER on_auth_user_created
--- AFTER INSERT ON auth.users
--- FOR EACH ROW EXECUTE FUNCTION public.handle_new_user(); -- This needs to be setup in Supabase Auth Hooks usually
+CREATE TRIGGER on_auth_user_created
+AFTER INSERT ON auth.users
+FOR EACH ROW EXECUTE FUNCTION public.handle_new_user(); -- This needs to be setup in Supabase Auth Hooks usually
 
 -- Trigger on project_files table to set 'uploaded_by' on insert
 CREATE TRIGGER set_project_files_uploaded_by

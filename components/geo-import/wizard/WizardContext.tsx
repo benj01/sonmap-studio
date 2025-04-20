@@ -26,6 +26,8 @@ export interface WizardState {
   setFileInfo: (info: WizardFileInfo) => void;
   dataset?: WizardDataset;
   setDataset: (ds: WizardDataset) => void;
+  importDataset?: WizardDataset;
+  setImportDataset: (ds: WizardDataset) => void;
   selectedFeatureIds: number[];
   setSelectedFeatureIds: (ids: number[] | ((prev: number[]) => number[])) => void;
   heightAttribute: string | 'z' | '';
@@ -41,6 +43,7 @@ const WizardContext = createContext<WizardState | undefined>(undefined);
 export function WizardProvider({ projectId, initialFileInfo, children }: { projectId: string; initialFileInfo?: WizardFileInfo; children: ReactNode }) {
   const [fileInfo, setFileInfo] = useState<WizardFileInfo | undefined>(initialFileInfo);
   const [dataset, setDataset] = useState<WizardDataset | undefined>();
+  const [importDataset, setImportDataset] = useState<WizardDataset | undefined>();
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
   const [heightAttribute, setHeightAttribute] = useState<string | 'z' | ''>('');
   const [targetSrid, setTargetSrid] = useState<number>(4326);
@@ -54,6 +57,7 @@ export function WizardProvider({ projectId, initialFileInfo, children }: { proje
       projectId,
       fileInfo, setFileInfo,
       dataset, setDataset,
+      importDataset, setImportDataset,
       selectedFeatureIds, setSelectedFeatureIds,
       heightAttribute, setHeightAttribute,
       targetSrid,

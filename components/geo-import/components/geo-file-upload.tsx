@@ -57,6 +57,7 @@ export function GeoFileUpload({
   fileInfo,
   onImportSessionCreated
 }: GeoFileUploadProps) {
+  logger.info('GeoFileUpload component loaded');
   const [error, setError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -227,13 +228,31 @@ export function GeoFileUpload({
 
         // Parse the file
         const fullDataset = await parser.parse(mainFileData, companions, {
-          maxFeatures: 10000
+          maxFeatures: 10000,
+          transformCoordinates: false
         }, (event) => {
           const currentProgress = 40 + (event.progress * 0.4);
           if (event.message) {
             reportProgress(event.message, currentProgress);
           }
         });
+
+        // Log the actual coordinates and SRID before creating the import session
+        if (fullDataset.features && fullDataset.features.length > 0) {
+          const firstGeometry = fullDataset.features[0]?.geometry;
+          let firstFeatureCoords: any = undefined;
+          if (firstGeometry && 'coordinates' in firstGeometry) {
+            firstFeatureCoords = firstGeometry.coordinates;
+          } else {
+            firstFeatureCoords = `[Non-coordinate geometry type: ${firstGeometry?.type}]`;
+          }
+          logger.debug('Data BEFORE sending to backend/import session', {
+            detectedSourceSrid: fullDataset.metadata?.srid,
+            firstFeatureCoords: JSON.stringify(firstFeatureCoords).substring(0, 200) + '...'
+          });
+        } else {
+          logger.warn('fullDataset has no features before sending payload');
+        }
 
         // Generate preview dataset
         reportProgress('Generating preview...', 80);
@@ -249,8 +268,7 @@ export function GeoFileUpload({
           fileId: memoizedFileInfo.id,
           fileName: memoizedFileInfo.name,
           fileType: memoizedFileInfo.type,
-          fullDataset,
-          previewDataset
+          fullDataset
         });
 
         reportProgress('Import session created', 100);
@@ -282,6 +300,7 @@ export function GeoFileUpload({
 
   return (
     <div className="w-full space-y-2">
+      <div style={{background:'#d1fae5',color:'#065f46',padding:'4px',fontWeight:'bold'}}>NEW WIZARD ACTIVE</div>
       {error && (
         <Alert variant="destructive" className="py-2">
           <AlertCircle className="h-3 w-3" />
