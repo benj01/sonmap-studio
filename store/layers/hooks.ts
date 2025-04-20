@@ -194,65 +194,26 @@ export const useLayerVisibility = (layerId: string) => {
 
 // Layer readiness tracking
 export const useAreInitialLayersReady = () => {
-  logger.debug('HOOK RUN: useAreInitialLayersReady');
-  
-  // Get map readiness state
-  const isMapReady = useMapInstanceStore((state: { mapInstances: { mapbox: { instance: any; status: string } } }) => 
-    state.mapInstances.mapbox.instance !== null && 
-    state.mapInstances.mapbox.status === 'ready'
-  );
-
-  // Get all layers and their setup status
-  const layers = useLayerStore((state: LayerStore) => state.layers.byId);
+  // Only check initial load complete for Cesium
   const isInitialLoadComplete = useLayerStore((state: LayerStore) => state.isInitialLoadComplete);
+  const layers = useLayerStore((state: LayerStore) => state.layers.byId);
 
   // Memoize the readiness check
   const areLayersReady = useMemo(() => {
-    logger.debug('HOOK MEMO: Checking layer readiness', {
-      isMapReady,
-      isInitialLoadComplete,
-      layerCount: Object.keys(layers).length
-    });
-
-    if (!isMapReady || !isInitialLoadComplete) {
-      logger.debug('Layers not ready - map or initial load incomplete', {
-        isMapReady,
-        isInitialLoadComplete
-      });
+    if (!isInitialLoadComplete) {
       return false;
     }
-
     const layerIds = Object.keys(layers);
     if (layerIds.length === 0) {
-      logger.debug('No layers to check for readiness');
       return true; // No layers means we're ready
     }
-
     const allLayersReady = layerIds.every(id => {
       const layer = layers[id];
       // Consider both 'complete' and 'error' as final states
-      const isReady = layer.setupStatus === 'complete' || layer.setupStatus === 'error';
-      if (!isReady) {
-        logger.debug(`Layer ${id} not ready`, {
-          setupStatus: layer.setupStatus,
-          error: layer.error
-        });
-      }
-      return isReady;
+      return layer.setupStatus === 'complete' || layer.setupStatus === 'error';
     });
-
-    logger.debug('Layer readiness check complete', {
-      layerCount: layerIds.length,
-      allLayersReady,
-      layerStatuses: layerIds.map(id => ({
-        id,
-        setupStatus: layers[id].setupStatus,
-        error: layers[id].error
-      }))
-    });
-
     return allLayersReady;
-  }, [isMapReady, isInitialLoadComplete, layers]);
+  }, [isInitialLoadComplete, layers]);
 
   return areLayersReady;
 }; 

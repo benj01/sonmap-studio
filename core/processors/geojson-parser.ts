@@ -7,9 +7,12 @@ import proj4 from 'proj4';
 import { XMLParser } from 'fast-xml-parser';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 const SOURCE = 'GeoJsonParser';
 const logger = createLogger(SOURCE);
+const logManager = LogManager.getInstance();
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 /**
  * Extract coordinate system information from QGIS metadata file
@@ -44,15 +47,23 @@ async function extractCRSFromQMD(qmdContent: string): Promise<{ srid: number; pr
  */
 async function transformCoordinates(coords: Position, fromSrid: number): Promise<Position> {
   try {
-    // Get coordinate system definition
     const fromSystem = await getCoordinateSystem(fromSrid);
-    // Define the coordinate system if not already defined
     if (!proj4.defs(`EPSG:${fromSrid}`)) {
       proj4.defs(`EPSG:${fromSrid}`, fromSystem.proj4);
     }
-    return proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, coords);
+    const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, coords);
+    logManager.debug(SOURCE, 'Coordinate transformation', {
+      fromSrid,
+      toSrid: 4326,
+      input: coords,
+      output: result
+    });
+    if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
+      logManager.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
+    }
+    return result;
   } catch (error) {
-    logger.warn('Failed to transform coordinates:', error);
+    logManager.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
     return coords;
   }
 }
@@ -61,6 +72,7 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
  * Transform a GeoJSON geometry using the provided SRID
  */
 async function transformGeometry(geometry: Geometry, fromSrid: number): Promise<Geometry> {
+  logManager.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, fromSrid });
   switch (geometry.type) {
     case 'Point':
       return {

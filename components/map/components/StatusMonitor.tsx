@@ -37,7 +37,6 @@ interface Status {
 
 export function StatusMonitor() {
   const { layers } = useLayers();
-  const mapboxStatus = useMapInstanceStore(state => state.mapInstances.mapbox.status);
   const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
   const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -48,17 +47,15 @@ export function StatusMonitor() {
   });
 
   const checkMapStatus = useCallback(() => {
-    const mapboxReady = mapboxStatus === 'ready';
     const cesiumReady = cesiumStatus === 'ready';
 
     logger.debug('Map status check', {
-      mapboxStatus,
       cesiumStatus,
       hasCesium: !!cesiumInstance
     });
 
-    return { mapboxReady, cesiumReady };
-  }, [mapboxStatus, cesiumStatus, cesiumInstance]);
+    return { cesiumReady };
+  }, [cesiumStatus, cesiumInstance]);
 
   const checkLayerStatus = useCallback(() => {
     let hasChanges = false;
@@ -134,7 +131,7 @@ export function StatusMonitor() {
     return () => clearInterval(interval);
   }, [checkLayerStatus]);
 
-  const { mapboxReady, cesiumReady } = checkMapStatus();
+  const { cesiumReady } = checkMapStatus();
 
   const getStatusColor = (isReady: boolean) => 
     isReady ? 'text-green-500' : 'text-yellow-500';
@@ -142,15 +139,18 @@ export function StatusMonitor() {
   const getStatusIcon = (isReady: boolean) =>
     isReady ? '✓' : '⋯';
 
-  const getStatusText = (status: 'initializing' | 'ready' | 'error', error?: string) => {
+  const getStatusText = (status: 'ready' | 'initializing' | 'error' | 'destroyed') => {
     switch (status) {
       case 'ready':
         return 'Ready';
-      case 'error':
-        return error || 'Error';
       case 'initializing':
-      default:
         return 'Initializing';
+      case 'error':
+        return 'Error';
+      case 'destroyed':
+        return 'Destroyed';
+      default:
+        return 'Unknown';
     }
   };
 
@@ -162,8 +162,8 @@ export function StatusMonitor() {
       >
         <div className="font-semibold flex items-center gap-2">
           <span>System Status</span>
-          <span className={`${getStatusColor(mapboxReady && cesiumReady)}`}>
-            {getStatusIcon(mapboxReady && cesiumReady)}
+          <span className={`${getStatusColor(cesiumReady)}`}>
+            {getStatusIcon(cesiumReady)}
           </span>
         </div>
         <span className="text-gray-500">
@@ -174,13 +174,6 @@ export function StatusMonitor() {
       {isExpanded && (
         <div className="p-3 space-y-2 border-t dark:border-gray-700">
           <div className="space-y-1">
-            <div className="flex justify-between">
-              <span>2D Map (Mapbox)</span>
-              <span className={getStatusColor(mapboxReady)}>
-                {getStatusIcon(mapboxReady)} {getStatusText(mapboxStatus)}
-              </span>
-            </div>
-
             <div className="flex justify-between">
               <span>3D Map (Cesium)</span>
               <span className={getStatusColor(cesiumReady)}>

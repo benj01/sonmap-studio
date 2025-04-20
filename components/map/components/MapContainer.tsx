@@ -160,7 +160,8 @@ export const MapContainer = memo(function MapContainer({
       <div className="flex-1 flex flex-col gap-20 p-4">
         {shouldRender && (
           <>
-            <section className="h-[400px] flex flex-col gap-2">
+            {/* --- Removed 2D Map View (Mapbox) section --- */}
+            {/* <section className="h-[400px] flex flex-col gap-2">
               <div className="flex justify-between items-center px-2 mb-2">
                 <h2 className="text-lg font-semibold">2D Map View</h2>
                 <div className="flex gap-2">
@@ -176,13 +177,23 @@ export const MapContainer = memo(function MapContainer({
                 </div>
                 <MapView accessToken={accessToken} style={style} />
               </div>
-            </section>
+            </section> */}
 
-            <section className="h-[400px] flex flex-col gap-2 mt-4">
+            {/* --- New: Only 3D Map View (Cesium) and Layer Panel --- */}
+            <section className="h-full flex flex-col gap-2">
               <div className="flex justify-between items-center px-2 mb-4">
                 <h2 className="text-lg font-semibold">3D Map View</h2>
+                <div className="flex gap-2">
+                  <ResetButton />
+                </div>
               </div>
               <div className="relative flex-1">
+                {/* LayerPanel and LayerList remain, now only for Cesium */}
+                <div className="absolute left-0 top-0 z-10 h-full">
+                  <LayerPanel>
+                    <LayerList />
+                  </LayerPanel>
+                </div>
                 <CesiumViewWithProvider />
               </div>
             </section>

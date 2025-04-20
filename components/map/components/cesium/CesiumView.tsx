@@ -7,7 +7,6 @@ import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { useCesium } from '../../context/CesiumContext';
 import { LogManager, LogLevel } from '@/core/logging/log-manager';
-import { useSyncTo3D } from '../../hooks/useSyncTo3D';
 import { useLayers } from '@/store/layers/hooks';
 import { useLayerStore } from '@/store/layers/layerStore';
 
@@ -39,14 +38,11 @@ export function CesiumView() {
   const { setCesiumInstance, setCesiumStatus } = useMapInstanceStore();
   const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
-  const mapboxStatus = useMapInstanceStore(state => state.mapInstances.mapbox.status);
   const { viewState3D, setViewState3D } = useViewStateStore();
   const { getCesiumDefaults, getTerrainProvider } = useCesium();
-  const { syncTo3D, isLoading } = useSyncTo3D();
   const { layers } = useLayers();
   const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
   const initializationAttempted = useRef(false);
-  const initialSyncPerformed = useRef(false);
   const mountCount = useRef(0);
 
   // Effect for Viewer Initialization
@@ -77,7 +73,6 @@ export function CesiumView() {
         
         logger.info('CesiumView: Starting initialization process');
         setCesiumStatus('initializing');
-        initialSyncPerformed.current = false;
 
         // Generate new instance ID
         viewerInstanceId.current = `cesium-viewer-${Date.now()}`;
@@ -176,98 +171,130 @@ export function CesiumView() {
       viewerRef.current = null;
       setCesiumInstance(null);
       initializationAttempted.current = false;
-      initialSyncPerformed.current = false;
       viewerInstanceId.current = null;
       
       logger.info('CesiumView: Cleanup complete');
     };
   }, []);
 
-  // Effect for Triggering Sync based on State Changes AND Layer Data Readiness
+  // Effect: Directly manage Cesium layers based on Zustand layer state
   useEffect(() => {
-    // Don't attempt sync if viewer is destroyed or destroying
-    if (cesiumStatus === 'destroyed') {
-      return;
-    }
+    if (!cesiumInstance || cesiumInstance.isDestroyed()) return;
 
-    const visibleLayers = layers.filter(l => l.visible);
-    const vectorLayersToSync = visibleLayers.filter(l => (l.metadata?.type || 'vector') === 'vector');
-    
-    const layerReadinessDetails = vectorLayersToSync.map(l => ({
-      id: l.id,
-      setupStatus: l.setupStatus,
-      hasGeoJson: !!l.metadata?.properties?.geojson,
-      isReady: l.setupStatus === 'complete' && !!l.metadata?.properties?.geojson
-    }));
+    // Track Cesium objects by layerId
+    const dataSourceMap = new Map<string, Cesium.DataSource>();
+    const tilesetMap = new Map<string, Cesium.Cesium3DTileset>();
+    const imageryLayerMap = new Map<string, Cesium.ImageryLayer>();
 
-    const areVectorLayersReadyForSync = vectorLayersToSync.every(
-      l => l.setupStatus === 'complete' && l.metadata?.properties?.geojson
-    );
+    // Helper: Remove Cesium object by type
+    const removeCesiumLayer = (layerId: string) => {
+      // Remove DataSource
+      const ds = dataSourceMap.get(layerId);
+      if (ds) {
+        logger.info('Removing Cesium DataSource', { layerId });
+        cesiumInstance.dataSources.remove(ds, true);
+        dataSourceMap.delete(layerId);
+      }
+      // Remove Tileset
+      const ts = tilesetMap.get(layerId);
+      if (ts) {
+        logger.info('Removing Cesium 3D Tileset', { layerId });
+        cesiumInstance.scene.primitives.remove(ts);
+        tilesetMap.delete(layerId);
+      }
+      // Remove ImageryLayer
+      const il = imageryLayerMap.get(layerId);
+      if (il) {
+        logger.info('Removing Cesium ImageryLayer', { layerId });
+        cesiumInstance.imageryLayers.remove(il, true);
+        imageryLayerMap.delete(layerId);
+      }
+    };
 
-    const canSync =
-      cesiumInstance &&
-      !cesiumInstance.isDestroyed() &&
-      cesiumStatus === 'ready' &&
-      mapboxStatus === 'ready' &&
-      isInitialLoadComplete &&
-      areVectorLayersReadyForSync &&
-      !isLoading &&
-      !initialSyncPerformed.current;
-
-    if (canSync) {
-      logger.info('CesiumView: All conditions met for initial layer sync to 3D view', {
-        instanceId: viewerInstanceId.current,
-        layerCount: vectorLayersToSync.length,
-        layerDetails: layerReadinessDetails,
-        cesiumStatus,
-        mapboxStatus,
-        isInitialLoadComplete
-      });
-      
-      initialSyncPerformed.current = true;
-      syncTo3D({ 
-        syncView: true, 
-        syncLayers: true,
-        viewerInstanceId: viewerInstanceId.current 
-      })
-        .then(() => {
-          logger.info('CesiumView: Initial layer sync complete', {
-            instanceId: viewerInstanceId.current,
-            layerCount: vectorLayersToSync.length,
-            layerDetails: layerReadinessDetails
-          });
-        })
-        .catch((error) => {
-          logger.error('CesiumView: Initial layer sync failed', {
-            instanceId: viewerInstanceId.current,
-            error: error instanceof Error ? error.message : error,
-            layerCount: vectorLayersToSync.length,
-            layerDetails: layerReadinessDetails
-          });
-          initialSyncPerformed.current = false;
-        });
-    } else {
-      logger.warn('CesiumView: Sync conditions not met', {
-        conditions: {
-          hasCesiumInstance: !!cesiumInstance,
-          isDestroyed: cesiumInstance?.isDestroyed(),
-          instanceId: viewerInstanceId.current,
-          cesiumStatus,
-          mapboxStatus,
-          isInitialLoadComplete,
-          areVectorLayersReadyForSync,
-          isLoading,
-          initialSyncPerformed: initialSyncPerformed.current
-        },
-        layers: {
-          total: layers.length,
-          visible: visibleLayers.length,
-          vectorsToSync: vectorLayersToSync.length,
-          readinessDetails: layerReadinessDetails
+    // Helper: Add or update Cesium object for a layer
+    const addOrUpdateCesiumLayer = async (layer: any) => {
+      try {
+        if (!layer.visible) {
+          removeCesiumLayer(layer.id);
+          return;
         }
-      });
-    }
-  }, [cesiumInstance, cesiumStatus, mapboxStatus, syncTo3D, isLoading, layers, isInitialLoadComplete]);
+        // Vector (GeoJSON)
+        if (layer.metadata?.type === 'vector' && layer.metadata?.properties?.geojson) {
+          if (!dataSourceMap.has(layer.id)) {
+            logger.info('Adding Cesium GeoJSON DataSource', { layerId: layer.id });
+            const ds = await Cesium.GeoJsonDataSource.load(layer.metadata.properties.geojson, {
+              clampToGround: true
+              // TODO: Style mapping
+            });
+            ds.name = layer.id;
+            cesiumInstance.dataSources.add(ds);
+            dataSourceMap.set(layer.id, ds);
+          } else {
+            // TODO: Update data or style if changed
+            logger.debug('GeoJSON DataSource already present', { layerId: layer.id });
+          }
+        }
+        // 3D Tiles
+        else if (layer.metadata?.type === '3d-tiles' && layer.metadata?.properties?.url) {
+          if (!tilesetMap.has(layer.id)) {
+            logger.info('Adding Cesium 3D Tileset', { layerId: layer.id });
+            // TODO: Review Cesium3DTileset options type if linter error persists
+            const ts = new Cesium.Cesium3DTileset({ url: layer.metadata.properties.url } as any);
+            (ts as any)._layerId = layer.id;
+            cesiumInstance.scene.primitives.add(ts);
+            tilesetMap.set(layer.id, ts);
+          } else {
+            // TODO: Update tileset if needed
+            logger.debug('3D Tileset already present', { layerId: layer.id });
+          }
+        }
+        // Imagery
+        else if (layer.metadata?.type === 'imagery' && layer.metadata?.properties?.url) {
+          if (!imageryLayerMap.has(layer.id)) {
+            logger.info('Adding Cesium ImageryLayer', { layerId: layer.id });
+            const provider = new Cesium.UrlTemplateImageryProvider({ url: layer.metadata.properties.url });
+            const il = cesiumInstance.imageryLayers.addImageryProvider(provider);
+            (il as any)._layerId = layer.id;
+            imageryLayerMap.set(layer.id, il);
+          } else {
+            // TODO: Update imagery if needed
+            logger.debug('ImageryLayer already present', { layerId: layer.id });
+          }
+        } else {
+          logger.warn('Layer type not supported or missing data for Cesium', { layerId: layer.id, type: layer.metadata?.type });
+        }
+      } catch (error) {
+        logger.error('Error adding/updating Cesium layer', { layerId: layer.id, error });
+      }
+    };
+
+    // Sync Cesium with Zustand layers
+    (async () => {
+      // Remove Cesium objects for layers that are no longer present or not visible
+      const layerIds = new Set(layers.map(l => l.id));
+      for (const id of [...dataSourceMap.keys(), ...tilesetMap.keys(), ...imageryLayerMap.keys()]) {
+        const layer = layers.find(l => l.id === id);
+        if (!layer || !layer.visible) {
+          removeCesiumLayer(id);
+        }
+      }
+      // Add or update Cesium objects for all layers
+      for (const layer of layers) {
+        await addOrUpdateCesiumLayer(layer);
+      }
+    })();
+
+    // Cleanup: remove all Cesium objects on unmount
+    return () => {
+      for (const id of dataSourceMap.keys()) removeCesiumLayer(id);
+      for (const id of tilesetMap.keys()) removeCesiumLayer(id);
+      for (const id of imageryLayerMap.keys()) removeCesiumLayer(id);
+    };
+  }, [cesiumInstance, layers]);
+
+  // TODO: Directly manage Cesium layers based on Zustand layer state.
+  //       When layers or their visibility change, update Cesium data sources/primitives/imagery.
+  //       Remove any "sync to 3D" or Mapbox state logic.
 
   return (
     <div className="relative w-full h-full">

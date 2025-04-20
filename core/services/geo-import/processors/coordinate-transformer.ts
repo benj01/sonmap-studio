@@ -4,8 +4,11 @@ import { Position, Geometry } from 'geojson';
 import proj4 from 'proj4';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { FeatureProcessor, ProcessingContext, ProcessingResult } from './types';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 const logger = createLogger('CoordinateTransformer');
+const logManager = LogManager.getInstance();
+logManager.setComponentLogLevel('CoordinateTransformer', LogLevel.DEBUG);
 
 export class CoordinateTransformer implements FeatureProcessor {
   async process(feature: GeoFeature, context: ProcessingContext): Promise<ProcessingResult> {
@@ -55,9 +58,19 @@ export class CoordinateTransformer implements FeatureProcessor {
         proj4.defs(`EPSG:${toSrid}`, toSystem.proj4);
       }
 
-      return proj4(`EPSG:${fromSrid}`, `EPSG:${toSrid}`, coords);
+      const result = proj4(`EPSG:${fromSrid}`, `EPSG:${toSrid}`, coords);
+      logManager.debug('CoordinateTransformer', 'Coordinate transformation', {
+        fromSrid,
+        toSrid,
+        input: coords,
+        output: result
+      });
+      if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
+        logManager.warn('CoordinateTransformer', 'Transformed coordinates out of Swiss bounds', { result });
+      }
+      return result;
     } catch (error) {
-      logger.warn('Failed to transform coordinates', { error, fromSrid, toSrid });
+      logManager.warn('CoordinateTransformer', 'Failed to transform coordinates', { error, coords, fromSrid, toSrid });
       throw error;
     }
   }
@@ -67,6 +80,7 @@ export class CoordinateTransformer implements FeatureProcessor {
     fromSrid: number,
     toSrid: number
   ): Promise<Geometry> {
+    logManager.debug('CoordinateTransformer', 'Transforming geometry', { geometryType: geometry.type, fromSrid, toSrid });
     switch (geometry.type) {
       case 'Point':
         return {

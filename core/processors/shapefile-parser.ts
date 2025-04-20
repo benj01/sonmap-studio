@@ -8,10 +8,13 @@ import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 import * as turf from '@turf/turf';
 import { detectSRIDFromCoordinates, detectSRIDFromWKT } from '@/core/coordinates/coordinate-detection';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 const SOURCE = 'ShapefileParser';
 const logger = createLogger(SOURCE);
 const DEFAULT_SRID = 2056; // Swiss LV95
+const logManager = LogManager.getInstance();
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 /**
  * Gets coordinates from a GeoJSON geometry
@@ -40,24 +43,26 @@ function getCoordinates(geometry: Geometry): number[] {
  */
 async function transformCoordinates(coords: Position, fromSrid: number): Promise<Position> {
   try {
-    // Extract Z coordinate if it exists
     const hasZ = coords.length > 2;
     const z = hasZ ? coords[2] : null;
-
-    // Get coordinate system definition
     const fromSystem = await getCoordinateSystem(fromSrid);
-    // Define the coordinate system if not already defined
     if (!proj4.defs(`EPSG:${fromSrid}`)) {
       proj4.defs(`EPSG:${fromSrid}`, fromSystem.proj4);
     }
-    
-    // Transform X,Y coordinates
     const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, [coords[0], coords[1]]);
-    
-    // Add Z coordinate back if it existed
+    logManager.debug(SOURCE, 'Coordinate transformation', {
+      fromSrid,
+      toSrid: 4326,
+      input: coords,
+      output: result
+    });
+    // Switzerland bounds check
+    if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
+      logManager.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
+    }
     return hasZ && z !== null ? [result[0], result[1], z] : result;
   } catch (error) {
-    logger.warn('Failed to transform coordinates', { error, coords, fromSrid });
+    logManager.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
     return coords;
   }
 }
@@ -67,6 +72,7 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
  */
 async function transformGeometry(geometry: Geometry, srid: number): Promise<Geometry> {
   try {
+    logManager.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, srid });
     switch (geometry.type) {
       case 'Point':
         return {

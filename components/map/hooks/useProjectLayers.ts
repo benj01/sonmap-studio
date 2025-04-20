@@ -3,7 +3,6 @@
 import { useEffect, useRef } from 'react';
 import createClient from '@/utils/supabase/client';
 import { useLayerStore } from '@/store/layers/layerStore';
-import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { LogManager } from '@/core/logging/log-manager';
 import type { Feature, Geometry } from 'geojson';
 
@@ -65,7 +64,6 @@ function analyzeGeometryTypes(features: Feature<Geometry>[]): { hasPolygons: boo
 export function useProjectLayers(projectId: string) {
   const supabase = createClient();
   const { addLayer, setInitialLoadComplete } = useLayerStore();
-  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const mountCount = useRef(0);
   const isInitialized = useRef(false);
   const currentProjectId = useRef(projectId);

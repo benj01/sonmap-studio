@@ -6,11 +6,9 @@ import { Eye, EyeOff, Settings, AlertCircle, Maximize2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useLayer } from '@/store/layers/hooks';
-import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useLayerData } from '../hooks/useLayerData';
 import { useLayerZoom } from '../hooks/useLayerZoom';
 import { Skeleton } from '@/components/ui/skeleton';
-import * as mapboxgl from 'mapbox-gl';
 import { LayerSettingsDialog } from './LayerSettingsDialog';
 
 const SOURCE = 'LayerItem';
@@ -46,7 +44,6 @@ export interface LayerItemProps {
 export function LayerItem({ layer, className }: LayerItemProps) {
   const { layer: storeLayer, setVisibility, error: storeError } = useLayer(layer.id);
   const { data, loading, error: dataError } = useLayerData(layer.id);
-  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const { zoomToLayer } = useLayerZoom();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -61,22 +58,8 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   }, [layer.id, storeLayer, data, loading, storeError, dataError]);
 
   const handleVisibilityToggle = () => {
-    if (!mapboxInstance) return;
-
     const newVisibility = !storeLayer?.visible;
     setVisibility(newVisibility);
-
-    try {
-      if (mapboxInstance.getLayer(layer.id)) {
-        mapboxInstance.setLayoutProperty(
-          layer.id,
-          'visibility',
-          newVisibility ? 'visible' : 'none'
-        );
-      }
-    } catch (err) {
-      logger.error('Error toggling layer visibility', { error: err });
-    }
   };
 
   const handleZoomToLayer = () => {
