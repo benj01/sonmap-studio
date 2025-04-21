@@ -193,6 +193,19 @@ export function useProjectLayers(projectId: string) {
               fileId: importedFile.id
             });
 
+            // Fetch GeoJSON for vector layers
+            let geojson = undefined;
+            if (layer.type === 'vector') {
+              logger.info('Fetching GeoJSON for vector layer', { layerId: layer.id });
+              const { data: geojsonData, error: geojsonError } = await supabase.rpc('get_layer_features_geojson', { p_layer_id: layer.id });
+              if (geojsonError) {
+                logger.error('Error fetching GeoJSON for layer', { layerId: layer.id, error: geojsonError });
+              } else {
+                geojson = geojsonData;
+                logger.info('Fetched GeoJSON for layer', { layerId: layer.id, hasGeojson: !!geojson });
+              }
+            }
+
             // Analyze geometry types before adding layer
             const geometryTypes = layer.features ? analyzeGeometryTypes(layer.features) : {
               hasPolygons: false,
@@ -205,6 +218,9 @@ export function useProjectLayers(projectId: string) {
               featureCount: layer.features?.length || 0
             });
 
+            // Add geojson to properties if present
+            const propertiesWithGeojson = geojson ? { ...layer.properties, geojson } : layer.properties || {};
+
             addLayer(
               layer.id,
               true, // initially visible
@@ -213,7 +229,7 @@ export function useProjectLayers(projectId: string) {
                 name: layer.name,
                 type: layer.type,
                 fileId: importedFile.id,
-                properties: layer.properties || {},
+                properties: propertiesWithGeojson,
                 geometryTypes
               }
             );

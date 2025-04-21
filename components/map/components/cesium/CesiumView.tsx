@@ -44,6 +44,7 @@ export function CesiumView() {
   const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
   const initializationAttempted = useRef(false);
   const mountCount = useRef(0);
+  const updateLayerStatus = useLayerStore(state => state.updateLayerStatus);
 
   // Effect for Viewer Initialization
   useEffect(() => {
@@ -209,29 +210,45 @@ export function CesiumView() {
         cesiumInstance.imageryLayers.remove(il, true);
         imageryLayerMap.delete(layerId);
       }
+      // Set ready3D to false when removed
+      updateLayerStatus(layerId, 'pending');
     };
 
     // Helper: Add or update Cesium object for a layer
     const addOrUpdateCesiumLayer = async (layer: any) => {
+      if (!cesiumInstance || cesiumInstance.isDestroyed()) {
+        logger.error('Cesium instance is not ready when trying to add/update layer', { layerId: layer.id });
+        updateLayerStatus(layer.id, 'error', 'Cesium instance not ready');
+        return;
+      }
       try {
         if (!layer.visible) {
           removeCesiumLayer(layer.id);
+          updateLayerStatus(layer.id, 'pending');
           return;
         }
         // Vector (GeoJSON)
         if (layer.metadata?.type === 'vector' && layer.metadata?.properties?.geojson) {
           if (!dataSourceMap.has(layer.id)) {
             logger.info('Adding Cesium GeoJSON DataSource', { layerId: layer.id });
-            const ds = await Cesium.GeoJsonDataSource.load(layer.metadata.properties.geojson, {
-              clampToGround: true
-              // TODO: Style mapping
-            });
-            ds.name = layer.id;
-            cesiumInstance.dataSources.add(ds);
-            dataSourceMap.set(layer.id, ds);
+            try {
+              const ds = await Cesium.GeoJsonDataSource.load(layer.metadata.properties.geojson, {
+                clampToGround: true
+                // TODO: Style mapping
+              });
+              ds.name = layer.id;
+              cesiumInstance.dataSources.add(ds);
+              dataSourceMap.set(layer.id, ds);
+              logger.info('Successfully loaded and added GeoJSON DataSource', { layerId: layer.id });
+              updateLayerStatus(layer.id, 'complete');
+            } catch (loadError) {
+              logger.error('Error loading GeoJSON DataSource into Cesium', { layerId: layer.id, error: loadError });
+              updateLayerStatus(layer.id, 'error', 'Failed to load GeoJSON');
+            }
           } else {
             // TODO: Update data or style if changed
             logger.debug('GeoJSON DataSource already present', { layerId: layer.id });
+            updateLayerStatus(layer.id, 'complete');
           }
         }
         // 3D Tiles
@@ -262,9 +279,11 @@ export function CesiumView() {
           }
         } else {
           logger.warn('Layer type not supported or missing data for Cesium', { layerId: layer.id, type: layer.metadata?.type });
+          updateLayerStatus(layer.id, 'error', 'Unsupported type or missing data');
         }
       } catch (error) {
-        logger.error('Error adding/updating Cesium layer', { layerId: layer.id, error });
+        logger.error('Error processing Cesium layer', { layerId: layer.id, error });
+        updateLayerStatus(layer.id, 'error', 'Processing error');
       }
     };
 
@@ -280,6 +299,9 @@ export function CesiumView() {
       }
       // Add or update Cesium objects for all layers
       for (const layer of layers) {
+        // Debug log: print the layer object and geojson presence
+        console.log('Processing layer for Cesium:', JSON.stringify(layer, null, 2));
+        console.log(`Layer ${layer.id} has geojson?`, !!layer.metadata?.properties?.geojson);
         await addOrUpdateCesiumLayer(layer);
       }
     })();
