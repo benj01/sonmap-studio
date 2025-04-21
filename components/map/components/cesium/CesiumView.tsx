@@ -14,7 +14,7 @@ const SOURCE = 'CesiumView';
 const logManager = LogManager.getInstance();
 
 // Configure logging for CesiumView
-logManager.setComponentLogLevel(SOURCE, LogLevel.INFO);
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -35,6 +35,9 @@ export function CesiumView() {
   const cesiumContainer = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const viewerInstanceId = useRef<string | null>(null);
+  const dataSourceMap = useRef(new Map<string, Cesium.DataSource>());
+  const tilesetMap = useRef(new Map<string, Cesium.Cesium3DTileset>());
+  const imageryLayerMap = useRef(new Map<string, Cesium.ImageryLayer>());
   const { setCesiumInstance, setCesiumStatus } = useMapInstanceStore();
   const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
@@ -45,12 +48,22 @@ export function CesiumView() {
   const initializationAttempted = useRef(false);
   const mountCount = useRef(0);
   const updateLayerStatus = useLayerStore(state => state.updateLayerStatus);
+  // First-run guard for dev mode (must be at top level)
+  const isFirstRun = useRef(true);
 
   // Effect for Viewer Initialization
   useEffect(() => {
     mountCount.current++;
     const container = cesiumContainer.current;
     
+    // Log the Cesium container size for debugging
+    if (container) {
+      logger.debug('Cesium container size', {
+        width: container.offsetWidth,
+        height: container.offsetHeight
+      });
+    }
+
     // In development, skip first mount due to StrictMode
     if (process.env.NODE_ENV === 'development' && mountCount.current === 1) {
       logger.debug('Skipping first mount in development mode');
@@ -180,56 +193,90 @@ export function CesiumView() {
 
   // Effect: Directly manage Cesium layers based on Zustand layer state
   useEffect(() => {
-    if (!cesiumInstance || cesiumInstance.isDestroyed()) return;
+    // Log dependencies for debugging
+    logger.debug('Cesium layer management effect dependencies', {
+      cesiumInstanceExists: !!cesiumInstance,
+      cesiumInstanceDestroyed: cesiumInstance ? cesiumInstance.isDestroyed() : undefined,
+      layersLength: layers.length,
+      layerIds: layers.map(l => l.id),
+      isInitialLoadComplete
+    });
 
-    // Track Cesium objects by layerId
-    const dataSourceMap = new Map<string, Cesium.DataSource>();
-    const tilesetMap = new Map<string, Cesium.Cesium3DTileset>();
-    const imageryLayerMap = new Map<string, Cesium.ImageryLayer>();
+    // First-run guard for dev mode
+    if (isFirstRun.current) {
+      isFirstRun.current = false;
+      if (process.env.NODE_ENV === 'development') {
+        logger.debug('Skipping first cleanup in dev mode (first-run guard)');
+        return;
+      }
+    }
+
+    logger.debug('Cesium layer management effect RUNNING', { layerCount: layers.length });
+    if (!cesiumInstance || cesiumInstance.isDestroyed()) return;
 
     // Helper: Remove Cesium object by type
     const removeCesiumLayer = (layerId: string) => {
+      logger.debug('Attempting to remove Cesium layer', { layerId });
+      // Ensure cesiumInstance is valid before proceeding
+      if (!cesiumInstance || cesiumInstance.isDestroyed()) {
+        logger.warn('Attempted to remove Cesium layer but instance is not available', { layerId });
+        return;
+      }
       // Remove DataSource
-      const ds = dataSourceMap.get(layerId);
+      const ds = dataSourceMap.current.get(layerId);
       if (ds) {
         logger.info('Removing Cesium DataSource', { layerId });
         cesiumInstance.dataSources.remove(ds, true);
-        dataSourceMap.delete(layerId);
+        dataSourceMap.current.delete(layerId);
       }
       // Remove Tileset
-      const ts = tilesetMap.get(layerId);
+      const ts = tilesetMap.current.get(layerId);
       if (ts) {
         logger.info('Removing Cesium 3D Tileset', { layerId });
         cesiumInstance.scene.primitives.remove(ts);
-        tilesetMap.delete(layerId);
+        tilesetMap.current.delete(layerId);
       }
       // Remove ImageryLayer
-      const il = imageryLayerMap.get(layerId);
+      const il = imageryLayerMap.current.get(layerId);
       if (il) {
         logger.info('Removing Cesium ImageryLayer', { layerId });
         cesiumInstance.imageryLayers.remove(il, true);
-        imageryLayerMap.delete(layerId);
+        imageryLayerMap.current.delete(layerId);
       }
       // Set ready3D to false when removed
-      updateLayerStatus(layerId, 'pending');
+      const layer = layers.find(l => l.id === layerId);
+      if (layer && (layer.setupStatus !== 'pending' || layer.error !== undefined)) {
+        updateLayerStatus(layerId, 'pending');
+      }
     };
 
     // Helper: Add or update Cesium object for a layer
     const addOrUpdateCesiumLayer = async (layer: any) => {
+      logger.debug('addOrUpdateCesiumLayer called', {
+        id: layer.id,
+        visible: layer.visible,
+        type: layer.metadata?.type,
+        hasGeojson: !!layer.metadata?.properties?.geojson
+      });
       if (!cesiumInstance || cesiumInstance.isDestroyed()) {
         logger.error('Cesium instance is not ready when trying to add/update layer', { layerId: layer.id });
-        updateLayerStatus(layer.id, 'error', 'Cesium instance not ready');
+        if (layer.setupStatus !== 'error' || layer.error !== 'Cesium instance not ready') {
+          updateLayerStatus(layer.id, 'error', 'Cesium instance not ready');
+        }
         return;
       }
       try {
         if (!layer.visible) {
+          logger.debug('Layer not visible, will remove if present', { layerId: layer.id });
           removeCesiumLayer(layer.id);
-          updateLayerStatus(layer.id, 'pending');
+          if (layer.setupStatus !== 'pending' || layer.error !== undefined) {
+            updateLayerStatus(layer.id, 'pending');
+          }
           return;
         }
         // Vector (GeoJSON)
         if (layer.metadata?.type === 'vector' && layer.metadata?.properties?.geojson) {
-          if (!dataSourceMap.has(layer.id)) {
+          if (!dataSourceMap.current.has(layer.id)) {
             logger.info('Adding Cesium GeoJSON DataSource', { layerId: layer.id });
             try {
               const ds = await Cesium.GeoJsonDataSource.load(layer.metadata.properties.geojson, {
@@ -238,28 +285,34 @@ export function CesiumView() {
               });
               ds.name = layer.id;
               cesiumInstance.dataSources.add(ds);
-              dataSourceMap.set(layer.id, ds);
+              dataSourceMap.current.set(layer.id, ds);
               logger.info('Successfully loaded and added GeoJSON DataSource', { layerId: layer.id });
-              updateLayerStatus(layer.id, 'complete');
+              if (layer.setupStatus !== 'complete' || layer.error !== undefined) {
+                updateLayerStatus(layer.id, 'complete');
+              }
             } catch (loadError) {
               logger.error('Error loading GeoJSON DataSource into Cesium', { layerId: layer.id, error: loadError });
-              updateLayerStatus(layer.id, 'error', 'Failed to load GeoJSON');
+              if (layer.setupStatus !== 'error' || layer.error !== 'Failed to load GeoJSON') {
+                updateLayerStatus(layer.id, 'error', 'Failed to load GeoJSON');
+              }
             }
           } else {
             // TODO: Update data or style if changed
             logger.debug('GeoJSON DataSource already present', { layerId: layer.id });
-            updateLayerStatus(layer.id, 'complete');
+            if (layer.setupStatus !== 'complete' || layer.error !== undefined) {
+              updateLayerStatus(layer.id, 'complete');
+            }
           }
         }
         // 3D Tiles
         else if (layer.metadata?.type === '3d-tiles' && layer.metadata?.properties?.url) {
-          if (!tilesetMap.has(layer.id)) {
+          if (!tilesetMap.current.has(layer.id)) {
             logger.info('Adding Cesium 3D Tileset', { layerId: layer.id });
             // TODO: Review Cesium3DTileset options type if linter error persists
             const ts = new Cesium.Cesium3DTileset({ url: layer.metadata.properties.url } as any);
             (ts as any)._layerId = layer.id;
             cesiumInstance.scene.primitives.add(ts);
-            tilesetMap.set(layer.id, ts);
+            tilesetMap.current.set(layer.id, ts);
           } else {
             // TODO: Update tileset if needed
             logger.debug('3D Tileset already present', { layerId: layer.id });
@@ -267,50 +320,72 @@ export function CesiumView() {
         }
         // Imagery
         else if (layer.metadata?.type === 'imagery' && layer.metadata?.properties?.url) {
-          if (!imageryLayerMap.has(layer.id)) {
+          if (!imageryLayerMap.current.has(layer.id)) {
             logger.info('Adding Cesium ImageryLayer', { layerId: layer.id });
             const provider = new Cesium.UrlTemplateImageryProvider({ url: layer.metadata.properties.url });
             const il = cesiumInstance.imageryLayers.addImageryProvider(provider);
             (il as any)._layerId = layer.id;
-            imageryLayerMap.set(layer.id, il);
+            imageryLayerMap.current.set(layer.id, il);
           } else {
             // TODO: Update imagery if needed
             logger.debug('ImageryLayer already present', { layerId: layer.id });
           }
         } else {
           logger.warn('Layer type not supported or missing data for Cesium', { layerId: layer.id, type: layer.metadata?.type });
-          updateLayerStatus(layer.id, 'error', 'Unsupported type or missing data');
+          if (layer.setupStatus !== 'error' || layer.error !== 'Unsupported type or missing data') {
+            updateLayerStatus(layer.id, 'error', 'Unsupported type or missing data');
+          }
         }
       } catch (error) {
         logger.error('Error processing Cesium layer', { layerId: layer.id, error });
-        updateLayerStatus(layer.id, 'error', 'Processing error');
+        if (layer.setupStatus !== 'error' || layer.error !== 'Processing error') {
+          updateLayerStatus(layer.id, 'error', 'Processing error');
+        }
       }
     };
 
-    // Sync Cesium with Zustand layers
+    // --- Phase 1: Remove ---
+    const visibleLayerIds = new Set(layers.filter(l => l.visible).map(l => l.id));
+    // Remove DataSources no longer needed or invisible
+    for (const id of dataSourceMap.current.keys()) {
+      if (!visibleLayerIds.has(id)) {
+        removeCesiumLayer(id);
+      }
+    }
+    // Remove Tilesets no longer needed or invisible
+    for (const id of tilesetMap.current.keys()) {
+      if (!visibleLayerIds.has(id)) {
+        removeCesiumLayer(id);
+      }
+    }
+    // Remove ImageryLayers no longer needed or invisible
+    for (const id of imageryLayerMap.current.keys()) {
+      if (!visibleLayerIds.has(id)) {
+        removeCesiumLayer(id);
+      }
+    }
+
+    // --- Phase 2: Add/Update ---
     (async () => {
-      // Remove Cesium objects for layers that are no longer present or not visible
-      const layerIds = new Set(layers.map(l => l.id));
-      for (const id of [...dataSourceMap.keys(), ...tilesetMap.keys(), ...imageryLayerMap.keys()]) {
-        const layer = layers.find(l => l.id === id);
-        if (!layer || !layer.visible) {
-          removeCesiumLayer(id);
+      for (const layer of layers) {
+        if (layer.visible) {
+          logger.debug('Processing visible Cesium layer', {
+            id: layer.id,
+            type: layer.metadata?.type,
+            dataSourceExists: dataSourceMap.current.has(layer.id),
+            tilesetExists: tilesetMap.current.has(layer.id),
+            imageryLayerExists: imageryLayerMap.current.has(layer.id)
+          });
+          await addOrUpdateCesiumLayer(layer);
         }
       }
-      // Add or update Cesium objects for all layers
-      for (const layer of layers) {
-        // Debug log: print the layer object and geojson presence
-        console.log('Processing layer for Cesium:', JSON.stringify(layer, null, 2));
-        console.log(`Layer ${layer.id} has geojson?`, !!layer.metadata?.properties?.geojson);
-        await addOrUpdateCesiumLayer(layer);
-      }
+      logger.debug('Cesium layer management effect FINISHED processing adds/updates');
     })();
 
-    // Cleanup: remove all Cesium objects on unmount
+    // Cleanup: minimal for Strict Mode compatibility
     return () => {
-      for (const id of dataSourceMap.keys()) removeCesiumLayer(id);
-      for (const id of tilesetMap.keys()) removeCesiumLayer(id);
-      for (const id of imageryLayerMap.keys()) removeCesiumLayer(id);
+      logger.debug('Cesium layer management effect CLEANUP running (minimal)');
+      // No removal of layers or clearing of maps here. Main viewer cleanup handles full destruction.
     };
   }, [cesiumInstance, layers]);
 
@@ -320,7 +395,10 @@ export function CesiumView() {
 
   return (
     <div className="relative w-full h-full">
-      <div ref={cesiumContainer} className="absolute inset-0" />
+      <div
+        ref={cesiumContainer}
+        className="w-full h-full"
+      />
     </div>
   );
 } 

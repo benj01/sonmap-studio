@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useLayer } from '@/store/layers/hooks';
 import { useLayerData } from '../hooks/useLayerData';
-import { useLayerZoom } from '../hooks/useLayerZoom';
 import { Skeleton } from '@/components/ui/skeleton';
 import { LayerSettingsDialog } from './LayerSettingsDialog';
 
@@ -44,7 +43,6 @@ export interface LayerItemProps {
 export function LayerItem({ layer, className }: LayerItemProps) {
   const { layer: storeLayer, setVisibility, error: storeError } = useLayer(layer.id);
   const { data, loading, error: dataError } = useLayerData(layer.id);
-  const { zoomToLayer } = useLayerZoom();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
@@ -60,10 +58,6 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   const handleVisibilityToggle = () => {
     const newVisibility = !storeLayer?.visible;
     setVisibility(newVisibility);
-  };
-
-  const handleZoomToLayer = () => {
-    zoomToLayer(layer.id);
   };
 
   if (loading) {
@@ -99,17 +93,6 @@ export function LayerItem({ layer, className }: LayerItemProps) {
           {data?.features?.length || 0} features
         </p>
       </div>
-
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={handleZoomToLayer}
-        disabled={!!error || !storeLayer?.visible}
-        title="Zoom to layer"
-        className="h-6 w-6 shrink-0"
-      >
-        <Maximize2 className="h-3 w-3" />
-      </Button>
 
       {error ? (
         <Button

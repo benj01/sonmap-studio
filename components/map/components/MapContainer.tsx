@@ -4,9 +4,7 @@ import { useEffect, useRef, memo, useMemo } from 'react';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { LogManager } from '@/core/logging/log-manager';
-import { MapView } from './MapView';
 import { LayerPanel } from './LayerPanel';
-import { SyncTo3DButton } from './SyncTo3DButton';
 import { ResetButton } from './ResetButton';
 import { useProjectLayers } from '../hooks/useProjectLayers';
 import { LayerList } from './LayerList';
@@ -32,15 +30,6 @@ const logger = {
 };
 
 export interface MapContainerProps {
-  accessToken: string;
-  style: string;
-  initialViewState2D?: {
-    latitude: number;
-    longitude: number;
-    zoom: number;
-    bearing?: number;
-    pitch?: number;
-  };
   initialViewState3D?: {
     latitude: number;
     longitude: number;
@@ -51,17 +40,13 @@ export interface MapContainerProps {
   projectId?: string;
 }
 
-// Memoize the MapContainer component with a custom comparison function
 export const MapContainer = memo(function MapContainer({
-  accessToken,
-  style,
-  initialViewState2D,
   initialViewState3D,
   projectId
 }: MapContainerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { cleanup } = useMapInstanceStore();
-  const { setViewState2D, setViewState3D } = useViewStateStore();
+  const { setViewState3D } = useViewStateStore();
   const renderCount = useRef(0);
   const mountCount = useRef(0);
   const shouldRenderChildren = useRef(process.env.NODE_ENV === 'production');
@@ -79,10 +64,6 @@ export const MapContainer = memo(function MapContainer({
     projectLayersInitialized: projectLayersInitialized.current,
     isInitialized,
     props: {
-      hasAccessToken: !!accessToken,
-      hasStyle: !!style,
-      hasInitialViewState2D: !!initialViewState2D,
-      hasInitialViewState3D: !!initialViewState3D,
       hasProjectId: !!projectId
     },
     timestamp: new Date().toISOString()
@@ -108,17 +89,17 @@ export const MapContainer = memo(function MapContainer({
       logger.debug('Production: First mount - enabling child rendering');
     }
 
-    // Set initial view states if provided
-    if (initialViewState2D) {
-      logger.debug('Setting initial 2D view state', initialViewState2D);
-      setViewState2D({
-        longitude: initialViewState2D.longitude ?? 0,
-        latitude: initialViewState2D.latitude ?? 0,
-        zoom: initialViewState2D.zoom ?? 1,
-        pitch: initialViewState2D.pitch ?? 0,
-        bearing: initialViewState2D.bearing ?? 0
-      });
-    }
+    // Removed: Set initial view states if provided (2D)
+    // if (initialViewState2D) {
+    //   logger.debug('Setting initial 2D view state', initialViewState2D);
+    //   setViewState2D({
+    //     longitude: initialViewState2D.longitude ?? 0,
+    //     latitude: initialViewState2D.latitude ?? 0,
+    //     zoom: initialViewState2D.zoom ?? 1,
+    //     pitch: initialViewState2D.pitch ?? 0,
+    //     bearing: initialViewState2D.bearing ?? 0
+    //   });
+    // }
 
     if (initialViewState3D) {
       logger.debug('Setting initial 3D view state', initialViewState3D);
@@ -150,7 +131,7 @@ export const MapContainer = memo(function MapContainer({
         logger.debug('Cleanup skipped - not final unmount');
       }
     };
-  }, [cleanup, setViewState2D, setViewState3D, initialViewState2D, initialViewState3D]);
+  }, [cleanup, setViewState3D, initialViewState3D]);
 
   // Only render children after the first mount cycle in development
   const shouldRender = process.env.NODE_ENV === 'production' || shouldRenderChildren.current;
@@ -160,26 +141,7 @@ export const MapContainer = memo(function MapContainer({
       <div className="flex-1 flex flex-col gap-20 p-4">
         {shouldRender && (
           <>
-            {/* --- Removed 2D Map View (Mapbox) section --- */}
-            {/* <section className="h-[400px] flex flex-col gap-2">
-              <div className="flex justify-between items-center px-2 mb-2">
-                <h2 className="text-lg font-semibold">2D Map View</h2>
-                <div className="flex gap-2">
-                  <SyncTo3DButton />
-                  <ResetButton />
-                </div>
-              </div>
-              <div className="relative flex-1">
-                <div className="absolute left-0 top-0 z-10 h-full">
-                  <LayerPanel>
-                    <LayerList />
-                  </LayerPanel>
-                </div>
-                <MapView accessToken={accessToken} style={style} />
-              </div>
-            </section> */}
-
-            {/* --- New: Only 3D Map View (Cesium) and Layer Panel --- */}
+            {/* --- Only 3D Map View (Cesium) and Layer Panel --- */}
             <section className="h-full flex flex-col gap-2">
               <div className="flex justify-between items-center px-2 mb-4">
                 <h2 className="text-lg font-semibold">3D Map View</h2>
@@ -187,7 +149,7 @@ export const MapContainer = memo(function MapContainer({
                   <ResetButton />
                 </div>
               </div>
-              <div className="relative flex-1">
+              <div className="relative flex-1" style={{ height: 600 }}>
                 {/* LayerPanel and LayerList remain, now only for Cesium */}
                 <div className="absolute left-0 top-0 z-10 h-full">
                   <LayerPanel>
@@ -209,16 +171,7 @@ export const MapContainer = memo(function MapContainer({
 }, (prevProps, nextProps) => {
   // Custom comparison function for memo
   const propsEqual = 
-    prevProps.accessToken === nextProps.accessToken &&
-    prevProps.style === nextProps.style &&
     prevProps.projectId === nextProps.projectId &&
-    // Compare view states using shallow comparison of their properties
-    (!prevProps.initialViewState2D && !nextProps.initialViewState2D) ||
-    (prevProps.initialViewState2D?.latitude === nextProps.initialViewState2D?.latitude &&
-     prevProps.initialViewState2D?.longitude === nextProps.initialViewState2D?.longitude &&
-     prevProps.initialViewState2D?.zoom === nextProps.initialViewState2D?.zoom &&
-     prevProps.initialViewState2D?.bearing === nextProps.initialViewState2D?.bearing &&
-     prevProps.initialViewState2D?.pitch === nextProps.initialViewState2D?.pitch) &&
     (!prevProps.initialViewState3D && !nextProps.initialViewState3D) ||
     (prevProps.initialViewState3D?.latitude === nextProps.initialViewState3D?.latitude &&
      prevProps.initialViewState3D?.longitude === nextProps.initialViewState3D?.longitude &&
@@ -229,17 +182,9 @@ export const MapContainer = memo(function MapContainer({
   logger.debug('MapContainer: Props comparison', {
     propsEqual,
     prevProps: {
-      hasAccessToken: !!prevProps.accessToken,
-      hasStyle: !!prevProps.style,
-      hasInitialViewState2D: !!prevProps.initialViewState2D,
-      hasInitialViewState3D: !!prevProps.initialViewState3D,
       hasProjectId: !!prevProps.projectId
     },
     nextProps: {
-      hasAccessToken: !!nextProps.accessToken,
-      hasStyle: !!nextProps.style,
-      hasInitialViewState2D: !!nextProps.initialViewState2D,
-      hasInitialViewState3D: !!nextProps.initialViewState3D,
       hasProjectId: !!nextProps.projectId
     }
   });

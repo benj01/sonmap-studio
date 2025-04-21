@@ -3,7 +3,7 @@ import { useLayerStore, type LayerStore, initialState } from './layerStore';
 import { layerSelectors } from './layerStore';
 import type { Layer, LayerMetadata } from './types';
 import { LogManager } from '@/core/logging/log-manager';
-import { shallow } from 'zustand/shallow';
+import { useShallow } from 'zustand/react/shallow';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 
 const SOURCE = 'layerHooks';
@@ -85,9 +85,12 @@ export const useLayers = () => {
     timestamp: new Date().toISOString()
   });
 
-  // Select primitive state parts
-  const allIds = useLayerStore((state: LayerStore) => state.layers.allIds);
-  const byId = useLayerStore((state: LayerStore) => state.layers.byId);
+  // Select the entire layers object once USING useShallow for shallow comparison
+  const layersState = useLayerStore(useShallow((state: LayerStore) => state.layers));
+
+  // Memoize allIds and byId for stability
+  const allIds = useMemo(() => layersState.allIds, [layersState.allIds]);
+  const byId = useMemo(() => layersState.byId, [layersState.byId]);
 
   // Log selected state parts
   logger.debug('HOOK STATE: useLayers - Selected state parts', {

@@ -15,13 +15,6 @@ export default function Map3DPage() {
       </div>
       <div className="flex-1 relative">
         <MapContainer 
-          accessToken={env.NEXT_PUBLIC_MAPBOX_TOKEN}
-          style="mapbox://styles/mapbox/satellite-streets-v12"
-          initialViewState2D={{
-            latitude: 0,
-            longitude: 0,
-            zoom: 2
-          }}
           initialViewState3D={{
             latitude: 0,
             longitude: 0,
