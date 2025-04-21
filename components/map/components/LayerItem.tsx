@@ -60,6 +60,11 @@ export function LayerItem({ layer, className }: LayerItemProps) {
     setVisibility(newVisibility);
   };
 
+  const handleZoomToFeature = () => {
+    logger.info('Zoom to feature clicked', { layerId: layer.id });
+    // TODO: Implement Cesium zoom logic
+  };
+
   if (loading) {
     return (
       <div className={cn('p-4 border rounded-lg bg-background', className)}>
@@ -104,15 +109,26 @@ export function LayerItem({ layer, className }: LayerItemProps) {
           <AlertCircle className="h-3 w-3" />
         </Button>
       ) : (
-        <Button
-          variant="ghost"
-          size="icon"
-          title="Layer settings"
-          onClick={() => setSettingsOpen(true)}
-          className="h-6 w-6 shrink-0"
-        >
-          <Settings className="h-3 w-3" />
-        </Button>
+        <>
+          <Button
+            variant="ghost"
+            size="icon"
+            title="Zoom to feature"
+            onClick={handleZoomToFeature}
+            className="h-6 w-6 shrink-0"
+          >
+            <Maximize2 className="h-3 w-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            title="Layer settings"
+            onClick={() => setSettingsOpen(true)}
+            className="h-6 w-6 shrink-0"
+          >
+            <Settings className="h-3 w-3" />
+          </Button>
+        </>
       )}
 
       <LayerSettingsDialog

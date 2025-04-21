@@ -149,8 +149,7 @@ export const MapContainer = memo(function MapContainer({
                   <ResetButton />
                 </div>
               </div>
-              <div className="relative flex-1" style={{ height: 600 }}>
-                {/* LayerPanel and LayerList remain, now only for Cesium */}
+              <div className="relative w-full min-h-[400px] h-full">
                 <div className="absolute left-0 top-0 z-10 h-full">
                   <LayerPanel>
                     <LayerList />

@@ -77,6 +77,7 @@ export class LogManager {
     this.sourceFilters.set('useLayerData', LogLevel.WARN);
     this.sourceFilters.set('useMapbox', LogLevel.WARN);
     this.sourceFilters.set('MapLayer', LogLevel.WARN);
+    this.sourceFilters.set('layerStore', LogLevel.INFO);
   }
 
   /**

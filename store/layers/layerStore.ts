@@ -122,6 +122,16 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
         [layerId]: updatedLayer
       };
 
+      // Add debug log for all layers after visibility change
+      logger.debug('ACTION setLayerVisibility: layers state after change', {
+        allIds: state.layers.allIds,
+        byId: Object.entries(updatedById).map(([id, l]) => ({
+          id,
+          visible: l.visible,
+          setupStatus: l.setupStatus
+        }))
+      });
+
       logger.debug('ACTION END: setLayerVisibility', { layerId, visible });
       return {
         layers: {

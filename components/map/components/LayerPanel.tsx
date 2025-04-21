@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronRight, ChevronLeft } from 'lucide-react';
 import { LogManager } from '@/core/logging/log-manager';
 
 const SOURCE = 'LayerPanel';
@@ -55,7 +55,7 @@ export function LayerPanel({ children, defaultCollapsed = false }: LayerPanelPro
             className="shrink-0 absolute right-1 top-2 z-10"
             aria-label={isCollapsed ? 'Expand layer panel' : 'Collapse layer panel'}
           >
-            {isCollapsed ? <ChevronLeft className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
           </Button>
         </div>
         <div className={`transition-all duration-300 h-[calc(100%-2.5rem)] ${isCollapsed ? 'opacity-0 invisible w-0' : 'opacity-100 visible w-full'}`}>
