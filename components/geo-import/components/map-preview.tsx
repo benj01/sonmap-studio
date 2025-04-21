@@ -604,16 +604,12 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
 
         // Add a highly visible debug log before passing data to Mapbox (log raw string directly)
         try {
-          const debugDump = JSON.stringify(sourceData, null, 2);
-          logManager.error(
-            '=== MAPBOX GEOJSON RAW DUMP STRING ===',
-            debugDump
-          );
+          // Only log this in debug mode, and truncate/clean the output
+          const debugDump = logManager.safeStringify(sourceData, 2);
+          // This log is intentionally debug-level to avoid log spam. Enable debug for 'MapPreview' to see full dumps.
+          logger.debug('MAPBOX GEOJSON RAW DUMP STRING (truncated sample)', debugDump);
         } catch (err) {
-          logManager.error(
-            '=== MAPBOX GEOJSON RAW DUMP STRING FAILED TO STRINGIFY ===',
-            String(err)
-          );
+          logger.debug('MAPBOX GEOJSON RAW DUMP STRING FAILED TO STRINGIFY', String(err));
         }
 
         // --- Start: Remove existing preview layers and source ---
@@ -762,7 +758,6 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
 
         [...normalLayers, ...issueLayers].forEach(layer => {
           try {
-            logger.debug('addLayer called', { layerId: layer.id });
             mapInstance.addLayer(layer as AnyLayer);
           } catch (err) {
             logger.warn('Failed to add layer', { layerId: layer.id, error: err });
@@ -816,23 +811,21 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
 
         if (!didFitInitialBounds.current && !isLoading && bounds) {
           try {
-            // Calculate bbox from the current sourceData
-            const calculatedBbox = bbox(sourceData); // [minLng, minLat, maxLng, maxLat]
-            logger.info('Calculated Bbox for fitBounds:', { calculatedBbox });
-            // Validate bbox
+            const calculatedBbox = bbox(sourceData);
             if (
               calculatedBbox &&
               calculatedBbox.length === 4 &&
               calculatedBbox.every(coord => typeof coord === 'number' && isFinite(coord)) &&
-              calculatedBbox[1] >= -90 && calculatedBbox[1] <= 90 && // minLat
-              calculatedBbox[3] >= -90 && calculatedBbox[3] <= 90    // maxLat
+              calculatedBbox[1] >= -90 && calculatedBbox[1] <= 90 &&
+              calculatedBbox[3] >= -90 && calculatedBbox[3] <= 90
             ) {
               const mapboxBounds = [
-                [calculatedBbox[0], calculatedBbox[1]], // SW
-                [calculatedBbox[2], calculatedBbox[3]]  // NE
+                [calculatedBbox[0], calculatedBbox[1]],
+                [calculatedBbox[2], calculatedBbox[3]]
               ] as [mapboxgl.LngLatLike, mapboxgl.LngLatLike];
               mapInstance.fitBounds(mapboxBounds, { padding: 50, duration: 0 });
               didFitInitialBounds.current = true;
+              logger.info('fitBounds successful', { bounds: mapboxBounds });
             } else {
               logger.warn('Invalid calculated bounds, skipping fitBounds', { calculatedBbox });
             }

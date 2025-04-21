@@ -283,7 +283,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         ? 'application/xml'
         : file.type || 'application/octet-stream';
 
-      logger.debug(SOURCE, 'Starting file upload', { 
+      logManager.debug(SOURCE, 'Starting file upload', { 
         fileName: file.name,
         size: file.size,
         type: contentType,
@@ -296,7 +296,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         const sizeMB = Math.round(file.size / (1024 * 1024));
         const maxSizeMB = Math.round(maxFileSize / (1024 * 1024));
         const error = new Error(`File size (${sizeMB}MB) exceeds the maximum allowed size (${maxSizeMB}MB)`);
-        logger.error(SOURCE, 'File size validation failed', { 
+        logManager.error(SOURCE, 'File size validation failed', { 
           fileName: file.name,
           fileSize: file.size,
           maxSize: maxFileSize,
@@ -306,13 +306,13 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
       
       // Get signed URL
-      logger.debug(SOURCE, 'Requesting signed URL', { fileName: file.name });
+      logManager.debug(SOURCE, 'Requesting signed URL', { fileName: file.name });
       const supabase = createClient();
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       
       if (sessionError || !session) {
         const error = new Error('Authentication required');
-        logger.error(SOURCE, 'No valid session', { 
+        logManager.error(SOURCE, 'No valid session', { 
           error: sessionError,
           errorMessage: error.message 
         });
@@ -337,7 +337,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       try {
         responseData = JSON.parse(responseText);
       } catch (e) {
-        logger.error(SOURCE, 'Failed to parse response', {
+        logManager.error(SOURCE, 'Failed to parse response', {
           text: responseText,
           error: e
         });
@@ -349,7 +349,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             responseData?.error || responseText
           }`
         );
-        logger.error(SOURCE, 'Failed to get signed URL', {
+        logManager.error(SOURCE, 'Failed to get signed URL', {
           status: response.status,
           statusText: response.statusText,
           response: responseData || responseText,
@@ -362,7 +362,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         const error = new Error(
           'Invalid signed URL response from server: ' + JSON.stringify(responseData)
         );
-        logger.error(SOURCE, 'Invalid signed URL response', { 
+        logManager.error(SOURCE, 'Invalid signed URL response', { 
           data: responseData,
           error: error.message
         });
@@ -370,7 +370,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
 
       const { signedUrl } = responseData.data;
-      logger.debug(SOURCE, 'Got signed URL, starting upload to storage', { fileName: file.name });
+      logManager.debug(SOURCE, 'Got signed URL, starting upload to storage', { fileName: file.name });
       
       // Upload the file
       const xhr = new XMLHttpRequest();
@@ -384,7 +384,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             const currentQuarter = Math.floor(percentComplete / 25);
             if (currentQuarter > lastProgressLog) {
               lastProgressLog = currentQuarter;
-              logger.info(SOURCE, 'Upload progress', { 
+              logManager.info(SOURCE, 'Upload progress', { 
                 fileName: file.name,
                 progress: Math.round(percentComplete)
               });
@@ -394,7 +394,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         xhr.addEventListener('load', () => {
           if (xhr.status >= 200 && xhr.status < 300) {
-            logger.info(SOURCE, 'Upload completed successfully', { fileName: file.name });
+            logManager.info(SOURCE, 'Upload completed successfully', { fileName: file.name });
             resolve(undefined);
           } else {
             let errorMessage = `Upload failed with status ${xhr.status}: ${xhr.statusText}`;
@@ -411,7 +411,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
             }
             
             const error = new Error(errorMessage);
-            logger.error(SOURCE, 'Upload failed', {
+            logManager.error(SOURCE, 'Upload failed', {
               fileName: file.name,
               status: xhr.status,
               statusText: xhr.statusText,
@@ -424,7 +424,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         xhr.addEventListener('error', () => {
           const error = new Error(`Upload failed: Network error - ${xhr.statusText}`);
-          logger.error(SOURCE, 'Network error during upload', {
+          logManager.error(SOURCE, 'Network error during upload', {
             fileName: file.name,
             status: xhr.status,
             statusText: xhr.statusText,
@@ -436,8 +436,11 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
         xhr.addEventListener('abort', () => {
           const error = new Error('Upload aborted');
-          logger.error(SOURCE, 'Upload aborted', {
+          logManager.error(SOURCE, 'Upload aborted', {
             fileName: file.name,
+            status: xhr.status,
+            statusText: xhr.statusText,
+            response: xhr.responseText,
             error: error.message
           });
           reject(error);
@@ -448,7 +451,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         xhr.send(file);
       });
     } catch (error) {
-      logger.error(SOURCE, 'Upload failed', {
+      logManager.error(SOURCE, 'Upload failed', {
         fileName: file.name,
         error: error instanceof Error ? {
           message: error.message,
@@ -473,7 +476,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
         throw new Error(`Total file size (${sizeMB}MB) exceeds the maximum allowed size (${maxSizeMB}MB)`);
       }
       
-      logger.info(SOURCE, 'Starting upload for group', {
+      logManager.info(SOURCE, 'Starting upload for group', {
         mainFile: mainFileName,
         companions: group.companions.map(f => f.name),
         totalSize,
@@ -481,7 +484,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       });
 
       // Upload main file first
-      logger.info(SOURCE, 'Uploading main file', { fileName: mainFileName });
+      logManager.info(SOURCE, 'Uploading main file', { fileName: mainFileName });
       await uploadFile(group.mainFile, (progress) => {
         updateUploadProgress(mainFileName, progress);
       });
@@ -491,7 +494,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       if (group.companions.length > 0) {
         for (const companion of group.companions) {
           const ext = FileTypeUtil.getExtension(companion.name);
-          logger.info(SOURCE, 'Uploading companion file', {
+          logManager.info(SOURCE, 'Uploading companion file', {
             fileName: companion.name,
             extension: ext,
             type: companion.type,
@@ -508,7 +511,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       }
 
       // Create database record
-      logger.info(SOURCE, 'Creating database record', {
+      logManager.info(SOURCE, 'Creating database record', {
         mainFile: mainFileName,
         relatedFiles
       });
@@ -529,9 +532,9 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
       setUploadingFiles(prev => prev.filter(uf => uf.group.mainFile.name !== mainFileName));
       await loadExistingFiles();
       
-      logger.info(SOURCE, 'Upload process completed', { fileName: mainFileName });
+      logManager.info(SOURCE, 'Upload process completed', { fileName: mainFileName });
     } catch (error) {
-      logger.error(SOURCE, 'Upload process failed', {
+      logManager.error(SOURCE, 'Upload process failed', {
         fileName: mainFileName,
         error: error instanceof Error ? {
           message: error.message,
@@ -595,7 +598,7 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
 
   const handleViewLayer = (layerId: string) => {
     // TODO: Implement layer viewing functionality
-    logger.info(SOURCE, 'View layer requested', { layerId });
+    logManager.info(SOURCE, 'View layer requested', { layerId });
   };
 
   const handleDeleteImported = async (fileId: string) => {
@@ -624,7 +627,8 @@ export function FileManager({ projectId, onFilesProcessed, onError }: FileManage
   useEffect(() => {
     // Only log when files change
     if (files && files.length > 0) {
-      logManager.info(LOG_SOURCE, 'Raw files from DB', { files });
+      // This log is intentionally debug-level to avoid log spam. Enable debug for 'FileManager' to see full dumps.
+      logManager.debug(LOG_SOURCE, 'Raw files from DB (truncated sample)', { files: logManager.safeStringify(files, 2) });
       logManager.debug(LOG_SOURCE, 'Grouped files for FileList', { groupedFiles });
     }
   }, [files, groupedFiles]);
