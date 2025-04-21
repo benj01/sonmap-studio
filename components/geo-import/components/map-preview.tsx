@@ -8,6 +8,7 @@ import type { GeoFeature } from '@/types/geo-import';
 import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle } from 'lucide-react';
+import bbox from '@turf/bbox';
 
 interface MapPreviewProps {
   features: GeoFeature[];
@@ -70,10 +71,27 @@ const FALLBACK_GEOJSON: GeoJSON.FeatureCollection = {
   ]
 };
 
-// Define LayerSpecification locally since it's not exported from mapbox-gl
+// Allowed Mapbox layer types
+// https://docs.mapbox.com/mapbox-gl-js/style-spec/layers/
+type MapboxLayerType =
+  | 'fill'
+  | 'line'
+  | 'circle'
+  | 'symbol'
+  | 'raster'
+  | 'model'
+  | 'slot'
+  | 'heatmap'
+  | 'fill-extrusion'
+  | 'raster-particle'
+  | 'hillshade'
+  | 'background'
+  | 'sky'
+  | 'clip';
+
 interface LayerSpecification {
   id: string;
-  type: string;
+  type: MapboxLayerType;
   source: string;
   filter?: any[];
   paint?: Record<string, any>;
@@ -494,9 +512,12 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             id: f.id,
             geometry: {
               type: f.geometry.type,
-              coordinates: JSON.stringify(f.geometry.coordinates).length > 1000 
-                ? '[Coordinates too long to display]' 
-                : f.geometry.coordinates
+              coordinates:
+                f.geometry.type !== 'GeometryCollection' && 'coordinates' in f.geometry
+                  ? (JSON.stringify((f.geometry as any).coordinates).length > 1000
+                      ? '[Coordinates too long to display]'
+                      : (f.geometry as any).coordinates)
+                  : '[GeometryCollection]'
             },
             properties: f.properties
           }))
@@ -581,191 +602,249 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           }
         }
 
+        // Add a highly visible debug log before passing data to Mapbox (log raw string directly)
         try {
-          if (source) {
-            logManager.info(SOURCE, 'Updating existing source');
-            source.setData(sourceData);
-          } else {
-            logManager.info(SOURCE, 'Creating new source');
-            mapInstance.addSource('preview', {
-              type: 'geojson',
-              data: sourceData
-            });
-            
-            const normalLayers: LayerSpecification[] = [
-              {
-                id: 'preview-fill',
-                type: 'fill',
-                source: 'preview',
-                filter: ['all',
-                  ['any',
-                    ['==', ['get', 'geometry-type'], 'Polygon'],
-                    ['==', ['get', 'geometry-type'], 'MultiPolygon']
-                  ],
-                  ['==', ['get', 'hasIssues'], false]
-                ] as unknown as any[],
-                paint: {
-                  'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
-                  'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
-                }
-              },
-              {
-                id: 'preview-line',
-                type: 'line',
-                source: 'preview',
-                filter: ['all',
-                  ['any',
-                    ['==', ['get', 'geometry-type'], 'LineString'],
-                    ['==', ['get', 'geometry-type'], 'MultiLineString']
-                  ],
-                  ['==', ['get', 'hasIssues'], false]
-                ] as unknown as any[],
-                paint: {
-                  'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
-                  'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2]
-                }
-              },
-              {
-                id: 'preview-point',
-                type: 'circle',
-                source: 'preview',
-                filter: ['all',
-                  ['any',
-                    ['==', ['get', 'geometry-type'], 'Point'],
-                    ['==', ['get', 'geometry-type'], 'MultiPoint']
-                  ],
-                  ['==', ['get', 'hasIssues'], false]
-                ] as unknown as any[],
-                paint: {
-                  'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
-                  'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5]
-                }
-              }
-            ];
+          const debugDump = JSON.stringify(sourceData, null, 2);
+          logManager.error(
+            '=== MAPBOX GEOJSON RAW DUMP STRING ===',
+            debugDump
+          );
+        } catch (err) {
+          logManager.error(
+            '=== MAPBOX GEOJSON RAW DUMP STRING FAILED TO STRINGIFY ===',
+            String(err)
+          );
+        }
 
-            const issueLayers: LayerSpecification[] = [
-              {
-                id: 'preview-fill-issues',
-                type: 'fill',
-                source: 'preview',
-                filter: ['all',
-                  ['any',
-                    ['==', ['get', 'geometry-type'], 'Polygon'],
-                    ['==', ['get', 'geometry-type'], 'MultiPolygon']
-                  ],
-                  ['==', ['get', 'hasIssues'], true]
-                ] as unknown as any[],
-                paint: {
-                  'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
-                  'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
-                }
-              },
-              {
-                id: 'preview-line-issues',
-                type: 'line',
-                source: 'preview',
-                filter: ['all',
-                  ['any',
-                    ['==', ['get', 'geometry-type'], 'LineString'],
-                    ['==', ['get', 'geometry-type'], 'MultiLineString']
-                  ],
-                  ['==', ['get', 'hasIssues'], true]
-                ] as unknown as any[],
-                paint: {
-                  'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
-                  'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2],
-                  'line-dasharray': [2, 1]
-                }
-              },
-              {
-                id: 'preview-point-issues',
-                type: 'circle',
-                source: 'preview',
-                filter: ['all',
-                  ['any',
-                    ['==', ['get', 'geometry-type'], 'Point'],
-                    ['==', ['get', 'geometry-type'], 'MultiPoint']
-                  ],
-                  ['==', ['get', 'hasIssues'], true]
-                ] as unknown as any[],
-                paint: {
-                  'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
-                  'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5],
-                  'circle-stroke-width': 2,
-                  'circle-stroke-color': '#000'
-                }
-              }
-            ];
-
-            [...normalLayers, ...issueLayers].forEach(layer => {
-              if (!mapInstance.getLayer(layer.id)) {
-                logger.debug('addLayer called', { layerId: layer.id });
-                mapInstance.addLayer(layer);
-              }
-            });
-
-            const popup = new mapboxgl.Popup({
-              closeButton: false,
-              closeOnClick: false
-            });
-
-            issueLayers.forEach(layer => {
-              mapInstance.on('mouseenter', layer.id, (e) => {
-                if (e.features?.[0]) {
-                  const feature = e.features[0];
-                  const issues = feature.properties?.issues;
-                  if (issues) {
-                    popup.setLngLat(e.lngLat)
-                      .setHTML(`
-                        <div class="p-2">
-                          <strong>Geometry Issues:</strong>
-                          <ul class="list-disc pl-4">
-                            ${issues.map((issue: string) => `<li>${issue}</li>`).join('')}
-                          </ul>
-                        </div>
-                      `)
-                      .addTo(mapInstance);
-                  }
-                }
-              });
-
-              mapInstance.on('mouseleave', layer.id, () => {
-                popup.remove();
-              });
-            });
+        // --- Start: Remove existing preview layers and source ---
+        const previewLayerIds = [
+          'preview-fill', 'preview-fill-issues',
+          'preview-line', 'preview-line-issues',
+          'preview-point', 'preview-point-issues'
+        ];
+        previewLayerIds.forEach(layerId => {
+          if (mapInstance.getLayer(layerId)) {
+            try {
+              mapInstance.removeLayer(layerId);
+              logger.info('Removed existing layer', { layerId });
+            } catch (err) {
+              logger.warn('Failed to remove layer', { layerId, error: err });
+            }
           }
+        });
+        if (mapInstance.getSource('preview')) {
+          try {
+            mapInstance.removeSource('preview');
+            logger.info('Removed existing source', { sourceId: 'preview' });
+          } catch (err) {
+            logger.warn('Failed to remove source', { sourceId: 'preview', error: err });
+          }
+        }
+        // --- End: Remove existing preview layers and source ---
 
-          loadedFeatures.forEach(feature => {
-            logger.debug('setFeatureState call', {
-              id: feature.id,
-              selected: !!selectedFeatureIds.includes(feature.id),
-              type: feature.geometry.type
-            });
-            mapInstance.setFeatureState(
-              { source: 'preview', id: feature.id },
-              { selected: !!selectedFeatureIds.includes(feature.id) }
-            );
-            const state = mapInstance.getFeatureState({ source: 'preview', id: feature.id });
-            logger.debug('getFeatureState result', { id: feature.id, state });
-            mapInstance.triggerRepaint();
+        // Add the new source with the fresh GeoJSON data
+        try {
+          mapInstance.addSource('preview', {
+            type: 'geojson',
+            data: sourceData
+          });
+          logger.info('Added new preview source');
+        } catch (err) {
+          logger.error('Failed to add new preview source', { error: err });
+          return;
+        }
+
+        // Add the layers back
+        const normalLayers: LayerSpecification[] = [
+          {
+            id: 'preview-fill',
+            type: 'fill',
+            source: 'preview',
+            filter: ['all',
+              ['any',
+                ['==', ['get', 'geometry-type'], 'Polygon'],
+                ['==', ['get', 'geometry-type'], 'MultiPolygon']
+              ],
+              ['==', ['get', 'hasIssues'], false]
+            ] as unknown as any[],
+            paint: {
+              'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
+              'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
+            }
+          },
+          {
+            id: 'preview-line',
+            type: 'line',
+            source: 'preview',
+            filter: ['all',
+              ['any',
+                ['==', ['get', 'geometry-type'], 'LineString'],
+                ['==', ['get', 'geometry-type'], 'MultiLineString']
+              ],
+              ['==', ['get', 'hasIssues'], false]
+            ] as unknown as any[],
+            paint: {
+              'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
+              'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2]
+            }
+          },
+          {
+            id: 'preview-point',
+            type: 'circle',
+            source: 'preview',
+            filter: ['all',
+              ['any',
+                ['==', ['get', 'geometry-type'], 'Point'],
+                ['==', ['get', 'geometry-type'], 'MultiPoint']
+              ],
+              ['==', ['get', 'hasIssues'], false]
+            ] as unknown as any[],
+            paint: {
+              'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
+              'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5]
+            }
+          }
+        ];
+
+        const issueLayers: LayerSpecification[] = [
+          {
+            id: 'preview-fill-issues',
+            type: 'fill',
+            source: 'preview',
+            filter: ['all',
+              ['any',
+                ['==', ['get', 'geometry-type'], 'Polygon'],
+                ['==', ['get', 'geometry-type'], 'MultiPolygon']
+              ],
+              ['==', ['get', 'hasIssues'], true]
+            ] as unknown as any[],
+            paint: {
+              'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
+              'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
+            }
+          },
+          {
+            id: 'preview-line-issues',
+            type: 'line',
+            source: 'preview',
+            filter: ['all',
+              ['any',
+                ['==', ['get', 'geometry-type'], 'LineString'],
+                ['==', ['get', 'geometry-type'], 'MultiLineString']
+              ],
+              ['==', ['get', 'hasIssues'], true]
+            ] as unknown as any[],
+            paint: {
+              'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
+              'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2],
+              'line-dasharray': [2, 1]
+            }
+          },
+          {
+            id: 'preview-point-issues',
+            type: 'circle',
+            source: 'preview',
+            filter: ['all',
+              ['any',
+                ['==', ['get', 'geometry-type'], 'Point'],
+                ['==', ['get', 'geometry-type'], 'MultiPoint']
+              ],
+              ['==', ['get', 'hasIssues'], true]
+            ] as unknown as any[],
+            paint: {
+              'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
+              'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5],
+              'circle-stroke-width': 2,
+              'circle-stroke-color': '#000'
+            }
+          }
+        ];
+
+        [...normalLayers, ...issueLayers].forEach(layer => {
+          try {
+            logger.debug('addLayer called', { layerId: layer.id });
+            mapInstance.addLayer(layer as AnyLayer);
+          } catch (err) {
+            logger.warn('Failed to add layer', { layerId: layer.id, error: err });
+          }
+        });
+
+        const popup = new mapboxgl.Popup({
+          closeButton: false,
+          closeOnClick: false
+        });
+
+        issueLayers.forEach(layer => {
+          mapInstance.on('mouseenter', layer.id, (e) => {
+            if (e.features?.[0]) {
+              const feature = e.features[0];
+              const issues = feature.properties?.issues;
+              if (issues) {
+                popup.setLngLat(e.lngLat)
+                  .setHTML(`
+                    <div class="p-2">
+                      <strong>Geometry Issues:</strong>
+                      <ul class="list-disc pl-4">
+                        ${issues.map((issue: string) => `<li>${issue}</li>`).join('')}
+                      </ul>
+                    </div>
+                  `)
+                  .addTo(mapInstance);
+              }
+            }
           });
 
-          if (!didFitInitialBounds.current && !isLoading && bounds) {
-            mapInstance.fitBounds(
-              [[bounds[0], bounds[1]], [bounds[2], bounds[3]]],
-              { padding: 50, animate: false }
-            );
-            didFitInitialBounds.current = true;
-          }
-        } catch (error) {
-          logger.error('Failed to update map data', {
-            error,
-            featureCount: features.length
+          mapInstance.on('mouseleave', layer.id, () => {
+            popup.remove();
           });
+        });
+
+        loadedFeatures.forEach(feature => {
+          logger.debug('setFeatureState call', {
+            id: feature.id,
+            selected: !!selectedFeatureIds.includes(feature.id),
+            type: feature.geometry.type
+          });
+          mapInstance.setFeatureState(
+            { source: 'preview', id: feature.id },
+            { selected: !!selectedFeatureIds.includes(feature.id) }
+          );
+          const state = mapInstance.getFeatureState({ source: 'preview', id: feature.id });
+          logger.debug('getFeatureState result', { id: feature.id, state });
+          mapInstance.triggerRepaint();
+        });
+
+        if (!didFitInitialBounds.current && !isLoading && bounds) {
+          try {
+            // Calculate bbox from the current sourceData
+            const calculatedBbox = bbox(sourceData); // [minLng, minLat, maxLng, maxLat]
+            logger.info('Calculated Bbox for fitBounds:', { calculatedBbox });
+            // Validate bbox
+            if (
+              calculatedBbox &&
+              calculatedBbox.length === 4 &&
+              calculatedBbox.every(coord => typeof coord === 'number' && isFinite(coord)) &&
+              calculatedBbox[1] >= -90 && calculatedBbox[1] <= 90 && // minLat
+              calculatedBbox[3] >= -90 && calculatedBbox[3] <= 90    // maxLat
+            ) {
+              const mapboxBounds = [
+                [calculatedBbox[0], calculatedBbox[1]], // SW
+                [calculatedBbox[2], calculatedBbox[3]]  // NE
+              ] as [mapboxgl.LngLatLike, mapboxgl.LngLatLike];
+              mapInstance.fitBounds(mapboxBounds, { padding: 50, duration: 0 });
+              didFitInitialBounds.current = true;
+            } else {
+              logger.warn('Invalid calculated bounds, skipping fitBounds', { calculatedBbox });
+            }
+          } catch (boundsError) {
+            logger.error('Error calculating or using bounds', { error: boundsError });
+          }
         }
       } catch (error) {
         logger.error('Failed to update map data', {
-          error,
+          error: error instanceof Error
+            ? { name: error.name, message: error.message, stack: error.stack }
+            : error,
           featureCount: features.length
         });
       }
