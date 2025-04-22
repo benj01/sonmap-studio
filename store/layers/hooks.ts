@@ -117,7 +117,9 @@ export const useLayers = () => {
       id: l.id,
       visible: l.visible,
       setupStatus: l.setupStatus,
-      metadata: l.metadata
+      name: l.metadata?.name,
+      type: l.metadata?.type,
+      fileId: l.metadata?.fileId
     }))
   });
 
