@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { LogManager } from '@/core/logging/log-manager';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { shallow } from 'zustand/shallow';
 import { useCallback, useMemo } from 'react';
 import type { Layer, LayerMetadata } from './types';
@@ -8,6 +8,7 @@ import type { FeatureCollection } from 'geojson';
 
 const SOURCE = 'layerStore';
 const logManager = LogManager.getInstance();
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -111,27 +112,26 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     logger.debug('ACTION START: setLayerVisibility', { layerId, visible });
     set((state) => {
       const layer = state.layers.byId[layerId];
+      logger.debug('LAYER BEFORE VISIBILITY TOGGLE', { layer });
       if (!layer || layer.visible === visible) {
         logger.debug('ACTION SKIP: setLayerVisibility - no change needed', { layerId, visible });
         return state;
       }
-
       const updatedLayer = { ...layer, visible };
       const updatedById = {
         ...state.layers.byId,
         [layerId]: updatedLayer
       };
-
-      // Add debug log for all layers after visibility change
-      logger.debug('ACTION setLayerVisibility: layers state after change', {
+      logger.debug('LAYER AFTER VISIBILITY TOGGLE', { updatedLayer });
+      logger.debug('ALL LAYERS AFTER VISIBILITY TOGGLE', {
         allIds: state.layers.allIds,
         byId: Object.entries(updatedById).map(([id, l]) => ({
           id,
           visible: l.visible,
-          setupStatus: l.setupStatus
+          setupStatus: l.setupStatus,
+          metadata: l.metadata
         }))
       });
-
       logger.debug('ACTION END: setLayerVisibility', { layerId, visible });
       return {
         layers: {

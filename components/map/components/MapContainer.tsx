@@ -10,9 +10,13 @@ import { useProjectLayers } from '../hooks/useProjectLayers';
 import { LayerList } from './LayerList';
 import { StatusMonitor } from './StatusMonitor';
 import { CesiumViewWithProvider } from './cesium/CesiumViewWithProvider';
+import { LogLevel } from '@/core/logging/log-manager';
 
 const SOURCE = 'MapContainer';
 const logManager = LogManager.getInstance();
+
+// Ensure debug logs for MapContainer are always shown during troubleshooting
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -64,7 +68,8 @@ export const MapContainer = memo(function MapContainer({
     projectLayersInitialized: projectLayersInitialized.current,
     isInitialized,
     props: {
-      hasProjectId: !!projectId
+      hasProjectId: !!projectId,
+      initialViewState3D
     },
     timestamp: new Date().toISOString()
   });
@@ -135,6 +140,7 @@ export const MapContainer = memo(function MapContainer({
 
   // Only render children after the first mount cycle in development
   const shouldRender = process.env.NODE_ENV === 'production' || shouldRenderChildren.current;
+  logger.debug('MapContainer: shouldRender value', { shouldRender });
 
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col">

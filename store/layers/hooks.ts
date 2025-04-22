@@ -2,12 +2,13 @@ import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import { useLayerStore, type LayerStore, initialState } from './layerStore';
 import { layerSelectors } from './layerStore';
 import type { Layer, LayerMetadata } from './types';
-import { LogManager } from '@/core/logging/log-manager';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { useShallow } from 'zustand/react/shallow';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 
 const SOURCE = 'layerHooks';
 const logManager = LogManager.getInstance();
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -108,6 +109,17 @@ export const useLayers = () => {
     });
     return allIds.map((id: string) => byId[id]).filter(Boolean);
   }, [allIds, byId]);
+
+  // Log the full layers array after every render
+  logger.debug('HOOK STATE: useLayers - Full layers array after render', {
+    renderCount: renderCount.current,
+    layers: layers.map(l => ({
+      id: l.id,
+      visible: l.visible,
+      setupStatus: l.setupStatus,
+      metadata: l.metadata
+    }))
+  });
 
   // Select actions
   const addLayerAction = useLayerStore((state: LayerStore) => state.addLayer);

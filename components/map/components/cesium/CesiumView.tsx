@@ -216,7 +216,7 @@ export function CesiumView() {
 
     // Helper: Remove Cesium object by type
     const removeCesiumLayer = (layerId: string) => {
-      logger.debug('Attempting to remove Cesium layer', { layerId });
+      logger.debug('Attempting to remove Cesium layer representation', { layerId });
       // Ensure cesiumInstance is valid before proceeding
       if (!cesiumInstance || cesiumInstance.isDestroyed()) {
         logger.warn('Attempted to remove Cesium layer but instance is not available', { layerId });
@@ -225,29 +225,29 @@ export function CesiumView() {
       // Remove DataSource
       const ds = dataSourceMap.current.get(layerId);
       if (ds) {
-        logger.info('Removing Cesium DataSource', { layerId });
+        logger.info('Removing Cesium DataSource from view', { layerId });
         cesiumInstance.dataSources.remove(ds, true);
         dataSourceMap.current.delete(layerId);
       }
       // Remove Tileset
       const ts = tilesetMap.current.get(layerId);
       if (ts) {
-        logger.info('Removing Cesium 3D Tileset', { layerId });
+        logger.info('Removing Cesium 3D Tileset from view', { layerId });
         cesiumInstance.scene.primitives.remove(ts);
         tilesetMap.current.delete(layerId);
       }
       // Remove ImageryLayer
       const il = imageryLayerMap.current.get(layerId);
       if (il) {
-        logger.info('Removing Cesium ImageryLayer', { layerId });
+        logger.info('Removing Cesium ImageryLayer from view', { layerId });
         cesiumInstance.imageryLayers.remove(il, true);
         imageryLayerMap.current.delete(layerId);
       }
-      // Set ready3D to false when removed
-      const layer = layers.find(l => l.id === layerId);
-      if (layer && (layer.setupStatus !== 'pending' || layer.error !== undefined)) {
-        updateLayerStatus(layerId, 'pending');
-      }
+      // --- CHANGE: Do NOT update the layer's setupStatus here. ---
+      // Hiding a layer just removes its representation from Cesium,
+      // it doesn't mean the layer needs to be loaded again.
+      // The status should remain 'complete' (or 'error' if it failed previously).
+      logger.debug('Cesium layer representation removed, store status NOT changed', { layerId });
     };
 
     // Helper: Add or update Cesium object for a layer
@@ -269,9 +269,6 @@ export function CesiumView() {
         if (!layer.visible) {
           logger.debug('Layer not visible, will remove if present', { layerId: layer.id });
           removeCesiumLayer(layer.id);
-          if (layer.setupStatus !== 'pending' || layer.error !== undefined) {
-            updateLayerStatus(layer.id, 'pending');
-          }
           return;
         }
         // Vector (GeoJSON)

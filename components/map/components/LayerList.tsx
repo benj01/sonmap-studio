@@ -2,13 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useLayers } from '@/store/layers/hooks';
-import { LogManager } from '@/core/logging/log-manager';
+import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { LayerItem } from './LayerItem';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Layer as StoreLayer } from '@/store/layers/types';
 
 const SOURCE = 'LayerList';
 const logManager = LogManager.getInstance();
+logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 const logger = {
   info: (message: string, data?: any) => {
@@ -37,8 +38,18 @@ interface LayerListProps {
 }
 
 export function LayerList({ className }: LayerListProps) {
-  const { layers, visibleLayers } = useLayers();
-  const [isLoading, setIsLoading] = useState(true);
+  const { layers } = useLayers();
+
+  logger.debug('LayerList render start', {
+    layerCount: layers.length,
+    layers: layers.map(l => ({
+      id: l.id,
+      visible: l.visible,
+      setupStatus: l.setupStatus,
+      metadata: l.metadata
+    })),
+    className
+  });
 
   logger.info('LayerList hook data', {
     layerCount: layers.length,
@@ -51,39 +62,10 @@ export function LayerList({ className }: LayerListProps) {
     }))
   });
 
-  useEffect(() => {
-    logger.info('LayerList state', {
-      layerCount: layers.length,
-      layers: layers.map(l => ({
-        id: l.id,
-        name: l.metadata?.name,
-        visible: l.visible,
-        setupStatus: l.setupStatus,
-        metadata: l.metadata
-      }))
-    });
-
-    // Update loading state based on layer status
-    const hasLayers = layers.length > 0;
-    const allLayersLoaded = layers.every(l => l.setupStatus === 'complete' || l.setupStatus === 'error');
-    
-    logger.info('LayerList loading state', {
-      hasLayers,
-      allLayersLoaded,
-      isLoading,
-      layerStatuses: layers.map(l => ({
-        id: l.id,
-        status: l.setupStatus
-      }))
-    });
-
-    // Only update loading state if it would actually change
-    if (hasLayers && allLayersLoaded && isLoading) {
-      setIsLoading(false);
-    } else if ((!hasLayers || !allLayersLoaded) && !isLoading) {
-      setIsLoading(true);
-    }
-  }, [layers]); // Remove isLoading from dependencies since we check it inside
+  // Derived loading state
+  const hasLayers = layers.length > 0;
+  const allLayersLoaded = layers.every(l => l.setupStatus === 'complete' || l.setupStatus === 'error');
+  const isLoading = !(hasLayers && allLayersLoaded);
 
   logger.info('LayerList render', {
     layerCount: layers.length,
@@ -93,6 +75,7 @@ export function LayerList({ className }: LayerListProps) {
   });
 
   if (isLoading) {
+    logger.debug('LayerList is loading, rendering skeletons');
     return (
       <div className="space-y-2">
         <Skeleton className="h-12 w-full" />
@@ -103,6 +86,7 @@ export function LayerList({ className }: LayerListProps) {
   }
 
   if (layers.length === 0) {
+    logger.debug('LayerList: No layers available');
     return (
       <div className="flex items-center justify-center h-32 text-muted-foreground">
         No layers available
@@ -110,26 +94,40 @@ export function LayerList({ className }: LayerListProps) {
     );
   }
 
+  let renderedCount = 0;
+  let renderError = null;
+  let children = null;
+  try {
+    children = layers.map((layer: StoreLayer) => {
+      if (!layer.metadata) return null;
+      renderedCount++;
+      const layerItemLayer: LayerItemLayer = {
+        id: layer.id,
+        name: layer.metadata.name,
+        type: layer.metadata.type,
+        properties: layer.metadata.properties
+      };
+      return (
+        <LayerItem
+          key={layer.id}
+          layer={layerItemLayer}
+          className={className}
+        />
+      );
+    });
+  } catch (err) {
+    renderError = err;
+    logger.error('LayerList: Error rendering layers', { error: err });
+  }
+
+  logger.debug('LayerList render end', {
+    renderedCount,
+    renderError
+  });
+
   return (
     <div className="space-y-2">
-      {layers.map((layer: StoreLayer) => {
-        if (!layer.metadata) return null;
-
-        const layerItemLayer: LayerItemLayer = {
-          id: layer.id,
-          name: layer.metadata.name,
-          type: layer.metadata.type,
-          properties: layer.metadata.properties
-        };
-
-        return (
-          <LayerItem
-            key={layer.id}
-            layer={layerItemLayer}
-            className={className}
-          />
-        );
-      })}
+      {children}
     </div>
   );
 } 
