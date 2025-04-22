@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
@@ -58,6 +58,8 @@ export function CesiumView() {
   // First-run guard for dev mode (must be at top level)
   const isFirstRun = useRef(true);
   const loadingLayersRef = useRef(new Set<string>());
+  const [mapType, setMapType] = useState<'satellite' | 'osm'>('satellite');
+  const [expanded, setExpanded] = useState(false);
 
   // Effect for Viewer Initialization
   useEffect(() => {
@@ -432,12 +434,105 @@ export function CesiumView() {
     };
   }, [cesiumInstance, layers]);
 
+  // Effect: Switch imagery provider when mapType changes
+  useEffect(() => {
+    const switchImagery = async () => {
+      if (!viewerRef.current) return;
+      try {
+        const viewer = viewerRef.current;
+        viewer.imageryLayers.removeAll();
+        if (mapType === 'osm') {
+          logger.info('Switching to OpenStreetMap imagery');
+          const osmProvider = new Cesium.OpenStreetMapImageryProvider({
+            url: 'https://tile.openstreetmap.org/',
+            credit: new Cesium.Credit('© OpenStreetMap contributors'),
+            maximumLevel: 19
+          });
+          viewer.imageryLayers.addImageryProvider(osmProvider);
+        } else {
+          logger.info('Switching to Satellite (Cesium World Imagery/Ion)');
+          const worldImagery = await Cesium.createWorldImageryAsync();
+          viewer.imageryLayers.addImageryProvider(worldImagery);
+        }
+      } catch (error) {
+        logger.error('Error switching imagery provider', error);
+      }
+    };
+    switchImagery();
+  }, [mapType]);
+
   // TODO: Directly manage Cesium layers based on Zustand layer state.
   //       When layers or their visibility change, update Cesium data sources/primitives/imagery.
   //       Remove any "sync to 3D" or Mapbox state logic.
 
   return (
     <div className="relative w-full h-full">
+      {/* Collapsible Map Type Switcher */}
+      <div
+        className="absolute bottom-4 right-4 z-20 flex flex-col items-end"
+        onMouseEnter={() => setExpanded(true)}
+        onMouseLeave={() => setExpanded(false)}
+        onFocus={() => setExpanded(true)}
+        onBlur={() => setExpanded(false)}
+        tabIndex={0}
+        aria-label="Map type switcher"
+      >
+        {expanded ? (
+          <div className="flex bg-white bg-opacity-70 rounded-lg shadow p-1 gap-1 border border-gray-200 transition-all duration-200">
+            <button
+              type="button"
+              aria-label="Satellite Map"
+              className={`flex flex-col items-center px-2 py-1 rounded-md transition border ${mapType === 'satellite' ? 'border-blue-500 bg-blue-50 shadow-sm' : 'border-transparent hover:bg-gray-100'} focus:outline-none`}
+              style={{ minWidth: 48 }}
+              onClick={() => { setMapType('satellite'); setExpanded(false); }}
+              tabIndex={0}
+            >
+              <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="32" height="32" rx="8" fill="#e0e7ef"/>
+                <image href="https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Earth_Eastern_Hemisphere.jpg/64px-Earth_Eastern_Hemisphere.jpg" x="4" y="4" height="24" width="24"/>
+              </svg>
+              <span className="text-[10px] mt-0.5 font-medium text-gray-700">Satellite</span>
+            </button>
+            <button
+              type="button"
+              aria-label="OpenStreetMap"
+              className={`flex flex-col items-center px-2 py-1 rounded-md transition border ${mapType === 'osm' ? 'border-green-500 bg-green-50 shadow-sm' : 'border-transparent hover:bg-gray-100'} focus:outline-none`}
+              style={{ minWidth: 48 }}
+              onClick={() => { setMapType('osm'); setExpanded(false); }}
+              tabIndex={0}
+            >
+              <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="32" height="32" rx="8" fill="#e0f7e9"/>
+                <path d="M8 24L24 8M8 8L24 24" stroke="#34a853" strokeWidth="2" strokeLinecap="round"/>
+                <circle cx="16" cy="16" r="6" fill="#34a853" fillOpacity="0.2"/>
+              </svg>
+              <span className="text-[10px] mt-0.5 font-medium text-gray-700">OpenStreetMap</span>
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            aria-label={mapType === 'satellite' ? 'Satellite Map' : 'OpenStreetMap'}
+            className="rounded-full bg-white bg-opacity-80 shadow border border-gray-200 p-1 flex items-center justify-center transition-all duration-200 focus:outline-none"
+            style={{ width: 40, height: 40 }}
+            onClick={() => setExpanded(true)}
+            tabIndex={0}
+          >
+            {mapType === 'satellite' ? (
+              <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="32" height="32" rx="8" fill="#e0e7ef"/>
+                <image href="https://upload.wikimedia.org/wikipedia/commons/thumb/6/6f/Earth_Eastern_Hemisphere.jpg/64px-Earth_Eastern_Hemisphere.jpg" x="4" y="4" height="24" width="24"/>
+              </svg>
+            ) : (
+              <svg width="24" height="24" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <rect width="32" height="32" rx="8" fill="#e0f7e9"/>
+                <path d="M8 24L24 8M8 8L24 24" stroke="#34a853" strokeWidth="2" strokeLinecap="round"/>
+                <circle cx="16" cy="16" r="6" fill="#34a853" fillOpacity="0.2"/>
+              </svg>
+            )}
+          </button>
+        )}
+      </div>
       <div
         ref={cesiumContainer}
         className="w-full h-full"
