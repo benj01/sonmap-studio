@@ -168,3 +168,83 @@ The Height Source Configuration system enables Sonmap Studio to visualize 2D vec
 ## Conclusion
 
 The Height Source Configuration system provides a foundation for 3D visualization in Sonmap Studio. While the basic functionality for handling Z-coordinates and numeric attributes is in place, significant work remains to support complex scenarios like buildings with height attributes and true 3D models. The planned implementation phases will address these needs incrementally, starting with completing the current features before moving on to more advanced capabilities. 
+
+## Coordinate Transformation System
+
+### REST API Endpoint
+
+The application includes a dedicated API endpoint for Swiss coordinate transformation:
+
+- **Endpoint**: `/api/coordinates/transform`
+- **File**: `app/api/coordinates/transform/route.ts`
+- **Purpose**: Transforms LV95 coordinates to WGS84 using the SwissTopo REST API
+- **Method**: POST
+- **Request Format**:
+  ```json
+  {
+    "coordinates": [
+      { "easting": 2600000, "northing": 1200000, "elevation": 500 }
+    ]
+  }
+  ```
+- **Response Format**:
+  ```json
+  {
+    "coordinates": [
+      { 
+        "easting": 2600000, 
+        "northing": 1200000, 
+        "elevation": 500,
+        "longitude": 7.43861, 
+        "latitude": 46.95108, 
+        "ellipsoidalHeight": 550.3
+      }
+    ]
+  }
+  ```
+- **Error Handling**: Returns appropriate HTTP status codes with error messages
+- **Rate Limiting**: Implements basic rate limiting to prevent abuse
+
+### Client Utilities
+
+Coordinate transformation is handled by client-side utilities in `core/utils/coordinates.ts`:
+
+#### Key Functions
+
+1. **`transformLv95ToWgs84()`**
+   - Transforms LV95 coordinates to WGS84 via the API endpoint
+   - Handles batching for improved performance with large datasets
+   - Implements retry logic for failed requests
+   - Returns WGS84 coordinates with ellipsoidal heights
+
+2. **`processStoredLv95Coordinates()`**
+   - Processes GeoJSON features with stored LV95 coordinates
+   - Extracts stored coordinates from feature properties
+   - Calls the transformation API
+   - Updates feature geometry with transformed coordinates
+   - Preserves original LV95 values in properties
+
+### Import Process Integration
+
+The coordinate transformation system is integrated with the import process:
+
+1. When GeoJSON data is imported:
+   - LV95 coordinates are automatically detected
+   - Original coordinates are stored in feature properties
+   - `height_mode` is set to "lv95_stored" when Z-coordinates are available
+   - Geometry is initially transformed to WGS84 (2D only) for display
+
+2. When 3D visualization is requested:
+   - System checks for `height_mode` value
+   - If "lv95_stored", retrieves original LV95 coordinates
+   - Transforms to WGS84 with correct ellipsoidal heights
+   - Applies transformed heights to features
+
+### Usage in Height Source Configuration
+
+The Height Configuration Dialog integrates with this system by:
+
+1. Detecting when imported data has stored LV95 coordinates
+2. Offering appropriate height source options based on data type
+3. Using the transformation API when processing Z-coordinate based heights
+4. Providing previews with correctly transformed height values 
