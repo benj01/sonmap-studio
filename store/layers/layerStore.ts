@@ -43,6 +43,7 @@ export interface LayerStore {
   updateLayerStatus: (layerId: string, status: Layer['setupStatus'], error?: string) => void;
   handleFileDeleted: (fileId: string) => void;
   updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => void;
+  updateLayerHeightSource: (layerId: string, heightSource: { type: 'z_coord' | 'attribute' | 'none'; attributeName?: string; }) => void;
   setInitialLoadComplete: (complete: boolean) => void;
   setLayerGeoJsonData: (layerId: string, geojsonData: FeatureCollection | null) => void;
   reset: () => void;
@@ -379,6 +380,56 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
       };
 
       // Create new state with all new objects
+      return {
+        layers: {
+          ...state.layers,
+          metadata: {
+            ...state.layers.metadata,
+            [layerId]: newMetadata
+          },
+          byId: {
+            ...state.layers.byId,
+            [layerId]: newLayer
+          }
+        }
+      };
+    });
+  },
+
+  updateLayerHeightSource: (layerId: string, heightSource: { type: 'z_coord' | 'attribute' | 'none'; attributeName?: string; }) => {
+    logger.debug('ACTION START: updateLayerHeightSource', { layerId, heightSource });
+    set((state) => {
+      const layer = state.layers.byId[layerId];
+      if (!layer) {
+        logger.debug('ACTION SKIP: updateLayerHeightSource - layer does not exist', { layerId });
+        return state;
+      }
+
+      // Get current metadata or create new one
+      const currentMetadata = state.layers.metadata[layerId] || { name: layerId, type: 'vector', properties: {} };
+      
+      // Create new metadata object with the height source information
+      const newMetadata: LayerMetadata = {
+        ...currentMetadata,
+        height: {
+          ...currentMetadata.height,
+          sourceType: heightSource.type,
+          attributeName: heightSource.attributeName
+        }
+      };
+
+      // Create new layer object
+      const newLayer = {
+        ...layer,
+        metadata: newMetadata
+      };
+
+      logger.debug('ACTION END: updateLayerHeightSource', { 
+        layerId,
+        heightSourceType: heightSource.type,
+        attributeName: heightSource.attributeName
+      });
+
       return {
         layers: {
           ...state.layers,

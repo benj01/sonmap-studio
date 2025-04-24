@@ -12,6 +12,12 @@ export interface LayerMetadata {
     hasLines: boolean;
     hasPoints: boolean;
   };
+  height?: {
+    sourceType: 'z_coord' | 'attribute' | 'none';
+    attributeName?: string;
+    extrusion?: number;
+    scale?: number;
+  };
 }
 
 export interface Layer {

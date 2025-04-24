@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
@@ -10,6 +10,9 @@ import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { useLayers } from '@/store/layers/hooks';
 import { useLayerStore } from '@/store/layers/layerStore';
 import { processFeatureCollectionHeights, needsHeightTransformation } from '../../services/heightTransformService';
+import * as GeoJSON from 'geojson';
+import { Skeleton } from '@/components/ui/skeleton';
+import type { Layer } from '@/store/layers/types';
 
 const SOURCE = 'CesiumView';
 const logManager = LogManager.getInstance();
@@ -39,6 +42,96 @@ const logger = {
   }
 };
 
+/**
+ * Applies height data to GeoJSON features based on configuration
+ */
+function applyHeightToFeatures(
+  featureCollection: GeoJSON.FeatureCollection,
+  heightConfig: {
+    sourceType: 'z_coord' | 'attribute' | 'none';
+    attributeName?: string;
+  }
+): GeoJSON.FeatureCollection {
+  if (!featureCollection || !featureCollection.features || !heightConfig) {
+    return featureCollection;
+  }
+
+  const { sourceType, attributeName } = heightConfig;
+  
+  // No need to modify if no height source is specified
+  if (sourceType === 'none') {
+    return featureCollection;
+  }
+  
+  // Create a deep copy to avoid mutating the original
+  const result = JSON.parse(JSON.stringify(featureCollection)) as GeoJSON.FeatureCollection;
+  
+  // Process each feature
+  result.features = result.features.map((feature: GeoJSON.Feature) => {
+    // For z-coordinate source, we don't need to modify the coordinates
+    // as they already have Z values that Cesium will use
+    if (sourceType === 'z_coord') {
+      return feature;
+    }
+    
+    // For attribute source, we need to extract the height value and apply it
+    if (sourceType === 'attribute' && attributeName && feature.properties) {
+      const heightValue = feature.properties[attributeName];
+      
+      // Skip if no valid height value
+      if (typeof heightValue !== 'number' || isNaN(heightValue)) {
+        return feature;
+      }
+      
+      // Apply the height value based on geometry type
+      if (feature.geometry) {
+        switch (feature.geometry.type) {
+          case 'Point':
+            if (Array.isArray(feature.geometry.coordinates) && feature.geometry.coordinates.length >= 2) {
+              (feature.geometry.coordinates as number[])[2] = heightValue;
+            }
+            break;
+            
+          case 'LineString':
+            if (Array.isArray(feature.geometry.coordinates)) {
+              feature.geometry.coordinates = feature.geometry.coordinates.map((coord: number[]) => {
+                if (coord.length >= 2) {
+                  return [...coord.slice(0, 2), heightValue];
+                }
+                return coord;
+              });
+            }
+            break;
+            
+          case 'Polygon':
+            if (Array.isArray(feature.geometry.coordinates)) {
+              feature.geometry.coordinates = feature.geometry.coordinates.map((ring: number[][]) => {
+                return ring.map((coord: number[]) => {
+                  if (coord.length >= 2) {
+                    return [...coord.slice(0, 2), heightValue];
+                  }
+                  return coord;
+                });
+              });
+            }
+            break;
+            
+          // Add similar handling for other geometry types as needed
+          case 'MultiPoint':
+          case 'MultiLineString':
+          case 'MultiPolygon':
+            // Implementation would be similar but with deeper nesting
+            break;
+        }
+      }
+    }
+    
+    return feature;
+  });
+  
+  return result;
+}
+
 export function CesiumView() {
   const cesiumContainer = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
@@ -46,11 +139,44 @@ export function CesiumView() {
   const dataSourceMap = useRef(new Map<string, Cesium.DataSource>());
   const tilesetMap = useRef(new Map<string, Cesium.Cesium3DTileset>());
   const imageryLayerMap = useRef(new Map<string, Cesium.ImageryLayer>());
+  
+  // Replace useMapView with direct store access
   const { setCesiumInstance, setCesiumStatus } = useMapInstanceStore();
   const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
   const { viewState3D, setViewState3D } = useViewStateStore();
-  const { getCesiumDefaults, getTerrainProvider } = useCesium();
+  
+  // Define utility functions inline since they were previously from useMapView
+  const getCesiumDefaults = useCallback(() => {
+    return {
+      animation: false,
+      baseLayerPicker: false,
+      fullscreenButton: false,
+      geocoder: false,
+      homeButton: false,
+      infoBox: false,
+      sceneModePicker: false,
+      selectionIndicator: false,
+      timeline: false,
+      navigationHelpButton: false,
+      navigationInstructionsInitiallyVisible: false,
+      shouldAnimate: true
+    };
+  }, []);
+
+  const getTerrainProvider = useCallback(async () => {
+    try {
+      return await Cesium.createWorldTerrainAsync({
+        requestVertexNormals: true,
+        requestWaterMask: true
+      });
+    } catch (error) {
+      logger.error('Error creating terrain provider', error);
+      // Return default terrain provider as fallback
+      return new Cesium.EllipsoidTerrainProvider({});
+    }
+  }, []);
+  
   const { layers } = useLayers();
   const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
   const initializationAttempted = useRef(false);
@@ -308,10 +434,22 @@ export function CesiumView() {
                 
                 logger.info('Height transformation complete', { layerId: layer.id });
               }
+              
+              // Apply height data according to layer configuration
+              const heightConfig = layer.metadata.height;
+              if (heightConfig && heightConfig.sourceType !== 'none') {
+                logger.info('Applying height configuration to layer', { 
+                  layerId: layer.id,
+                  heightSource: heightConfig.sourceType,
+                  attributeName: heightConfig.attributeName 
+                });
+                
+                geojsonData = applyHeightToFeatures(geojsonData, heightConfig);
+              }
 
               const ds = await Cesium.GeoJsonDataSource.load(geojsonData, {
-                clampToGround: true
-                // TODO: Style mapping
+                clampToGround: !heightConfig || heightConfig.sourceType === 'none',
+                // If we have height data, don't clamp to ground to allow for elevation
               });
               ds.name = layer.id;
 
