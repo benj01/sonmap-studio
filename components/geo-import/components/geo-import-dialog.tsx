@@ -16,6 +16,7 @@ import { GeoImportDialogProps, ImportSession } from '../types';
 import { FullDataset } from '@/types/geo-import';
 import { logger } from '@/utils/logger';
 import { useGeoImport } from '../hooks/use-geo-import';
+import { useWizard } from '../wizard/WizardContext';
 
 const SOURCE = 'GeoImportDialog';
 const supabase = createClient();
@@ -64,6 +65,8 @@ const safeStringify = (obj: any): string => {
   }
 };
 
+// DEPRECATED: This is the legacy import dialog. Please use the wizard-based import flow instead. This component is kept for reference and should not be used for new imports.
+
 export function GeoImportDialog({
   projectId,
   open,
@@ -81,6 +84,10 @@ export function GeoImportDialog({
   const [progressMessage, setProgressMessage] = useState('');
   const [currentImportLogId, setCurrentImportLogId] = useState<string | null>(null);
   const { /* generatePreview, */ ...geoImportRest } = useGeoImport();
+  const { heightAttribute } = useWizard();
+
+  // Set log level for this component to DEBUG for detailed logs
+  LogManager.getInstance().setComponentLogLevel('GeoImportDialog', LogLevel.DEBUG);
 
   const memoizedFileInfo = useMemo(() => 
     fileInfo ? {
@@ -178,6 +185,9 @@ export function GeoImportDialog({
 
       setProgressMessage(`Importing ${selectedFeatures.length} features...`);
       
+      // Log the value of heightAttribute
+      LogManager.getInstance().debug('GeoImportDialog', 'handleImport: heightAttribute value', { heightAttribute });
+
       // Get the current session
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) {
@@ -200,14 +210,12 @@ export function GeoImportDialog({
         })),
         sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
         targetSrid: 4326,
-        batchSize: 100
+        batchSize: 100,
+        heightAttributeKey: heightAttribute
       };
 
-      safeLogger.info('Starting import', { 
-        featureCount: selectedFeatures.length,
-        sourceSrid: requestPayload.sourceSrid,
-        batchSize: requestPayload.batchSize
-      });
+      // Log the full payload
+      LogManager.getInstance().info('GeoImportDialog', 'handleImport: requestPayload', requestPayload);
 
       // Make a single API call instead of streaming
       const response = await fetch('/api/geo-import/stream', {
@@ -218,6 +226,13 @@ export function GeoImportDialog({
         },
         body: JSON.stringify(requestPayload),
         signal: AbortSignal.timeout(300000) // 5 minute timeout
+      });
+
+      // Log the backend response
+      const backendResponse = await response.clone().json().catch(() => null);
+      LogManager.getInstance().info('GeoImportDialog', 'handleImport: backend response', {
+        status: response.status,
+        response: backendResponse
       });
 
       if (!response.ok) {

@@ -1,96 +1,5 @@
 DROP FUNCTION IF EXISTS public.transform_swiss_coords_swisstopo(float, float, float);
 
--- Enhanced logging version (see comment for verbosity)
-CREATE OR REPLACE FUNCTION public.transform_swiss_coords_swisstopo(
-  easting_lv95 float,
-  northing_lv95 float,
-  lhn95_height float
-) RETURNS jsonb
-LANGUAGE plv8
-STABLE
-AS $$
-  const besselEndpoint = 'https://geodesy.geo.admin.ch/reframe/lhn95tobessel';
-  const wgs84Endpoint = 'https://geodesy.geo.admin.ch/reframe/lv95towgs84';
-  const MAX_LOG_BODY_LENGTH = 250;
-  const truncate = (str, len) => (str && str.length > len) ? str.substring(0, len) + '...' : (str || '');
-
-  if (easting_lv95 === null || northing_lv95 === null || lhn95_height === null ||
-      typeof easting_lv95 !== 'number' || typeof northing_lv95 !== 'number' || typeof lhn95_height !== 'number') {
-    plv8.elog(WARNING, `[SwissTopo] Invalid input: E=${easting_lv95}, N=${northing_lv95}, H=${lhn95_height}`);
-    return null;
-  }
-  plv8.elog(DEBUG, `[SwissTopo] Function called with E=${easting_lv95}, N=${northing_lv95}, H=${lhn95_height}`);
-  try {
-    const besselUrl = `${besselEndpoint}?easting=${easting_lv95}&northing=${northing_lv95}&altitude=${lhn95_height}&format=json`;
-    plv8.elog(DEBUG, `[SwissTopo] Requesting Bessel: ${besselUrl}`);
-    const besselResponse = plv8.fetch(besselUrl);
-    let besselBodyText = '';
-    try { besselBodyText = besselResponse.text(); } catch (e) {
-      plv8.elog(WARNING, `[SwissTopo] Failed to read Bessel response body. Status: ${besselResponse.status} ${besselResponse.statusText}. Error: ${e.message}`);
-      return null;
-    }
-    plv8.elog(DEBUG, `[SwissTopo] Bessel API response: ${besselResponse.status} ${besselResponse.statusText}. Body: ${truncate(besselBodyText, MAX_LOG_BODY_LENGTH)}`);
-    if (!besselResponse.ok) {
-      plv8.elog(WARNING, `[SwissTopo] Failed Bessel API call. Status: ${besselResponse.status} ${besselResponse.statusText}. URL: ${besselUrl}. Body: ${besselBodyText}`);
-      return null;
-    }
-    let besselResult;
-    try { besselResult = JSON.parse(besselBodyText); } catch(e) {
-      plv8.elog(WARNING, `[SwissTopo] Failed to parse Bessel JSON response. Status: ${besselResponse.status}. Error: ${e.message}. Body: ${besselBodyText}`);
-      return null;
-    }
-    if (!besselResult || besselResult.altitude === undefined || besselResult.altitude === null) {
-      plv8.elog(WARNING, `[SwissTopo] Bessel API response missing altitude. Response: ${JSON.stringify(besselResult)}`);
-      return null;
-    }
-    const besselHeight = parseFloat(besselResult.altitude);
-    if (isNaN(besselHeight)) {
-      plv8.elog(WARNING, `[SwissTopo] Failed to parse Bessel height from API response: ${besselResult.altitude}`);
-      return null;
-    }
-    plv8.elog(DEBUG, `[SwissTopo] Parsed Bessel Height: ${besselHeight}`);
-    const wgs84Url = `${wgs84Endpoint}?easting=${easting_lv95}&northing=${northing_lv95}&altitude=${besselHeight}&format=json`;
-    plv8.elog(DEBUG, `[SwissTopo] Requesting WGS84: ${wgs84Url}`);
-    const wgs84Response = plv8.fetch(wgs84Url);
-    let wgs84BodyText = '';
-    try { wgs84BodyText = wgs84Response.text(); } catch(e) {
-      plv8.elog(WARNING, `[SwissTopo] Failed to read WGS84 response body. Status: ${wgs84Response.status} ${wgs84Response.statusText}. Error: ${e.message}`);
-      return null;
-    }
-    plv8.elog(DEBUG, `[SwissTopo] WGS84 API response: ${wgs84Response.status} ${wgs84Response.statusText}. Body: ${truncate(wgs84BodyText, MAX_LOG_BODY_LENGTH)}`);
-    if (!wgs84Response.ok) {
-      plv8.elog(WARNING, `[SwissTopo] Failed WGS84 API call. Status: ${wgs84Response.status} ${wgs84Response.statusText}. URL: ${wgs84Url}. Body: ${wgs84BodyText}`);
-      return null;
-    }
-    let wgs84Result;
-    try { wgs84Result = JSON.parse(wgs84BodyText); } catch(e) {
-      plv8.elog(WARNING, `[SwissTopo] Failed to parse WGS84 JSON response. Status: ${wgs84Response.status}. Error: ${e.message}. Body: ${wgs84BodyText}`);
-      return null;
-    }
-    if (!wgs84Result || wgs84Result.easting === undefined || wgs84Result.easting === null ||
-        wgs84Result.northing === undefined || wgs84Result.northing === null ||
-        wgs84Result.altitude === undefined || wgs84Result.altitude === null) {
-      plv8.elog(WARNING, `[SwissTopo] WGS84 API response missing expected fields. Response: ${JSON.stringify(wgs84Result)}`);
-      return null;
-    }
-    const lon = parseFloat(wgs84Result.easting);
-    const lat = parseFloat(wgs84Result.northing);
-    const ellHeight = parseFloat(wgs84Result.altitude);
-    if (isNaN(lon) || isNaN(lat) || isNaN(ellHeight)) {
-      plv8.elog(WARNING, `[SwissTopo] Failed to parse WGS84 results from API. Lon: ${wgs84Result.easting}, Lat: ${wgs84Result.northing}, Height: ${wgs84Result.altitude}`);
-      return null;
-    }
-    const resultJson = { lon: lon, lat: lat, ell_height: ellHeight };
-    plv8.elog(INFO, `[SwissTopo] Success: LV95 (${easting_lv95},${northing_lv95},${lhn95_height}) -> WGS84 (${lon},${lat},${ellHeight})`);
-    plv8.elog(DEBUG, `[SwissTopo] Parsed output: ${JSON.stringify(resultJson)}`);
-    return resultJson;
-  } catch (error) {
-    plv8.elog(ERROR, '[SwissTopo] Error in transform_swiss_coords_swisstopo: ' + (error.message || error) + (error.stack ? '\nStack: ' + error.stack : ''));
-    return null;
-  }
-$$;
-
-
 -- Drop the existing import function if it exists (handling potential signature changes)
 -- Note: Using types for more specific dropping
 DROP FUNCTION IF EXISTS public.import_geo_features_with_transform(uuid, text, jsonb, integer, integer, integer);
@@ -101,7 +10,8 @@ CREATE OR REPLACE FUNCTION public.import_geo_features_with_transform(
   p_collection_name text,
   p_features jsonb,
   p_source_srid integer,
-  p_target_srid integer, -- Target SRID for the 'srid' column, geometry_2d is always 4326
+  p_target_srid integer,
+  p_height_attribute_key text,
   p_batch_size integer DEFAULT 1000
 ) RETURNS TABLE (
   collection_id uuid,
@@ -139,7 +49,6 @@ DECLARE
   v_height_mode TEXT := NULL;
   v_height_source TEXT := NULL;
   v_vertical_datum_source TEXT := NULL;
-  v_coords JSONB; -- Changed from TEXT to JSONB to match plv8 return intention
 
   -- Loop and Batching Variables
   v_total_features INTEGER;
@@ -206,7 +115,7 @@ BEGIN
       -- Reset feature-specific variables
       v_lhn95_height := NULL; v_base_elevation_ellipsoidal := NULL; v_object_height := NULL;
       v_height_mode := NULL; v_height_source := NULL; v_vertical_datum_source := NULL;
-      v_coords := NULL; v_raw_geometry := NULL; v_cleaned_geometry := NULL; v_validated_geometry := NULL;
+      v_raw_geometry := NULL; v_cleaned_geometry := NULL; v_validated_geometry := NULL;
       v_geometry_2d := NULL; v_representative_point := NULL; lv95_easting := NULL; lv95_northing := NULL;
 
       IF v_feature->'geometry' IS NULL OR jsonb_typeof(v_feature->'geometry') = 'null' THEN
@@ -271,16 +180,29 @@ BEGIN
           IF v_lhn95_height IS NULL THEN v_height_source := NULL; END IF;
         END IF;
 
-        IF v_lhn95_height IS NULL THEN
-           DECLARE h_mean FLOAT := (v_properties->>'H_MEAN')::FLOAT; hoehe FLOAT := (v_properties->>'HOEHE')::FLOAT; z_val FLOAT := (v_properties->>'Z_Value')::FLOAT; alt FLOAT := (v_properties->>'Altitude')::FLOAT; height FLOAT := (v_properties->>'height')::FLOAT; height_uc FLOAT := (v_properties->>'HEIGHT')::FLOAT;
-           BEGIN v_lhn95_height := COALESCE(h_mean, hoehe, z_val, alt, height, height_uc);
-              IF v_lhn95_height IS NOT NULL THEN
-                 IF h_mean IS NOT NULL THEN v_height_source := 'attribute:H_MEAN'; ELSIF hoehe IS NOT NULL THEN v_height_source := 'attribute:HOEHE'; ELSIF z_val IS NOT NULL THEN v_height_source := 'attribute:Z_Value'; ELSIF alt IS NOT NULL THEN v_height_source := 'attribute:Altitude'; ELSIF height IS NOT NULL THEN v_height_source := 'attribute:height'; ELSIF height_uc IS NOT NULL THEN v_height_source := 'attribute:HEIGHT'; ELSE v_height_source := 'attribute:unknown'; END IF;
-              END IF;
-           END;
+        IF v_lhn95_height IS NULL AND p_height_attribute_key IS NOT NULL AND p_height_attribute_key <> '' THEN
+          DECLARE
+            attr_value_text TEXT;
+            attr_value_float FLOAT;
+          BEGIN
+            attr_value_text := v_properties->>p_height_attribute_key;
+            RAISE LOG '[Feature % Height] Checking user attribute "%": Value "%"', i, p_height_attribute_key, attr_value_text;
+            IF attr_value_text IS NOT NULL THEN
+              BEGIN
+                attr_value_float := attr_value_text::FLOAT;
+                v_lhn95_height := attr_value_float;
+                v_height_source := 'attribute:' || p_height_attribute_key;
+                RAISE LOG '[Feature % Height] Used attribute "%": %', i, p_height_attribute_key, v_lhn95_height;
+              EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING '[Feature % Height] Could not cast attribute "%" value "%" to FLOAT: %', i, p_height_attribute_key, attr_value_text, SQLERRM;
+              END;
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING '[Feature % Height] Error accessing attribute "%": %', i, p_height_attribute_key, SQLERRM;
+          END;
         END IF;
 
-        v_object_height := COALESCE( (v_properties->>'object_height')::float, (v_properties->>'obj_height')::float, (v_properties->>'OBJ_HOEHE')::float, (v_properties->>'height')::float, (v_properties->>'HEIGHT')::float );
+        v_object_height := COALESCE( (v_properties->>'object_height')::float, (v_properties->>'obj_height')::float, (v_properties->>'OBJ_HOEHE')::float );
          IF v_object_height IS NULL AND v_height_source != 'attribute:HEIGHT' AND v_height_source != 'attribute:height' THEN v_object_height := (v_properties->>'HEIGHT')::float; END IF;
 
         -- 4. Get Representative Point (in original SRID) for API call if needed
@@ -315,21 +237,18 @@ BEGIN
         -- Before ST_Transform
         RAISE LOG '[Feature %] Geometry before ST_Transform (SRID: %): %', i, ST_SRID(v_validated_geometry), substring(ST_AsText(v_validated_geometry) from 1 for 200) || CASE WHEN length(ST_AsText(v_validated_geometry)) > 200 THEN '...' ELSE '' END;
 
-        -- 6. Calculate WGS84 Ellipsoidal Height via API if applicable
-        IF p_source_srid = 2056 AND v_lhn95_height IS NOT NULL AND lv95_easting IS NOT NULL AND lv95_northing IS NOT NULL THEN
-          RAISE NOTICE 'Calling Swisstopo API for feature index % (E:%, N:%, H:%)', i, lv95_easting, lv95_northing, v_lhn95_height;
-          v_coords := public.transform_swiss_coords_swisstopo(lv95_easting, lv95_northing, v_lhn95_height);
-          IF v_coords IS NOT NULL AND jsonb_typeof(v_coords) = 'object' AND v_coords ? 'ell_height' THEN
-            v_base_elevation_ellipsoidal := (v_coords->>'ell_height')::float; v_height_mode := 'absolute_ellipsoidal';
-            RAISE NOTICE 'API success for feature index %. Ellipsoidal Height: %', i, v_base_elevation_ellipsoidal;
-          ELSE
-            RAISE WARNING 'Swisstopo API call failed or returned invalid data for feature index %. Result: %', i, v_coords;
-            v_height_source := COALESCE(v_height_source, 'unknown') || ' (API Failed)';
-          END IF;
-        ELSIF v_lhn95_height IS NOT NULL AND v_vertical_datum_source = 'WGS84' THEN
-           v_base_elevation_ellipsoidal := v_lhn95_height; v_height_mode := 'absolute_ellipsoidal';
-        ELSIF v_lhn95_height IS NOT NULL THEN
-            RAISE NOTICE 'Feature index % has height % from source % but datum % not configured for transformation.', i, v_lhn95_height, v_height_source, v_vertical_datum_source;
+        -- 6. Set height values directly for WGS84, or set LV95 coords for later client-side transformation
+        IF p_source_srid = 4326 AND v_lhn95_height IS NOT NULL THEN
+            v_base_elevation_ellipsoidal := v_lhn95_height;
+            v_height_mode := 'absolute_ellipsoidal';
+        ELSIF p_source_srid = 2056 AND v_lhn95_height IS NOT NULL THEN
+            -- Store original LV95 coordinates for client-side transformation
+            v_properties := v_properties || jsonb_build_object(
+              'lv95_easting', lv95_easting,
+              'lv95_northing', lv95_northing,
+              'lv95_height', v_lhn95_height
+            );
+            v_height_mode := 'lv95_stored';
         END IF;
 
         -- After ST_Transform

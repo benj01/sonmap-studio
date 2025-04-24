@@ -17,8 +17,78 @@ const SOURCE = 'ParseStep';
 const logManager = LogManager.getInstance();
 logManager.setComponentLogLevel(SOURCE, LogLevel.INFO);
 
+// Helper function to detect Z coordinates in features
+function detectZCoordinates(features: any[]) {
+  if (!features || features.length === 0) return { hasZ: false, message: 'No features found' };
+  
+  let zCount = 0;
+  let zSum = 0;
+  let zMin = Infinity;
+  let zMax = -Infinity;
+  let totalCoords = 0;
+  
+  // Function to process coordinates recursively
+  const processCoords = (coords: any[]) => {
+    if (!Array.isArray(coords)) return;
+    
+    if (coords.length >= 3 && typeof coords[2] === 'number') {
+      // This is a coordinate with Z value
+      const z = coords[2];
+      if (!isNaN(z)) {
+        zCount++;
+        zSum += z;
+        zMin = Math.min(zMin, z);
+        zMax = Math.max(zMax, z);
+      }
+      totalCoords++;
+    } else if (Array.isArray(coords[0])) {
+      // This is a nested array of coordinates
+      coords.forEach(c => processCoords(c));
+    }
+  };
+  
+  // Process all features
+  features.forEach(feature => {
+    if (feature.geometry && feature.geometry.coordinates) {
+      processCoords(feature.geometry.coordinates);
+    }
+  });
+  
+  // Analyze results
+  const hasNonZeroZ = zMin !== 0 || zMax !== 0;
+  const hasReasonableRange = zMin >= -100 && zMax <= 4000;
+  const hasSufficientData = zCount > 0 && zCount >= 0.5 * totalCoords;
+  
+  if (zCount === 0) {
+    return { 
+      hasZ: false, 
+      message: 'No Z coordinates found' 
+    };
+  } else if (!hasNonZeroZ) {
+    return { 
+      hasZ: false, 
+      message: 'All Z coordinates are zero'
+    };
+  } else if (!hasReasonableRange) {
+    return { 
+      hasZ: false, 
+      message: `Z values outside reasonable range (${zMin.toFixed(1)} to ${zMax.toFixed(1)})`
+    };
+  } else if (!hasSufficientData) {
+    return { 
+      hasZ: false, 
+      message: `Insufficient Z data (${zCount}/${totalCoords} coordinates have Z values)`
+    };
+  }
+  
+  return { 
+    hasZ: true, 
+    message: `Valid Z coordinates detected (range: ${zMin.toFixed(1)} to ${zMax.toFixed(1)} meters)`
+  };
+}
+
 export function ParseStep({ onNext, onBack }: ParseStepProps) {
-  const { fileInfo, setDataset, setImportDataset } = useWizard();
+  const { fileInfo, setDataset, setImportDataset, setHeightSource } = useWizard();
   const [parsing, setParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [parseSummary, setParseSummary] = useState<string | null>(null);
@@ -78,11 +148,31 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           transformCoordinates: false
         });
 
+        // Detect Z coordinates
+        const zDetection = detectZCoordinates(fullDataset.features || []);
+        logManager.info(SOURCE, 'Z coordinate detection result', zDetection);
+        
+        // Set height source based on detection
+        if (zDetection.hasZ) {
+          setHeightSource({
+            type: 'z',
+            status: 'detected',
+            message: zDetection.message
+          });
+        } else {
+          setHeightSource({
+            type: 'none',
+            status: 'not_detected',
+            message: zDetection.message
+          });
+        }
+
         // IMPORTANT: Store the original dataset for import (with untransformed coordinates)
         setImportDataset(fullDataset);
         logManager.info(SOURCE, 'Stored original dataset for import', { 
           srid: fullDataset.metadata?.srid, 
-          featureCount: fullDataset.features?.length 
+          featureCount: fullDataset.features?.length,
+          heightSource: zDetection.hasZ ? 'z' : 'none'
         });
 
         // Create a transformed copy of the dataset for map preview if needed
@@ -284,7 +374,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
     if (fileInfo?.id && fileInfo.name) {
       parseFile();
     }
-  }, [fileInfo, setDataset, onNext, supabase, setImportDataset]);
+  }, [fileInfo, setDataset, onNext, supabase, setImportDataset, setHeightSource]);
 
   return (
     <div className="space-y-4">

@@ -72,6 +72,7 @@
     "@types/proj4": "^2.5.5",
     "@web-std/file": "^3.0.3",
     "autoprefixer": "10.4.20",
+    "axios": "^1.8.4",
     "cesium": "^1.127.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",

@@ -4,9 +4,7 @@ import { WizardStepper } from './WizardStepper';
 import { FileSelectStep } from './steps/FileSelectStep';
 import { ParseStep } from './steps/ParseStep';
 import { PreviewStep } from './steps/PreviewStep';
-import { AttributeMappingStep } from './steps/AttributeMappingStep';
 import { ValidationStep } from './steps/ValidationStep';
-import { TransformStep } from './steps/TransformStep';
 import { ConfirmStep } from './steps/ConfirmStep';
 import { ReviewStep } from './steps/ReviewStep';
 import { createLogger } from '@/utils/logger';
@@ -17,9 +15,7 @@ const steps = [
   { label: 'Select File', component: FileSelectStep },
   { label: 'Parse & Analyze', component: ParseStep },
   { label: 'Preview & Select', component: PreviewStep },
-  { label: 'Attribute Mapping', component: AttributeMappingStep },
   { label: 'Validation', component: ValidationStep },
-  { label: 'Transform', component: TransformStep },
   { label: 'Confirm', component: ConfirmStep },
   { label: 'Review', component: ReviewStep },
 ];

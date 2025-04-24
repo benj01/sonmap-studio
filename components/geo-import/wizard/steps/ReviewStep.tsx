@@ -22,9 +22,8 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
     dataset,
     importDataset,
     selectedFeatureIds,
-    heightAttribute,
+    heightSource,
     targetSrid,
-    useSwissTopo,
   } = useWizard();
   const [result, setResult] = useState<null | {
     success: boolean;
@@ -50,6 +49,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
   }, [result, onClose, onRefreshFiles]);
 
   const handleImport = async () => {
+    logManager.info(LOG_SOURCE, 'handleImport: ENTERED', {});
     setImporting(true);
     setError(null);
     setResult(null);
@@ -65,18 +65,24 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       // Prepare features to import (using original coordinates)
       const features = (datasetForImport?.features || []).filter((f: any) => selectedFeatureIds.includes(f.id));
       
+      // Determine height attribute key based on detection
+      // Always provide a non-empty value even when Z coordinates aren't detected
+      const heightAttributeKey = heightSource.type === 'z' ? 'z' : '_none';  // Use '_none' as a fallback instead of empty string
+      
       // Prepare payload (include collectionName as required by backend)
       const payload = {
         projectFileId: fileInfo?.id,
         collectionName: fileInfo?.name || 'Imported Features',
         features: features.map((f: any) => ({
           ...f,
-          height: heightAttribute === 'z' ? f.geometry?.coordinates?.[2] : f.properties?.[heightAttribute],
+          // Only add height if Z coordinates were detected
+          ...(heightSource.type === 'z' ? {
+            height: f.geometry?.coordinates?.[2]
+          } : {})
         })),
         sourceSrid: datasetForImport?.metadata?.srid || 2056,
         targetSrid,
-        useSwissTopo,
-        heightAttribute,
+        heightAttributeKey
       };
       
       // Log both datasets to confirm the correct one is being used
@@ -86,7 +92,8 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
         hasImportDataset: !!importDataset,
         importDatasetSrid: importDataset?.metadata?.srid,
         usingDataset: importDataset ? 'importDataset' : 'dataset',
-        selectedSrid: payload.sourceSrid
+        selectedSrid: payload.sourceSrid,
+        heightSource
       });
       
       // Log the payload
@@ -96,6 +103,8 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
         featureCount: payload.features.length,
         sourceSrid: payload.sourceSrid,
         targetSrid: payload.targetSrid,
+        heightAttributeKey: payload.heightAttributeKey,
+        heightSource,
         // Show sample of first feature's coordinates
         features: payload.features.length > 0 
           ? [{ 
@@ -171,7 +180,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Step 8: Post-Import Review</h2>
+      <h2 className="text-lg font-semibold">Step 6: Post-Import Review</h2>
       {!result && (
         <div>
           <button

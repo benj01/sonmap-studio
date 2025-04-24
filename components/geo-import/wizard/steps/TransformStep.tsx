@@ -9,8 +9,8 @@ interface TransformStepProps {
 }
 
 export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: TransformStepProps) {
-  const { dataset, setTargetSrid, useSwissTopo, setUseSwissTopo } = useWizard();
-  const sourceSrid = dataset?.metadata?.srid || 2056;
+  const { importDataset, setTargetSrid, useSwissTopo, setUseSwissTopo } = useWizard();
+  const sourceSrid = importDataset?.metadata?.srid || 2056;
 
   useEffect(() => {
     setTargetSrid(4326);
@@ -29,14 +29,20 @@ export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: Trans
         </div>
       </div>
       {sourceSrid === 2056 && (
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="swisstopo"
-            checked={useSwissTopo}
-            onChange={e => setUseSwissTopo(e.target.checked)}
-          />
-          <label htmlFor="swisstopo" className="text-sm">Use SwissTopo API for height conversion</label>
+        <div className="space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              id="swisstopo"
+              checked={useSwissTopo}
+              onChange={e => setUseSwissTopo(e.target.checked)}
+            />
+            <label htmlFor="swisstopo" className="text-sm">Store LV95 coordinates for later client-side transformation</label>
+          </div>
+          <div className="text-xs text-gray-600 pl-6">
+            When checked, LV95 coordinates will be stored in the database and transformed to WGS84 when loaded in the application.
+            This allows for precise Swiss height conversions using the SwissTopo API.
+          </div>
         </div>
       )}
       <div className="flex gap-2 mt-4">

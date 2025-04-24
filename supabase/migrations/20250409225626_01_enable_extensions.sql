@@ -1,7 +1,8 @@
 -- Enable necessary extensions
 -- CREATE EXTENSION IF NOT EXISTS postgis WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS postgis;
-CREATE EXTENSION IF NOT EXISTS plv8;
+-- CREATE EXTENSION IF NOT EXISTS plv8;
+-- CREATE EXTENSION IF NOT EXISTS pg_net;
 -- CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions;
 
 -- Grant usage on extensions schema

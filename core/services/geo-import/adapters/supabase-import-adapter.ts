@@ -31,6 +31,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
           p_features: params.features,
           p_source_srid: params.sourceSrid,
           p_target_srid: params.targetSrid,
+          p_height_attribute_key: params.heightAttributeKey,
           p_batch_size: params.batchSize
         }
       );
@@ -199,6 +200,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
                   p_features: batchFeatures,
                   p_source_srid: params.sourceSrid,
                   p_target_srid: params.targetSrid,
+                  p_height_attribute_key: params.heightAttributeKey,
                   p_batch_size: batchFeatures.length
                 }
               );
@@ -234,6 +236,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
                         p_features: subBatch,
                         p_source_srid: params.sourceSrid,
                         p_target_srid: params.targetSrid,
+                        p_height_attribute_key: params.heightAttributeKey,
                         p_batch_size: subBatch.length
                       }
                     );

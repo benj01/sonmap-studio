@@ -20,6 +20,12 @@ export interface WizardDataset {
   metadata?: any;
 }
 
+export interface HeightSource {
+  type: 'z' | 'none';
+  status: 'detected' | 'not_detected';
+  message: string;
+}
+
 export interface WizardState {
   projectId: string;
   fileInfo?: WizardFileInfo;
@@ -30,12 +36,10 @@ export interface WizardState {
   setImportDataset: (ds: WizardDataset) => void;
   selectedFeatureIds: number[];
   setSelectedFeatureIds: (ids: number[] | ((prev: number[]) => number[])) => void;
-  heightAttribute: string | 'z' | '';
-  setHeightAttribute: (attr: string | 'z' | '') => void;
+  heightSource: HeightSource;
+  setHeightSource: (source: HeightSource) => void;
   targetSrid: number;
   setTargetSrid: (srid: number) => void;
-  useSwissTopo: boolean;
-  setUseSwissTopo: (use: boolean) => void;
 }
 
 const WizardContext = createContext<WizardState | undefined>(undefined);
@@ -45,9 +49,12 @@ export function WizardProvider({ projectId, initialFileInfo, children }: { proje
   const [dataset, setDataset] = useState<WizardDataset | undefined>();
   const [importDataset, setImportDataset] = useState<WizardDataset | undefined>();
   const [selectedFeatureIds, setSelectedFeatureIds] = useState<number[]>([]);
-  const [heightAttribute, setHeightAttribute] = useState<string | 'z' | ''>('');
+  const [heightSource, setHeightSource] = useState<HeightSource>({
+    type: 'none',
+    status: 'not_detected',
+    message: 'No height data detected'
+  });
   const [targetSrid, setTargetSrid] = useState<number>(4326);
-  const [useSwissTopo, setUseSwissTopo] = useState<boolean>(false);
 
   // Override setTargetSrid to always set 4326
   const setTargetSridFixed = () => setTargetSrid(4326);
@@ -59,10 +66,9 @@ export function WizardProvider({ projectId, initialFileInfo, children }: { proje
       dataset, setDataset,
       importDataset, setImportDataset,
       selectedFeatureIds, setSelectedFeatureIds,
-      heightAttribute, setHeightAttribute,
+      heightSource, setHeightSource,
       targetSrid,
       setTargetSrid: setTargetSridFixed,
-      useSwissTopo, setUseSwissTopo
     }}>
       {children}
     </WizardContext.Provider>

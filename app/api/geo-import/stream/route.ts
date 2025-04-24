@@ -74,16 +74,18 @@ export async function POST(request: NextRequest) {
       features, 
       sourceSrid, 
       targetSrid = 4326, 
+      heightAttributeKey,
       batchSize = 100 
     } = requestBody;
     
-    // Basic validation
-    if (!projectFileId || !features || !Array.isArray(features) || !collectionName) {
+    // Basic validation - consider '_none' as a valid height attribute key
+    if (!projectFileId || !features || !Array.isArray(features) || !collectionName || (!heightAttributeKey && heightAttributeKey !== '_none')) {
       logger.error('Missing required parameters', { 
         hasProjectFileId: !!projectFileId,
         hasFeatures: !!features,
         isArray: Array.isArray(features),
-        hasCollectionName: !!collectionName
+        hasCollectionName: !!collectionName,
+        hasHeightAttributeKey: !!heightAttributeKey || heightAttributeKey === '_none'
       });
       return NextResponse.json(
         { error: 'Missing required parameters' },
@@ -127,6 +129,7 @@ export async function POST(request: NextRequest) {
         p_features: features,
         p_source_srid: sourceSrid,
         p_target_srid: targetSrid,
+        p_height_attribute_key: heightAttributeKey,
         p_batch_size: batchSize
       }
     );

@@ -5,6 +5,7 @@ import createClient from '@/utils/supabase/client';
 import { LogManager } from '@/core/logging/log-manager';
 import { useLayerStore } from '@/store/layers/layerStore';
 import type { Feature } from 'geojson';
+import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
 
 const SOURCE = 'useLayerData';
 const logManager = LogManager.getInstance();
@@ -266,7 +267,7 @@ export function useLayerData(layerId: string) {
         });
 
         // Process features into GeoJSON
-        const processedFeatures = features?.map((feature: {
+        const processedFeatures = await Promise.all(features?.map(async (feature: {
           id: string;
           geojson: string | GeoJSON.Geometry;
           properties: Record<string, any>;
@@ -281,17 +282,42 @@ export function useLayerData(layerId: string) {
               return null;
             }
 
-            return {
+            // Create the GeoJSON feature
+            let geoJsonFeature: Feature = {
               type: 'Feature',
               id: feature.id,
               geometry,
               properties: feature.properties || {}
-            } as Feature;
+            };
+
+            // Process LV95 stored coordinates if needed
+            if (feature.properties?.height_mode === 'lv95_stored' && 
+                feature.properties?.lv95_easting && 
+                feature.properties?.lv95_northing && 
+                feature.properties?.lv95_height) {
+              try {
+                logger.debug('Processing feature with LV95 stored coordinates', { featureId: feature.id });
+                geoJsonFeature = await processStoredLv95Coordinates(geoJsonFeature);
+                logger.debug('Transformed LV95 coordinates to WGS84 with accurate height', { 
+                  featureId: feature.id,
+                  height_mode: geoJsonFeature.properties?.height_mode,
+                  elevation: geoJsonFeature.properties?.base_elevation_ellipsoidal
+                });
+              } catch (transformError) {
+                logger.warn('Failed to transform LV95 coordinates, using original feature', {
+                  featureId: feature.id,
+                  error: transformError
+                });
+                // Continue with the original feature
+              }
+            }
+
+            return geoJsonFeature;
           } catch (error) {
             logger.warn('Failed to process feature', { featureId: feature.id, error });
             return null;
           }
-        }).filter(Boolean) || [];
+        }).filter(Boolean) || []);
 
         const featureCollection: GeoJSON.FeatureCollection = {
           type: 'FeatureCollection',

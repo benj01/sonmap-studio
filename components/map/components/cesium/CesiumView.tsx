@@ -9,6 +9,7 @@ import { useCesium } from '../../context/CesiumContext';
 import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { useLayers } from '@/store/layers/hooks';
 import { useLayerStore } from '@/store/layers/layerStore';
+import { processFeatureCollectionHeights, needsHeightTransformation } from '../../services/heightTransformService';
 
 const SOURCE = 'CesiumView';
 const logManager = LogManager.getInstance();
@@ -295,7 +296,20 @@ export function CesiumView() {
               logger.info('>>> Preparing to ADD Cesium GeoJSON DataSource', { layerId: layer.id });
               loadingLayersRef.current.add(layer.id); // Mark as loading SYNCHRONOUSLY
 
-              const ds = await Cesium.GeoJsonDataSource.load(layer.metadata.properties.geojson, {
+              // Process the GeoJSON data to transform heights if needed
+              let geojsonData = layer.metadata.properties.geojson;
+              
+              // Check if any features need height transformation
+              if (needsHeightTransformation(geojsonData)) {
+                logger.info('Layer contains features with LV95 stored coordinates, transforming heights', { layerId: layer.id });
+                
+                // Transform feature heights using our service
+                geojsonData = await processFeatureCollectionHeights(geojsonData);
+                
+                logger.info('Height transformation complete', { layerId: layer.id });
+              }
+
+              const ds = await Cesium.GeoJsonDataSource.load(geojsonData, {
                 clampToGround: true
                 // TODO: Style mapping
               });
