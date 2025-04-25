@@ -45,6 +45,10 @@ export interface BatchProcessOptions {
   maxRetries?: number;
   pollingInterval?: number;
   cancelToken?: AbortSignal;
+  swissTransformation?: {
+    method: 'api' | 'delta';
+    cache: boolean;
+  };
 }
 
 /**
@@ -239,7 +243,8 @@ export class HeightTransformBatchService {
         chunkSize,
         maxRetries,
         pollingInterval,
-        abortController.signal
+        abortController.signal,
+        options
       );
       
       return true;
@@ -262,7 +267,8 @@ export class HeightTransformBatchService {
     chunkSize: number,
     maxRetries: number,
     pollingInterval: number,
-    abortSignal: AbortSignal
+    abortSignal: AbortSignal,
+    options: BatchProcessOptions
   ): Promise<void> {
     const batch = this.activeBatches.get(batchId);
     if (!batch) return;
@@ -272,6 +278,15 @@ export class HeightTransformBatchService {
     const totalChunks = Math.ceil(features.length / chunkSize);
     
     try {
+      // Check if using Swiss delta-based transformation
+      const useDeltaTransformation = options.swissTransformation?.method === 'delta';
+      
+      if (useDeltaTransformation) {
+        // Use spatial grouping and delta-based processing for more efficiency
+        await this.processFeaturesWithDelta(features, batchId, options);
+        return; // Skip standard processing
+      }
+      
       // Process chunks sequentially to avoid overwhelming the API
       for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
         // Check if processing was cancelled
@@ -308,7 +323,7 @@ export class HeightTransformBatchService {
             while (!success && retries < maxRetries && !abortSignal.aborted) {
               try {
                 // Transform feature heights using coordinate utility
-                await this.processFeature(feature);
+                await this.processFeature(feature, options);
                 success = true;
               } catch (error) {
                 retries++;
@@ -375,9 +390,18 @@ export class HeightTransformBatchService {
   /**
    * Process a single feature's height transformation
    */
-  private async processFeature(feature: Feature): Promise<Feature> {
+  private async processFeature(feature: Feature, options?: BatchProcessOptions): Promise<Feature> {
     if (feature.properties?.height_mode === 'lv95_stored') {
-      return await processStoredLv95Coordinates(feature);
+      // Apply transformation with appropriate method
+      if (options?.swissTransformation) {
+        return await processStoredLv95Coordinates(feature, {
+          transformationMethod: options.swissTransformation.method,
+          cacheResults: options.swissTransformation.cache
+        });
+      } else {
+        // Use default transformation
+        return await processStoredLv95Coordinates(feature);
+      }
     }
     return feature;
   }
@@ -494,5 +518,127 @@ export class HeightTransformBatchService {
    */
   public getActiveBatches(): Map<string, BatchProgress> {
     return new Map(this.activeBatches);
+  }
+  
+  /**
+   * Process features with delta-based transformation using spatial groups
+   * This is more efficient for large datasets
+   */
+  private async processFeaturesWithDelta(
+    features: Feature[],
+    batchId: string,
+    options: BatchProcessOptions = {}
+  ): Promise<void> {
+    try {
+      const batch = this.activeBatches.get(batchId);
+      if (!batch) return;
+      
+      const { layerId } = batch;
+      
+      // Group features by spatial proximity
+      const { groupFeaturesByProximity } = await import('@/core/utils/coordinates');
+      const spatialGroups = groupFeaturesByProximity(features);
+      
+      logger.info('Processing features with delta-based transformation', {
+        batchId,
+        layerId,
+        totalFeatures: features.length,
+        groupCount: spatialGroups.length
+      });
+      
+      // Track progress
+      let processedCount = 0;
+      let failedCount = 0;
+      
+      // Process each spatial group
+      for (const group of spatialGroups) {
+        // Process reference feature first using direct API call
+        try {
+          await this.processFeature(group.referenceFeature, {
+            ...options,
+            // Force API call for reference feature to establish accurate baseline
+            swissTransformation: {
+              method: 'api',
+              cache: options.swissTransformation?.cache ?? true
+            }
+          });
+          
+          processedCount++;
+          
+          // Get the transformed data from the reference feature
+          const referenceProps = group.referenceFeature.properties;
+          if (referenceProps && 
+              referenceProps.height_transformed &&
+              referenceProps.base_elevation_ellipsoidal !== undefined) {
+            
+            // Now process related features using delta approach
+            for (const feature of group.relatedFeatures) {
+              try {
+                await this.processFeature(feature, {
+                  ...options,
+                  swissTransformation: {
+                    method: 'delta',
+                    cache: options.swissTransformation?.cache ?? true
+                  }
+                });
+                processedCount++;
+              } catch (error) {
+                logger.error('Failed to process related feature', {
+                  featureId: feature.id,
+                  error
+                });
+                failedCount++;
+              }
+            }
+          }
+        } catch (error) {
+          logger.error('Failed to process reference feature', {
+            featureId: group.referenceFeature.id,
+            error
+          });
+          failedCount++;
+          
+          // If reference feature failed, try each related feature individually with API method
+          for (const feature of group.relatedFeatures) {
+            try {
+              await this.processFeature(feature, {
+                ...options,
+                swissTransformation: {
+                  method: 'api',
+                  cache: options.swissTransformation?.cache ?? true
+                }
+              });
+              processedCount++;
+            } catch (error) {
+              logger.error('Failed to process feature after reference failure', {
+                featureId: feature.id,
+                error
+              });
+              failedCount++;
+            }
+          }
+        }
+        
+        // Update batch progress after each group
+        this.updateBatchProgress(batchId, {
+          processedFeatures: processedCount,
+          failedFeatures: failedCount,
+          percentComplete: Math.round((processedCount / features.length) * 100)
+        });
+        
+        // Small delay to avoid overwhelming the system
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      logger.info('Delta-based transformation completed', {
+        batchId,
+        layerId,
+        processed: processedCount,
+        failed: failedCount
+      });
+    } catch (error) {
+      logger.error('Error in delta-based transformation', { error });
+      throw error;
+    }
   }
 } 

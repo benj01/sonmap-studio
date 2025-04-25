@@ -53,6 +53,13 @@ export interface HeightSource {
     };
   };
   
+  // Swiss height transformation options
+  swissHeightTransformation?: {
+    enabled: boolean;
+    transformationMethod: 'api' | 'delta';
+    cacheResults: boolean;
+  };
+  
   // Common options
   applyToAllLayers: boolean;
   savePreference: boolean;
@@ -81,6 +88,13 @@ const logger = {
  * Gets the first Z coordinate from a feature or null if none exists
  */
 function getFeatureZCoordinate(feature: Feature): number | null {
+  // First check for LV95 stored heights
+  if (feature.properties?.height_mode === 'lv95_stored' && 
+      feature.properties.lv95_height !== undefined && 
+      typeof feature.properties.lv95_height === 'number') {
+    return feature.properties.lv95_height;
+  }
+  
   if (!feature.geometry) return null;
   
   try {
@@ -185,6 +199,22 @@ function detectZCoordinates(features: Feature[]): {
   
   // Process all features
   features.forEach(feature => {
+    // Check if feature has the LV95 stored height mode
+    if (feature.properties?.height_mode === 'lv95_stored' && 
+        feature.properties.lv95_height !== undefined && 
+        typeof feature.properties.lv95_height === 'number') {
+      // This is a feature with a Z coordinate stored as LV95
+      const z = feature.properties.lv95_height;
+      if (!isNaN(z)) {
+        zCount++;
+        zSum += z;
+        zMin = Math.min(zMin, z);
+        zMax = Math.max(zMax, z);
+      }
+      totalCoords++;
+    }
+    
+    // Also check the geometry for Z coordinates
     if (!feature.geometry) return;
     
     try {
@@ -319,10 +349,16 @@ function detectNumericAttributes(features: Feature[]): {
   features.forEach(feature => {
     if (!feature.properties) return;
     
+    // Skip LV95 stored height values - these should be treated as Z coordinates, not as regular attributes
+    const hasLv95StoredHeight = feature.properties.height_mode === 'lv95_stored';
+    
     // Analyze each property
     Object.entries(feature.properties).forEach(([key, value]) => {
       // Skip LV95 coordinates (these are already processed)
       if (key.startsWith('lv95_')) return;
+      
+      // Skip lv95_height values that should be treated as Z coordinates
+      if (hasLv95StoredHeight && key === 'height') return;
 
       // Try to convert value to number
       const numValue = typeof value === 'number' ? value : 
@@ -380,7 +416,15 @@ function getHeightPreview(features: Feature[], source: string, maxSamples: numbe
     let value: number | null = null;
     
     if (source === 'z_coord') {
-      value = getFeatureZCoordinate(feature);
+      // First check for LV95 stored height
+      if (feature.properties?.height_mode === 'lv95_stored' && 
+          feature.properties.lv95_height !== undefined &&
+          typeof feature.properties.lv95_height === 'number') {
+        value = feature.properties.lv95_height;
+      } else {
+        // Fall back to geometry Z coordinate
+        value = getFeatureZCoordinate(feature);
+      }
     } else if (source && feature.properties && typeof feature.properties[source] === 'number') {
       value = feature.properties[source] as number;
     }
@@ -390,6 +434,171 @@ function getHeightPreview(features: Feature[], source: string, maxSamples: numbe
       value
     };
   });
+}
+
+/**
+ * Detects if features use Swiss coordinates
+ */
+function detectSwissCoordinates(features: Feature[]): { 
+  isSwiss: boolean;
+  hasLv95Stored: boolean;
+  hasSwissVerticalDatum: boolean;
+  message: string;
+} {
+  if (!features || features.length === 0) {
+    return { 
+      isSwiss: false,
+      hasLv95Stored: false,
+      hasSwissVerticalDatum: false,
+      message: 'No features found' 
+    };
+  }
+  
+  // Check for 'lv95_stored' height mode
+  const hasLv95Stored = features.some(f => 
+    f.properties?.height_mode === 'lv95_stored'
+  );
+  
+  // Check for Swiss vertical datum
+  const hasSwissVerticalDatum = features.some(f => 
+    f.properties?.vertical_datum_source === 'LHN95'
+  );
+  
+  // Check for Swiss coordinate ranges (if no other indicators are found)
+  let hasSwissCoordinateRange = false;
+  if (!hasLv95Stored && !hasSwissVerticalDatum) {
+    hasSwissCoordinateRange = features.some(feature => {
+      if (feature.geometry?.type === 'Point') {
+        const coords = (feature.geometry as Point).coordinates;
+        // Check for typical Swiss LV95 coordinate ranges
+        return (
+          coords[0] > 2000000 && coords[0] < 3000000 &&
+          coords[1] > 1000000 && coords[1] < 2000000
+        );
+      }
+      return false;
+    });
+  }
+  
+  const isSwiss = hasLv95Stored || hasSwissVerticalDatum || hasSwissCoordinateRange;
+  
+  let message = 'No Swiss coordinates detected';
+  if (isSwiss) {
+    if (hasLv95Stored) {
+      message = 'Swiss coordinates with stored LV95 values detected';
+    } else if (hasSwissVerticalDatum) {
+      message = 'Swiss height datum (LHN95) detected';
+    } else {
+      message = 'Coordinates in Swiss range detected';
+    }
+  }
+  
+  return { 
+    isSwiss,
+    hasLv95Stored,
+    hasSwissVerticalDatum,
+    message
+  };
+}
+
+/**
+ * Component for Swiss height transformation settings
+ */
+function SwissHeightTransformationSettings({ 
+  showSwissOptions,
+  settings,
+  onSettingsChange
+}: { 
+  showSwissOptions: boolean;
+  settings: HeightSource['swissHeightTransformation'];
+  onSettingsChange: (settings: HeightSource['swissHeightTransformation']) => void;
+}) {
+  if (!showSwissOptions) return null;
+  
+  // Initialize with default settings if none exist
+  const currentSettings = settings || {
+    enabled: false,
+    transformationMethod: 'api' as const,
+    cacheResults: true
+  };
+  
+  return (
+    <div className="p-4 border rounded-md mt-4">
+      <h3 className="text-lg font-medium mb-2">Swiss Height Transformation</h3>
+      <div className="space-y-4">
+        <div className="flex items-center">
+          <Checkbox
+            id="enable-swiss-transform"
+            checked={currentSettings.enabled}
+            onCheckedChange={(checked) => onSettingsChange({
+              ...currentSettings,
+              enabled: !!checked
+            })}
+          />
+          <Label htmlFor="enable-swiss-transform" className="ml-2 text-sm">
+            Use Swiss Reframe API for precise height transformation
+          </Label>
+        </div>
+        
+        {currentSettings.enabled && (
+          <>
+            <div className="ml-6 space-y-2">
+              <div className="text-xs text-gray-600 mb-2">
+                Required for accurate visualization of Swiss LV95 coordinates in 3D.
+                The transformation will be performed once when you apply these settings.
+              </div>
+              
+              <RadioGroup
+                value={currentSettings.transformationMethod}
+                onValueChange={(value) => onSettingsChange({
+                  ...currentSettings,
+                  transformationMethod: value as 'api' | 'delta'
+                })}
+                className="flex flex-col space-y-1"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="api" id="transform-api" />
+                  <Label htmlFor="transform-api" className="font-normal">
+                    Direct API calls
+                    <p className="text-xs text-muted-foreground">
+                      Highest precision, uses individual API calls for each coordinate
+                    </p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="delta" id="transform-delta" />
+                  <Label htmlFor="transform-delta" className="font-normal">
+                    Delta-based calculation
+                    <p className="text-xs text-muted-foreground">
+                      Faster for large datasets, calculates heights based on reference points
+                    </p>
+                  </Label>
+                </div>
+              </RadioGroup>
+              
+              <div className="flex items-center mt-2">
+                <Checkbox
+                  id="cache-results"
+                  checked={currentSettings.cacheResults}
+                  onCheckedChange={(checked) => onSettingsChange({
+                    ...currentSettings,
+                    cacheResults: !!checked
+                  })}
+                />
+                <Label htmlFor="cache-results" className="ml-2 text-sm">
+                  Cache transformation results
+                  <p className="text-xs text-muted-foreground">
+                    Improves performance for future transformations in the same area
+                  </p>
+                </Label>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 }
 
 export function HeightConfigurationDialog({
@@ -403,127 +612,116 @@ export function HeightConfigurationDialog({
   // Configuration mode
   const [configMode, setConfigMode] = useState<'simple' | 'advanced'>('simple');
   
-  // Simple mode state
-  const [sourceType, setSourceType] = useState<'z_coord' | 'attribute' | 'none'>('none');
+  // Source type state
+  const [sourceType, setSourceType] = useState<'z_coord' | 'attribute' | 'none'>('z_coord');
   const [selectedAttribute, setSelectedAttribute] = useState<string>('');
   const [interpretationMode, setInterpretationMode] = useState<'absolute' | 'relative' | 'extrusion'>('absolute');
   
-  // Advanced mode state
-  const [advancedConfig, setAdvancedConfig] = useState<HeightSource['advanced']>({
-    baseElevation: {
-      source: 'terrain',
-      attributeName: '',
-      isAbsolute: true
-    },
-    heightConfig: {
-      source: 'attribute',
-      attributeName: '',
-      isRelative: true
-    },
-    visualization: {
-      type: 'extrusion',
-      extrudedFaces: true,
-      extrudedTop: true
-    }
+  // Advanced configuration state
+  const [advancedConfig, setAdvancedConfig] = useState<HeightSource['advanced']>();
+  
+  // Swiss coordinates state
+  const [swissCoordinatesInfo, setSwissCoordinatesInfo] = useState<ReturnType<typeof detectSwissCoordinates>>({
+    isSwiss: false,
+    hasLv95Stored: false,
+    hasSwissVerticalDatum: false,
+    message: ''
   });
   
-  // Common state
-  const [numericAttributes, setNumericAttributes] = useState<{ name: string; min: number; max: number; count: number }[]>([]);
-  const [zCoordinateInfo, setZCoordinateInfo] = useState<{ hasZ: boolean; message: string }>({ hasZ: false, message: '' });
+  // Swiss height transformation settings
+  const [swissHeightSettings, setSwissHeightSettings] = useState<HeightSource['swissHeightTransformation']>({
+    enabled: false,
+    transformationMethod: 'api',
+    cacheResults: true
+  });
+  
+  // Common options
   const [applyToAllLayers, setApplyToAllLayers] = useState<boolean>(false);
   const [savePreference, setSavePreference] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [heightPreview, setHeightPreview] = useState<{ featureId: string | number; value: number | null }[]>([]);
-  const [selectedTab, setSelectedTab] = useState<string>('z_coord');
-  const [advancedTab, setAdvancedTab] = useState<string>('base');
   
-  // Batch processing state
-  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  // Tab state
+  const [activeTab, setActiveTab] = useState<string>('z_coord');
+  
+  // Processing state
   const [showProgress, setShowProgress] = useState<boolean>(false);
+  const [batchId, setBatchId] = useState<string | null>(null);
   
-  // Preference store for saving user preferences
+  // Features analysis
+  const [zCoordinatesInfo, setZCoordinatesInfo] = useState<ReturnType<typeof detectZCoordinates>>({
+    hasZ: false,
+    zCount: 0,
+    totalCoords: 0,
+    zMin: 0,
+    zMax: 0,
+    message: ''
+  });
+  
+  const [numericAttributesInfo, setNumericAttributesInfo] = useState<ReturnType<typeof detectNumericAttributes>>({
+    attributes: [],
+    message: ''
+  });
+  
+  const [heightPreview, setHeightPreview] = useState<ReturnType<typeof getHeightPreview>>([]);
+  
+  // Get preferences
   const { preferences, setHeightSourcePreference } = usePreferenceStore();
-  const heightSourcePreference = preferences.heightSourcePreference;
   
   // Batch service instance
   const batchService = HeightTransformBatchService.getInstance();
   
-  // Detect Z coordinates and numeric attributes on mount and when featureCollection changes
   useEffect(() => {
-    if (featureCollection && featureCollection.features) {
-      // Detect if features have Z coordinates
-      const zInfo = detectZCoordinates(featureCollection.features);
-      setZCoordinateInfo({
-        hasZ: zInfo.hasZ,
-        message: zInfo.message
-      });
+    // Analyze features when they change
+    const features = featureCollection?.features || [];
+    if (features.length > 0) {
+      // Calculate Z-coordinate info
+      const zInfo = detectZCoordinates(features);
+      setZCoordinatesInfo(zInfo);
+      logger.debug('Z-coordinate detection results', { zInfo });
       
-      // Detect numeric attributes in feature properties
-      const attrInfo = detectNumericAttributes(featureCollection.features);
-      setNumericAttributes(attrInfo.attributes);
-      
-      // Set default source type based on what's available
-      if (zInfo.hasZ) {
+      // Set default source type based on Z-coordinate detection
+      if (zInfo.hasZ && zInfo.zCount > (zInfo.totalCoords * 0.5)) {
         setSourceType('z_coord');
-        setSelectedTab('z_coord');
-      } else if (attrInfo.attributes.length > 0) {
-        setSourceType('attribute');
-        setSelectedAttribute(attrInfo.attributes[0].name);
-        setSelectedTab('attribute');
+        setActiveTab('z_coord');
       } else {
-        setSourceType('none');
-        setSelectedTab('none');
+        setSourceType('attribute');
+        setActiveTab('attribute');
       }
       
-      // Apply preference if available
-      if (heightSourcePreference) {
-        if (heightSourcePreference.type === 'attribute') {
-          // Only apply attribute preference if this layer has that attribute
-          const hasAttribute = attrInfo.attributes.some(attr => 
-            attr.name === heightSourcePreference.attributeName
-          );
-          
-          if (hasAttribute) {
-            setSourceType('attribute');
-            setSelectedAttribute(heightSourcePreference.attributeName || '');
-            setSelectedTab('attribute');
-            if (heightSourcePreference.interpretationMode) {
-              setInterpretationMode(heightSourcePreference.interpretationMode);
-            }
-          }
-        } else if (heightSourcePreference.type === 'z_coord' && zInfo.hasZ) {
-          setSourceType('z_coord');
-          setSelectedTab('z_coord');
-        } else if (heightSourcePreference.type === 'none') {
-          setSourceType('none');
-          setSelectedTab('none');
-        }
-        
-        setSavePreference(true);
-      }
-    }
-  }, [featureCollection, heightSourcePreference]);
-  
-  // Update preview when source type or selected attribute changes
-  useEffect(() => {
-    if (featureCollection && featureCollection.features) {
+      // Calculate numeric attributes info
+      const attributesInfo = detectNumericAttributes(features);
+      setNumericAttributesInfo(attributesInfo);
+      logger.debug('Numeric attributes detection results', { attributesInfo });
+      
+      // Update height preview
       if (sourceType === 'z_coord') {
-        setHeightPreview(getHeightPreview(featureCollection.features, 'z_coord'));
+        setHeightPreview(getHeightPreview(features, 'z_coord'));
       } else if (sourceType === 'attribute' && selectedAttribute) {
-        setHeightPreview(getHeightPreview(featureCollection.features, selectedAttribute));
-      } else {
-        setHeightPreview([]);
+        setHeightPreview(getHeightPreview(features, selectedAttribute));
+      }
+      
+      // Detect Swiss coordinates
+      const swissInfo = detectSwissCoordinates(features);
+      setSwissCoordinatesInfo(swissInfo);
+      logger.debug('Swiss coordinates detection results', { swissInfo });
+      
+      // Auto-enable Swiss height transformation if LV95 coordinates are stored
+      if (swissInfo.hasLv95Stored) {
+        setSwissHeightSettings({
+          enabled: true,
+          transformationMethod: 'api',
+          cacheResults: true
+        });
       }
     }
   }, [featureCollection, sourceType, selectedAttribute]);
   
   // Handle tab change
   const handleTabChange = (value: string) => {
-    setSelectedTab(value);
+    setActiveTab(value);
     setSourceType(value as 'z_coord' | 'attribute' | 'none');
     
-    if (value === 'attribute' && numericAttributes.length > 0 && !selectedAttribute) {
-      setSelectedAttribute(numericAttributes[0].name);
+    if (value === 'attribute' && numericAttributesInfo.attributes.length > 0 && !selectedAttribute) {
+      setSelectedAttribute(numericAttributesInfo.attributes[0].name);
     }
   };
   
@@ -542,109 +740,130 @@ export function HeightConfigurationDialog({
     setSavePreference(!!checked);
   };
   
+  // Handle Swiss height transformation settings change
+  const handleSwissHeightSettingsChange = (settings: HeightSource['swissHeightTransformation']) => {
+    setSwissHeightSettings(settings);
+  };
+  
   // Handle apply button click
   const handleApply = async () => {
-    setIsLoading(true);
+    setShowProgress(true);
     
     try {
-      // Create the height source configuration
-      const heightSource: HeightSource = {
-        mode: 'simple',
-        type: sourceType,
-        attributeName: sourceType === 'attribute' ? selectedAttribute : undefined,
-        interpretationMode: sourceType === 'attribute' ? interpretationMode : undefined,
+      // Gather the configuration based on current state
+      let heightSource: HeightSource = {
+        mode: configMode,
         applyToAllLayers,
         savePreference,
+        swissHeightTransformation: swissHeightSettings
       };
       
-      // Save preference if requested
-      if (savePreference) {
-        setHeightSourcePreference({
-          type: sourceType,
-          attributeName: sourceType === 'attribute' ? selectedAttribute : undefined,
-          interpretationMode: sourceType === 'attribute' ? interpretationMode : undefined
-        });
-      }
-      
-      // Always notify parent about height source selection, even if no batch processing needed
-      onHeightSourceSelect(heightSource);
-
-      // Skip batch processing for 'none' height source type
-      if (sourceType === 'none') {
-        onOpenChange(false);
-        return;
-      }
-      
-      // Check if there are features to process
-      if (!featureCollection.features || featureCollection.features.length === 0) {
-        logger.warn('No features available to process', { layerId });
-        // Show a brief message and close the dialog
-        setIsLoading(false);
-        onOpenChange(false);
-        return;
-      }
-      
-      // Initialize a batch for processing
-      const batchId = await batchService.initializeBatch(
-        layerId,
-        sourceType,
-        sourceType === 'attribute' ? selectedAttribute : undefined
-      );
-      
-      if (batchId === 'NO_FEATURES') {
-        // Special case: No features found in the database
-        logger.warn('No features found in database for layer', { layerId });
-        onOpenChange(false);
-        return;
-      } else if (batchId) {
-        setActiveBatchId(batchId);
+      if (configMode === 'simple') {
+        heightSource.type = sourceType;
         
-        // Start batch processing
-        const started = await batchService.startBatchProcessing(
-          batchId,
-          featureCollection,
-          { chunkSize: 50 }
+        if (sourceType === 'attribute') {
+          heightSource.attributeName = selectedAttribute;
+          heightSource.interpretationMode = interpretationMode;
+        }
+      } else {
+        heightSource.advanced = advancedConfig;
+      }
+      
+      // Save as preference if requested
+      if (savePreference) {
+        const preferenceSource = {
+          type: sourceType as 'z_coord' | 'attribute' | 'none',
+          attributeName: sourceType === 'attribute' ? selectedAttribute : undefined,
+          interpretationMode: sourceType === 'attribute' ? interpretationMode : undefined,
+          mode: configMode as 'simple' | 'advanced',
+          advanced: advancedConfig
+        };
+        
+        setHeightSourcePreference(preferenceSource);
+        logger.info('Saved height source preference', { preferenceSource });
+      }
+      
+      // Apply the height source (will handle batch processing if needed)
+      onHeightSourceSelect(heightSource);
+      
+      // Initialize batch if needed (for z_coord or attribute types)
+      if (configMode === 'simple' && sourceType !== 'none') {
+        if (!featureCollection || !featureCollection.features || featureCollection.features.length === 0) {
+          logger.warn('No features available to process', { layerId });
+          // Show a brief message and close the dialog
+          setShowProgress(false);
+          onOpenChange(false);
+          return;
+        }
+        
+        const batchId = await batchService.initializeBatch(
+          layerId,
+          sourceType,
+          sourceType === 'attribute' ? selectedAttribute : undefined
         );
         
-        if (started) {
-          setShowProgress(true);
+        if (batchId === 'NO_FEATURES') {
+          logger.warn('No features found for transformation', { layerId });
+          onOpenChange(false);
+          return;
+        } else if (batchId) {
+          setBatchId(batchId);
+          
+          // Start batch processing
+          const success = await batchService.startBatchProcessing(
+            batchId,
+            featureCollection,
+            {
+              chunkSize: 50,
+              // Pass Swiss transformation options
+              swissTransformation: swissHeightSettings?.enabled ? {
+                method: swissHeightSettings.transformationMethod,
+                cache: swissHeightSettings.cacheResults
+              } : undefined
+            }
+          );
+          
+          if (success) {
+            setShowProgress(true);
+          } else {
+            logger.error('Failed to start batch processing', { batchId, layerId });
+            setBatchId(null);
+            onOpenChange(false);
+          }
         } else {
-          logger.error('Failed to start batch processing', { batchId, layerId });
-          setActiveBatchId(null);
+          logger.warn('No batch ID returned', { layerId });
           onOpenChange(false);
         }
       } else {
-        logger.error('Failed to initialize batch', { layerId });
+        // For 'none' type, just close the dialog without processing
         onOpenChange(false);
       }
     } catch (error) {
       logger.error('Error applying height source', error);
       onOpenChange(false);
-    } finally {
-      setIsLoading(false);
     }
   };
   
   const handleProgressComplete = () => {
     setShowProgress(false);
-    setActiveBatchId(null);
+    setBatchId(null);
     onOpenChange(false);
   };
   
   const handleProgressCancel = () => {
     setShowProgress(false);
     // The batch has already been cancelled in the progress component
-    setActiveBatchId(null);
+    setBatchId(null);
   };
   
   // Content rendered when progress is showing
   const renderProgressContent = () => {
-    if (!activeBatchId) return null;
+    if (!batchId) return null;
     
     return (
       <div className="flex justify-center items-center p-4">
         <HeightTransformProgress
-          batchId={activeBatchId}
+          batchId={batchId}
           layerName={layerName}
           onComplete={handleProgressComplete}
           onCancel={handleProgressCancel}
@@ -690,12 +909,12 @@ export function HeightConfigurationDialog({
         
         {configMode === 'simple' ? (
           /* Simple mode configuration */
-          <Tabs value={selectedTab} onValueChange={handleTabChange} className="w-full">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
             <TabsList className="grid grid-cols-3 mb-4">
-              <TabsTrigger value="z_coord" disabled={!zCoordinateInfo.hasZ}>
+              <TabsTrigger value="z_coord" disabled={!zCoordinatesInfo.hasZ}>
                 Z Coordinates
               </TabsTrigger>
-              <TabsTrigger value="attribute" disabled={numericAttributes.length === 0}>
+              <TabsTrigger value="attribute" disabled={numericAttributesInfo.attributes.length === 0}>
                 Attribute
               </TabsTrigger>
               <TabsTrigger value="none">
@@ -707,16 +926,21 @@ export function HeightConfigurationDialog({
               <div className="text-sm">
                 Use Z coordinates from the geometry for height values.
                 
-                {!zCoordinateInfo.hasZ && (
+                {!zCoordinatesInfo.hasZ && (
                   <div className="text-amber-600 mt-2 flex items-center">
                     <Info className="h-4 w-4 mr-1" />
                     No valid Z coordinates detected in this layer.
                   </div>
                 )}
                 
-                {zCoordinateInfo.hasZ && (
+                {zCoordinatesInfo.hasZ && (
                   <div className="text-green-600 mt-2">
                     Z coordinates detected and will be used for heights.
+                    {swissCoordinatesInfo.hasLv95Stored && (
+                      <p className="text-xs mt-1">
+                        Source: LV95 heights stored during import
+                      </p>
+                    )}
                   </div>
                 )}
               </div>
@@ -749,7 +973,7 @@ export function HeightConfigurationDialog({
                       <SelectValue placeholder="Select attribute" />
                     </SelectTrigger>
                     <SelectContent>
-                      {numericAttributes.map(attr => (
+                      {numericAttributesInfo.attributes.map(attr => (
                         <SelectItem key={attr.name} value={attr.name}>
                           {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
                         </SelectItem>
@@ -819,7 +1043,7 @@ export function HeightConfigurationDialog({
           </Tabs>
         ) : (
           /* Advanced mode configuration */
-          <Tabs value={advancedTab} onValueChange={setAdvancedTab} className="w-full">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="grid grid-cols-3 mb-4">
               <TabsTrigger value="base">
                 Base Elevation
@@ -875,16 +1099,21 @@ export function HeightConfigurationDialog({
                     <RadioGroupItem 
                       value="z_coord" 
                       id="base-z-coord" 
-                      disabled={!zCoordinateInfo.hasZ}
+                      disabled={!zCoordinatesInfo.hasZ}
                     />
                     <Label htmlFor="base-z-coord" className="font-normal">
                       Z Coordinates
                       <p className="text-xs text-muted-foreground">
                         Use Z values from geometry coordinates
                       </p>
-                      {!zCoordinateInfo.hasZ && (
+                      {!zCoordinatesInfo.hasZ && (
                         <p className="text-xs text-amber-600">
                           No Z coordinates detected in this layer
+                        </p>
+                      )}
+                      {zCoordinatesInfo.hasZ && swissCoordinatesInfo.hasLv95Stored && (
+                        <p className="text-xs text-green-600">
+                          Z coordinates available from Swiss LV95 stored values
                         </p>
                       )}
                     </Label>
@@ -894,7 +1123,7 @@ export function HeightConfigurationDialog({
                     <RadioGroupItem 
                       value="attribute" 
                       id="base-attribute" 
-                      disabled={numericAttributes.length === 0}
+                      disabled={numericAttributesInfo.attributes.length === 0}
                     />
                     <Label htmlFor="base-attribute" className="font-normal">
                       Attribute
@@ -953,7 +1182,7 @@ export function HeightConfigurationDialog({
                       <SelectValue placeholder="Select attribute" />
                     </SelectTrigger>
                     <SelectContent>
-                      {numericAttributes.map(attr => (
+                      {numericAttributesInfo.attributes.map(attr => (
                         <SelectItem key={attr.name} value={attr.name}>
                           {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
                         </SelectItem>
@@ -1047,7 +1276,7 @@ export function HeightConfigurationDialog({
                     <RadioGroupItem 
                       value="attribute" 
                       id="height-attribute" 
-                      disabled={numericAttributes.length === 0}
+                      disabled={numericAttributesInfo.attributes.length === 0}
                     />
                     <Label htmlFor="height-attribute" className="font-normal">
                       Attribute
@@ -1116,7 +1345,7 @@ export function HeightConfigurationDialog({
                       <SelectValue placeholder="Select attribute" />
                     </SelectTrigger>
                     <SelectContent>
-                      {numericAttributes.map(attr => (
+                      {numericAttributesInfo.attributes.map(attr => (
                         <SelectItem key={attr.name} value={attr.name}>
                           {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
                         </SelectItem>
@@ -1328,33 +1557,37 @@ export function HeightConfigurationDialog({
           </Tabs>
         )}
         
-        <div className="space-y-2 mt-6">
+        {/* Swiss Height Transformation Settings */}
+        {swissCoordinatesInfo.isSwiss && (
+          <SwissHeightTransformationSettings
+            showSwissOptions={swissCoordinatesInfo.isSwiss}
+            settings={swissHeightSettings}
+            onSettingsChange={handleSwissHeightSettingsChange}
+          />
+        )}
+        
+        {/* Common Options */}
+        <div className="border-t mt-6 pt-6 space-y-4">
           <div className="flex items-center space-x-2">
             <Checkbox 
               id="apply-all" 
-              checked={applyToAllLayers}
-              onCheckedChange={handleApplyToAllLayersChange}
+              checked={applyToAllLayers} 
+              onCheckedChange={handleApplyToAllLayersChange} 
             />
-            <label
-              htmlFor="apply-all"
-              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-            >
+            <Label htmlFor="apply-all" className="font-normal">
               Apply to all compatible layers
-            </label>
+            </Label>
           </div>
           
           <div className="flex items-center space-x-2">
             <Checkbox 
               id="save-preference" 
-              checked={savePreference}
-              onCheckedChange={handleSavePreferenceChange}
+              checked={savePreference} 
+              onCheckedChange={handleSavePreferenceChange} 
             />
-            <label
-              htmlFor="save-preference"
-              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-            >
-              Save as preference for future layers
-            </label>
+            <Label htmlFor="save-preference" className="font-normal">
+              Save as default for future layers
+            </Label>
           </div>
         </div>
         
@@ -1362,8 +1595,8 @@ export function HeightConfigurationDialog({
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleApply} disabled={isLoading}>
-            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          <Button onClick={handleApply} disabled={showProgress}>
+            {showProgress && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Apply
           </Button>
         </DialogFooter>

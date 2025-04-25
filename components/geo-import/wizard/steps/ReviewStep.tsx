@@ -73,13 +73,60 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       const payload = {
         projectFileId: fileInfo?.id,
         collectionName: fileInfo?.name || 'Imported Features',
-        features: features.map((f: any) => ({
-          ...f,
-          // Only add height if Z coordinates were detected
-          ...(heightSource.type === 'z' ? {
-            height: f.geometry?.coordinates?.[2]
-          } : {})
-        })),
+        features: features.map((f: any) => {
+          // Create a modified feature with additional metadata
+          const modifiedFeature = { ...f };
+          
+          // Add extra height information for z-coordinate features
+          if (heightSource.type === 'z') {
+            // Extract Z value based on geometry type
+            let zValue = null;
+            const geom = f.geometry;
+            
+            if (geom && geom.coordinates) {
+              // For Point geometries
+              if (geom.type === 'Point' && geom.coordinates.length >= 3) {
+                zValue = geom.coordinates[2];
+              }
+              // For LineString geometries - use first point
+              else if (geom.type === 'LineString' && geom.coordinates[0] && geom.coordinates[0].length >= 3) {
+                zValue = geom.coordinates[0][2];
+              }
+              // For Polygon geometries - use first point of outer ring
+              else if (geom.type === 'Polygon' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0].length >= 3) {
+                zValue = geom.coordinates[0][0][2];
+              }
+              // For MultiPoint geometries - use first point
+              else if (geom.type === 'MultiPoint' && geom.coordinates[0] && geom.coordinates[0].length >= 3) {
+                zValue = geom.coordinates[0][2];
+              }
+              // For MultiLineString geometries - use first point of first line
+              else if (geom.type === 'MultiLineString' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0].length >= 3) {
+                zValue = geom.coordinates[0][0][2];
+              }
+              // For MultiPolygon geometries - use first point of first polygon
+              else if (geom.type === 'MultiPolygon' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0][0] && geom.coordinates[0][0][0].length >= 3) {
+                zValue = geom.coordinates[0][0][0][2];
+              }
+            }
+            
+            // Add the height property if we found a Z value
+            if (zValue !== null && !isNaN(zValue)) {
+              modifiedFeature.properties = {
+                ...(modifiedFeature.properties || {}),
+                height: zValue
+              };
+              
+              logManager.debug(LOG_SOURCE, `Added z-height ${zValue} for feature ${f.id} (${f.geometry?.type})`, {
+                featureId: f.id,
+                geometryType: f.geometry?.type,
+                zValue
+              });
+            }
+          }
+          
+          return modifiedFeature;
+        }),
         sourceSrid: datasetForImport?.metadata?.srid || 2056,
         targetSrid,
         heightAttributeKey
@@ -112,7 +159,8 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
               geometry: { 
                 type: payload.features[0].geometry.type,
                 coordinates: JSON.stringify(payload.features[0].geometry.coordinates).substring(0, 100) + '...' 
-              }
+              },
+              properties: payload.features[0].properties
             }] 
           : []
       });

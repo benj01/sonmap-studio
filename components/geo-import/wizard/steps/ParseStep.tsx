@@ -26,9 +26,10 @@ function detectZCoordinates(features: any[]) {
   let zMin = Infinity;
   let zMax = -Infinity;
   let totalCoords = 0;
+  let geometryTypes = new Set<string>();
   
   // Function to process coordinates recursively
-  const processCoords = (coords: any[]) => {
+  const processCoords = (coords: any[], geomType: string) => {
     if (!Array.isArray(coords)) return;
     
     if (coords.length >= 3 && typeof coords[2] === 'number') {
@@ -39,19 +40,34 @@ function detectZCoordinates(features: any[]) {
         zSum += z;
         zMin = Math.min(zMin, z);
         zMax = Math.max(zMax, z);
+        
+        logManager.debug(SOURCE, `Found Z coordinate: ${z} in ${geomType}`, { z, geomType });
       }
       totalCoords++;
     } else if (Array.isArray(coords[0])) {
       // This is a nested array of coordinates
-      coords.forEach(c => processCoords(c));
+      coords.forEach(c => processCoords(c, geomType));
     }
   };
   
   // Process all features
   features.forEach(feature => {
-    if (feature.geometry && feature.geometry.coordinates) {
-      processCoords(feature.geometry.coordinates);
+    if (!feature.geometry || !feature.geometry.coordinates) return;
+    
+    const geomType = feature.geometry.type;
+    geometryTypes.add(geomType);
+    
+    try {
+      processCoords(feature.geometry.coordinates, geomType);
+    } catch (error) {
+      logManager.warn(SOURCE, `Error processing coordinates for geometry type ${geomType}`, { error });
     }
+  });
+  
+  logManager.info(SOURCE, 'Z coordinate detection summary', { 
+    zCount, totalCoords, zMin, zMax, 
+    geometryTypes: Array.from(geometryTypes),
+    percentWithZ: totalCoords > 0 ? Math.round((zCount / totalCoords) * 100) : 0
   });
   
   // Analyze results
@@ -112,6 +128,14 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           setParsing(false);
           return;
         }
+        
+        logManager.info(SOURCE, 'Processing file', { 
+          fileName: fileInfo.name,
+          fileId: fileInfo.id,
+          storagePath: mainFileRecord.storage_path,
+          fileExtension: fileInfo.name.split('.').pop()?.toLowerCase()
+        });
+        
         // 2. Download main file using storage_path
         const { data, error: downloadError } = await supabase.storage
           .from('project-files')
@@ -122,6 +146,16 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           return;
         }
         const arrayBuffer = await data.arrayBuffer();
+        
+        // Log file size and binary header data for debugging
+        const fileSize = arrayBuffer.byteLength;
+        const headerBytes = new Uint8Array(arrayBuffer.slice(0, Math.min(50, fileSize)));
+        logManager.info(SOURCE, 'File binary information', {
+          fileName: fileInfo.name,
+          fileSize,
+          headerHex: Array.from(headerBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')
+        });
+        
         // 3. Download companion files using their storage_path
         let companionBuffers: Record<string, ArrayBuffer> = {};
         if (fileInfo.companions && fileInfo.companions.length > 0) {
@@ -143,28 +177,159 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
         }
         // Use parser factory to parse the file
         const parser = ParserFactory.createParser(fileInfo.name);
+        
+        // Enable more verbose debugging for parsing
+        logManager.info(SOURCE, 'Using parser', { 
+          parserType: parser.constructor.name,
+          fileExtension: fileInfo.name.split('.').pop()?.toLowerCase()
+        });
+        
         const fullDataset = await parser.parse(arrayBuffer, companionBuffers, { 
           maxFeatures: 10000,
           transformCoordinates: false
         });
+        
+        // Log raw dataset details including first feature
+        if (fullDataset.features && fullDataset.features.length > 0) {
+          const firstFeature = fullDataset.features[0];
+          logManager.info(SOURCE, 'First parsed feature', {
+            hasGeometry: !!firstFeature.geometry,
+            geometryType: firstFeature.geometry?.type,
+            coordinates: firstFeature.geometry && 'coordinates' in firstFeature.geometry ? 
+              JSON.stringify(firstFeature.geometry.coordinates).substring(0, 500) : 'No coordinates',
+            properties: firstFeature.properties ? 
+              JSON.stringify(firstFeature.properties).substring(0, 500) : 'No properties'
+          });
+        }
+
+        // Add a special-case path for shapefiles specifically to check if coordinates are in array form
+        // Some shapefile parsers might return Z coordinates in a different format
+        if (fileInfo.name.toLowerCase().endsWith('.shp')) {
+          logManager.info(SOURCE, 'Special shapefile processing', {
+            featureCount: fullDataset.features?.length || 0,
+            hasFeatures: !!fullDataset.features && fullDataset.features.length > 0
+          });
+          
+          // Force deep inspection of the first few features
+          if (fullDataset.features && fullDataset.features.length > 0) {
+            for (let i = 0; i < Math.min(5, fullDataset.features.length); i++) {
+              const feature = fullDataset.features[i];
+              // Log the entire feature structure for debugging
+              logManager.info(SOURCE, `Full shapefile feature ${i} data`, {
+                feature: JSON.stringify(feature),
+                featureType: feature.geometry?.type,
+                coordsType: feature.geometry && 'coordinates' in feature.geometry ? 
+                  typeof feature.geometry.coordinates : 'undefined'
+              });
+              
+              // Check if Z values might be stored in feature properties
+              const propKeys = Object.keys(feature.properties || {});
+              const possibleZProps = propKeys.filter(k => 
+                /^(z|height|elevation|altitude|h|hoehe|z_value|z_coord)$/i.test(k)
+              );
+              
+              if (possibleZProps.length > 0) {
+                logManager.info(SOURCE, `Feature ${i} has possible Z properties`, {
+                  zProperties: possibleZProps.map(k => ({
+                    key: k,
+                    value: feature.properties?.[k]
+                  }))
+                });
+              }
+            }
+          }
+        }
 
         // Detect Z coordinates
         const zDetection = detectZCoordinates(fullDataset.features || []);
         logManager.info(SOURCE, 'Z coordinate detection result', zDetection);
-        
-        // Set height source based on detection
-        if (zDetection.hasZ) {
-          setHeightSource({
-            type: 'z',
-            status: 'detected',
-            message: zDetection.message
-          });
+
+        // Now that we have the original zDetection, run enhanced detection if needed
+        if (fileInfo.name.toLowerCase().endsWith('.shp') && !zDetection.hasZ) {
+          try {
+            // Some formats might store Z in properties or special structure
+            const enhancedFeatures = fullDataset.features.map(feature => {
+              // Clone the feature to avoid modifying original
+              const enhancedFeature = { ...feature };
+              
+              // Check for Z value in properties that might indicate height
+              const props = feature.properties || {};
+              const zProps = ['z', 'height', 'elevation', 'altitude', 'hoehe', 'h'];
+              let zValue = null;
+              
+              // Find first property that might contain Z value
+              for (const prop of zProps) {
+                if (prop in props && typeof props[prop] === 'number') {
+                  zValue = props[prop];
+                  logManager.debug(SOURCE, `Found Z value in property`, { 
+                    property: prop, 
+                    value: zValue,
+                    featureId: feature.id
+                  });
+                  break;
+                }
+              }
+              
+              // If Z value found in properties but not in coords, add it
+              if (zValue !== null && enhancedFeature.geometry && 'coordinates' in enhancedFeature.geometry) {
+                const coords = enhancedFeature.geometry.coordinates;
+                
+                // Handle different geometry types
+                if (enhancedFeature.geometry.type === 'Point' && Array.isArray(coords) && coords.length === 2) {
+                  // Add Z to Point coordinates - fix type error by creating a proper Position array
+                  // @ts-ignore - We know we're dealing with a Point geometry with coordinates
+                  enhancedFeature.geometry.coordinates = [coords[0], coords[1], zValue];
+                  logManager.debug(SOURCE, 'Added Z coordinate to Point', { 
+                    original: coords, 
+                    enhanced: enhancedFeature.geometry.coordinates 
+                  });
+                }
+                // Could add more cases for other geometry types
+              }
+              
+              return enhancedFeature;
+            });
+            
+            // Run Z detection on enhanced features, but only update if more Z values found
+            const enhancedZDetection = detectZCoordinates(enhancedFeatures);
+            if (enhancedZDetection.hasZ) {
+              logManager.info(SOURCE, 'Enhanced Z detection found Z values', enhancedZDetection);
+              
+              // Update the dataset with enhanced features
+              fullDataset.features = enhancedFeatures;
+              
+              // Replace original detection result
+              const updatedZDetection = enhancedZDetection;
+              logManager.info(SOURCE, 'Updated Z detection result', updatedZDetection);
+              
+              // Set height source based on the enhanced detection
+              if (updatedZDetection.hasZ) {
+                setHeightSource({
+                  type: 'z',
+                  status: 'detected',
+                  message: updatedZDetection.message
+                });
+              }
+            }
+          } catch (err) {
+            logManager.warn(SOURCE, 'Enhanced Z detection failed', { error: err });
+            // Continue with original detection, don't fail the process
+          }
         } else {
-          setHeightSource({
-            type: 'none',
-            status: 'not_detected',
-            message: zDetection.message
-          });
+          // Set height source based on detection
+          if (zDetection.hasZ) {
+            setHeightSource({
+              type: 'z',
+              status: 'detected',
+              message: zDetection.message
+            });
+          } else {
+            setHeightSource({
+              type: 'none',
+              status: 'not_detected',
+              message: zDetection.message
+            });
+          }
         }
 
         // IMPORTANT: Store the original dataset for import (with untransformed coordinates)

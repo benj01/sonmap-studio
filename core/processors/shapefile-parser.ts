@@ -1,7 +1,7 @@
 import { BaseGeoDataParser, ParserOptions, ParserProgressEvent, InvalidFileFormatError } from './base-parser';
 import { FullDataset, GeoFeature } from '@/types/geo-import';
 import { read } from 'shapefile';
-import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position } from 'geojson';
+import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, GeometryCollection } from 'geojson';
 import proj4 from 'proj4';
 import { createLogger } from '@/utils/logger';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
@@ -15,6 +15,55 @@ const logger = createLogger(SOURCE);
 const DEFAULT_SRID = 2056; // Swiss LV95
 const logManager = LogManager.getInstance();
 logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
+
+// Shape Type Definitions (based on shapefile spec)
+const SHAPE_TYPES = {
+  NULL_SHAPE: 0,
+  POINT: 1,
+  POLYLINE: 3,
+  POLYGON: 5,
+  MULTIPOINT: 8,
+  POINT_Z: 11,
+  POLYLINE_Z: 13,
+  POLYGON_Z: 15,
+  MULTIPOINT_Z: 18,
+  POINT_M: 21,
+  POLYLINE_M: 23,
+  POLYGON_M: 25,
+  MULTIPOINT_M: 28,
+  MULTIPATCH: 31
+};
+
+// Reverse mapping for logging
+const SHAPE_TYPE_NAMES: Record<number, string> = {
+  0: 'NULL_SHAPE',
+  1: 'POINT',
+  3: 'POLYLINE',
+  5: 'POLYGON',
+  8: 'MULTIPOINT',
+  11: 'POINT_Z',
+  13: 'POLYLINE_Z',
+  15: 'POLYGON_Z',
+  18: 'MULTIPOINT_Z',
+  21: 'POINT_M',
+  23: 'POLYLINE_M',
+  25: 'POLYGON_M',
+  28: 'MULTIPOINT_M',
+  31: 'MULTIPATCH'
+};
+
+// Define a proper interface for the shapefile reader result
+interface ShapefileReader {
+  // Add proper typings based on the actual shape of the data
+  type: string;
+  features: Array<{
+    type: string;
+    geometry: Geometry;
+    properties: Record<string, any>;
+    [key: string]: any;
+  }>;
+  [key: string]: any;
+}
 
 /**
  * Gets coordinates from a GeoJSON geometry
@@ -152,6 +201,12 @@ interface ShapefileMetadata {
 export class ShapefileParser extends BaseGeoDataParser {
   private srid: number | undefined = undefined;
   private features: GeoFeature[] = [];
+  private supportedExtension = 'shp';
+
+  constructor() {
+    // Call the parent constructor without arguments
+    super();
+  }
 
   /**
    * Parse a Shapefile and its companion files
@@ -219,12 +274,84 @@ export class ShapefileParser extends BaseGeoDataParser {
 
       // Parse shapefile
       logger.info('Reading shapefile data');
-      const result = await read(mainFile, companionFiles['.dbf']);
-      const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
+      const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
+      const geojson = {
+        type: 'FeatureCollection',
+        features: result.features || []
+      } as FeatureCollection<Geometry, GeoJsonProperties>;
 
       logger.info('Shapefile parsed successfully', {
         featureCount: geojson.features.length
       });
+      
+      // Check for PointZ shapes and extract Z values if needed
+      // Get the shape type (bytes 32-35, little-endian)
+      const view = new DataView(mainFile);
+      const shapeType = view.getInt32(32, true);
+      
+      logManager.info(SOURCE, `Detected shapefile type from header`, {
+        shapeType,
+        typeDescription: SHAPE_TYPE_NAMES[shapeType] || 'UNKNOWN',
+        isPointZ: shapeType === SHAPE_TYPES.POINT_Z,
+        headerBytes: Array.from(new Uint8Array(mainFile.slice(0, 40)))
+          .map(b => b.toString(16).padStart(2, '0')).join(' ')
+      });
+      
+      // For PointZ types, we need to ensure Z values are preserved
+      if (shapeType === SHAPE_TYPES.POINT_Z) {
+        logManager.info(SOURCE, `Processing PointZ shapefile type`, {
+          totalFeatures: geojson.features.length
+        });
+        
+        try {
+          // Skip 100 bytes of the header
+          let offset = 100;
+          
+          for (let i = 0; i < Math.min(geojson.features.length, 1000); i++) {
+            try {
+              // Skip record header (8 bytes)
+              offset += 8;
+              
+              // Skip shape type (4 bytes)
+              offset += 4;
+              
+              // Read X, Y (8 bytes each)
+              const x = view.getFloat64(offset, true);
+              const y = view.getFloat64(offset + 8, true);
+              
+              // Read Z (8 bytes) - this is what's missing from the library parsing
+              const z = view.getFloat64(offset + 16, true);
+              
+              logManager.debug(SOURCE, `Extracted Z value for feature ${i}`, { 
+                x, y, z,
+                // Safe check before accessing coordinates
+                originalCoords: geojson.features[i].geometry.type === 'Point' ? 
+                  (geojson.features[i].geometry as Point).coordinates : 
+                  'non-point geometry'
+              });
+              
+              // Update the feature with Z coordinate
+              if (geojson.features[i].geometry.type === 'Point') {
+                const pointGeom = geojson.features[i].geometry as Point;
+                pointGeom.coordinates = [x, y, z];
+              }
+              
+              // Move to next record
+              offset += 24; // 8 for X, 8 for Y, 8 for Z
+              
+              // Skip M value if present (8 bytes) - depends on shapefile format
+              // Some PointZ have M values too
+              if (offset + 8 <= mainFile.byteLength) {
+                offset += 8;
+              }
+            } catch (e) {
+              logManager.warn(SOURCE, `Error reading Z value for feature ${i}`, { error: e });
+            }
+          }
+        } catch (e) {
+          logManager.warn(SOURCE, `Error processing Z values from PointZ shapefile`, { error: e });
+        }
+      }
 
       // CRITICAL DEBUG LOG - Display sample coordinates from first feature
       if (geojson.features.length > 0) {
@@ -364,9 +491,9 @@ export class ShapefileParser extends BaseGeoDataParser {
         throw new Error('Missing required .dbf file');
       }
 
-      const result = await read(mainFile, companionFiles['.dbf']);
-      const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
-      return geojson.features.length > 0 && !!geojson.features[0].geometry;
+      // Revert to original method call that worked with proper type casting
+      const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
+      return result.features.length > 0 && !!result.features[0].geometry;
     } catch (error) {
       logger.warn('Validation failed', error);
       return false;
@@ -385,17 +512,17 @@ export class ShapefileParser extends BaseGeoDataParser {
         throw new Error('Missing required .dbf file');
       }
 
-      const result = await read(mainFile, companionFiles['.dbf']);
-      const geojson = result as unknown as FeatureCollection<Geometry, GeoJsonProperties>;
-      if (!geojson.features.length) {
+      // Revert to original method call that worked with proper type casting
+      const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
+      if (!result.features.length) {
         throw new Error('Empty shapefile');
       }
 
       let bounds: [number, number, number, number] | undefined;
       const geometryTypes = new Set<string>();
-      const properties = Object.keys(geojson.features[0].properties || {});
+      const properties = Object.keys(result.features[0].properties || {});
 
-      for (const feature of geojson.features) {
+      for (const feature of result.features) {
         if (feature.geometry) {
           const coords = getCoordinates(feature.geometry);
           bounds = updateBounds(bounds, coords);
@@ -410,7 +537,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       }
 
       return {
-        featureCount: geojson.features.length,
+        featureCount: result.features.length,
         bounds,
         geometryTypes: Array.from(geometryTypes),
         properties,

@@ -58,8 +58,8 @@ DECLARE
   v_current_batch INTEGER;
 
   -- Logging and Debugging Variables
-  v_feature_errors JSONB := '[]'::JSONB;
-  v_notices JSONB := '[]'::JSONB;
+  v_feature_errors JSONB := '[]'::jsonb;
+  v_notices JSONB := '[]'::jsonb;
   v_debug_info JSONB;
   v_start_time TIMESTAMPTZ;
 
@@ -175,12 +175,15 @@ BEGIN
             ELSIF GeometryType(v_validated_geometry) LIKE '%LINESTRING' THEN v_lhn95_height := ST_Z(ST_StartPoint(v_validated_geometry)); v_height_source := 'z_coord';
             ELSIF GeometryType(v_validated_geometry) LIKE '%POLYGON' THEN v_lhn95_height := ST_Z(ST_PointN(ST_ExteriorRing(v_validated_geometry), 1)); v_height_source := 'z_coord';
             END IF;
-          EXCEPTION WHEN OTHERS THEN RAISE WARNING 'Could not extract Z coordinate for feature index %: %', i, SQLERRM; v_lhn95_height := NULL;
+            RAISE LOG '[Feature %] Successfully extracted Z coordinate: %', i, v_lhn95_height;
+          EXCEPTION WHEN OTHERS THEN 
+            RAISE WARNING 'Could not extract Z coordinate for feature index %: %', i, SQLERRM; 
+            v_lhn95_height := NULL;
           END;
           IF v_lhn95_height IS NULL THEN v_height_source := NULL; END IF;
         END IF;
 
-        IF v_lhn95_height IS NULL AND p_height_attribute_key IS NOT NULL AND p_height_attribute_key <> '' THEN
+        IF v_lhn95_height IS NULL AND p_height_attribute_key IS NOT NULL AND p_height_attribute_key <> '' AND p_height_attribute_key <> '_none' THEN
           DECLARE
             attr_value_text TEXT;
             attr_value_float FLOAT;
@@ -199,6 +202,19 @@ BEGIN
             END IF;
           EXCEPTION WHEN OTHERS THEN
             RAISE WARNING '[Feature % Height] Error accessing attribute "%": %', i, p_height_attribute_key, SQLERRM;
+          END;
+        END IF;
+
+        -- Check for 'height' field in properties which might be added by client
+        IF v_lhn95_height IS NULL AND v_properties ? 'height' AND p_height_attribute_key = 'z' THEN
+          BEGIN
+            v_lhn95_height := (v_properties->>'height')::float;
+            IF v_lhn95_height IS NOT NULL THEN
+              v_height_source := 'properties:height';
+              RAISE LOG '[Feature % Height] Used explicit height property: %', i, v_lhn95_height;
+            END IF;
+          EXCEPTION WHEN OTHERS THEN
+            RAISE WARNING '[Feature % Height] Could not use height property: %', i, SQLERRM;
           END;
         END IF;
 
@@ -221,6 +237,7 @@ BEGIN
         END IF;
 
         -- 5. Transform Footprint to WGS84 2D (EPSG:4326)
+        -- Note: We use ST_Force2D because geometry_2d column is 2D, but we've already extracted Z value
         BEGIN
           v_geometry_2d := ST_Force2D(ST_Transform(v_validated_geometry, 4326));
         EXCEPTION WHEN OTHERS THEN
@@ -241,6 +258,7 @@ BEGIN
         IF p_source_srid = 4326 AND v_lhn95_height IS NOT NULL THEN
             v_base_elevation_ellipsoidal := v_lhn95_height;
             v_height_mode := 'absolute_ellipsoidal';
+            RAISE LOG '[Feature %] Setting WGS84 height directly: %', i, v_base_elevation_ellipsoidal;
         ELSIF p_source_srid = 2056 AND v_lhn95_height IS NOT NULL THEN
             -- Store original LV95 coordinates for client-side transformation
             v_properties := v_properties || jsonb_build_object(
@@ -249,14 +267,51 @@ BEGIN
               'lv95_height', v_lhn95_height
             );
             v_height_mode := 'lv95_stored';
+            RAISE LOG '[Feature %] Storing LV95 height in properties: %', i, v_lhn95_height;
         END IF;
+
+        -- Also store the original height in original_height_values for reference/debugging
+        DECLARE
+            v_original_height_values JSONB := '{}'::jsonb;
+        BEGIN
+            IF v_lhn95_height IS NOT NULL THEN
+                v_original_height_values := jsonb_build_object(
+                    'source', v_height_source,
+                    'value', v_lhn95_height,
+                    'datum', v_vertical_datum_source,
+                    'srid', p_source_srid
+                );
+            END IF;
+        END;
 
         -- After ST_Transform
         RAISE LOG '[Feature %] Geometry after ST_Transform (SRID: %): %', i, ST_SRID(v_geometry_2d), substring(ST_AsText(v_geometry_2d) from 1 for 200) || CASE WHEN length(ST_AsText(v_geometry_2d)) > 200 THEN '...' ELSE '' END;
 
         -- 7. Insert feature with calculated values
-        INSERT INTO public.geo_features ( layer_id, collection_id, properties, srid, geometry_2d, base_elevation_ellipsoidal, object_height, height_mode, height_source, vertical_datum_source )
-        VALUES ( v_layer_id, v_collection_id, v_properties, p_target_srid, v_geometry_2d, v_base_elevation_ellipsoidal, v_object_height, v_height_mode, v_height_source, v_vertical_datum_source );
+        INSERT INTO public.geo_features ( 
+            layer_id, 
+            collection_id, 
+            properties, 
+            srid, 
+            geometry_2d, 
+            base_elevation_ellipsoidal, 
+            object_height, 
+            height_mode, 
+            height_source, 
+            vertical_datum_source 
+        )
+        VALUES ( 
+            v_layer_id, 
+            v_collection_id, 
+            v_properties, 
+            p_target_srid, 
+            v_geometry_2d, 
+            v_base_elevation_ellipsoidal, 
+            v_object_height, 
+            v_height_mode, 
+            v_height_source, 
+            v_vertical_datum_source 
+        );
         v_imported_count := v_imported_count + 1;
 
         -- On successful transformation
