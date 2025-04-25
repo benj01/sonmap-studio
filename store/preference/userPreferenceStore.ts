@@ -23,8 +23,32 @@ const logger = {
  * Height source preference configuration
  */
 export interface HeightSourcePreference {
+  // Primary mode
+  mode?: 'simple' | 'advanced';
+  
+  // Simple mode fields (backward compatible)
   type: 'z_coord' | 'attribute' | 'none';
   attributeName?: string;
+  interpretationMode?: 'absolute' | 'relative' | 'extrusion';
+  
+  // Advanced mode
+  advanced?: {
+    baseElevation: {
+      source: 'z_coord' | 'attribute' | 'terrain';
+      attributeName?: string;
+      isAbsolute: boolean;
+    };
+    heightConfig: {
+      source: 'attribute' | 'calculated' | 'none';
+      attributeName?: string;
+      isRelative: boolean;
+    };
+    visualization: {
+      type: 'extrusion' | 'point_elevation' | 'line_elevation';
+      extrudedFaces?: boolean;
+      extrudedTop?: boolean;
+    };
+  };
 }
 
 /**

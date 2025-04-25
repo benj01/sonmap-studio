@@ -43,7 +43,29 @@ export interface LayerStore {
   updateLayerStatus: (layerId: string, status: Layer['setupStatus'], error?: string) => void;
   handleFileDeleted: (fileId: string) => void;
   updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => void;
-  updateLayerHeightSource: (layerId: string, heightSource: { type: 'z_coord' | 'attribute' | 'none'; attributeName?: string; }) => void;
+  updateLayerHeightSource: (layerId: string, heightSource: { 
+    mode: 'simple' | 'advanced'; 
+    type?: 'z_coord' | 'attribute' | 'none'; 
+    attributeName?: string; 
+    interpretationMode?: 'absolute' | 'relative' | 'extrusion';
+    advanced?: {
+      baseElevation: {
+        source: 'z_coord' | 'attribute' | 'terrain';
+        attributeName?: string;
+        isAbsolute: boolean;
+      };
+      heightConfig: {
+        source: 'attribute' | 'calculated' | 'none';
+        attributeName?: string;
+        isRelative: boolean;
+      };
+      visualization: {
+        type: 'extrusion' | 'point_elevation' | 'line_elevation';
+        extrudedFaces?: boolean;
+        extrudedTop?: boolean;
+      };
+    };
+  }) => void;
   setInitialLoadComplete: (complete: boolean) => void;
   setLayerGeoJsonData: (layerId: string, geojsonData: FeatureCollection | null) => void;
   reset: () => void;
@@ -396,7 +418,29 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
     });
   },
 
-  updateLayerHeightSource: (layerId: string, heightSource: { type: 'z_coord' | 'attribute' | 'none'; attributeName?: string; }) => {
+  updateLayerHeightSource: (layerId: string, heightSource: { 
+    mode: 'simple' | 'advanced'; 
+    type?: 'z_coord' | 'attribute' | 'none'; 
+    attributeName?: string; 
+    interpretationMode?: 'absolute' | 'relative' | 'extrusion';
+    advanced?: {
+      baseElevation: {
+        source: 'z_coord' | 'attribute' | 'terrain';
+        attributeName?: string;
+        isAbsolute: boolean;
+      };
+      heightConfig: {
+        source: 'attribute' | 'calculated' | 'none';
+        attributeName?: string;
+        isRelative: boolean;
+      };
+      visualization: {
+        type: 'extrusion' | 'point_elevation' | 'line_elevation';
+        extrudedFaces?: boolean;
+        extrudedTop?: boolean;
+      };
+    };
+  }) => {
     logger.debug('ACTION START: updateLayerHeightSource', { layerId, heightSource });
     set((state) => {
       const layer = state.layers.byId[layerId];
@@ -408,14 +452,41 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
       // Get current metadata or create new one
       const currentMetadata = state.layers.metadata[layerId] || { name: layerId, type: 'vector', properties: {} };
       
+      // Create new height configuration based on mode
+      let heightConfig: typeof currentMetadata.height = {
+        sourceType: 'none' // Default value to satisfy TypeScript
+      };
+      
+      if (heightSource.mode === 'simple') {
+        // Simple mode (backward compatible)
+        heightConfig = {
+          mode: 'simple',
+          sourceType: heightSource.type || 'none',
+          attributeName: heightSource.attributeName,
+          interpretationMode: heightSource.interpretationMode,
+          // Preserve existing transformation data if present
+          transformationStatus: currentMetadata.height?.transformationStatus,
+          transformationProgress: currentMetadata.height?.transformationProgress,
+          transformationError: currentMetadata.height?.transformationError
+        };
+      } else {
+        // Advanced mode
+        heightConfig = {
+          mode: 'advanced',
+          // Keep sourceType for backward compatibility
+          sourceType: currentMetadata.height?.sourceType || 'none',
+          advanced: heightSource.advanced,
+          // Preserve existing transformation data if present
+          transformationStatus: currentMetadata.height?.transformationStatus,
+          transformationProgress: currentMetadata.height?.transformationProgress,
+          transformationError: currentMetadata.height?.transformationError
+        };
+      }
+
       // Create new metadata object with the height source information
       const newMetadata: LayerMetadata = {
         ...currentMetadata,
-        height: {
-          ...currentMetadata.height,
-          sourceType: heightSource.type,
-          attributeName: heightSource.attributeName
-        }
+        height: heightConfig
       };
 
       // Create new layer object
@@ -426,8 +497,13 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
 
       logger.debug('ACTION END: updateLayerHeightSource', { 
         layerId,
-        heightSourceType: heightSource.type,
-        attributeName: heightSource.attributeName
+        mode: heightSource.mode,
+        simpleConfig: heightSource.mode === 'simple' ? {
+          sourceType: heightSource.type,
+          attributeName: heightSource.attributeName,
+          interpretationMode: heightSource.interpretationMode
+        } : null,
+        advancedConfig: heightSource.mode === 'advanced' ? heightSource.advanced : null
       });
 
       return {

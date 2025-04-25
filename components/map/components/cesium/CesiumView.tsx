@@ -50,21 +50,29 @@ function applyHeightToFeatures(
   heightConfig: {
     sourceType: 'z_coord' | 'attribute' | 'none';
     attributeName?: string;
+    interpretationMode?: 'absolute' | 'relative' | 'extrusion';
   }
 ): GeoJSON.FeatureCollection {
   if (!featureCollection || !featureCollection.features || !heightConfig) {
     return featureCollection;
   }
-
-  const { sourceType, attributeName } = heightConfig;
   
-  // No need to modify if no height source is specified
-  if (sourceType === 'none') {
-    return featureCollection;
-  }
+  const sourceType = heightConfig.sourceType;
+  const attributeName = heightConfig.attributeName;
+  const interpretationMode = heightConfig.interpretationMode || 'absolute';
   
-  // Create a deep copy to avoid mutating the original
-  const result = JSON.parse(JSON.stringify(featureCollection)) as GeoJSON.FeatureCollection;
+  // Create a copy of the feature collection to avoid modifying the original
+  const result = {
+    ...featureCollection,
+    features: [...featureCollection.features]
+  };
+  
+  logger.debug('Applying height to features', {
+    sourceType,
+    attributeName,
+    interpretationMode,
+    featureCount: result.features.length
+  });
   
   // Process each feature
   result.features = result.features.map((feature: GeoJSON.Feature) => {
@@ -83,53 +91,122 @@ function applyHeightToFeatures(
         return feature;
       }
       
-      // Apply the height value based on geometry type
-      if (feature.geometry) {
-        switch (feature.geometry.type) {
-          case 'Point':
-            if (Array.isArray(feature.geometry.coordinates) && feature.geometry.coordinates.length >= 2) {
-              (feature.geometry.coordinates as number[])[2] = heightValue;
-            }
-            break;
-            
-          case 'LineString':
-            if (Array.isArray(feature.geometry.coordinates)) {
-              feature.geometry.coordinates = feature.geometry.coordinates.map((coord: number[]) => {
-                if (coord.length >= 2) {
-                  return [...coord.slice(0, 2), heightValue];
-                }
-                return coord;
-              });
-            }
-            break;
-            
-          case 'Polygon':
-            if (Array.isArray(feature.geometry.coordinates)) {
-              feature.geometry.coordinates = feature.geometry.coordinates.map((ring: number[][]) => {
-                return ring.map((coord: number[]) => {
-                  if (coord.length >= 2) {
-                    return [...coord.slice(0, 2), heightValue];
-                  }
-                  return coord;
-                });
-              });
-            }
-            break;
-            
-          // Add similar handling for other geometry types as needed
-          case 'MultiPoint':
-          case 'MultiLineString':
-          case 'MultiPolygon':
-            // Implementation would be similar but with deeper nesting
-            break;
+      // Create a copy of the feature to avoid modifying the original
+      const featureCopy = { ...feature, geometry: { ...feature.geometry } };
+      
+      // Apply the height value based on interpretation mode
+      if (interpretationMode === 'absolute') {
+        // Absolute elevation: directly use the height value
+        applyAbsoluteHeight(featureCopy, heightValue);
+      } 
+      else if (interpretationMode === 'relative') {
+        // Relative to ground: will be handled by Cesium extrusion
+        // We'll store the relative height in a special property that Cesium will use
+        if (!featureCopy.properties) {
+          featureCopy.properties = {};
         }
+        featureCopy.properties['_relativeHeight'] = heightValue;
+        
+        // We'll still set the z-coordinate to 0 for proper initial positioning
+        applyAbsoluteHeight(featureCopy, 0);
       }
+      else if (interpretationMode === 'extrusion') {
+        // Building extrusion: will create extruded geometries in Cesium
+        // Store the extrusion height in a special property
+        if (!featureCopy.properties) {
+          featureCopy.properties = {};
+        }
+        featureCopy.properties['_extrusionHeight'] = heightValue;
+        
+        // Set the base z-coordinate to 0
+        applyAbsoluteHeight(featureCopy, 0);
+      }
+      
+      return featureCopy;
     }
     
     return feature;
   });
   
   return result;
+}
+
+/**
+ * Helper function to apply absolute height to a feature's geometry
+ */
+function applyAbsoluteHeight(feature: GeoJSON.Feature, heightValue: number): void {
+  if (!feature.geometry) return;
+  
+  switch (feature.geometry.type) {
+    case 'Point':
+      if (Array.isArray(feature.geometry.coordinates) && feature.geometry.coordinates.length >= 2) {
+        (feature.geometry.coordinates as number[])[2] = heightValue;
+      }
+      break;
+      
+    case 'LineString':
+      if (Array.isArray(feature.geometry.coordinates)) {
+        feature.geometry.coordinates = feature.geometry.coordinates.map((coord: number[]) => {
+          if (coord.length >= 2) {
+            return [...coord.slice(0, 2), heightValue];
+          }
+          return coord;
+        });
+      }
+      break;
+      
+    case 'Polygon':
+      if (Array.isArray(feature.geometry.coordinates)) {
+        feature.geometry.coordinates = feature.geometry.coordinates.map((ring: number[][]) => {
+          return ring.map((coord: number[]) => {
+            if (coord.length >= 2) {
+              return [...coord.slice(0, 2), heightValue];
+            }
+            return coord;
+          });
+        });
+      }
+      break;
+      
+    case 'MultiPoint':
+      if (Array.isArray(feature.geometry.coordinates)) {
+        feature.geometry.coordinates = feature.geometry.coordinates.map((coord: number[]) => {
+          if (coord.length >= 2) {
+            return [...coord.slice(0, 2), heightValue];
+          }
+          return coord;
+        });
+      }
+      break;
+      
+    case 'MultiLineString':
+      if (Array.isArray(feature.geometry.coordinates)) {
+        feature.geometry.coordinates = feature.geometry.coordinates.map((line: number[][]) => {
+          return line.map((coord: number[]) => {
+            if (coord.length >= 2) {
+              return [...coord.slice(0, 2), heightValue];
+            }
+            return coord;
+          });
+        });
+      }
+      break;
+      
+    case 'MultiPolygon':
+      if (Array.isArray(feature.geometry.coordinates)) {
+        feature.geometry.coordinates = feature.geometry.coordinates.map((polygon: number[][][]) => {
+          return polygon.map((ring: number[][]) => {
+            return ring.map((coord: number[]) => {
+              if (coord.length >= 2) {
+                return [...coord.slice(0, 2), heightValue];
+              }
+              return coord;
+            });
+          });
+        });
+      }
+      break;
+  }
 }
 
 export function CesiumView() {
@@ -449,9 +526,56 @@ export function CesiumView() {
 
               const ds = await Cesium.GeoJsonDataSource.load(geojsonData, {
                 clampToGround: !heightConfig || heightConfig.sourceType === 'none',
-                // If we have height data, don't clamp to ground to allow for elevation
+                stroke: Cesium.Color.fromCssColorString('#1E88E5'),
+                strokeWidth: 3,
+                fill: Cesium.Color.fromCssColorString('#1E88E5').withAlpha(0.5),
               });
               ds.name = layer.id;
+
+              // Apply special handling for height interpretation modes
+              if (heightConfig && heightConfig.sourceType === 'attribute' && 
+                  heightConfig.interpretationMode && heightConfig.interpretationMode !== 'absolute') {
+                
+                // Process each entity for relative heights or extrusions
+                const entities = ds.entities.values;
+                for (let i = 0; i < entities.length; i++) {
+                  const entity = entities[i];
+                  
+                  if (heightConfig.interpretationMode === 'relative' && 
+                      entity.properties && entity.properties['_relativeHeight']) {
+                    
+                    // Get the relative height value
+                    const relativeHeight = entity.properties['_relativeHeight'].getValue();
+                    
+                    // Set the height reference to be relative to ground
+                    if (entity.billboard) {
+                      entity.billboard.heightReference = new Cesium.ConstantProperty(Cesium.HeightReference.RELATIVE_TO_GROUND);
+                      entity.billboard.height = new Cesium.ConstantProperty(relativeHeight);
+                    }
+                    
+                    if (entity.point) {
+                      entity.point.heightReference = new Cesium.ConstantProperty(Cesium.HeightReference.RELATIVE_TO_GROUND);
+                    }
+                    
+                    if (entity.polyline) {
+                      entity.polyline.clampToGround = new Cesium.ConstantProperty(true);
+                    }
+                  }
+                  else if (heightConfig.interpretationMode === 'extrusion' && 
+                           entity.properties && entity.properties['_extrusionHeight']) {
+                    
+                    // Get the extrusion height value
+                    const extrusionHeight = entity.properties['_extrusionHeight'].getValue();
+                    
+                    // Apply extrusion to polygon entities
+                    if (entity.polygon) {
+                      entity.polygon.extrudedHeight = new Cesium.ConstantProperty(extrusionHeight);
+                      entity.polygon.perPositionHeight = new Cesium.ConstantProperty(false);
+                      entity.polygon.heightReference = new Cesium.ConstantProperty(Cesium.HeightReference.CLAMP_TO_GROUND);
+                    }
+                  }
+                }
+              }
 
               // Double-check viewer hasn't been destroyed during await
               if (!cesiumInstance || cesiumInstance.isDestroyed()) {

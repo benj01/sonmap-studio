@@ -26,7 +26,31 @@
 | Implement error handling for edge cases | ✅ | Special case handling for various scenarios |
 | Create progress UI component | ✅ | With status indicators and controls |
 
-### Phase 3: Advanced Features
+### Phase 3: Height Interpretation Modes
+| Task | Status | Notes |
+|------|--------|-------|
+| Add interpretation mode to data model | ✅ | Extended layer metadata and preference store |
+| Create UI for interpretation modes | ✅ | Radio group with descriptive labels |
+| Implement absolute elevation mode | ✅ | Direct Z-coordinate application |
+| Implement relative to ground mode | ✅ | Using Cesium's HeightReference system |
+| Implement building extrusion mode | ✅ | Using Cesium's polygon extrusion |
+| Update CesiumView rendering | ✅ | Special handling for each mode |
+| Add preference support for modes | ✅ | Save and apply preferred interpretation |
+| Improve height handling for MultiPolygons | ✅ | Complete support for complex geometries |
+
+### Phase 4: Advanced Height Configuration
+| Task | Status | Notes |
+|------|--------|-------|
+| Update data model for advanced mode | ✅ | Simple/Advanced mode toggle with backward compatibility |
+| Implement base/top elevation configuration | ✅ | Separate configuration for base and height/top |
+| Create advanced configuration UI | ✅ | Tabbed interface with base elevation, height/top, and visualization tabs |
+| Enhance height processing for mixed sources | 🔄 | Support Z-coordinate + attribute combinations |
+| Implement visualization options | ✅ | Point, line, and polygon-specific rendering options |
+| Add preset configurations | 🔄 | Common scenarios like buildings, terrain-relative features |
+| Update layer compatibility detection | 🔄 | Multi-attribute verification for complex configurations |
+| Extend preference system | ✅ | Save and load advanced configurations |
+
+### Phase 5: Advanced Features
 | Task | Status | Notes |
 |------|--------|-------|
 | Create batch history view | 🔲 | For viewing past transformations |
@@ -36,25 +60,46 @@
 | Implement request throttling | 🔲 | To prevent API rate limiting |
 | Add coordinate caching | 🔲 | For performance optimization |
 | Implement request batching | 🔲 | For efficient API usage |
-
-### Phase 4: 3D Visualization Extensions
-| Task | Status | Notes |
-|------|--------|-------|
-| Implement building extrusion support | 🔲 | For height + extrusion scenarios |
+| Create advanced extrusion options | 🔲 | For more complex building scenarios |
+| Add formula-based height calculations | 🔲 | Custom expressions for height values |
 | Add 3D Tiles integration | 🔲 | For complex 3D geometries |
-| Create 3D model transformation pipeline | 🔲 | For processing uploaded models |
-| Add extended configuration options | 🔲 | For advanced visualization scenarios |
 
 ## Recent Implementation Notes
 
-### 2025-04-25: Empty Layer Detection
+### 2023-06-20: Advanced Height Configuration UI
+- Completed full implementation of advanced configuration UI
+- Added mode toggle between Simple and Advanced configurations
+- Implemented tabbed interface for Base Elevation, Height/Top, and Visualization
+- Enhanced UI with contextual help text and descriptive labels
+- Added proper handling for undefined states and fallback defaults
+- Implemented specialized settings for different geometry types
+- Added comprehensive error handling and validation
+
+### 2023-06-01: Advanced Height Configuration System
+- Design and implementation of enhanced height configuration system
+- Added support for separate base and top elevation sources
+- Created data model for advanced configuration options
+- Implemented backward compatibility with existing configurations
+- Added specialized visualization options for different geometry types
+- Enhanced Cesium rendering to support complex height scenarios
+
+### 2023-05-15: Height Interpretation Modes
+- Added 'interpretationMode' field to layer height configuration
+- Implemented three modes: absolute, relative, and extrusion
+- Enhanced HeightConfigurationDialog with mode selection UI
+- Updated CesiumView to handle different modes when rendering
+- Added proper Cesium entity property handling for each mode
+- Implemented building extrusion for polygon geometries
+- Updated documentation to reflect new capabilities
+
+### 2023-05-01: Empty Layer Detection
 - Added validation in database function to check for features before processing
 - Implemented 404 responses in API for layers with no features
 - Enhanced batch service to properly handle 'NO_FEATURES' conditions
 - Updated dialog to close gracefully when dealing with empty layers
 - Added special handling for 'none' height source type to bypass unnecessary processing
 
-### 2025-04-20: Batch Processing Service
+### 2023-04-20: Batch Processing Service
 - Created singleton service for coordinating transformations
 - Implemented chunk-based processing to handle large datasets
 - Added retry logic that attempts 3 retries with exponential backoff
@@ -62,14 +107,7 @@
 - Added AbortController integration for proper cancellation
 - Created cleanup methods to prevent memory leaks
 
-### 2025-04-15: Status API Implementation
-- Implemented REST API endpoint for transformation status
-- Created TypeScript interfaces for status responses
-- Added comprehensive error handling
-- Integrated with database functions for accurate reporting
-- Implemented polling mechanism for status updates
-
-### 2025-04-10: Apply To All Layers Enhancement
+### 2023-04-10: Apply To All Layers Enhancement
 - Implemented layer compatibility detection system
 - Created interface for selecting specific layers
 - Added visual indicators for compatibility status
@@ -89,23 +127,32 @@
    - Test cancellation during processing
    - Check behavior with intentionally invalid data
 
-3. **Error Handling**
-   - Test with empty layers
-   - Verify behavior when API errors occur
-   - Check database transaction integrity
-   - Test with various error scenarios
+3. **Height Interpretation Modes**
+   - Test each interpretation mode with various geometries
+   - Verify building extrusion works properly for polygons
+   - Test relative heights with varying terrain
+   - Verify modes are saved and applied correctly through preferences
 
-4. **Multi-Layer Application**
+4. **Advanced Height Configuration**
+   - Test combinations of base and top elevation sources
+   - Verify compatibility with different geometry types
+   - Test visualization options for polygons, points, and lines
+   - Verify presets apply the correct configuration
+   - Test backward compatibility with simple mode configurations
+
+5. **Multi-Layer Application**
    - Test applying to multiple compatible layers
    - Verify handling of mixed compatibility layers
    - Test prevention of duplicate transformations
 
 ## Next Development Priorities
 
-1. **Implement batch history view** - Allow users to see past transformations, retry failed ones, and clean up completed batches.
+1. **Complete mixed source processing** - Finish implementation of processing logic for combined Z-coordinate and attribute sources.
 
-2. **Add detailed error inspection UI** - Create an interface for examining specific errors in failed transformations and providing guidance for resolution.
+2. **Add visualization presets** - Create preset configurations for common scenarios like buildings with base + height.
 
-3. **Implement coordinate caching** - Add a caching system for transformed coordinates to improve performance on frequently used datasets.
+3. **Enhance compatibility detection** - Update the layer compatibility detection system to handle advanced configurations.
 
-4. **Begin building extrusion support** - Start implementing the foundation for extruding building footprints based on height attributes. 
+4. **Implement batch history view** - Allow users to see past transformations, retry failed ones, and clean up completed batches.
+
+5. **Add formula-based height calculations** - Add support for calculating heights from multiple attributes using expressions. 

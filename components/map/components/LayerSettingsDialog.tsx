@@ -500,7 +500,8 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
         // Make sure type is always defined to satisfy TypeScript
         updateLayerHeightSource(targetLayerId, {
           type: heightSource.type,
-          attributeName: heightSource.attributeName
+          attributeName: heightSource.attributeName,
+          interpretationMode: heightSource.interpretationMode
         });
         successCount++;
       } catch (error) {
@@ -538,7 +539,8 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
       // First, apply to the current layer
       updateLayerHeightSource(baseLayerId, {
         type: heightSource.type,
-        attributeName: heightSource.attributeName
+        attributeName: heightSource.attributeName,
+        interpretationMode: heightSource.interpretationMode
       });
       
       // Show success toast for current layer
@@ -551,7 +553,8 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
       if (heightSource.savePreference) {
         setHeightSourcePreference({
           type: heightSource.type,
-          attributeName: heightSource.attributeName
+          attributeName: heightSource.attributeName,
+          interpretationMode: heightSource.interpretationMode
         });
         toast({
           title: "Preference saved",
@@ -623,6 +626,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
     const heightSource: HeightSource = {
       type: layer.metadata.height.sourceType,
       attributeName: layer.metadata.height.attributeName,
+      interpretationMode: layer.metadata.height.interpretationMode,
       applyToAllLayers: true,
       savePreference: false
     };
@@ -827,6 +831,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
                   applyHeightConfigToSelectedLayers({
                     type: heightConfig.sourceType,
                     attributeName: heightConfig.attributeName,
+                    interpretationMode: heightConfig.interpretationMode,
                     applyToAllLayers: true,
                     savePreference: false // Already saved if requested
                   });
