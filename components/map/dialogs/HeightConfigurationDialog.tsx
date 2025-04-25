@@ -26,10 +26,10 @@ interface HeightConfigurationDialogProps {
 }
 
 export interface HeightSource {
-  // Primary mode
-  mode: 'simple' | 'advanced';
+  // Primary mode - now only advanced is supported
+  mode: 'advanced';
   
-  // Simple mode (backward compatible)
+  // Simple mode fields kept for backward compatibility
   type?: 'z_coord' | 'attribute' | 'none';
   attributeName?: string;
   interpretationMode?: 'absolute' | 'relative' | 'extrusion';
@@ -88,13 +88,28 @@ const logger = {
  * Gets the first Z coordinate from a feature or null if none exists
  */
 function getFeatureZCoordinate(feature: Feature): number | null {
-  // First check for LV95 stored heights
-  if (feature.properties?.height_mode === 'lv95_stored' && 
-      feature.properties.lv95_height !== undefined && 
-      typeof feature.properties.lv95_height === 'number') {
-    return feature.properties.lv95_height;
+  // First check for LV95 stored heights - this takes priority
+  if (feature.properties?.height_mode === 'lv95_stored') {
+    // Check for lv95_height property first
+    if (typeof feature.properties.lv95_height === 'number' && 
+        !isNaN(feature.properties.lv95_height)) {
+      return feature.properties.lv95_height;
+    }
+    
+    // Fallback to height property if present
+    if (typeof feature.properties.height === 'number' && 
+        !isNaN(feature.properties.height)) {
+      return feature.properties.height;
+    }
+    
+    // Fallback to base_elevation_ellipsoidal if present
+    if (typeof feature.properties.base_elevation_ellipsoidal === 'number' && 
+        !isNaN(feature.properties.base_elevation_ellipsoidal)) {
+      return feature.properties.base_elevation_ellipsoidal;
+    }
   }
   
+  // Then check for direct Z coordinates in the geometry
   if (!feature.geometry) return null;
   
   try {
@@ -176,6 +191,7 @@ function detectZCoordinates(features: Feature[]): {
   let zMin = Infinity;
   let zMax = -Infinity;
   let totalCoords = 0;
+  let lv95StoredCount = 0;
   
   // Function to process coordinates recursively
   const processCoords = (coords: any[]) => {
@@ -200,18 +216,22 @@ function detectZCoordinates(features: Feature[]): {
   // Process all features
   features.forEach(feature => {
     // Check if feature has the LV95 stored height mode
-    if (feature.properties?.height_mode === 'lv95_stored' && 
-        feature.properties.lv95_height !== undefined && 
-        typeof feature.properties.lv95_height === 'number') {
-      // This is a feature with a Z coordinate stored as LV95
-      const z = feature.properties.lv95_height;
-      if (!isNaN(z)) {
-        zCount++;
-        zSum += z;
-        zMin = Math.min(zMin, z);
-        zMax = Math.max(zMax, z);
+    if (feature.properties?.height_mode === 'lv95_stored') {
+      // This is a feature with LV95 stored height data
+      lv95StoredCount++;
+      
+      // Extract height from lv95_height property
+      if (feature.properties.lv95_height !== undefined && 
+          typeof feature.properties.lv95_height === 'number') {
+        const z = feature.properties.lv95_height;
+        if (!isNaN(z)) {
+          zCount++;
+          zSum += z;
+          zMin = Math.min(zMin, z);
+          zMax = Math.max(zMax, z);
+        }
+        totalCoords++;
       }
-      totalCoords++;
     }
     
     // Also check the geometry for Z coordinates
@@ -276,6 +296,12 @@ function detectZCoordinates(features: Feature[]): {
     }
   });
   
+  // If we have LV95 stored heights but no coordinate counts, ensure we have at least the count of features with LV95 stored heights
+  if (lv95StoredCount > 0 && totalCoords === 0) {
+    totalCoords = lv95StoredCount;
+    logger.debug('Using LV95 stored feature count for total coordinates', { lv95StoredCount });
+  }
+  
   // No Z coordinates found
   if (zCount === 0) {
     return { 
@@ -322,6 +348,18 @@ function detectZCoordinates(features: Feature[]): {
     };
   }
   
+  // Special case for LV95 stored heights
+  if (lv95StoredCount > 0) {
+    return { 
+      hasZ: true,
+      zCount,
+      totalCoords,
+      zMin,
+      zMax,
+      message: `${zCount} coordinates with Z values (range: ${zMin.toFixed(1)} to ${zMax.toFixed(1)}) from LV95 stored height data`
+    };
+  }
+  
   return { 
     hasZ: true,
     zCount,
@@ -349,16 +387,25 @@ function detectNumericAttributes(features: Feature[]): {
   features.forEach(feature => {
     if (!feature.properties) return;
     
-    // Skip LV95 stored height values - these should be treated as Z coordinates, not as regular attributes
-    const hasLv95StoredHeight = feature.properties.height_mode === 'lv95_stored';
+    // Check if this feature has LV95 stored height data
+    const isLv95Stored = feature.properties.height_mode === 'lv95_stored';
     
     // Analyze each property
     Object.entries(feature.properties).forEach(([key, value]) => {
-      // Skip LV95 coordinates (these are already processed)
-      if (key.startsWith('lv95_')) return;
+      // Skip known non-attribute values
+      if (key === 'id' || key === 'layer_id' || key === 'geometry_type') return;
       
-      // Skip lv95_height values that should be treated as Z coordinates
-      if (hasLv95StoredHeight && key === 'height') return;
+      // Skip LV95 coordinates (these are treated as Z coordinates)
+      if (key === 'lv95_easting' || key === 'lv95_northing' || key === 'lv95_height') return;
+      
+      // Skip height_mode and related properties
+      if (key === 'height_mode' || 
+          key === 'height_source' || 
+          key === 'height_transformation_status' ||
+          key === 'vertical_datum_source') return;
+      
+      // If this is an LV95 stored feature, skip height values that should be considered Z coordinates
+      if (isLv95Stored && (key === 'height' || key === 'base_elevation_ellipsoidal')) return;
 
       // Try to convert value to number
       const numValue = typeof value === 'number' ? value : 
@@ -416,17 +463,18 @@ function getHeightPreview(features: Feature[], source: string, maxSamples: numbe
     let value: number | null = null;
     
     if (source === 'z_coord') {
-      // First check for LV95 stored height
-      if (feature.properties?.height_mode === 'lv95_stored' && 
-          feature.properties.lv95_height !== undefined &&
-          typeof feature.properties.lv95_height === 'number') {
-        value = feature.properties.lv95_height;
-      } else {
-        // Fall back to geometry Z coordinate
-        value = getFeatureZCoordinate(feature);
+      // Use our comprehensive Z coordinate extraction function
+      value = getFeatureZCoordinate(feature);
+    } else if (source && feature.properties) {
+      // For attribute source, get the property value
+      if (typeof feature.properties[source] === 'number') {
+        value = feature.properties[source] as number;
+      } else if (typeof feature.properties[source] === 'string') {
+        const parsedValue = parseFloat(feature.properties[source] as string);
+        if (!isNaN(parsedValue)) {
+          value = parsedValue;
+        }
       }
-    } else if (source && feature.properties && typeof feature.properties[source] === 'number') {
-      value = feature.properties[source] as number;
     }
     
     return {
@@ -459,6 +507,14 @@ function detectSwissCoordinates(features: Feature[]): {
     f.properties?.height_mode === 'lv95_stored'
   );
   
+  // Check for lv95 properties
+  const hasLv95Properties = features.some(f => 
+    f.properties && 
+    (f.properties.lv95_easting !== undefined || 
+     f.properties.lv95_northing !== undefined || 
+     f.properties.lv95_height !== undefined)
+  );
+  
   // Check for Swiss vertical datum
   const hasSwissVerticalDatum = features.some(f => 
     f.properties?.vertical_datum_source === 'LHN95'
@@ -466,7 +522,7 @@ function detectSwissCoordinates(features: Feature[]): {
   
   // Check for Swiss coordinate ranges (if no other indicators are found)
   let hasSwissCoordinateRange = false;
-  if (!hasLv95Stored && !hasSwissVerticalDatum) {
+  if (!hasLv95Stored && !hasSwissVerticalDatum && !hasLv95Properties) {
     hasSwissCoordinateRange = features.some(feature => {
       if (feature.geometry?.type === 'Point') {
         const coords = (feature.geometry as Point).coordinates;
@@ -480,12 +536,14 @@ function detectSwissCoordinates(features: Feature[]): {
     });
   }
   
-  const isSwiss = hasLv95Stored || hasSwissVerticalDatum || hasSwissCoordinateRange;
+  const isSwiss = hasLv95Stored || hasSwissVerticalDatum || hasLv95Properties || hasSwissCoordinateRange;
   
   let message = 'No Swiss coordinates detected';
   if (isSwiss) {
     if (hasLv95Stored) {
       message = 'Swiss coordinates with stored LV95 values detected';
+    } else if (hasLv95Properties) {
+      message = 'Swiss LV95 properties detected';
     } else if (hasSwissVerticalDatum) {
       message = 'Swiss height datum (LHN95) detected';
     } else {
@@ -495,7 +553,7 @@ function detectSwissCoordinates(features: Feature[]): {
   
   return { 
     isSwiss,
-    hasLv95Stored,
+    hasLv95Stored: hasLv95Stored || hasLv95Properties,
     hasSwissVerticalDatum,
     message
   };
@@ -609,16 +667,31 @@ export function HeightConfigurationDialog({
   featureCollection,
   onHeightSourceSelect
 }: HeightConfigurationDialogProps) {
-  // Configuration mode
-  const [configMode, setConfigMode] = useState<'simple' | 'advanced'>('simple');
+  // Configuration mode - now fixed to 'advanced'
   
-  // Source type state
+  // Source type state (maintaining for backward compatibility)
   const [sourceType, setSourceType] = useState<'z_coord' | 'attribute' | 'none'>('z_coord');
   const [selectedAttribute, setSelectedAttribute] = useState<string>('');
   const [interpretationMode, setInterpretationMode] = useState<'absolute' | 'relative' | 'extrusion'>('absolute');
   
-  // Advanced configuration state
-  const [advancedConfig, setAdvancedConfig] = useState<HeightSource['advanced']>();
+  // Advanced configuration state with default values
+  const [advancedConfig, setAdvancedConfig] = useState<NonNullable<HeightSource['advanced']>>({
+    baseElevation: {
+      source: 'terrain',
+      attributeName: '',
+      isAbsolute: false
+    },
+    heightConfig: {
+      source: 'none',
+      attributeName: '',
+      isRelative: false
+    },
+    visualization: {
+      type: 'extrusion',
+      extrudedFaces: true,
+      extrudedTop: true
+    }
+  });
   
   // Swiss coordinates state
   const [swissCoordinatesInfo, setSwissCoordinatesInfo] = useState<ReturnType<typeof detectSwissCoordinates>>({
@@ -639,8 +712,8 @@ export function HeightConfigurationDialog({
   const [applyToAllLayers, setApplyToAllLayers] = useState<boolean>(false);
   const [savePreference, setSavePreference] = useState<boolean>(false);
   
-  // Tab state
-  const [activeTab, setActiveTab] = useState<string>('z_coord');
+  // Tab state - default to 'base' for advanced mode
+  const [activeTab, setActiveTab] = useState<string>('base');
   
   // Processing state
   const [showProgress, setShowProgress] = useState<boolean>(false);
@@ -673,36 +746,53 @@ export function HeightConfigurationDialog({
     // Analyze features when they change
     const features = featureCollection?.features || [];
     if (features.length > 0) {
+      // First detect Swiss coordinates
+      const swissInfo = detectSwissCoordinates(features);
+      setSwissCoordinatesInfo(swissInfo);
+      logger.debug('Swiss coordinates detection results', { swissInfo });
+      
       // Calculate Z-coordinate info
       const zInfo = detectZCoordinates(features);
       setZCoordinatesInfo(zInfo);
       logger.debug('Z-coordinate detection results', { zInfo });
-      
-      // Set default source type based on Z-coordinate detection
-      if (zInfo.hasZ && zInfo.zCount > (zInfo.totalCoords * 0.5)) {
-        setSourceType('z_coord');
-        setActiveTab('z_coord');
-      } else {
-        setSourceType('attribute');
-        setActiveTab('attribute');
-      }
       
       // Calculate numeric attributes info
       const attributesInfo = detectNumericAttributes(features);
       setNumericAttributesInfo(attributesInfo);
       logger.debug('Numeric attributes detection results', { attributesInfo });
       
-      // Update height preview
-      if (sourceType === 'z_coord') {
-        setHeightPreview(getHeightPreview(features, 'z_coord'));
-      } else if (sourceType === 'attribute' && selectedAttribute) {
-        setHeightPreview(getHeightPreview(features, selectedAttribute));
+      // Set default source type based on detection results
+      // We still need this for backward compatibility
+      let initialSourceType: 'z_coord' | 'attribute' | 'none' = 'none';
+      
+      // Prioritize Z coordinates, especially if LV95 stored values are present
+      if (zInfo.hasZ || (swissInfo.hasLv95Stored && swissInfo.isSwiss)) {
+        initialSourceType = 'z_coord';
+      } else if (attributesInfo.attributes.length > 0) {
+        initialSourceType = 'attribute';
+        // Set the first attribute as default
+        if (!selectedAttribute && attributesInfo.attributes.length > 0) {
+          setSelectedAttribute(attributesInfo.attributes[0].name);
+        }
       }
       
-      // Detect Swiss coordinates
-      const swissInfo = detectSwissCoordinates(features);
-      setSwissCoordinatesInfo(swissInfo);
-      logger.debug('Swiss coordinates detection results', { swissInfo });
+      setSourceType(initialSourceType);
+      
+      // Configure advanced settings based on detection
+      setAdvancedConfig(currentConfig => {
+        const updatedConfig = {...currentConfig};
+        
+        if (zInfo.hasZ) {
+          // If Z coordinates available, use them for base elevation
+          updatedConfig.baseElevation.source = 'z_coord';
+        } else if (attributesInfo.attributes.length > 0) {
+          // If numeric attributes available, use the first one for height
+          updatedConfig.heightConfig.source = 'attribute';
+          updatedConfig.heightConfig.attributeName = attributesInfo.attributes[0].name;
+        }
+        
+        return updatedConfig;
+      });
       
       // Auto-enable Swiss height transformation if LV95 coordinates are stored
       if (swissInfo.hasLv95Stored) {
@@ -713,7 +803,7 @@ export function HeightConfigurationDialog({
         });
       }
     }
-  }, [featureCollection, sourceType, selectedAttribute]);
+  }, [featureCollection, selectedAttribute]);
   
   // Handle tab change
   const handleTabChange = (value: string) => {
@@ -752,30 +842,31 @@ export function HeightConfigurationDialog({
     try {
       // Gather the configuration based on current state
       let heightSource: HeightSource = {
-        mode: configMode,
+        mode: 'advanced',
         applyToAllLayers,
         savePreference,
-        swissHeightTransformation: swissHeightSettings
+        swissHeightTransformation: swissHeightSettings,
+        advanced: advancedConfig
       };
       
-      if (configMode === 'simple') {
-        heightSource.type = sourceType;
-        
-        if (sourceType === 'attribute') {
-          heightSource.attributeName = selectedAttribute;
-          heightSource.interpretationMode = interpretationMode;
-        }
+      // For backward compatibility, map advanced settings to simple mode fields
+      if (advancedConfig.baseElevation.source === 'z_coord') {
+        heightSource.type = 'z_coord';
+      } else if (advancedConfig.heightConfig.source === 'attribute') {
+        heightSource.type = 'attribute';
+        heightSource.attributeName = advancedConfig.heightConfig.attributeName;
+        heightSource.interpretationMode = advancedConfig.heightConfig.isRelative ? 'relative' : 'absolute';
       } else {
-        heightSource.advanced = advancedConfig;
+        heightSource.type = 'none';
       }
       
       // Save as preference if requested
       if (savePreference) {
         const preferenceSource = {
-          type: sourceType as 'z_coord' | 'attribute' | 'none',
-          attributeName: sourceType === 'attribute' ? selectedAttribute : undefined,
-          interpretationMode: sourceType === 'attribute' ? interpretationMode : undefined,
-          mode: configMode as 'simple' | 'advanced',
+          type: heightSource.type as 'z_coord' | 'attribute' | 'none',
+          attributeName: heightSource.attributeName,
+          interpretationMode: heightSource.interpretationMode,
+          mode: 'advanced' as const,
           advanced: advancedConfig
         };
         
@@ -787,69 +878,71 @@ export function HeightConfigurationDialog({
       onHeightSourceSelect(heightSource);
       
       // Initialize batch if needed (for z_coord or attribute types)
-      if (configMode === 'simple' && sourceType !== 'none') {
+      if (heightSource.type !== 'none') {
         if (!featureCollection || !featureCollection.features || featureCollection.features.length === 0) {
           logger.warn('No features available to process', { layerId });
-          // Show a brief message and close the dialog
           setShowProgress(false);
-          onOpenChange(false);
           return;
         }
         
+        logger.info('Initializing height transformation batch', { layerId, heightSource });
+        
         const batchId = await batchService.initializeBatch(
           layerId,
-          sourceType,
-          sourceType === 'attribute' ? selectedAttribute : undefined
+          heightSource.type,
+          heightSource.type === 'attribute' ? heightSource.attributeName : undefined
         );
         
+        if (!batchId) {
+          logger.error('Failed to initialize batch', { layerId });
+          setShowProgress(false);
+          return;
+        }
+        
+        // Handle special case of no features
         if (batchId === 'NO_FEATURES') {
           logger.warn('No features found for transformation', { layerId });
           onOpenChange(false);
           return;
-        } else if (batchId) {
-          setBatchId(batchId);
-          
-          // Start batch processing
-          const success = await batchService.startBatchProcessing(
-            batchId,
-            featureCollection,
-            {
-              chunkSize: 50,
-              // Pass Swiss transformation options
-              swissTransformation: swissHeightSettings?.enabled ? {
-                method: swissHeightSettings.transformationMethod,
-                cache: swissHeightSettings.cacheResults
-              } : undefined
-            }
-          );
-          
-          if (success) {
-            setShowProgress(true);
-          } else {
-            logger.error('Failed to start batch processing', { batchId, layerId });
-            setBatchId(null);
-            onOpenChange(false);
+        }
+        
+        setBatchId(batchId);
+        
+        // Start batch processing with Swiss transformation options if enabled
+        const success = await batchService.startBatchProcessing(
+          batchId,
+          featureCollection,
+          {
+            chunkSize: 50,
+            swissTransformation: swissHeightSettings?.enabled ? {
+              method: swissHeightSettings.transformationMethod,
+              cache: swissHeightSettings.cacheResults
+            } : undefined
           }
-        } else {
-          logger.warn('No batch ID returned', { layerId });
-          onOpenChange(false);
+        );
+        
+        if (!success) {
+          logger.error('Failed to start batch processing', { batchId, layerId });
+          setShowProgress(false);
         }
       } else {
-        // For 'none' type, just close the dialog without processing
+        // No height transformation needed
         onOpenChange(false);
       }
     } catch (error) {
-      logger.error('Error applying height source', error);
-      onOpenChange(false);
+      logger.error('Error applying height configuration', error);
+      setShowProgress(false);
     }
   };
   
+  // Handle progress complete
   const handleProgressComplete = () => {
     setShowProgress(false);
     setBatchId(null);
     onOpenChange(false);
   };
   
+  // Handle progress cancel
   const handleProgressCancel = () => {
     setShowProgress(false);
     // The batch has already been cancelled in the progress component
@@ -883,679 +976,371 @@ export function HeightConfigurationDialog({
           </DialogDescription>
         </DialogHeader>
         
-        {/* Mode toggle */}
-        <div className="mb-4 flex justify-center">
-          <div className="border rounded-md p-1">
-            <div className="grid grid-cols-2 gap-1">
-              <Button 
-                variant={configMode === 'simple' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setConfigMode('simple')}
-                className="text-xs h-8"
-              >
-                Simple
-              </Button>
-              <Button 
-                variant={configMode === 'advanced' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setConfigMode('advanced')}
-                className="text-xs h-8"
-              >
-                Advanced
-              </Button>
+        {/* Advanced mode configuration */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <TabsList className="grid grid-cols-3 mb-4">
+            <TabsTrigger value="base">
+              Base Elevation
+            </TabsTrigger>
+            <TabsTrigger value="height">
+              Height/Top
+            </TabsTrigger>
+            <TabsTrigger value="visual">
+              Visualization
+            </TabsTrigger>
+          </TabsList>
+          
+          {/* Base Elevation Tab */}
+          <TabsContent value="base" className="space-y-4">
+            <div className="text-sm mb-3">
+              Configure where features start in 3D space
             </div>
-          </div>
-        </div>
-        
-        {configMode === 'simple' ? (
-          /* Simple mode configuration */
-          <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
-            <TabsList className="grid grid-cols-3 mb-4">
-              <TabsTrigger value="z_coord" disabled={!zCoordinatesInfo.hasZ}>
-                Z Coordinates
-              </TabsTrigger>
-              <TabsTrigger value="attribute" disabled={numericAttributesInfo.attributes.length === 0}>
-                Attribute
-              </TabsTrigger>
-              <TabsTrigger value="none">
-                No Height
-              </TabsTrigger>
-            </TabsList>
             
-            <TabsContent value="z_coord" className="space-y-4">
-              <div className="text-sm">
-                Use Z coordinates from the geometry for height values.
-                
-                {!zCoordinatesInfo.hasZ && (
-                  <div className="text-amber-600 mt-2 flex items-center">
-                    <Info className="h-4 w-4 mr-1" />
-                    No valid Z coordinates detected in this layer.
-                  </div>
-                )}
-                
-                {zCoordinatesInfo.hasZ && (
-                  <div className="text-green-600 mt-2">
-                    Z coordinates detected and will be used for heights.
-                    {swissCoordinatesInfo.hasLv95Stored && (
-                      <p className="text-xs mt-1">
-                        Source: LV95 heights stored during import
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-              
-              {heightPreview.length > 0 && (
-                <div className="mt-4">
-                  <h4 className="text-sm font-medium mb-2">Preview:</h4>
-                  <div className="text-xs grid grid-cols-2 gap-x-4 gap-y-1">
-                    {heightPreview.map(item => (
-                      <div key={`${item.featureId}`} className="flex justify-between">
-                        <span className="text-muted-foreground truncate">{item.featureId}</span>
-                        <span>{item.value !== null ? `${item.value.toFixed(2)}m` : 'N/A'}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </TabsContent>
-            
-            <TabsContent value="attribute" className="space-y-4">
-              <div className="space-y-4">
-                <div className="text-sm">
-                  Use a numeric attribute from feature properties for height values.
+            <div className="space-y-3">
+              <Label>Base Elevation Source</Label>
+              <RadioGroup
+                value={advancedConfig.baseElevation.source}
+                onValueChange={(value) => {
+                  setAdvancedConfig({
+                    ...advancedConfig,
+                    baseElevation: {
+                      ...advancedConfig.baseElevation,
+                      source: value as 'z_coord' | 'attribute' | 'terrain'
+                    }
+                  });
+                }}
+                className="flex flex-col space-y-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="terrain" id="base-terrain" />
+                  <Label htmlFor="base-terrain" className="font-normal">
+                    Terrain Surface
+                    <p className="text-xs text-muted-foreground">
+                      Features will be placed on the terrain surface
+                    </p>
+                  </Label>
                 </div>
                 
-                <div className="space-y-2">
-                  <Label htmlFor="attribute-select">Height Attribute</Label>
-                  <Select value={selectedAttribute} onValueChange={handleAttributeSelect}>
-                    <SelectTrigger id="attribute-select">
-                      <SelectValue placeholder="Select attribute" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {numericAttributesInfo.attributes.map(attr => (
-                        <SelectItem key={attr.name} value={attr.name}>
-                          {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                
-                <div className="space-y-2">
-                  <Label htmlFor="interpretation-mode">Interpretation Mode</Label>
-                  <RadioGroup
-                    value={interpretationMode}
-                    onValueChange={(value) => setInterpretationMode(value as 'absolute' | 'relative' | 'extrusion')}
-                    className="flex flex-col space-y-1"
-                  >
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="absolute" id="interpretation-absolute" />
-                      <Label htmlFor="interpretation-absolute" className="font-normal">
-                        Absolute Elevation
-                        <p className="text-xs text-muted-foreground">
-                          Values represent absolute elevation above sea level
-                        </p>
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="relative" id="interpretation-relative" />
-                      <Label htmlFor="interpretation-relative" className="font-normal">
-                        Relative to Ground
-                        <p className="text-xs text-muted-foreground">
-                          Values represent height above terrain
-                        </p>
-                      </Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="extrusion" id="interpretation-extrusion" />
-                      <Label htmlFor="interpretation-extrusion" className="font-normal">
-                        Building Height
-                        <p className="text-xs text-muted-foreground">
-                          Values represent building height for extrusion
-                        </p>
-                      </Label>
-                    </div>
-                  </RadioGroup>
-                </div>
-                
-                {heightPreview.length > 0 && (
-                  <div>
-                    <h4 className="text-sm font-medium mb-2">Preview:</h4>
-                    <div className="text-xs grid grid-cols-2 gap-x-4 gap-y-1">
-                      {heightPreview.map(item => (
-                        <div key={`${item.featureId}`} className="flex justify-between">
-                          <span className="text-muted-foreground truncate">{item.featureId}</span>
-                          <span>{item.value !== null ? `${item.value.toFixed(2)}m` : 'N/A'}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </TabsContent>
-            
-            <TabsContent value="none" className="space-y-4">
-              <div className="text-sm">
-                Features will be displayed flat without height information.
-              </div>
-            </TabsContent>
-          </Tabs>
-        ) : (
-          /* Advanced mode configuration */
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-            <TabsList className="grid grid-cols-3 mb-4">
-              <TabsTrigger value="base">
-                Base Elevation
-              </TabsTrigger>
-              <TabsTrigger value="height">
-                Height/Top
-              </TabsTrigger>
-              <TabsTrigger value="visual">
-                Visualization
-              </TabsTrigger>
-            </TabsList>
-            
-            {/* Base Elevation Tab */}
-            <TabsContent value="base" className="space-y-4">
-              <div className="text-sm mb-3">
-                Configure where features start in 3D space
-              </div>
-              
-              <div className="space-y-3">
-                <Label>Base Elevation Source</Label>
-                <RadioGroup
-                  value={advancedConfig?.baseElevation.source || 'terrain'}
-                  onValueChange={(value) => {
-                    const defaultConfig = {
-                      baseElevation: {
-                        source: 'terrain' as const,
-                        attributeName: '',
-                        isAbsolute: false
-                      },
-                      heightConfig: {
-                        source: 'none' as const,
-                        attributeName: '',
-                        isRelative: false
-                      },
-                      visualization: {
-                        type: 'extrusion' as const,
-                        extrudedFaces: true,
-                        extrudedTop: true
-                      }
-                    };
-                    
-                    setAdvancedConfig({
-                      ...(advancedConfig || defaultConfig),
-                      baseElevation: {
-                        ...(advancedConfig?.baseElevation || defaultConfig.baseElevation),
-                        source: value as 'z_coord' | 'attribute' | 'terrain'
-                      }
-                    });
-                  }}
-                  className="flex flex-col space-y-2"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem 
-                      value="z_coord" 
-                      id="base-z-coord" 
-                      disabled={!zCoordinatesInfo.hasZ}
-                    />
-                    <Label htmlFor="base-z-coord" className="font-normal">
-                      Z Coordinates
-                      <p className="text-xs text-muted-foreground">
-                        Use Z values from geometry coordinates
-                      </p>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem 
+                    value="z_coord" 
+                    id="base-z" 
+                    disabled={!zCoordinatesInfo.hasZ}
+                  />
+                  <Label htmlFor="base-z" className={`font-normal ${!zCoordinatesInfo.hasZ ? 'text-muted-foreground' : ''}`}>
+                    Z Coordinates
+                    <p className="text-xs text-muted-foreground">
+                      Use Z values from geometry as base elevation
                       {!zCoordinatesInfo.hasZ && (
-                        <p className="text-xs text-amber-600">
+                        <span className="block text-amber-600 mt-1">
                           No Z coordinates detected in this layer
-                        </p>
+                        </span>
                       )}
-                      {zCoordinatesInfo.hasZ && swissCoordinatesInfo.hasLv95Stored && (
-                        <p className="text-xs text-green-600">
-                          Z coordinates available from Swiss LV95 stored values
-                        </p>
+                    </p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem 
+                    value="attribute" 
+                    id="base-attribute" 
+                    disabled={numericAttributesInfo.attributes.length === 0}
+                  />
+                  <Label 
+                    htmlFor="base-attribute" 
+                    className={`font-normal ${numericAttributesInfo.attributes.length === 0 ? 'text-muted-foreground' : ''}`}
+                  >
+                    Attribute Value
+                    <p className="text-xs text-muted-foreground">
+                      Use a numeric attribute for base elevation
+                      {numericAttributesInfo.attributes.length === 0 && (
+                        <span className="block text-amber-600 mt-1">
+                          No numeric attributes detected in this layer
+                        </span>
                       )}
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem 
-                      value="attribute" 
-                      id="base-attribute" 
-                      disabled={numericAttributesInfo.attributes.length === 0}
-                    />
-                    <Label htmlFor="base-attribute" className="font-normal">
-                      Attribute
-                      <p className="text-xs text-muted-foreground">
-                        Use attribute value for base elevation
-                      </p>
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="terrain" id="base-terrain" />
-                    <Label htmlFor="base-terrain" className="font-normal">
-                      Terrain
-                      <p className="text-xs text-muted-foreground">
-                        Place features on terrain surface
-                      </p>
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
-              
-              {advancedConfig?.baseElevation.source === 'attribute' && (
-                <div className="space-y-2 mt-3">
-                  <Label htmlFor="base-attribute-select">Base Elevation Attribute</Label>
-                  <Select 
-                    value={advancedConfig.baseElevation.attributeName || ''}
-                    onValueChange={(value) => {
-                      const defaultConfig = {
-                        baseElevation: {
-                          source: 'terrain' as const,
-                          attributeName: '',
-                          isAbsolute: false
-                        },
-                        heightConfig: {
-                          source: 'none' as const,
-                          attributeName: '',
-                          isRelative: false
-                        },
-                        visualization: {
-                          type: 'extrusion' as const,
-                          extrudedFaces: true,
-                          extrudedTop: true
-                        }
-                      };
-                      
+                    </p>
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+            
+            {advancedConfig.baseElevation.source === 'attribute' && (
+              <div className="space-y-2 mt-3">
+                <Label htmlFor="base-attribute-select">Base Elevation Attribute</Label>
+                <Select 
+                  value={advancedConfig.baseElevation.attributeName || ''}
+                  onValueChange={(value) => {
+                    setAdvancedConfig({
+                      ...advancedConfig,
+                      baseElevation: {
+                        ...advancedConfig.baseElevation,
+                        attributeName: value
+                      }
+                    });
+                  }}
+                >
+                  <SelectTrigger id="base-attribute-select">
+                    <SelectValue placeholder="Select attribute" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {numericAttributesInfo.attributes.map(attr => (
+                      <SelectItem key={attr.name} value={attr.name}>
+                        {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                <div className="flex items-center space-x-2 mt-2">
+                  <Checkbox 
+                    id="base-absolute" 
+                    checked={advancedConfig.baseElevation.isAbsolute}
+                    onCheckedChange={(checked) => {
                       setAdvancedConfig({
-                        ...(advancedConfig || defaultConfig),
+                        ...advancedConfig,
                         baseElevation: {
-                          ...(advancedConfig?.baseElevation || defaultConfig.baseElevation),
-                          attributeName: value
+                          ...advancedConfig.baseElevation,
+                          isAbsolute: !!checked
                         }
                       });
                     }}
+                  />
+                  <label
+                    htmlFor="base-absolute"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                   >
-                    <SelectTrigger id="base-attribute-select">
-                      <SelectValue placeholder="Select attribute" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {numericAttributesInfo.attributes.map(attr => (
-                        <SelectItem key={attr.name} value={attr.name}>
-                          {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  
-                  <div className="flex items-center space-x-2 mt-2">
+                    Value is absolute elevation (not relative to terrain)
+                  </label>
+                </div>
+              </div>
+            )}
+          </TabsContent>
+          
+          {/* Height/Top Tab */}
+          <TabsContent value="height" className="space-y-4">
+            <div className="text-sm mb-3">
+              Configure top elevation or height of features
+            </div>
+            
+            <div className="space-y-3">
+              <Label>Height Source</Label>
+              <RadioGroup
+                value={advancedConfig.heightConfig.source}
+                onValueChange={(value) => {
+                  setAdvancedConfig({
+                    ...advancedConfig,
+                    heightConfig: {
+                      ...advancedConfig.heightConfig,
+                      source: value as 'attribute' | 'calculated' | 'none'
+                    }
+                  });
+                }}
+                className="flex flex-col space-y-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="none" id="height-none" />
+                  <Label htmlFor="height-none" className="font-normal">
+                    No Height/Flat
+                    <p className="text-xs text-muted-foreground">
+                      Features will be flat at base elevation
+                    </p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem 
+                    value="attribute" 
+                    id="height-attribute" 
+                    disabled={numericAttributesInfo.attributes.length === 0}
+                  />
+                  <Label 
+                    htmlFor="height-attribute" 
+                    className={`font-normal ${numericAttributesInfo.attributes.length === 0 ? 'text-muted-foreground' : ''}`}
+                  >
+                    Attribute Value
+                    <p className="text-xs text-muted-foreground">
+                      Use a numeric attribute for height or top elevation
+                      {numericAttributesInfo.attributes.length === 0 && (
+                        <span className="block text-amber-600 mt-1">
+                          No numeric attributes detected in this layer
+                        </span>
+                      )}
+                    </p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="calculated" id="height-calculated" disabled />
+                  <Label htmlFor="height-calculated" className="font-normal text-muted-foreground">
+                    Calculated Value
+                    <p className="text-xs text-muted-foreground">
+                      Calculate height from other attributes or properties
+                      <span className="block text-amber-600 mt-1">
+                        Coming soon
+                      </span>
+                    </p>
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+            
+            {advancedConfig.heightConfig.source === 'attribute' && (
+              <div className="space-y-2 mt-3">
+                <Label htmlFor="height-attribute-select">Height Attribute</Label>
+                <Select 
+                  value={advancedConfig.heightConfig.attributeName || ''}
+                  onValueChange={(value) => {
+                    setAdvancedConfig({
+                      ...advancedConfig,
+                      heightConfig: {
+                        ...advancedConfig.heightConfig,
+                        attributeName: value
+                      }
+                    });
+                  }}
+                >
+                  <SelectTrigger id="height-attribute-select">
+                    <SelectValue placeholder="Select attribute" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {numericAttributesInfo.attributes.map(attr => (
+                      <SelectItem key={attr.name} value={attr.name}>
+                        {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                
+                <div className="flex items-center space-x-2 mt-2">
+                  <Checkbox 
+                    id="height-relative" 
+                    checked={advancedConfig.heightConfig.isRelative}
+                    onCheckedChange={(checked) => {
+                      setAdvancedConfig({
+                        ...advancedConfig,
+                        heightConfig: {
+                          ...advancedConfig.heightConfig,
+                          isRelative: !!checked
+                        }
+                      });
+                    }}
+                  />
+                  <label
+                    htmlFor="height-relative"
+                    className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+                  >
+                    Value is relative height (not absolute top elevation)
+                  </label>
+                </div>
+              </div>
+            )}
+          </TabsContent>
+          
+          {/* Visualization Tab */}
+          <TabsContent value="visual" className="space-y-4">
+            <div className="text-sm mb-3">
+              Configure how heights are visualized in 3D
+            </div>
+            
+            <div className="space-y-3">
+              <Label>Visualization Type</Label>
+              <RadioGroup
+                value={advancedConfig.visualization.type}
+                onValueChange={(value) => {
+                  setAdvancedConfig({
+                    ...advancedConfig,
+                    visualization: {
+                      ...advancedConfig.visualization,
+                      type: value as 'extrusion' | 'point_elevation' | 'line_elevation'
+                    }
+                  });
+                }}
+                className="flex flex-col space-y-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="extrusion" id="visual-extrusion" />
+                  <Label htmlFor="visual-extrusion" className="font-normal">
+                    Polygon Extrusion
+                    <p className="text-xs text-muted-foreground">
+                      Extrude polygons from base to top elevation
+                    </p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="point_elevation" id="visual-point" />
+                  <Label htmlFor="visual-point" className="font-normal">
+                    Point Elevation
+                    <p className="text-xs text-muted-foreground">
+                      Position points at specified elevation
+                    </p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="line_elevation" id="visual-line" />
+                  <Label htmlFor="visual-line" className="font-normal">
+                    Line Elevation
+                    <p className="text-xs text-muted-foreground">
+                      Position lines at specified elevation
+                    </p>
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+            
+            {advancedConfig.visualization.type === 'extrusion' && (
+              <div className="space-y-2 mt-3">
+                <Label>Extrusion Options</Label>
+                <div className="flex flex-col space-y-2 mt-1">
+                  <div className="flex items-center space-x-2">
                     <Checkbox 
-                      id="base-absolute" 
-                      checked={advancedConfig.baseElevation.isAbsolute}
+                      id="extrusion-faces" 
+                      checked={advancedConfig.visualization.extrudedFaces}
                       onCheckedChange={(checked) => {
-                        const defaultConfig = {
-                          baseElevation: {
-                            source: 'terrain' as const,
-                            attributeName: '',
-                            isAbsolute: false
-                          },
-                          heightConfig: {
-                            source: 'none' as const,
-                            attributeName: '',
-                            isRelative: false
-                          },
-                          visualization: {
-                            type: 'extrusion' as const,
-                            extrudedFaces: true,
-                            extrudedTop: true
-                          }
-                        };
-                        
                         setAdvancedConfig({
-                          ...(advancedConfig || defaultConfig),
-                          baseElevation: {
-                            ...(advancedConfig?.baseElevation || defaultConfig.baseElevation),
-                            isAbsolute: !!checked
+                          ...advancedConfig,
+                          visualization: {
+                            ...advancedConfig.visualization,
+                            extrudedFaces: !!checked
                           }
                         });
                       }}
                     />
                     <label
-                      htmlFor="base-absolute"
+                      htmlFor="extrusion-faces"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Absolute elevation (meters above sea level)
+                      Show side faces
                     </label>
                   </div>
-                </div>
-              )}
-            </TabsContent>
-            
-            {/* Height/Top Config Tab */}
-            <TabsContent value="height" className="space-y-4">
-              <div className="text-sm mb-3">
-                Configure how feature heights or top elevations are determined
-              </div>
-              
-              <div className="space-y-3">
-                <Label>Height/Top Source</Label>
-                <RadioGroup
-                  value={advancedConfig?.heightConfig.source || 'none'}
-                  onValueChange={(value) => {
-                    const defaultConfig = {
-                      baseElevation: {
-                        source: 'terrain' as const,
-                        attributeName: '',
-                        isAbsolute: false
-                      },
-                      heightConfig: {
-                        source: 'none' as const,
-                        attributeName: '',
-                        isRelative: false
-                      },
-                      visualization: {
-                        type: 'extrusion' as const,
-                        extrudedFaces: true,
-                        extrudedTop: true
-                      }
-                    };
-                    
-                    setAdvancedConfig({
-                      ...(advancedConfig || defaultConfig),
-                      heightConfig: {
-                        ...(advancedConfig?.heightConfig || defaultConfig.heightConfig),
-                        source: value as 'attribute' | 'calculated' | 'none'
-                      }
-                    });
-                  }}
-                  className="flex flex-col space-y-2"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem 
-                      value="attribute" 
-                      id="height-attribute" 
-                      disabled={numericAttributesInfo.attributes.length === 0}
-                    />
-                    <Label htmlFor="height-attribute" className="font-normal">
-                      Attribute
-                      <p className="text-xs text-muted-foreground">
-                        Use attribute value for height/top elevation
-                      </p>
-                    </Label>
-                  </div>
                   
                   <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="calculated" id="height-calculated" disabled={true} />
-                    <Label htmlFor="height-calculated" className="font-normal">
-                      Calculated (Coming Soon)
-                      <p className="text-xs text-muted-foreground">
-                        Calculate height from formula (future feature)
-                      </p>
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="none" id="height-none" />
-                    <Label htmlFor="height-none" className="font-normal">
-                      None
-                      <p className="text-xs text-muted-foreground">
-                        No height (flat features)
-                      </p>
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
-              
-              {advancedConfig?.heightConfig.source === 'attribute' && (
-                <div className="space-y-2 mt-3">
-                  <Label htmlFor="height-attribute-select">Height Attribute</Label>
-                  <Select 
-                    value={advancedConfig.heightConfig.attributeName || ''}
-                    onValueChange={(value) => {
-                      const defaultConfig = {
-                        baseElevation: {
-                          source: 'terrain' as const,
-                          attributeName: '',
-                          isAbsolute: false
-                        },
-                        heightConfig: {
-                          source: 'none' as const,
-                          attributeName: '',
-                          isRelative: false
-                        },
-                        visualization: {
-                          type: 'extrusion' as const,
-                          extrudedFaces: true,
-                          extrudedTop: true
-                        }
-                      };
-                      
-                      setAdvancedConfig({
-                        ...(advancedConfig || defaultConfig),
-                        heightConfig: {
-                          ...(advancedConfig?.heightConfig || defaultConfig.heightConfig),
-                          attributeName: value
-                        }
-                      });
-                    }}
-                  >
-                    <SelectTrigger id="height-attribute-select">
-                      <SelectValue placeholder="Select attribute" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {numericAttributesInfo.attributes.map(attr => (
-                        <SelectItem key={attr.name} value={attr.name}>
-                          {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  
-                  <div className="flex items-center space-x-2 mt-2">
                     <Checkbox 
-                      id="height-relative" 
-                      checked={advancedConfig.heightConfig.isRelative}
+                      id="extrusion-top" 
+                      checked={advancedConfig.visualization.extrudedTop}
                       onCheckedChange={(checked) => {
-                        const defaultConfig = {
-                          baseElevation: {
-                            source: 'terrain' as const,
-                            attributeName: '',
-                            isAbsolute: false
-                          },
-                          heightConfig: {
-                            source: 'none' as const,
-                            attributeName: '',
-                            isRelative: false
-                          },
-                          visualization: {
-                            type: 'extrusion' as const,
-                            extrudedFaces: true,
-                            extrudedTop: true
-                          }
-                        };
-                        
                         setAdvancedConfig({
-                          ...(advancedConfig || defaultConfig),
-                          heightConfig: {
-                            ...(advancedConfig?.heightConfig || defaultConfig.heightConfig),
-                            isRelative: !!checked
+                          ...advancedConfig,
+                          visualization: {
+                            ...advancedConfig.visualization,
+                            extrudedTop: !!checked
                           }
                         });
                       }}
                     />
                     <label
-                      htmlFor="height-relative"
+                      htmlFor="extrusion-top"
                       className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
                     >
-                      Value is relative height (not absolute top elevation)
+                      Show top face
                     </label>
                   </div>
                 </div>
-              )}
-            </TabsContent>
-            
-            {/* Visualization Tab */}
-            <TabsContent value="visual" className="space-y-4">
-              <div className="text-sm mb-3">
-                Configure how heights are visualized in 3D
               </div>
-              
-              <div className="space-y-3">
-                <Label>Visualization Type</Label>
-                <RadioGroup
-                  value={advancedConfig?.visualization.type || 'extrusion'}
-                  onValueChange={(value) => {
-                    const defaultConfig = {
-                      baseElevation: {
-                        source: 'terrain' as const,
-                        attributeName: '',
-                        isAbsolute: false
-                      },
-                      heightConfig: {
-                        source: 'none' as const,
-                        attributeName: '',
-                        isRelative: false
-                      },
-                      visualization: {
-                        type: 'extrusion' as const,
-                        extrudedFaces: true,
-                        extrudedTop: true
-                      }
-                    };
-                    
-                    setAdvancedConfig({
-                      ...(advancedConfig || defaultConfig),
-                      visualization: {
-                        ...(advancedConfig?.visualization || defaultConfig.visualization),
-                        type: value as 'extrusion' | 'point_elevation' | 'line_elevation'
-                      }
-                    });
-                  }}
-                  className="flex flex-col space-y-2"
-                >
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="extrusion" id="visual-extrusion" />
-                    <Label htmlFor="visual-extrusion" className="font-normal">
-                      Polygon Extrusion
-                      <p className="text-xs text-muted-foreground">
-                        Extrude polygons from base to top elevation
-                      </p>
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="point_elevation" id="visual-point" />
-                    <Label htmlFor="visual-point" className="font-normal">
-                      Point Elevation
-                      <p className="text-xs text-muted-foreground">
-                        Position points at specified elevation
-                      </p>
-                    </Label>
-                  </div>
-                  
-                  <div className="flex items-center space-x-2">
-                    <RadioGroupItem value="line_elevation" id="visual-line" />
-                    <Label htmlFor="visual-line" className="font-normal">
-                      Line Elevation
-                      <p className="text-xs text-muted-foreground">
-                        Position lines at specified elevation
-                      </p>
-                    </Label>
-                  </div>
-                </RadioGroup>
-              </div>
-              
-              {advancedConfig?.visualization.type === 'extrusion' && (
-                <div className="space-y-2 mt-3">
-                  <Label>Extrusion Options</Label>
-                  <div className="flex flex-col space-y-2 mt-1">
-                    <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="extrusion-faces" 
-                        checked={advancedConfig.visualization.extrudedFaces}
-                        onCheckedChange={(checked) => {
-                          const defaultConfig = {
-                            baseElevation: {
-                              source: 'terrain' as const,
-                              attributeName: '',
-                              isAbsolute: false
-                            },
-                            heightConfig: {
-                              source: 'none' as const,
-                              attributeName: '',
-                              isRelative: false
-                            },
-                            visualization: {
-                              type: 'extrusion' as const,
-                              extrudedFaces: true,
-                              extrudedTop: true
-                            }
-                          };
-                          
-                          setAdvancedConfig({
-                            ...(advancedConfig || defaultConfig),
-                            visualization: {
-                              ...(advancedConfig?.visualization || defaultConfig.visualization),
-                              extrudedFaces: !!checked
-                            }
-                          });
-                        }}
-                      />
-                      <label
-                        htmlFor="extrusion-faces"
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                      >
-                        Show side faces
-                      </label>
-                    </div>
-                    
-                    <div className="flex items-center space-x-2">
-                      <Checkbox 
-                        id="extrusion-top" 
-                        checked={advancedConfig.visualization.extrudedTop}
-                        onCheckedChange={(checked) => {
-                          const defaultConfig = {
-                            baseElevation: {
-                              source: 'terrain' as const,
-                              attributeName: '',
-                              isAbsolute: false
-                            },
-                            heightConfig: {
-                              source: 'none' as const,
-                              attributeName: '',
-                              isRelative: false
-                            },
-                            visualization: {
-                              type: 'extrusion' as const,
-                              extrudedFaces: true,
-                              extrudedTop: true
-                            }
-                          };
-                          
-                          setAdvancedConfig({
-                            ...(advancedConfig || defaultConfig),
-                            visualization: {
-                              ...(advancedConfig?.visualization || defaultConfig.visualization),
-                              extrudedTop: !!checked
-                            }
-                          });
-                        }}
-                      />
-                      <label
-                        htmlFor="extrusion-top"
-                        className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                      >
-                        Show top face
-                      </label>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </TabsContent>
-          </Tabs>
-        )}
+            )}
+          </TabsContent>
+        </Tabs>
         
         {/* Swiss Height Transformation Settings */}
         {swissCoordinatesInfo.isSwiss && (
