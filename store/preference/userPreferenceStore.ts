@@ -1,0 +1,105 @@
+'use client';
+
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import { LogManager } from '@/core/logging/log-manager';
+
+const SOURCE = 'userPreferenceStore';
+const logManager = LogManager.getInstance();
+
+const logger = {
+  info: (message: string, data?: any) => {
+    logManager.info(SOURCE, message, data);
+  },
+  debug: (message: string, data?: any) => {
+    logManager.debug(SOURCE, message, data);
+  },
+  error: (message: string, error?: any) => {
+    logManager.error(SOURCE, message, error);
+  }
+};
+
+/**
+ * Height source preference configuration
+ */
+export interface HeightSourcePreference {
+  type: 'z_coord' | 'attribute' | 'none';
+  attributeName?: string;
+}
+
+/**
+ * User preferences data structure
+ */
+export interface UserPreferences {
+  // Height source preferences
+  heightSourcePreference: HeightSourcePreference;
+  
+  // Add more preference categories here as needed
+}
+
+/**
+ * User preference store interface
+ */
+export interface PreferenceStore {
+  // State
+  preferences: UserPreferences;
+  
+  // Actions
+  setHeightSourcePreference: (preference: HeightSourcePreference) => void;
+  reset: () => void;
+}
+
+// Initial state for preferences
+const initialState: UserPreferences = {
+  heightSourcePreference: {
+    type: 'z_coord'  // Default to Z coordinates if available
+  }
+};
+
+/**
+ * Preference store with persistence
+ * Uses localStorage to save preferences between sessions
+ */
+export const usePreferenceStore = create<PreferenceStore>()(
+  persist(
+    (set) => ({
+      // Initial state
+      preferences: initialState,
+      
+      // Actions
+      setHeightSourcePreference: (preference) => {
+        logger.info('Setting height source preference', preference);
+        set(state => ({
+          preferences: {
+            ...state.preferences,
+            heightSourcePreference: preference
+          }
+        }));
+      },
+      
+      // Reset all preferences to defaults
+      reset: () => {
+        logger.info('Resetting user preferences');
+        set({ preferences: initialState });
+      }
+    }),
+    {
+      name: 'user-preferences', // Storage key in localStorage
+      partialize: (state) => ({
+        preferences: state.preferences
+      })
+    }
+  )
+);
+
+/**
+ * Hook to get height source preferences
+ */
+export const useHeightSourcePreference = () => {
+  const { preferences, setHeightSourcePreference } = usePreferenceStore();
+  
+  return {
+    heightSourcePreference: preferences.heightSourcePreference,
+    setHeightSourcePreference
+  };
+}; 

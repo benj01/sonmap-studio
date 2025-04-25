@@ -169,6 +169,89 @@ The Height Source Configuration system enables Sonmap Studio to visualize 2D vec
 
 The Height Source Configuration system provides a foundation for 3D visualization in Sonmap Studio. While the basic functionality for handling Z-coordinates and numeric attributes is in place, significant work remains to support complex scenarios like buildings with height attributes and true 3D models. The planned implementation phases will address these needs incrementally, starting with completing the current features before moving on to more advanced capabilities. 
 
+## Detailed Implementation Plan
+
+### Phase 1: Complete Current Features
+
+#### 1. Implement "Apply to all layers" functionality
+- Current status: UI exists but backend functionality incomplete
+- Implementation steps:
+  1. Get access to all layers using `layerSelectors.getAllLayers` in the `LayerSettingsDialog`
+  2. Modify `handleHeightSourceSelect` to loop through all layers when `applyToAllLayers` is true
+  3. Update the toast notification to indicate multi-layer updates
+  4. Add proper error handling and logging
+  5. Test with multiple layer scenarios
+
+#### 2. Add preference saving mechanism
+- Current status: UI exists but storage mechanism not implemented
+- Implementation steps:
+  1. Create `store/preference/userPreferenceStore.ts` with Zustand persist middleware
+  2. Define height source preferences schema (type, attribute name)
+  3. Add action for saving height source preferences
+  4. Update `HeightConfigurationDialog` to save preferences when checkbox is checked
+  5. Add functionality to apply saved preferences to new imports
+  6. Add ability to reset preferences
+
+#### 3. Begin database schema updates
+- Implementation steps:
+  1. Extend `LayerMetadata` interface in `store/layers/types.ts` with additional height fields
+  2. Add transformation status tracking: pending, in_progress, complete, failed
+  3. Add progress tracking fields: processed count, total count, start/end time
+  4. Add error tracking for height transformations
+  5. Update existing components to use the new schema fields
+
+### Phase 2: Performance & UX Enhancements
+
+#### 1. Improve performance with batched processing
+- Implementation steps:
+  1. Enhance `heightTransformService.ts` with batched processing capability
+  2. Process features in chunks (e.g., 100 features at a time)
+  3. Add progress tracking during batch processing
+  4. Implement background processing to prevent UI blocking
+  5. Add throttling for API calls to avoid rate limits
+
+#### 2. Add progress indicators and cancellation
+- Implementation steps:
+  1. Create `HeightTransformationProgress` component for visualizing progress
+  2. Add cancellation token system to stop transformations mid-process
+  3. Update `processFeatureCollectionHeights` to accept progress callback
+  4. Integrate progress updates with UI components
+  5. Add cancellation UI and handler functions
+
+#### 3. Improve error handling and user guidance
+- Implementation steps:
+  1. Create more specific error messages for different failure scenarios
+  2. Add retry mechanisms for failed transformations
+  3. Create a transaction system to ensure data consistency
+  4. Add tooltips and help text to explain height options
+  5. Provide visual cues for recommended settings
+
+### Phase 3: Prepare for Future Complex Functionality
+
+#### 1. Extend height configuration schema
+- Implementation steps:
+  1. Update `LayerMetadata` to support extrusion properties
+  2. Add fields for base height, extrusion height, and scale factors
+  3. Create placeholder UI components for extrusion settings
+  4. Ensure backward compatibility with current implementation
+  5. Document the extended schema for future development
+
+#### 2. Implement caching mechanism
+- Implementation steps:
+  1. Create a caching system for transformed coordinates
+  2. Store processed heights to reduce repeated API calls
+  3. Add cache invalidation when source data changes
+  4. Track cache usage statistics
+  5. Implement cache cleanup for old/unused data
+
+#### 3. Future-proof Cesium integration
+- Implementation steps:
+  1. Add hooks for future 3D Tiles integration
+  2. Create abstraction layer for height application method
+  3. Add support for different visualization methods based on data type
+  4. Document integration points for future 3D enhancements
+  5. Create test fixtures with various 3D data scenarios
+
 ## Coordinate Transformation System
 
 ### REST API Endpoint

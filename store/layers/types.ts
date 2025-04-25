@@ -17,6 +17,14 @@ export interface LayerMetadata {
     attributeName?: string;
     extrusion?: number;
     scale?: number;
+    transformationStatus?: 'pending' | 'in_progress' | 'complete' | 'failed';
+    transformationProgress?: {
+      processed: number;
+      total: number;
+      startTime?: number;
+      endTime?: number;
+    };
+    transformationError?: string;
   };
 }
 
@@ -28,4 +36,5 @@ export interface Layer {
   setupStatus: 'pending' | 'adding' | 'complete' | 'error';
   metadata?: LayerMetadata;
   error?: string;
+  geoJsonData?: GeoJSON.FeatureCollection;
 } 

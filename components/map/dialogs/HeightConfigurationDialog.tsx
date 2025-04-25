@@ -11,6 +11,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { LogManager } from '@/core/logging/log-manager';
 import { Feature, FeatureCollection, Geometry, Position, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, GeometryCollection } from 'geojson';
 import { Loader2, Info } from 'lucide-react';
+import { usePreferenceStore } from '@/store/preference/userPreferenceStore';
+import { CheckedState } from '@radix-ui/react-checkbox';
 
 interface HeightConfigurationDialogProps {
   open: boolean;
@@ -26,6 +28,7 @@ export interface HeightSource {
   attributeName?: string;
   applyToAllLayers: boolean;
   savePreference: boolean;
+  selectedLayerIds?: string[];
 }
 
 const SOURCE = 'HeightConfigurationDialog';
@@ -369,14 +372,21 @@ export function HeightConfigurationDialog({
   featureCollection,
   onHeightSourceSelect
 }: HeightConfigurationDialogProps) {
-  const [heightSourceType, setHeightSourceType] = useState<'z_coord' | 'attribute' | 'none'>('none');
+  const [selectedHeightSource, setSelectedHeightSource] = useState<'z_coord' | 'attribute' | 'none'>('none');
   const [selectedAttribute, setSelectedAttribute] = useState<string>('');
   const [applyToAllLayers, setApplyToAllLayers] = useState(false);
+  const [layerSelectionOpen, setLayerSelectionOpen] = useState(false);
   const [savePreference, setSavePreference] = useState(false);
   const [loading, setLoading] = useState(true);
   const [zInfo, setZInfo] = useState<ReturnType<typeof detectZCoordinates> | null>(null);
   const [attributeInfo, setAttributeInfo] = useState<ReturnType<typeof detectNumericAttributes> | null>(null);
   const [preview, setPreview] = useState<ReturnType<typeof getHeightPreview>>([]);
+  
+  // Get saved preferences from the store
+  const heightSourcePreference = usePreferenceStore(state => state.preferences.heightSourcePreference);
+  
+  // Flag to track if a preference has been found and can be applied
+  const [preferenceApplied, setPreferenceApplied] = useState(false);
 
   // Analyze features when the dialog opens
   useEffect(() => {
@@ -392,19 +402,60 @@ export function HeightConfigurationDialog({
         const attrData = detectNumericAttributes(featureCollection.features);
         setAttributeInfo(attrData);
         
-        // Set default height source type based on what's available
-        if (zData.hasZ) {
-          setHeightSourceType('z_coord');
-          // Set preview for Z coordinates
-          setPreview(getHeightPreview(featureCollection.features, 'z_coord'));
-        } else if (attrData.attributes.length > 0) {
-          setHeightSourceType('attribute');
-          setSelectedAttribute(attrData.attributes[0].name);
-          // Set preview for first attribute
-          setPreview(getHeightPreview(featureCollection.features, attrData.attributes[0].name));
-        } else {
-          setHeightSourceType('none');
-          setPreview([]);
+        // Try to apply saved preference if it exists and is applicable
+        if (heightSourcePreference && !preferenceApplied) {
+          logger.info('Attempting to apply saved height source preference', heightSourcePreference);
+          
+          // Check if the preferred source is available
+          let canApplyPreference = false;
+          
+          if (heightSourcePreference.type === 'z_coord' && zData.hasZ) {
+            setSelectedHeightSource('z_coord');
+            canApplyPreference = true;
+          } else if (heightSourcePreference.type === 'attribute' && 
+                     heightSourcePreference.attributeName && 
+                     attrData.attributes.some(attr => attr.name === heightSourcePreference.attributeName)) {
+            setSelectedHeightSource('attribute');
+            setSelectedAttribute(heightSourcePreference.attributeName);
+            canApplyPreference = true;
+          } else if (heightSourcePreference.type === 'none') {
+            setSelectedHeightSource('none');
+            canApplyPreference = true;
+          }
+          
+          if (canApplyPreference) {
+            logger.info('Applied saved height source preference', {
+              type: heightSourcePreference.type,
+              attributeName: heightSourcePreference.attributeName
+            });
+            setPreferenceApplied(true);
+            // When a preference is applied, suggest saving it as well
+            setSavePreference(true);
+          } else {
+            logger.info('Could not apply saved preference - using detection instead', {
+              preferenceType: heightSourcePreference.type,
+              hasZ: zData.hasZ,
+              attrCount: attrData.attributes.length
+            });
+          }
+        }
+        
+        // If no preference was applied or it couldn't be applied,
+        // set default height source type based on what's available
+        if (!preferenceApplied) {
+          if (zData.hasZ) {
+            setSelectedHeightSource('z_coord');
+            // Set preview for Z coordinates
+            setPreview(getHeightPreview(featureCollection.features, 'z_coord'));
+          } else if (attrData.attributes.length > 0) {
+            setSelectedHeightSource('attribute');
+            setSelectedAttribute(attrData.attributes[0].name);
+            // Set preview for first attribute
+            setPreview(getHeightPreview(featureCollection.features, attrData.attributes[0].name));
+          } else {
+            setSelectedHeightSource('none');
+            setPreview([]);
+          }
         }
       } catch (error) {
         logger.error('Error analyzing features', error);
@@ -412,30 +463,50 @@ export function HeightConfigurationDialog({
         setLoading(false);
       }
     }
-  }, [open, featureCollection]);
+  }, [open, featureCollection, heightSourcePreference, preferenceApplied]);
 
   // Update preview when height source changes
   useEffect(() => {
     if (featureCollection && featureCollection.features) {
-      if (heightSourceType === 'z_coord') {
+      if (selectedHeightSource === 'z_coord') {
         setPreview(getHeightPreview(featureCollection.features, 'z_coord'));
-      } else if (heightSourceType === 'attribute' && selectedAttribute) {
+      } else if (selectedHeightSource === 'attribute' && selectedAttribute) {
         setPreview(getHeightPreview(featureCollection.features, selectedAttribute));
       } else {
         setPreview([]);
       }
     }
-  }, [heightSourceType, selectedAttribute, featureCollection]);
+  }, [selectedHeightSource, selectedAttribute, featureCollection]);
+
+  // Reset settings when dialog is closed
+  useEffect(() => {
+    if (!open) {
+      setPreferenceApplied(false); // Reset preference applied flag
+    }
+  }, [open]);
+
+  // Toggle apply to all layers and layer selection panel
+  const handleApplyToAllLayersChange = (checked: CheckedState) => {
+    setApplyToAllLayers(checked === true);
+    if (checked === true) {
+      setLayerSelectionOpen(true);
+    } else {
+      setLayerSelectionOpen(false);
+    }
+  };
 
   const handleApply = () => {
     const heightSource: HeightSource = {
-      type: heightSourceType,
-      attributeName: heightSourceType === 'attribute' ? selectedAttribute : undefined,
+      type: selectedHeightSource,
       applyToAllLayers,
-      savePreference
+      savePreference,
     };
-    
-    logger.info('Height source selected', heightSource);
+
+    if (selectedHeightSource === 'attribute' && selectedAttribute) {
+      heightSource.attributeName = selectedAttribute;
+    }
+
+    logger.info('Applying height source', heightSource);
     onHeightSourceSelect(heightSource);
     onOpenChange(false);
   };
@@ -461,8 +532,8 @@ export function HeightConfigurationDialog({
               <h3 className="text-sm font-medium">Select height data source:</h3>
               
               <RadioGroup 
-                value={heightSourceType} 
-                onValueChange={(value) => setHeightSourceType(value as 'z_coord' | 'attribute' | 'none')}
+                value={selectedHeightSource} 
+                onValueChange={(value) => setSelectedHeightSource(value as 'z_coord' | 'attribute' | 'none')}
                 className="space-y-3"
               >
                 <div className="flex items-start space-x-2">
@@ -495,7 +566,7 @@ export function HeightConfigurationDialog({
                     >
                       Use attribute field
                     </Label>
-                    {heightSourceType === "attribute" && attributeInfo?.attributes.length ? (
+                    {selectedHeightSource === "attribute" && attributeInfo?.attributes.length ? (
                       <Select 
                         value={selectedAttribute} 
                         onValueChange={setSelectedAttribute}
@@ -533,7 +604,7 @@ export function HeightConfigurationDialog({
             </div>
             
             {/* Preview section */}
-            {heightSourceType !== 'none' && preview.length > 0 && (
+            {selectedHeightSource !== 'none' && preview.length > 0 && (
               <div className="border rounded-md p-3 bg-gray-50">
                 <h4 className="text-sm font-medium mb-2">
                   Preview 
@@ -559,32 +630,33 @@ export function HeightConfigurationDialog({
             
             {/* Options section */}
             <div className="space-y-3 pt-2">
-              <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="apply-all" 
-                  checked={applyToAllLayers} 
-                  onCheckedChange={(checked) => setApplyToAllLayers(checked as boolean)} 
-                />
-                <label 
-                  htmlFor="apply-all" 
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Apply to all layers in project
-                </label>
+              <div className="space-y-2">
+                <div className="flex items-center space-x-2">
+                  <Checkbox 
+                    id="apply-all-layers" 
+                    checked={applyToAllLayers} 
+                    onCheckedChange={handleApplyToAllLayersChange} 
+                  />
+                  <Label htmlFor="apply-all-layers" className="font-normal cursor-pointer">
+                    Apply to compatible layers
+                  </Label>
+                </div>
+                {layerSelectionOpen && (
+                  <div className="ml-6 mt-2 text-sm text-muted-foreground">
+                    When checked, this configuration will be applied to other layers with compatible data structure.
+                  </div>
+                )}
               </div>
               
               <div className="flex items-center space-x-2">
                 <Checkbox 
-                  id="save-pref" 
+                  id="save-preference" 
                   checked={savePreference} 
-                  onCheckedChange={(checked) => setSavePreference(checked as boolean)}
+                  onCheckedChange={(checked: CheckedState) => setSavePreference(checked === true)} 
                 />
-                <label 
-                  htmlFor="save-pref" 
-                  className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
-                >
-                  Save this preference for future imports
-                </label>
+                <Label htmlFor="save-preference" className="font-normal cursor-pointer">
+                  Save preference for future imports
+                </Label>
               </div>
             </div>
             
