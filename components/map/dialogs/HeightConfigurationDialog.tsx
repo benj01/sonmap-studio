@@ -13,6 +13,8 @@ import { Feature, FeatureCollection, Geometry, Position, Point, LineString, Poly
 import { Loader2, Info } from 'lucide-react';
 import { usePreferenceStore } from '@/store/preference/userPreferenceStore';
 import { CheckedState } from '@radix-ui/react-checkbox';
+import { HeightTransformBatchService } from '../services/heightTransformBatchService';
+import { HeightTransformProgress } from '../components/HeightTransformProgress';
 
 interface HeightConfigurationDialogProps {
   open: boolean;
@@ -372,312 +374,376 @@ export function HeightConfigurationDialog({
   featureCollection,
   onHeightSourceSelect
 }: HeightConfigurationDialogProps) {
-  const [selectedHeightSource, setSelectedHeightSource] = useState<'z_coord' | 'attribute' | 'none'>('none');
+  // State for source type selection (z-coord, attribute, or none)
+  const [sourceType, setSourceType] = useState<'z_coord' | 'attribute' | 'none'>('none');
   const [selectedAttribute, setSelectedAttribute] = useState<string>('');
-  const [applyToAllLayers, setApplyToAllLayers] = useState(false);
-  const [layerSelectionOpen, setLayerSelectionOpen] = useState(false);
-  const [savePreference, setSavePreference] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [zInfo, setZInfo] = useState<ReturnType<typeof detectZCoordinates> | null>(null);
-  const [attributeInfo, setAttributeInfo] = useState<ReturnType<typeof detectNumericAttributes> | null>(null);
-  const [preview, setPreview] = useState<ReturnType<typeof getHeightPreview>>([]);
+  const [numericAttributes, setNumericAttributes] = useState<{ name: string; min: number; max: number; count: number }[]>([]);
+  const [zCoordinateInfo, setZCoordinateInfo] = useState<{ hasZ: boolean; message: string }>({ hasZ: false, message: '' });
+  const [applyToAllLayers, setApplyToAllLayers] = useState<boolean>(false);
+  const [savePreference, setSavePreference] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [heightPreview, setHeightPreview] = useState<{ featureId: string | number; value: number | null }[]>([]);
+  const [selectedTab, setSelectedTab] = useState<string>('z_coord');
   
-  // Get saved preferences from the store
-  const heightSourcePreference = usePreferenceStore(state => state.preferences.heightSourcePreference);
+  // New state for batch processing
+  const [activeBatchId, setActiveBatchId] = useState<string | null>(null);
+  const [showProgress, setShowProgress] = useState<boolean>(false);
   
-  // Flag to track if a preference has been found and can be applied
-  const [preferenceApplied, setPreferenceApplied] = useState(false);
-
-  // Analyze features when the dialog opens
-  useEffect(() => {
-    if (open && featureCollection && featureCollection.features) {
-      setLoading(true);
-      
-      try {
-        // Detect Z coordinates
-        const zData = detectZCoordinates(featureCollection.features);
-        setZInfo(zData);
-        
-        // Detect numeric attributes
-        const attrData = detectNumericAttributes(featureCollection.features);
-        setAttributeInfo(attrData);
-        
-        // Try to apply saved preference if it exists and is applicable
-        if (heightSourcePreference && !preferenceApplied) {
-          logger.info('Attempting to apply saved height source preference', heightSourcePreference);
-          
-          // Check if the preferred source is available
-          let canApplyPreference = false;
-          
-          if (heightSourcePreference.type === 'z_coord' && zData.hasZ) {
-            setSelectedHeightSource('z_coord');
-            canApplyPreference = true;
-          } else if (heightSourcePreference.type === 'attribute' && 
-                     heightSourcePreference.attributeName && 
-                     attrData.attributes.some(attr => attr.name === heightSourcePreference.attributeName)) {
-            setSelectedHeightSource('attribute');
-            setSelectedAttribute(heightSourcePreference.attributeName);
-            canApplyPreference = true;
-          } else if (heightSourcePreference.type === 'none') {
-            setSelectedHeightSource('none');
-            canApplyPreference = true;
-          }
-          
-          if (canApplyPreference) {
-            logger.info('Applied saved height source preference', {
-              type: heightSourcePreference.type,
-              attributeName: heightSourcePreference.attributeName
-            });
-            setPreferenceApplied(true);
-            // When a preference is applied, suggest saving it as well
-            setSavePreference(true);
-          } else {
-            logger.info('Could not apply saved preference - using detection instead', {
-              preferenceType: heightSourcePreference.type,
-              hasZ: zData.hasZ,
-              attrCount: attrData.attributes.length
-            });
-          }
-        }
-        
-        // If no preference was applied or it couldn't be applied,
-        // set default height source type based on what's available
-        if (!preferenceApplied) {
-          if (zData.hasZ) {
-            setSelectedHeightSource('z_coord');
-            // Set preview for Z coordinates
-            setPreview(getHeightPreview(featureCollection.features, 'z_coord'));
-          } else if (attrData.attributes.length > 0) {
-            setSelectedHeightSource('attribute');
-            setSelectedAttribute(attrData.attributes[0].name);
-            // Set preview for first attribute
-            setPreview(getHeightPreview(featureCollection.features, attrData.attributes[0].name));
-          } else {
-            setSelectedHeightSource('none');
-            setPreview([]);
-          }
-        }
-      } catch (error) {
-        logger.error('Error analyzing features', error);
-      } finally {
-        setLoading(false);
-      }
-    }
-  }, [open, featureCollection, heightSourcePreference, preferenceApplied]);
-
-  // Update preview when height source changes
+  // Preference store for saving user preferences
+  const { preferences, setHeightSourcePreference } = usePreferenceStore();
+  const heightSourcePreference = preferences.heightSourcePreference;
+  
+  // Batch service instance
+  const batchService = HeightTransformBatchService.getInstance();
+  
+  // Detect Z coordinates and numeric attributes on mount and when featureCollection changes
   useEffect(() => {
     if (featureCollection && featureCollection.features) {
-      if (selectedHeightSource === 'z_coord') {
-        setPreview(getHeightPreview(featureCollection.features, 'z_coord'));
-      } else if (selectedHeightSource === 'attribute' && selectedAttribute) {
-        setPreview(getHeightPreview(featureCollection.features, selectedAttribute));
+      // Detect if features have Z coordinates
+      const zInfo = detectZCoordinates(featureCollection.features);
+      setZCoordinateInfo({
+        hasZ: zInfo.hasZ,
+        message: zInfo.message
+      });
+      
+      // Detect numeric attributes in feature properties
+      const attrInfo = detectNumericAttributes(featureCollection.features);
+      setNumericAttributes(attrInfo.attributes);
+      
+      // Set default source type based on what's available
+      if (zInfo.hasZ) {
+        setSourceType('z_coord');
+        setSelectedTab('z_coord');
+      } else if (attrInfo.attributes.length > 0) {
+        setSourceType('attribute');
+        setSelectedAttribute(attrInfo.attributes[0].name);
+        setSelectedTab('attribute');
       } else {
-        setPreview([]);
+        setSourceType('none');
+        setSelectedTab('none');
+      }
+      
+      // Apply preference if available
+      if (heightSourcePreference) {
+        if (heightSourcePreference.type === 'attribute') {
+          // Only apply attribute preference if this layer has that attribute
+          const hasAttribute = attrInfo.attributes.some(attr => 
+            attr.name === heightSourcePreference.attributeName
+          );
+          
+          if (hasAttribute) {
+            setSourceType('attribute');
+            setSelectedAttribute(heightSourcePreference.attributeName || '');
+            setSelectedTab('attribute');
+          }
+        } else if (heightSourcePreference.type === 'z_coord' && zInfo.hasZ) {
+          setSourceType('z_coord');
+          setSelectedTab('z_coord');
+        } else if (heightSourcePreference.type === 'none') {
+          setSourceType('none');
+          setSelectedTab('none');
+        }
+        
+        setSavePreference(true);
       }
     }
-  }, [selectedHeightSource, selectedAttribute, featureCollection]);
-
-  // Reset settings when dialog is closed
+  }, [featureCollection, heightSourcePreference]);
+  
+  // Update preview when source type or selected attribute changes
   useEffect(() => {
-    if (!open) {
-      setPreferenceApplied(false); // Reset preference applied flag
+    if (featureCollection && featureCollection.features) {
+      if (sourceType === 'z_coord') {
+        setHeightPreview(getHeightPreview(featureCollection.features, 'z_coord'));
+      } else if (sourceType === 'attribute' && selectedAttribute) {
+        setHeightPreview(getHeightPreview(featureCollection.features, selectedAttribute));
+      } else {
+        setHeightPreview([]);
+      }
     }
-  }, [open]);
-
-  // Toggle apply to all layers and layer selection panel
-  const handleApplyToAllLayersChange = (checked: CheckedState) => {
-    setApplyToAllLayers(checked === true);
-    if (checked === true) {
-      setLayerSelectionOpen(true);
-    } else {
-      setLayerSelectionOpen(false);
+  }, [featureCollection, sourceType, selectedAttribute]);
+  
+  // Handle tab change
+  const handleTabChange = (value: string) => {
+    setSelectedTab(value);
+    setSourceType(value as 'z_coord' | 'attribute' | 'none');
+    
+    if (value === 'attribute' && numericAttributes.length > 0 && !selectedAttribute) {
+      setSelectedAttribute(numericAttributes[0].name);
     }
   };
+  
+  // Handle attribute selection
+  const handleAttributeSelect = (value: string) => {
+    setSelectedAttribute(value);
+  };
+  
+  // Handle apply to all layers change
+  const handleApplyToAllLayersChange = (checked: CheckedState) => {
+    setApplyToAllLayers(!!checked);
+  };
+  
+  // Handle save preference change
+  const handleSavePreferenceChange = (checked: CheckedState) => {
+    setSavePreference(!!checked);
+  };
+  
+  // Handle apply button click
+  const handleApply = async () => {
+    setIsLoading(true);
+    
+    try {
+      // Create the height source configuration
+      const heightSource: HeightSource = {
+        type: sourceType,
+        attributeName: sourceType === 'attribute' ? selectedAttribute : undefined,
+        applyToAllLayers,
+        savePreference,
+      };
+      
+      // Save preference if requested
+      if (savePreference) {
+        setHeightSourcePreference({
+          type: sourceType,
+          attributeName: sourceType === 'attribute' ? selectedAttribute : undefined
+        });
+      }
+      
+      // Always notify parent about height source selection, even if no batch processing needed
+      onHeightSourceSelect(heightSource);
 
-  const handleApply = () => {
-    const heightSource: HeightSource = {
-      type: selectedHeightSource,
-      applyToAllLayers,
-      savePreference,
-    };
-
-    if (selectedHeightSource === 'attribute' && selectedAttribute) {
-      heightSource.attributeName = selectedAttribute;
+      // Skip batch processing for 'none' height source type
+      if (sourceType === 'none') {
+        onOpenChange(false);
+        return;
+      }
+      
+      // Check if there are features to process
+      if (!featureCollection.features || featureCollection.features.length === 0) {
+        logger.warn('No features available to process', { layerId });
+        // Show a brief message and close the dialog
+        setIsLoading(false);
+        onOpenChange(false);
+        return;
+      }
+      
+      // Initialize a batch for processing
+      const batchId = await batchService.initializeBatch(
+        layerId,
+        sourceType,
+        sourceType === 'attribute' ? selectedAttribute : undefined
+      );
+      
+      if (batchId === 'NO_FEATURES') {
+        // Special case: No features found in the database
+        logger.warn('No features found in database for layer', { layerId });
+        onOpenChange(false);
+        return;
+      } else if (batchId) {
+        setActiveBatchId(batchId);
+        
+        // Start batch processing
+        const started = await batchService.startBatchProcessing(
+          batchId,
+          featureCollection,
+          { chunkSize: 50 }
+        );
+        
+        if (started) {
+          setShowProgress(true);
+        } else {
+          logger.error('Failed to start batch processing', { batchId, layerId });
+          setActiveBatchId(null);
+          onOpenChange(false);
+        }
+      } else {
+        logger.error('Failed to initialize batch', { layerId });
+        onOpenChange(false);
+      }
+    } catch (error) {
+      logger.error('Error applying height source', error);
+      onOpenChange(false);
+    } finally {
+      setIsLoading(false);
     }
-
-    logger.info('Applying height source', heightSource);
-    onHeightSourceSelect(heightSource);
+  };
+  
+  const handleProgressComplete = () => {
+    setShowProgress(false);
+    setActiveBatchId(null);
     onOpenChange(false);
   };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[550px]">
+  
+  const handleProgressCancel = () => {
+    setShowProgress(false);
+    // The batch has already been cancelled in the progress component
+    setActiveBatchId(null);
+  };
+  
+  // Content rendered when progress is showing
+  const renderProgressContent = () => {
+    if (!activeBatchId) return null;
+    
+    return (
+      <div className="flex justify-center items-center p-4">
+        <HeightTransformProgress
+          batchId={activeBatchId}
+          layerName={layerName}
+          onComplete={handleProgressComplete}
+          onCancel={handleProgressCancel}
+        />
+      </div>
+    );
+  };
+  
+  // Content rendered for height configuration options
+  const renderConfigContent = () => {
+    return (
+      <>
         <DialogHeader>
-          <DialogTitle>Height Configuration</DialogTitle>
+          <DialogTitle>Configure Height Source</DialogTitle>
           <DialogDescription>
-            Configure height data for 3D visualization of {layerName}
+            Choose how height values should be determined for 3D visualization
           </DialogDescription>
         </DialogHeader>
         
-        {loading ? (
-          <div className="flex justify-center items-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <span className="ml-2">Analyzing features...</span>
-          </div>
-        ) : (
-          <div className="space-y-6 py-4">
-            <div className="space-y-4">
-              <h3 className="text-sm font-medium">Select height data source:</h3>
+        <Tabs value={selectedTab} onValueChange={handleTabChange} className="w-full">
+          <TabsList className="grid grid-cols-3 mb-4">
+            <TabsTrigger value="z_coord" disabled={!zCoordinateInfo.hasZ}>
+              Z Coordinates
+            </TabsTrigger>
+            <TabsTrigger value="attribute" disabled={numericAttributes.length === 0}>
+              Attribute
+            </TabsTrigger>
+            <TabsTrigger value="none">
+              No Height
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="z_coord" className="space-y-4">
+            <div className="text-sm">
+              Use Z coordinates from the geometry for height values.
               
-              <RadioGroup 
-                value={selectedHeightSource} 
-                onValueChange={(value) => setSelectedHeightSource(value as 'z_coord' | 'attribute' | 'none')}
-                className="space-y-3"
-              >
-                <div className="flex items-start space-x-2">
-                  <RadioGroupItem value="z_coord" id="z_coord" disabled={!zInfo?.hasZ} />
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="z_coord" className={!zInfo?.hasZ ? "text-gray-400" : ""}>
-                      Use Z coordinates
-                      {zInfo?.hasZ && (
-                        <span className="ml-2 text-xs text-green-600 font-medium">
-                          (Recommended)
-                        </span>
-                      )}
-                    </Label>
-                    <p className="text-sm text-gray-500">
-                      {zInfo?.message || "No Z coordinate information available"}
-                    </p>
-                  </div>
+              {!zCoordinateInfo.hasZ && (
+                <div className="text-amber-600 mt-2 flex items-center">
+                  <Info className="h-4 w-4 mr-1" />
+                  No valid Z coordinates detected in this layer.
                 </div>
-                
-                <div className="flex items-start space-x-2">
-                  <RadioGroupItem 
-                    value="attribute" 
-                    id="attribute" 
-                    disabled={!attributeInfo?.attributes.length} 
-                  />
-                  <div className="grid gap-1.5 w-full">
-                    <Label 
-                      htmlFor="attribute" 
-                      className={!attributeInfo?.attributes.length ? "text-gray-400" : ""}
-                    >
-                      Use attribute field
-                    </Label>
-                    {selectedHeightSource === "attribute" && attributeInfo?.attributes.length ? (
-                      <Select 
-                        value={selectedAttribute} 
-                        onValueChange={setSelectedAttribute}
-                        disabled={!attributeInfo?.attributes.length}
-                      >
-                        <SelectTrigger className="w-full">
-                          <SelectValue placeholder="Select attribute" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {attributeInfo?.attributes.map(attr => (
-                            <SelectItem key={attr.name} value={attr.name}>
-                              {attr.name} ({attr.min.toFixed(1)} to {attr.max.toFixed(1)} m)
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    ) : (
-                      <p className="text-sm text-gray-500">
-                        {attributeInfo?.message || "No attribute information available"}
-                      </p>
-                    )}
-                  </div>
+              )}
+              
+              {zCoordinateInfo.hasZ && (
+                <div className="text-green-600 mt-2">
+                  Z coordinates detected and will be used for heights.
                 </div>
-                
-                <div className="flex items-start space-x-2">
-                  <RadioGroupItem value="none" id="none" />
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="none">No height data</Label>
-                    <p className="text-sm text-gray-500">
-                      Features will be displayed without elevation (flat)
-                    </p>
-                  </div>
-                </div>
-              </RadioGroup>
+              )}
             </div>
             
-            {/* Preview section */}
-            {selectedHeightSource !== 'none' && preview.length > 0 && (
-              <div className="border rounded-md p-3 bg-gray-50">
-                <h4 className="text-sm font-medium mb-2">
-                  Preview 
-                  <span className="text-xs text-gray-500 ml-1">
-                    (first {preview.length} features)
-                  </span>
-                </h4>
-                <div className="space-y-1">
-                  {preview.map(item => (
-                    <div key={item.featureId} className="grid grid-cols-2 text-sm">
-                      <span className="text-gray-500">Feature #{item.featureId}</span>
-                      <span>
-                        {item.value !== null 
-                          ? `${item.value.toFixed(2)} m` 
-                          : <span className="text-gray-400">No value</span>
-                        }
-                      </span>
+            {heightPreview.length > 0 && (
+              <div className="mt-4">
+                <h4 className="text-sm font-medium mb-2">Preview:</h4>
+                <div className="text-xs grid grid-cols-2 gap-x-4 gap-y-1">
+                  {heightPreview.map(item => (
+                    <div key={`${item.featureId}`} className="flex justify-between">
+                      <span className="text-muted-foreground truncate">{item.featureId}</span>
+                      <span>{item.value !== null ? `${item.value.toFixed(2)}m` : 'N/A'}</span>
                     </div>
                   ))}
                 </div>
               </div>
             )}
-            
-            {/* Options section */}
-            <div className="space-y-3 pt-2">
-              <div className="space-y-2">
-                <div className="flex items-center space-x-2">
-                  <Checkbox 
-                    id="apply-all-layers" 
-                    checked={applyToAllLayers} 
-                    onCheckedChange={handleApplyToAllLayersChange} 
-                  />
-                  <Label htmlFor="apply-all-layers" className="font-normal cursor-pointer">
-                    Apply to compatible layers
-                  </Label>
-                </div>
-                {layerSelectionOpen && (
-                  <div className="ml-6 mt-2 text-sm text-muted-foreground">
-                    When checked, this configuration will be applied to other layers with compatible data structure.
-                  </div>
-                )}
+          </TabsContent>
+          
+          <TabsContent value="attribute" className="space-y-4">
+            <div className="space-y-4">
+              <div className="text-sm">
+                Use a numeric attribute from feature properties for height values.
               </div>
               
-              <div className="flex items-center space-x-2">
-                <Checkbox 
-                  id="save-preference" 
-                  checked={savePreference} 
-                  onCheckedChange={(checked: CheckedState) => setSavePreference(checked === true)} 
-                />
-                <Label htmlFor="save-preference" className="font-normal cursor-pointer">
-                  Save preference for future imports
-                </Label>
+              <div className="space-y-2">
+                <Label htmlFor="attribute-select">Height Attribute</Label>
+                <Select value={selectedAttribute} onValueChange={handleAttributeSelect}>
+                  <SelectTrigger id="attribute-select">
+                    <SelectValue placeholder="Select attribute" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {numericAttributes.map(attr => (
+                      <SelectItem key={attr.name} value={attr.name}>
+                        {attr.name} ({attr.min.toFixed(1)} - {attr.max.toFixed(1)})
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
+              
+              {heightPreview.length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Preview:</h4>
+                  <div className="text-xs grid grid-cols-2 gap-x-4 gap-y-1">
+                    {heightPreview.map(item => (
+                      <div key={`${item.featureId}`} className="flex justify-between">
+                        <span className="text-muted-foreground truncate">{item.featureId}</span>
+                        <span>{item.value !== null ? `${item.value.toFixed(2)}m` : 'N/A'}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
-            
-            <div className="bg-blue-50 border border-blue-200 rounded-md p-3 flex">
-              <Info className="h-5 w-5 text-blue-500 mr-2 flex-shrink-0 mt-0.5" />
-              <div className="text-sm text-blue-700">
-                <p>Height transformation will convert LV95 coordinates to WGS84 ellipsoidal heights for accurate 3D visualization.</p>
-                <p className="mt-1">This process uses the SwissTopo API and might take some time for large datasets.</p>
-              </div>
+          </TabsContent>
+          
+          <TabsContent value="none" className="space-y-4">
+            <div className="text-sm">
+              Features will be displayed flat without height information.
             </div>
-          </div>
-        )}
+          </TabsContent>
+        </Tabs>
         
-        <DialogFooter>
+        <div className="space-y-2 mt-6">
+          <div className="flex items-center space-x-2">
+            <Checkbox 
+              id="apply-all" 
+              checked={applyToAllLayers}
+              onCheckedChange={handleApplyToAllLayersChange}
+            />
+            <label
+              htmlFor="apply-all"
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              Apply to all compatible layers
+            </label>
+          </div>
+          
+          <div className="flex items-center space-x-2">
+            <Checkbox 
+              id="save-preference" 
+              checked={savePreference}
+              onCheckedChange={handleSavePreferenceChange}
+            />
+            <label
+              htmlFor="save-preference"
+              className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70"
+            >
+              Save as preference for future layers
+            </label>
+          </div>
+        </div>
+        
+        <DialogFooter className="mt-6">
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleApply} disabled={loading}>
+          <Button onClick={handleApply} disabled={isLoading}>
+            {isLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Apply
           </Button>
         </DialogFooter>
+      </>
+    );
+  };
+  
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[500px]">
+        {showProgress ? renderProgressContent() : renderConfigContent()}
       </DialogContent>
     </Dialog>
   );
