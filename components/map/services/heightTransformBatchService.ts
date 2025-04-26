@@ -119,6 +119,25 @@ export class HeightTransformBatchService {
         });
         
         // Handle specific error cases
+        if (response.status === 404) {
+          // Call the diagnostic endpoint for more information
+          try {
+            const diagResponse = await fetch(`/api/height-transformation/feature-counts?layerId=${layerId}`);
+            
+            if (diagResponse.ok) {
+              const diagData = await diagResponse.json();
+              logger.warn('Feature counts diagnostic information', diagData);
+            }
+          } catch (diagError) {
+            logger.error('Failed to get diagnostic information', { error: diagError });
+          }
+          
+          logger.warn('No features found in layer, skipping transformation', { layerId });
+          // Return a special flag to indicate no features instead of null (error)
+          return 'NO_FEATURES';
+        }
+        
+        // Handle other error cases
         try {
           const errorData = JSON.parse(errorText);
           if (errorData.error && errorData.error.includes('No features found')) {

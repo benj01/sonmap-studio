@@ -66,7 +66,31 @@ export async function POST(req: NextRequest) {
     }
     
     if (count === 0) {
-      logger.warn('No features found in layer', { layerId });
+      // Run a more detailed query to check if the layer exists at all
+      const { data: layerCheckData, error: layerCheckError } = await supabase
+        .from('layers')
+        .select('id, name')
+        .eq('id', layerId)
+        .maybeSingle();
+        
+      if (layerCheckError) {
+        logger.error('Failed to check if layer exists', { error: layerCheckError, layerId });
+      }
+      
+      // Try to query directly by SQL to see if there's any permissions issue
+      const { data: directCheckData, error: directCheckError } = await supabase.rpc(
+        'count_layer_features',
+        { p_layer_id: layerId }
+      );
+      
+      logger.warn('No features found in layer', { 
+        layerId,
+        layerExists: !!layerCheckData,
+        layerName: layerCheckData?.name,
+        directCheckCount: directCheckData || 0,
+        directCheckError: directCheckError?.message
+      });
+      
       return NextResponse.json(
         { error: `No features found in layer ${layerId}` },
         { status: 404 }

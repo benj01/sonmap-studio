@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { LogManager } from '../logging/log-manager';
+import { FeatureCollection } from 'geojson';
 
 const logManager = LogManager.getInstance();
 const SOURCE = 'Coordinates';
@@ -416,4 +417,66 @@ export function groupFeaturesByProximity(
       relatedFeatures
     };
   });
+}
+
+/**
+ * Processes a GeoJSON FeatureCollection to transform heights for features 
+ * with LV95 stored coordinates.
+ * 
+ * @param featureCollection The GeoJSON feature collection to process
+ * @returns A transformed feature collection with accurate ellipsoidal heights
+ */
+export async function processFeatureCollectionHeights(
+  featureCollection: FeatureCollection
+): Promise<FeatureCollection> {
+  try {
+    logManager.info(SOURCE, 'Processing feature collection heights', {
+      featureCount: featureCollection.features.length
+    });
+    
+    let transformedCount = 0;
+    let unchangedCount = 0;
+    
+    // Process each feature in parallel
+    const transformedFeatures = await Promise.all(
+      featureCollection.features.map(async (feature) => {
+        // Check if this feature has lv95_stored height mode
+        if (feature.properties?.height_mode === 'lv95_stored') {
+          try {
+            // Transform using the utility function
+            const transformedFeature = await processStoredLv95Coordinates(feature);
+            transformedCount++;
+            return transformedFeature;
+          } catch (error) {
+            logManager.error(SOURCE, 'Error transforming feature height', {
+              featureId: feature.id,
+              error
+            });
+            // Return original feature if transformation fails
+            unchangedCount++;
+            return feature;
+          }
+        } else {
+          // Feature doesn't need height transformation
+          unchangedCount++;
+          return feature;
+        }
+      })
+    );
+    
+    logManager.info(SOURCE, 'Feature heights processed', {
+      transformedCount,
+      unchangedCount,
+      totalCount: featureCollection.features.length
+    });
+    
+    return {
+      ...featureCollection,
+      features: transformedFeatures
+    };
+  } catch (error) {
+    logManager.error(SOURCE, 'Error processing feature collection heights', error);
+    // Return original collection if processing fails
+    return featureCollection;
+  }
 } 

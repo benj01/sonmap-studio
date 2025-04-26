@@ -1,21 +1,25 @@
 # Height Transformation Database Schema
 
 ## Overview
-The height transformation system uses a robust database schema to track and manage transformations, especially for large datasets. This document provides detailed information about tables, columns, and PostgreSQL functions implemented to support this functionality.
+The height transformation system uses a database schema to track and manage transformations. This document details the tables, columns, and PostgreSQL functions that support this functionality.
 
-## Schema Details
+## Tables
 
-### geo_features Table Extensions
+### geo_features Extensions
 
-The `geo_features` table has been enhanced with additional columns to track height transformation:
+The `geo_features` table includes these additional columns for height transformation:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `height_transformation_status` | TEXT | Status: 'pending', 'in_progress', 'complete', 'failed' |
+| `height_transformation_status` | TEXT | Database values: 'pending', 'in_progress', 'complete', 'failed' (Note: 'cancelled' status is tracked client-side only) |
 | `height_transformed_at` | TIMESTAMP WITH TIME ZONE | When transformation completed |
 | `height_transformation_batch_id` | UUID | Reference to batch operation |
 | `height_transformation_error` | TEXT | Error message if transformation failed |
 | `original_height_values` | JSONB | Pre-transformation values for reference/rollback |
+| `base_elevation_ellipsoidal` | NUMERIC | Transformed base elevation value in WGS84 |
+| `object_height` | NUMERIC | Height/vertical extent of the feature |
+| `height_mode` | TEXT | Height interpretation mode |
+| `height_source` | TEXT | Source of height data |
 
 ### height_transformation_batches Table
 
@@ -23,16 +27,16 @@ This table tracks batches of height transformations:
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `id` | UUID | Primary key, generated using `gen_random_uuid()` |
-| `layer_id` | UUID | References `layers.id`, with ON DELETE CASCADE |
-| `height_source_type` | TEXT | Type: 'z_coord', 'attribute', 'none' |
-| `height_source_attribute` | TEXT | Attribute name (if type='attribute') |
-| `status` | TEXT | Batch status: 'pending', 'in_progress', 'complete', 'failed' |
+| `id` | UUID | Primary key |
+| `layer_id` | UUID | References `layers.id` (ON DELETE CASCADE) |
+| `height_source_type` | TEXT | 'z_coord', 'attribute', 'none' |
+| `height_source_attribute` | TEXT | Attribute name (for type='attribute') |
+| `status` | TEXT | Database values: 'pending', 'in_progress', 'complete', 'failed' (Note: 'cancelled' status is tracked client-side only) |
 | `total_features` | INTEGER | Total features to process |
 | `processed_features` | INTEGER | Features processed so far |
 | `failed_features` | INTEGER | Features that failed processing |
 | `started_at` | TIMESTAMP WITH TIME ZONE | Batch start time |
-| `completed_at` | TIMESTAMP WITH TIME ZONE | Batch completion time (NULL if not complete) |
+| `completed_at` | TIMESTAMP WITH TIME ZONE | Batch completion time |
 | `created_by` | UUID | User who initiated the batch |
 | `metadata` | JSONB | Additional batch metadata |
 
@@ -47,20 +51,7 @@ FUNCTION initialize_height_transformation(
 ) RETURNS UUID
 ```
 
-**Purpose**: Initiates a height transformation batch for a layer.
-
-**Parameters**:
-- `p_layer_id`: Layer ID to transform
-- `p_height_source_type`: Source type ('z_coord', 'attribute', 'none')
-- `p_height_source_attribute`: Attribute name for height (if applicable)
-
-**Returns**: UUID of the created batch
-
-**Actions**:
-1. Counts features in the layer
-2. Creates a batch record
-3. Marks features as pending for transformation
-4. Returns the batch ID
+Initiates a height transformation batch for a layer, counting features, creating a batch record, marking features for processing, and returning the batch ID.
 
 ### update_height_transformation_progress
 ```sql
@@ -71,17 +62,7 @@ FUNCTION update_height_transformation_progress(
 ) RETURNS VOID
 ```
 
-**Purpose**: Updates the progress of a transformation batch.
-
-**Parameters**:
-- `p_batch_id`: Batch ID to update
-- `p_processed`: Successfully processed features count
-- `p_failed`: Failed features count
-
-**Actions**:
-1. Updates batch record with current progress
-2. Updates status to 'complete' if all features processed
-3. Sets completed_at timestamp when finished
+Updates the progress of a transformation batch, tracking processed and failed features counts, and setting the completed_at timestamp when finished.
 
 ### mark_height_transformation_complete
 ```sql
@@ -92,17 +73,7 @@ FUNCTION mark_height_transformation_complete(
 ) RETURNS VOID
 ```
 
-**Purpose**: Marks a feature as having completed transformation.
-
-**Parameters**:
-- `p_feature_id`: Feature ID to update
-- `p_batch_id`: Current batch ID
-- `p_original_values`: Original height values for potential rollback
-
-**Actions**:
-1. Updates feature's transformation status to 'complete'
-2. Sets transformation timestamp
-3. Records original values if provided
+Marks a feature as having completed transformation, updating its status, setting a timestamp, and recording original values.
 
 ### mark_height_transformation_failed
 ```sql
@@ -113,16 +84,7 @@ FUNCTION mark_height_transformation_failed(
 ) RETURNS VOID
 ```
 
-**Purpose**: Marks a feature as having failed transformation.
-
-**Parameters**:
-- `p_feature_id`: Feature ID to update
-- `p_batch_id`: Current batch ID
-- `p_error`: Error message explaining failure
-
-**Actions**:
-1. Updates feature's transformation status to 'failed'
-2. Records the error message
+Marks a feature as having failed transformation, updating its status and recording the error message.
 
 ### reset_height_transformation
 ```sql
@@ -131,17 +93,7 @@ FUNCTION reset_height_transformation(
 ) RETURNS INTEGER
 ```
 
-**Purpose**: Resets all height transformation data for a layer.
-
-**Parameters**:
-- `p_layer_id`: Layer ID to reset
-
-**Returns**: Number of affected features
-
-**Actions**:
-1. Clears transformation data from features
-2. Deletes batch records
-3. Returns affected features count
+Resets all height transformation data for a layer, clearing transformation status, timestamps, batch ID, errors, original values, as well as transformed height data (base_elevation_ellipsoidal, object_height, height_mode, height_source). Deletes batch records and returns the count of affected features.
 
 ### get_height_transformation_status
 ```sql
@@ -150,123 +102,29 @@ FUNCTION get_height_transformation_status(
 ) RETURNS JSONB
 ```
 
-**Purpose**: Gets current transformation status for a layer.
-
-**Parameters**:
-- `p_layer_id`: Layer ID to check
-
-**Returns**: JSONB object containing:
-- Layer ID
-- Latest batch information (id, status, metrics)
-- Feature status counts (total, pending, in_progress, complete, failed)
-
-## Usage Examples
-
-### Initiating a Transformation
-```sql
--- Initialize Z-coordinate transformation
-SELECT initialize_height_transformation(
-    '31dfabbf-38cb-4c9e-8691-d5186475db25', 
-    'z_coord', 
-    NULL
-);
-
--- Initialize attribute-based transformation
-SELECT initialize_height_transformation(
-    '31dfabbf-38cb-4c9e-8691-d5186475db25', 
-    'attribute', 
-    'DACH_MAX'
-);
-```
-
-### Updating Progress
-```sql
--- Update progress for a batch
-SELECT update_height_transformation_progress(
-    '12345678-1234-1234-1234-123456789012', 
-    100, 
-    5
-);
-```
-
-### Managing Feature Status
-```sql
--- Mark feature as complete
-SELECT mark_height_transformation_complete(
-    '59bab84c-4b3f-490e-bcf6-53c702ced2a6',
-    '12345678-1234-1234-1234-123456789012',
-    '{"original_height": 450.5}'::jsonb
-);
-
--- Mark feature as failed
-SELECT mark_height_transformation_failed(
-    '59bab84c-4b3f-490e-bcf6-53c702ced2a6',
-    '12345678-1234-1234-1234-123456789012',
-    'Failed to transform height: invalid coordinate'
-);
-```
-
-### Checking Status
-```sql
--- Check layer status
-SELECT get_height_transformation_status(
-    '31dfabbf-38cb-4c9e-8691-d5186475db25'
-);
-```
-
-### Resetting Transformations
-```sql
--- Reset a layer
-SELECT reset_height_transformation(
-    '31dfabbf-38cb-4c9e-8691-d5186475db25'
-);
-```
+Gets the current transformation status for a layer, returning a JSONB object with layer ID, latest batch information, and feature counts by status. Note that this function only counts 'pending', 'in_progress', 'complete', and 'failed' statuses, not 'cancelled' features (which are tracked client-side).
 
 ## API Integration
 
 These database functions are exposed via API endpoints:
 
 1. **Initialization**: `/api/height-transformation/initialize` (POST)
-   - Accepts layer ID and height source configuration
-   - Calls `initialize_height_transformation`
-   - Returns batch ID for tracking
+   - Called from HeightConfigurationDialog when applying configuration
 
 2. **Status**: `/api/height-transformation/status` (GET)
-   - Accepts layer ID parameter
-   - Calls `get_height_transformation_status`
-   - Returns formatted status information
+   - Used by HeightTransformBatchService to monitor progress
 
-## Performance Optimization Recommendations
+## Client-Side Status Tracking
 
-1. **Indexes**
-   - Add index on `geo_features.height_transformation_status`
-   - Add index on `geo_features.height_transformation_batch_id`
-   - Consider composite indexes for common query patterns
+While the database schema tracks 'pending', 'in_progress', 'complete', and 'failed' statuses, the client-side code in HeightTransformBatchService also tracks a 'cancelled' status. This status is used when a user cancels an in-progress batch but is not reflected in the database schema.
 
-2. **Partitioning**
-   - For very large datasets, consider partitioning `geo_features` by:
-     - `layer_id`
-     - `height_transformation_status`
-     - Date ranges of `height_transformed_at`
+## Performance Considerations
 
-3. **Transaction Management**
-   - Ensure proper transaction boundaries in client code
-   - Consider batch sizes that balance performance and transaction overhead
-   - Implement optimistic locking for concurrent updates
+### Recommended Indexes
+- `geo_features.height_transformation_status`
+- `geo_features.height_transformation_batch_id`
+- Composite index on `(layer_id, height_transformation_status)`
 
-4. **Caching Strategy**
-   - Consider adding a coordinate cache table for frequently transformed coordinates
-   - Implement materialized views for complex status queries
-   - Add function result caching for expensive operations
-
-## Security Considerations
-
-1. **Access Control**
-   - All functions should be called through API endpoints with proper authorization
-   - Implement row-level security policies for multi-tenant scenarios
-   - Log all transformation operations for audit purposes
-
-2. **Input Validation**
-   - Validate all parameters before passing to functions
-   - Implement constraints on status values and other enumerations
-   - Add trigger-based validation for critical operations 
+### High Volume Recommendations
+- Consider partitioning large tables by layer_id or date ranges
+- Implement regular cleanup of completed batches 
