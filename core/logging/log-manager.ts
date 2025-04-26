@@ -78,6 +78,17 @@ export class LogManager {
     this.sourceFilters.set('useMapbox', LogLevel.WARN);
     this.sourceFilters.set('MapLayer', LogLevel.WARN);
     this.sourceFilters.set('layerStore', LogLevel.INFO);
+    
+    // Swiss Height Transformation - Set to DEBUG for detailed logging
+    this.sourceFilters.set('coordinates', LogLevel.DEBUG);
+    this.sourceFilters.set('HeightTransformBatchService', LogLevel.DEBUG);
+    this.sourceFilters.set('HeightTransformService', LogLevel.DEBUG);
+    this.sourceFilters.set('HeightConfigurationDialog', LogLevel.DEBUG);
+    this.sourceFilters.set('api/coordinates/transform', LogLevel.INFO);
+    this.sourceFilters.set('api/coordinates/transform-batch', LogLevel.INFO);
+    this.sourceFilters.set('api/height-transformation/initialize', LogLevel.DEBUG);
+    this.sourceFilters.set('api/height-transformation/feature-counts', LogLevel.DEBUG);
+    this.sourceFilters.set('api/height-transformation/status', LogLevel.DEBUG);
   }
 
   /**

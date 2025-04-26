@@ -449,18 +449,33 @@ export function detectSwissCoordinates(features: any[]): SwissCoordinatesInfo {
   let lv95StoredCount = 0;
   let swissVerticalDatumCount = 0;
   let hasValidLv95Coordinates = false;
+  let validLv95CoordinatesCount = 0;
   
   // Check each feature for Swiss coordinates
   for (const feature of features) {
     const props = feature.properties || {};
+    let featureHasValidLv95Coords = false;
     
-    // Check for LV95 stored coordinates
+    // Check for LV95 coordinates regardless of height_mode
+    if (props.lv95_easting && props.lv95_northing) {
+      const easting = parseFloat(props.lv95_easting);
+      const northing = parseFloat(props.lv95_northing);
+      
+      if (!isNaN(easting) && !isNaN(northing) &&
+          easting >= 2450000 && easting <= 2850000 &&
+          northing >= 1050000 && northing <= 1350000) {
+        featureHasValidLv95Coords = true;
+        validLv95CoordinatesCount++;
+        hasValidLv95Coordinates = true;
+      }
+    }
+    
+    // Check for LV95 stored coordinates mode
     if (props.height_mode === 'lv95_stored') {
       lv95StoredCount++;
       
-      // Validate that the stored coordinates are in LV95 format
-      // LV95 eastings should be around 2.5M to 2.9M and northings around 1.1M to 1.3M
-      if (props.lv95_easting && props.lv95_northing) {
+      // If we already validated the coordinates above, no need to check again
+      if (!featureHasValidLv95Coords && props.lv95_easting && props.lv95_northing) {
         const easting = parseFloat(props.lv95_easting);
         const northing = parseFloat(props.lv95_northing);
         
@@ -479,16 +494,19 @@ export function detectSwissCoordinates(features: any[]): SwissCoordinatesInfo {
     }
   }
   
-  const hasLv95Stored = lv95StoredCount > 0 && hasValidLv95Coordinates;
+  // Check if we have valid LV95 coordinates regardless of height_mode
+  const hasLv95Stored = (lv95StoredCount > 0 && hasValidLv95Coordinates) || validLv95CoordinatesCount > 0;
   const hasSwissVerticalDatum = swissVerticalDatumCount > 0;
   const isSwiss = hasLv95Stored || hasSwissVerticalDatum;
   
   // Generate appropriate message
   let message = '';
   if (isSwiss) {
-    if (hasLv95Stored && hasValidLv95Coordinates) {
+    if (validLv95CoordinatesCount > 0 && lv95StoredCount === 0) {
+      message = `Valid Swiss LV95 coordinates detected but not marked as LV95. Height transformation will be available.`;
+    } else if (hasLv95Stored && hasValidLv95Coordinates) {
       message = `Swiss LV95 coordinates detected. Height transformation will be applied automatically using the Swiss Reframe API for proper 3D visualization.`;
-    } else if (hasLv95Stored && !hasValidLv95Coordinates) {
+    } else if (lv95StoredCount > 0 && !hasValidLv95Coordinates) {
       message = `Features have LV95 format but coordinates appear to be outside valid Swiss range. Transformation may not be accurate.`;
     } else if (hasSwissVerticalDatum) {
       message = `Swiss vertical datum detected. Height values will be interpreted appropriately.`;

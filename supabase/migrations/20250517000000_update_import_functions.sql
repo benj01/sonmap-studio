@@ -213,13 +213,45 @@ BEGIN
                   END;
                 END IF;
                 
-                -- Set LV95 coordinates for Swiss data
+                -- When source SRID is 2056 (Swiss)
                 IF p_source_srid = 2056 AND v_lhn95_height IS NOT NULL THEN
-                    v_height_mode := 'lv95_stored';
-                    -- Add LV95 properties
-                    v_properties := v_properties || jsonb_build_object(
-                        'lv95_height', v_lhn95_height
-                    );
+                    -- Extract original coordinates before transformation
+                    DECLARE 
+                        v_geom_centroid GEOMETRY;
+                        v_centroid_x FLOAT;
+                        v_centroid_y FLOAT;
+                    BEGIN
+                        -- Get centroid or representative point of original geometry (still in LV95)
+                        CASE ST_GeometryType(v_geometry_3d)
+                            WHEN 'ST_Point' THEN
+                                -- For points, use the point coordinates directly
+                                v_centroid_x := ST_X(v_geometry_3d);
+                                v_centroid_y := ST_Y(v_geometry_3d);
+                            ELSE
+                                -- For polygons, lines, etc. use the centroid
+                                v_geom_centroid := ST_Centroid(v_geometry_3d);
+                                v_centroid_x := ST_X(v_geom_centroid);
+                                v_centroid_y := ST_Y(v_geom_centroid);
+                        END CASE;
+                        
+                        -- Store LV95 coordinates in properties
+                        v_properties := v_properties || jsonb_build_object(
+                            'lv95_height', v_lhn95_height,
+                            'lv95_easting', v_centroid_x,
+                            'lv95_northing', v_centroid_y
+                        );
+                        v_height_mode := 'lv95_stored';
+                        
+                        RAISE LOG '[IMPORT_FUNC] Stored LV95 coordinates for height transformation: X=%, Y=%, Z=%', 
+                            v_centroid_x, v_centroid_y, v_lhn95_height;
+                    EXCEPTION WHEN OTHERS THEN
+                        -- If there's an error extracting coordinates, still store height
+                        RAISE WARNING '[IMPORT_FUNC] Error extracting LV95 coordinates: %. Storing height only.', SQLERRM;
+                        v_properties := v_properties || jsonb_build_object(
+                            'lv95_height', v_lhn95_height
+                        );
+                        v_height_mode := 'lv95_stored';
+                    END;
                 ELSIF v_lhn95_height IS NOT NULL THEN
                     v_base_elevation := v_lhn95_height;
                 END IF;

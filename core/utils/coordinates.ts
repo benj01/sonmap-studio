@@ -48,24 +48,57 @@ export async function transformLv95ToWgs84(
   lhn95Height: number
 ): Promise<TransformResult> {
   try {
-    logManager.debug(SOURCE, `Transforming LV95 (${eastingLv95}, ${northingLv95}, ${lhn95Height}) to WGS84`);
+    // Enhanced logging - input coordinates with unique identifier
+    const requestId = `req_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    logManager.info(SOURCE, `Swiss Reframe transformation request ${requestId}`, { 
+      eastingLv95,
+      northingLv95,
+      lhn95Height,
+      requestId
+    });
     
-    const response = await axios.post('/api/coordinates/transform', {
+    const requestPayload = {
       eastingLv95,
       northingLv95,
       lhn95Height
+    };
+    
+    logManager.debug(SOURCE, `Sending transformation request ${requestId} to API`, { 
+      endpoint: '/api/coordinates/transform',
+      payload: requestPayload
     });
     
+    const response = await axios.post('/api/coordinates/transform', requestPayload);
+    
     if (response.status !== 200) {
+      logManager.error(SOURCE, `Transformation API returned non-200 status for ${requestId}`, {
+        status: response.status,
+        statusText: response.statusText,
+        responseData: response.data
+      });
       throw new Error(`Transformation API returned status ${response.status}`);
     }
     
     const result = response.data as TransformResult;
-    logManager.debug(SOURCE, `Transformed to WGS84: (${result.lon}, ${result.lat}, ${result.ell_height})`);
+    
+    // Log successful transformation with both input and output
+    logManager.info(SOURCE, `Swiss Reframe transformation completed ${requestId}`, { 
+      input: {
+        eastingLv95,
+        northingLv95,
+        lhn95Height
+      },
+      output: {
+        lon: result.lon,
+        lat: result.lat,
+        ell_height: result.ell_height
+      },
+      requestId
+    });
     
     return result;
   } catch (error) {
-    logManager.error(SOURCE, 'Coordinate transformation failed:', error);
+    logManager.error(SOURCE, 'Swiss coordinate transformation failed:', error);
     
     // Fallback to approximation for development/testing
     // This is a very rough approximation and should not be used in production
@@ -73,7 +106,18 @@ export async function transformLv95ToWgs84(
     const roughLat = 46.82 + (northingLv95 - 1200000) / 111000;
     const roughEllHeight = lhn95Height + 49.5; // Average offset between LHN95 and ellipsoidal height
     
-    logManager.warn(SOURCE, `Using fallback approximation: (${roughLon}, ${roughLat}, ${roughEllHeight})`);
+    logManager.warn(SOURCE, `Using fallback approximation for Swiss coordinates`, { 
+      input: {
+        eastingLv95,
+        northingLv95,
+        lhn95Height
+      },
+      approximation: {
+        lon: roughLon,
+        lat: roughLat,
+        ell_height: roughEllHeight
+      }
+    });
     
     return {
       lon: roughLon,
@@ -260,16 +304,38 @@ export async function processStoredLv95Coordinates(
 ): Promise<any> {
   try {
     const props = feature.properties;
+    const featureId = feature.id || 'unknown';
     
-    if (props.height_mode === 'lv95_stored' && 
+    // Log feature processing start
+    logManager.info(SOURCE, `Processing feature with LV95 coordinates`, {
+      featureId,
+      height_mode: props?.height_mode,
+      transformationMethod: options.transformationMethod || 'api',
+      hasLv95Data: !!(props?.lv95_easting && props?.lv95_northing && props?.lv95_height)
+    });
+    
+    if (props?.height_mode === 'lv95_stored' && 
         props.lv95_easting && 
         props.lv95_northing && 
         props.lv95_height) {
+      
+      // Log LV95 values for debugging
+      logManager.debug(SOURCE, `Feature LV95 coordinates`, {
+        featureId,
+        lv95_easting: props.lv95_easting,
+        lv95_northing: props.lv95_northing,
+        lv95_height: props.lv95_height
+      });
       
       let result: TransformResult;
       
       // Use appropriate transformation method
       if (options.transformationMethod === 'delta') {
+        logManager.debug(SOURCE, `Using delta-based transformation for feature`, {
+          featureId,
+          cacheResults: options.cacheResults ?? true
+        });
+        
         result = await transformLv95ToWgs84WithDelta(
           props.lv95_easting,
           props.lv95_northing,
@@ -278,6 +344,10 @@ export async function processStoredLv95Coordinates(
         );
       } else {
         // Default to direct API call
+        logManager.debug(SOURCE, `Using direct API transformation for feature`, {
+          featureId
+        });
+        
         result = await transformLv95ToWgs84(
           props.lv95_easting,
           props.lv95_northing,
@@ -285,8 +355,18 @@ export async function processStoredLv95Coordinates(
         );
       }
       
+      // Log transformation result
+      logManager.info(SOURCE, `Feature transformation completed`, {
+        featureId,
+        height_mode: 'lv95_stored',
+        newHeightMode: 'absolute_ellipsoidal',
+        original_height: props.lv95_height,
+        transformed_height: result.ell_height,
+        height_difference: result.ell_height - props.lv95_height
+      });
+      
       // Update feature with the transformed height
-      return {
+      const updatedFeature = {
         ...feature,
         properties: {
           ...props,
@@ -296,11 +376,42 @@ export async function processStoredLv95Coordinates(
           height_transformed_at: new Date().toISOString()
         }
       };
+      
+      // Log updated feature data
+      logManager.debug(SOURCE, `Updated feature properties after transformation`, {
+        featureId,
+        updatedProperties: {
+          base_elevation_ellipsoidal: updatedFeature.properties.base_elevation_ellipsoidal,
+          height_mode: updatedFeature.properties.height_mode,
+          height_transformed: updatedFeature.properties.height_transformed,
+          height_transformed_at: updatedFeature.properties.height_transformed_at
+        }
+      });
+      
+      return updatedFeature;
     }
+    
+    logManager.warn(SOURCE, `Feature skipped - not eligible for LV95 processing`, {
+      featureId,
+      height_mode: props?.height_mode,
+      hasLv95Easting: !!props?.lv95_easting,
+      hasLv95Northing: !!props?.lv95_northing,
+      hasLv95Height: !!props?.lv95_height
+    });
     
     return feature;
   } catch (error) {
-    logManager.error(SOURCE, 'Error processing stored LV95 coordinates:', error);
+    const featureId = feature?.id || 'unknown';
+    logManager.error(SOURCE, `Error processing LV95 coordinates for feature ${featureId}:`, error);
+    logManager.error(SOURCE, `Feature that caused error:`, {
+      featureId,
+      properties: feature?.properties ? {
+        height_mode: feature.properties.height_mode,
+        lv95_easting: feature.properties.lv95_easting,
+        lv95_northing: feature.properties.lv95_northing,
+        lv95_height: feature.properties.lv95_height
+      } : 'No properties'
+    });
     return feature;
   }
 }

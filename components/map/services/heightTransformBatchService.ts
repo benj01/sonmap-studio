@@ -78,24 +78,58 @@ export class HeightTransformBatchService {
    * @param layerId The layer ID to process
    * @param heightSourceType The type of height source ('z_coord', 'attribute', 'none')
    * @param heightSourceAttribute Optional attribute name for attribute type
+   * @param featureCollection Optional GeoJSON feature collection with in-memory features (not yet persisted to database)
    * @returns Batch ID if successful, 'NO_FEATURES' if layer has no features, or null on error
    */
   public async initializeBatch(
     layerId: string,
     heightSourceType: 'z_coord' | 'attribute' | 'none',
-    heightSourceAttribute?: string
+    heightSourceAttribute?: string,
+    featureCollection?: any
   ): Promise<string | 'NO_FEATURES' | null> {
     try {
+      // Set unique batch ID for logging purposes
+      const batchTraceId = `batch_init_${Date.now()}`;
+      
       logger.info('Initializing height transformation batch', { 
+        batchTraceId,
         layerId, 
         heightSourceType, 
-        heightSourceAttribute 
+        heightSourceAttribute,
+        hasFeatureCollection: !!featureCollection
       });
       
       // Skip initialization for 'none' height source type as it doesn't require processing
       if (heightSourceType === 'none') {
-        logger.info('Skipping batch initialization for "none" height source type', { layerId });
+        logger.info('Skipping batch initialization for "none" height source type', { 
+          batchTraceId,
+          layerId 
+        });
         return null;
+      }
+      
+      // Log API call attempt
+      logger.info('Calling height transformation initialization API', {
+        batchTraceId,
+        endpoint: '/api/height-transformation/initialize',
+        requestBody: {
+          layerId,
+          heightSourceType,
+          heightSourceAttribute,
+          hasFeatureCollection: !!featureCollection
+        }
+      });
+      
+      // Prepare the request body - include featureCollection if provided
+      const requestBody: any = {
+        layerId,
+        heightSourceType,
+        heightSourceAttribute
+      };
+      
+      // Only include featureCollection if provided
+      if (featureCollection) {
+        requestBody.featureCollection = featureCollection;
       }
       
       const response = await fetch('/api/height-transformation/initialize', {
@@ -103,16 +137,21 @@ export class HeightTransformBatchService {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          layerId,
-          heightSourceType,
-          heightSourceAttribute
-        }),
+        body: JSON.stringify(requestBody),
+      });
+      
+      // Log API response status
+      logger.info('Received initialization API response', {
+        batchTraceId,
+        status: response.status,
+        ok: response.ok,
+        statusText: response.statusText
       });
       
       if (!response.ok) {
         const errorText = await response.text();
         logger.error('Failed to initialize batch', { 
+          batchTraceId,
           layerId, 
           status: response.status,
           error: errorText
@@ -122,17 +161,47 @@ export class HeightTransformBatchService {
         if (response.status === 404) {
           // Call the diagnostic endpoint for more information
           try {
+            logger.info('Calling diagnostic endpoint for feature counts', {
+              batchTraceId,
+              endpoint: `/api/height-transformation/feature-counts?layerId=${layerId}`
+            });
+            
             const diagResponse = await fetch(`/api/height-transformation/feature-counts?layerId=${layerId}`);
             
             if (diagResponse.ok) {
               const diagData = await diagResponse.json();
-              logger.warn('Feature counts diagnostic information', diagData);
+              logger.info('Feature counts diagnostic information', {
+                batchTraceId,
+                diagData
+              });
+              
+              // Log specific counts for Swiss coordinates features
+              if (diagData.height_mode_counts) {
+                logger.info('Swiss coordinates feature counts', {
+                  batchTraceId,
+                  total_features: diagData.total_features,
+                  lv95_stored_features: diagData.lv95_stored_features,
+                  height_mode_counts: diagData.height_mode_counts
+                });
+              }
+            } else {
+              logger.warn('Failed to get diagnostic information', {
+                batchTraceId,
+                status: diagResponse.status,
+                statusText: diagResponse.statusText
+              });
             }
           } catch (diagError) {
-            logger.error('Failed to get diagnostic information', { error: diagError });
+            logger.error('Error calling diagnostic endpoint', { 
+              batchTraceId,
+              error: diagError 
+            });
           }
           
-          logger.warn('No features found in layer, skipping transformation', { layerId });
+          logger.warn('No features found in layer, skipping transformation', { 
+            batchTraceId,
+            layerId 
+          });
           // Return a special flag to indicate no features instead of null (error)
           return 'NO_FEATURES';
         }
@@ -141,12 +210,21 @@ export class HeightTransformBatchService {
         try {
           const errorData = JSON.parse(errorText);
           if (errorData.error && errorData.error.includes('No features found')) {
-            logger.warn('No features found in layer, skipping transformation', { layerId });
+            logger.warn('No features found in layer, skipping transformation', { 
+              batchTraceId,
+              layerId,
+              errorMessage: errorData.error
+            });
             // Return a special flag to indicate no features instead of null (error)
             return 'NO_FEATURES';
           }
         } catch (parseError) {
           // Not JSON or other parsing error, continue with normal error handling
+          logger.warn('Could not parse error response', {
+            batchTraceId,
+            errorText,
+            parseError
+          });
         }
         
         return null;
@@ -155,7 +233,10 @@ export class HeightTransformBatchService {
       const data = await response.json();
       
       if (!data.success || !data.batchId) {
-        logger.error('Invalid response from batch initialization', { data });
+        logger.error('Invalid response from batch initialization', { 
+          batchTraceId,
+          data 
+        });
         return null;
       }
       
@@ -174,10 +255,21 @@ export class HeightTransformBatchService {
         totalChunks: 0
       });
       
-      logger.info('Batch initialized successfully', { batchId, layerId });
+      logger.info('Batch initialized successfully', { 
+        batchTraceId,
+        batchId, 
+        layerId 
+      });
       return batchId;
     } catch (error) {
-      logger.error('Error initializing batch', { layerId, error });
+      logger.error('Error initializing batch', { 
+        layerId, 
+        error: error instanceof Error ? {
+          message: error.message,
+          name: error.name,
+          stack: error.stack
+        } : error
+      });
       return null;
     }
   }
@@ -342,7 +434,7 @@ export class HeightTransformBatchService {
             while (!success && retries < maxRetries && !abortSignal.aborted) {
               try {
                 // Transform feature heights using coordinate utility
-                await this.processFeature(feature, options);
+                await this.processFeature(feature, batchId, options);
                 success = true;
               } catch (error) {
                 retries++;
@@ -409,20 +501,165 @@ export class HeightTransformBatchService {
   /**
    * Process a single feature's height transformation
    */
-  private async processFeature(feature: Feature, options?: BatchProcessOptions): Promise<Feature> {
+  private async processFeature(feature: Feature, batchId?: string, options?: BatchProcessOptions): Promise<Feature> {
+    const featureId = feature.id || 'unknown';
+    
+    // Check if this feature needs transformation
     if (feature.properties?.height_mode === 'lv95_stored') {
+      logger.info('Processing feature with LV95 stored coordinates', {
+        featureId,
+        batchId,
+        lv95_coordinates: {
+          easting: feature.properties?.lv95_easting,
+          northing: feature.properties?.lv95_northing,
+          height: feature.properties?.lv95_height
+        }
+      });
+      
       // Apply transformation with appropriate method
       if (options?.swissTransformation) {
-        return await processStoredLv95Coordinates(feature, {
+        logger.debug('Using specified Swiss transformation method', {
+          featureId,
+          method: options.swissTransformation.method,
+          cache: options.swissTransformation.cache
+        });
+        
+        const startTime = Date.now();
+        const transformedFeature = await processStoredLv95Coordinates(feature, {
           transformationMethod: options.swissTransformation.method,
           cacheResults: options.swissTransformation.cache
         });
+        const duration = Date.now() - startTime;
+        
+        logger.info('Feature transformation completed', {
+          featureId,
+          batchId,
+          duration: `${duration}ms`,
+          transformationMethod: options.swissTransformation.method,
+          original_height: feature.properties?.lv95_height,
+          transformed_height: transformedFeature.properties?.base_elevation_ellipsoidal,
+          height_mode_changed: feature.properties?.height_mode !== transformedFeature.properties?.height_mode
+        });
+        
+        // Save the transformed feature data to the database
+        await this.saveTransformedFeatureToDatabase(transformedFeature, feature.id, batchId);
+        
+        return transformedFeature;
       } else {
         // Use default transformation
-        return await processStoredLv95Coordinates(feature);
+        logger.debug('Using default transformation method', { featureId, batchId });
+        
+        const startTime = Date.now();
+        const transformedFeature = await processStoredLv95Coordinates(feature);
+        const duration = Date.now() - startTime;
+        
+        logger.info('Feature transformation completed with default method', {
+          featureId,
+          batchId,
+          duration: `${duration}ms`,
+          original_height: feature.properties?.lv95_height,
+          transformed_height: transformedFeature.properties?.base_elevation_ellipsoidal,
+          height_mode_changed: feature.properties?.height_mode !== transformedFeature.properties?.height_mode
+        });
+        
+        // Save the transformed feature data to the database
+        await this.saveTransformedFeatureToDatabase(transformedFeature, feature.id, batchId);
+        
+        return transformedFeature;
       }
     }
+    
+    logger.debug('Feature skipped - not eligible for transformation', {
+      featureId,
+      height_mode: feature.properties?.height_mode
+    });
+    
     return feature;
+  }
+  
+  /**
+   * Saves transformed feature data back to the database
+   */
+  private async saveTransformedFeatureToDatabase(
+    transformedFeature: Feature, 
+    featureId?: string | number,
+    batchId?: string
+  ): Promise<boolean> {
+    if (!featureId) {
+      logger.warn('Cannot save transformed feature without ID', { feature: transformedFeature });
+      return false;
+    }
+
+    try {
+      // Extract the transformed properties we need to save
+      const { 
+        base_elevation_ellipsoidal, 
+        height_mode,
+        height_transformed,
+        height_transformed_at
+      } = transformedFeature.properties || {};
+      
+      // Skip if we don't have the necessary height data
+      if (base_elevation_ellipsoidal === undefined || !height_mode) {
+        logger.warn('Transformed feature missing required height data', { 
+          featureId,
+          base_elevation_ellipsoidal,
+          height_mode
+        });
+        return false;
+      }
+      
+      logger.debug('Saving transformed feature to database', {
+        featureId,
+        batchId,
+        height_mode,
+        base_elevation_ellipsoidal
+      });
+      
+      // Call our update API endpoint
+      const response = await fetch('/api/height-transformation/update-feature', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          featureId,
+          batchId,
+          transformedData: {
+            base_elevation_ellipsoidal,
+            height_mode,
+            height_transformed,
+            height_transformed_at
+          }
+        }),
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error('Failed to save transformed feature', { 
+          featureId,
+          status: response.status,
+          error: errorText
+        });
+        return false;
+      }
+      
+      const result = await response.json();
+      
+      logger.info('Feature transformed data saved to database', { 
+        featureId,
+        height_mode: result.updated.height_mode,
+        base_elevation_ellipsoidal: result.updated.base_elevation_ellipsoidal 
+      });
+      
+      return true;
+    } catch (error) {
+      logger.error('Error saving transformed feature', { 
+        featureId,
+        error 
+      });
+      return false;
+    }
   }
   
   /**
@@ -573,7 +810,7 @@ export class HeightTransformBatchService {
       for (const group of spatialGroups) {
         // Process reference feature first using direct API call
         try {
-          await this.processFeature(group.referenceFeature, {
+          await this.processFeature(group.referenceFeature, batchId, {
             ...options,
             // Force API call for reference feature to establish accurate baseline
             swissTransformation: {
@@ -593,7 +830,7 @@ export class HeightTransformBatchService {
             // Now process related features using delta approach
             for (const feature of group.relatedFeatures) {
               try {
-                await this.processFeature(feature, {
+                await this.processFeature(feature, batchId, {
                   ...options,
                   swissTransformation: {
                     method: 'delta',
@@ -620,7 +857,7 @@ export class HeightTransformBatchService {
           // If reference feature failed, try each related feature individually with API method
           for (const feature of group.relatedFeatures) {
             try {
-              await this.processFeature(feature, {
+              await this.processFeature(feature, batchId, {
                 ...options,
                 swissTransformation: {
                   method: 'api',

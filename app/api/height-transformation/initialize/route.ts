@@ -2,6 +2,7 @@ import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import { LogManager } from '@/core/logging/log-manager';
+import { v4 as uuidv4 } from 'uuid';
 
 const SOURCE = 'api/height-transformation/initialize';
 const logManager = LogManager.getInstance();
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest) {
   try {
     // Parse request body
     const body = await req.json();
-    const { layerId, heightSourceType, heightSourceAttribute } = body;
+    const { layerId, heightSourceType, heightSourceAttribute, featureCollection } = body;
 
     logger.debug('Initializing height transformation', { layerId, heightSourceType, heightSourceAttribute });
 
@@ -51,50 +52,70 @@ export async function POST(req: NextRequest) {
     // Create Supabase client
     const supabase = createRouteHandlerClient({ cookies });
     
-    // Check if layer has features before initializing transformation
-    const { count, error: countError } = await supabase
-      .from('geo_features')
-      .select('id', { count: 'exact', head: true })
-      .eq('layer_id', layerId);
-    
-    if (countError) {
-      logger.error('Failed to check feature count', { error: countError, layerId });
-      return NextResponse.json(
-        { error: countError.message || 'Failed to check feature count' },
-        { status: 500 }
-      );
-    }
-    
-    if (count === 0) {
-      // Run a more detailed query to check if the layer exists at all
-      const { data: layerCheckData, error: layerCheckError } = await supabase
-        .from('layers')
-        .select('id, name')
-        .eq('id', layerId)
-        .maybeSingle();
-        
-      if (layerCheckError) {
-        logger.error('Failed to check if layer exists', { error: layerCheckError, layerId });
-      }
-      
-      // Try to query directly by SQL to see if there's any permissions issue
-      const { data: directCheckData, error: directCheckError } = await supabase.rpc(
-        'count_layer_features',
-        { p_layer_id: layerId }
-      );
-      
-      logger.warn('No features found in layer', { 
-        layerId,
-        layerExists: !!layerCheckData,
-        layerName: layerCheckData?.name,
-        directCheckCount: directCheckData || 0,
-        directCheckError: directCheckError?.message
+    // Log request details
+    logger.info('Height transformation batch initialization request', {
+      layerId,
+      heightSourceType,
+      heightSourceAttribute,
+      hasFeatureCollection: !!featureCollection
+    });
+
+    // If featureCollection provided directly, use it instead of querying database
+    if (featureCollection && featureCollection.features && featureCollection.features.length > 0) {
+      logger.info('Using provided feature collection', { 
+        featureCount: featureCollection.features.length 
       });
       
-      return NextResponse.json(
-        { error: `No features found in layer ${layerId}` },
-        { status: 404 }
-      );
+      // Generate a batch ID
+      const batchId = uuidv4();
+      
+      // Create batch record
+      try {
+        // Insert batch record
+        const { data: batchData, error: batchError } = await supabase
+          .from('height_transformation_batches')
+          .insert({
+            id: batchId,
+            layer_id: layerId,
+            status: 'pending',
+            height_source_type: heightSourceType,
+            height_source_attribute: heightSourceAttribute,
+            total_features: featureCollection.features.length,
+            processed_features: 0,
+            failed_features: 0
+          })
+          .select();
+          
+        if (batchError) {
+          logger.error('Failed to create transformation batch', { 
+            layerId, 
+            error: batchError 
+          });
+          return NextResponse.json({ 
+            error: 'Failed to create transformation batch' 
+          }, { status: 500 });
+        }
+        
+        logger.info('Transformation batch created successfully', { 
+          layerId, 
+          batchId,
+          featureCount: featureCollection.features.length
+        });
+        
+        return NextResponse.json({ 
+          success: true, 
+          batchId,
+          featureCount: featureCollection.features.length
+        });
+      } catch (error) {
+        logger.error('Error creating transformation batch with feature collection', { 
+          layerId, 
+          error 
+        });
+        return NextResponse.json({ 
+          error: 'Internal server error' 
+        }, { status: 500 });
+      }
     }
 
     // Call the initialize_height_transformation function

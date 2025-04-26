@@ -259,21 +259,64 @@ export function HeightConfigurationDialog({
         setHeightSourcePreference(preferenceSource);
       }
       
-      // Check if features exist before attempting transformation
-      const features = featureCollection?.features || [];
-      if (features.length === 0) {
+      // If no features, don't try to transform
+      if (!featureCollection || !featureCollection.features || featureCollection.features.length === 0) {
         logger.warn('No features to transform', { layerId });
-        // Still call the callback with the configuration, but don't attempt transformation
+        // Still call the callback with the configuration
         onHeightSourceSelect(heightSource);
         setShowProgress(false);
         if (onOpenChange) onOpenChange(false);
         return;
       }
+
+      const features = featureCollection.features;
+      
+      // Check for valid Swiss coordinates and update height_mode if needed
+      if (swissCoordinatesInfo.isSwiss) {
+        // Prepare a modified feature collection with updated height_mode
+        const updatedFeatures = features.map(feature => {
+          // Deep clone to avoid mutating the original
+          const updatedFeature = JSON.parse(JSON.stringify(feature));
+          
+          // If this feature has valid Swiss coordinates but no proper height_mode
+          if (
+            updatedFeature.properties &&
+            updatedFeature.properties.lv95_easting && 
+            updatedFeature.properties.lv95_northing &&
+            updatedFeature.properties.lv95_height &&
+            (!updatedFeature.properties.height_mode || updatedFeature.properties.height_mode !== 'lv95_stored')
+          ) {
+            // Check if coordinates are within valid Swiss range
+            const easting = parseFloat(updatedFeature.properties.lv95_easting);
+            const northing = parseFloat(updatedFeature.properties.lv95_northing);
+            
+            if (!isNaN(easting) && !isNaN(northing) &&
+                easting >= 2450000 && easting <= 2850000 &&
+                northing >= 1050000 && northing <= 1350000) {
+              
+              // Set the height_mode to lv95_stored
+              updatedFeature.properties.height_mode = 'lv95_stored';
+              logger.info('Updated feature with valid Swiss coordinates to use lv95_stored mode', {
+                coordinates: {
+                  lv95_easting: easting,
+                  lv95_northing: northing,
+                  lv95_height: updatedFeature.properties.lv95_height
+                }
+              });
+            }
+          }
+          
+          return updatedFeature;
+        });
+        
+        // Update the feature collection with updated features
+        featureCollection.features = updatedFeatures;
+      }
       
       // Apply transformation if Swiss coordinates are detected and need transformation
       if (swissCoordinatesInfo.isSwiss && heightSource.type === 'z_coord') {
         // Check if there are any features with lv95_stored height mode
-        const featuresWithLv95 = features.filter(f => f.properties?.height_mode === 'lv95_stored');
+        const featuresWithLv95 = featureCollection.features.filter(f => f.properties?.height_mode === 'lv95_stored');
         
         if (featuresWithLv95.length === 0) {
           logger.warn('No features with lv95_stored height mode found despite Swiss coordinates detection', { layerId });
@@ -331,7 +374,9 @@ export function HeightConfigurationDialog({
 
         const batchId = await batchService.initializeBatch(
           layerId,
-          'z_coord'
+          'z_coord',
+          undefined, // no attribute needed for z_coord
+          featureCollection // Pass the updated feature collection
         );
         
         if (batchId === null) {
@@ -345,26 +390,33 @@ export function HeightConfigurationDialog({
           onHeightSourceSelect(heightSource);
           setShowProgress(false);
           if (onOpenChange) onOpenChange(false);
-          return;
         }
         
         setBatchId(batchId);
         
         // Start batch processing
-        const success = await batchService.startBatchProcessing(
-          batchId,
-          featureCollection,
-          {
-            swissTransformation: {
-              method: (transformMethod === 'auto' ? 'api' : transformMethod) as 'api' | 'delta',
-              cache: true
+        if (batchId && typeof batchId === 'string') {
+          const success = await batchService.startBatchProcessing(
+            batchId,
+            featureCollection,
+            {
+              swissTransformation: {
+                method: (transformMethod === 'auto' ? 'api' : transformMethod) as 'api' | 'delta',
+                cache: true
+              }
             }
+          );
+          
+          if (!success) {
+            logger.error('Failed to start batch processing', { batchId, layerId });
+            setShowProgress(false);
           }
-        );
-        
-        if (!success) {
-          logger.error('Failed to start batch processing', { batchId, layerId });
+        } else {
+          // No valid batch ID, apply configuration without batch processing
+          logger.warn('No valid batch ID for transformation', { batchId, layerId });
+          onHeightSourceSelect(heightSource);
           setShowProgress(false);
+          if (onOpenChange) onOpenChange(false);
         }
       } else {
         // No transformation needed, just apply configuration
