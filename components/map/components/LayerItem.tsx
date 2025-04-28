@@ -2,7 +2,7 @@
 
 import { LogManager } from '@/core/logging/log-manager';
 import { useEffect, useRef, useState } from 'react';
-import { Eye, EyeOff, Settings, AlertCircle, Maximize2 } from 'lucide-react';
+import { Eye, EyeOff, Settings, AlertCircle, Maximize2, ArrowUpNarrowWide } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useLayer } from '@/store/layers/hooks';
@@ -45,9 +45,11 @@ export interface LayerItemProps {
 }
 
 export function LayerItem({ layer, className }: LayerItemProps) {
+  console.log('LAYER_ITEM_RENDERED_DEBUG');
   const { layer: storeLayer, setVisibility, error: storeError } = useLayer(layer.id);
   const { data, loading, error: dataError } = useLayerData(layer.id);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [heightSettingsOpen, setHeightSettingsOpen] = useState(false);
   const cesiumInstance = useCesiumInstance();
 
   useEffect(() => {
@@ -105,6 +107,16 @@ export function LayerItem({ layer, className }: LayerItemProps) {
     }
   };
 
+  // Determine if the layer has untransformed heights
+  const hasUntransformedHeights = !!data?.features?.some(
+    (f) => f.properties?.height_mode === 'lv95_stored'
+  );
+
+  // Tooltip text for the height icon
+  const heightTooltip = hasUntransformedHeights
+    ? 'Warning: This layer contains height values that are not ellipsoidal. 3D display may be incorrect. Please run the Swiss Height Transformation.'
+    : 'All height values are ellipsoidal. 3D display is correct.';
+
   if (loading) {
     return (
       <div className={cn('p-4 border rounded-lg bg-background', className)}>
@@ -133,7 +145,20 @@ export function LayerItem({ layer, className }: LayerItemProps) {
       </Button>
 
       <div className="flex-1 min-w-0">
-        <h4 className="text-xs font-medium truncate">{layer.name}</h4>
+        <h4
+          className="layer-name text-xs font-medium truncate"
+          style={{
+            maxWidth: '120px', // Adjust as needed for your icon width
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            display: 'inline-block',
+            verticalAlign: 'middle',
+          }}
+          title={layer.name}
+        >
+          {layer.name}
+        </h4>
         <p className="text-[10px] text-muted-foreground truncate">
           {data?.features?.length || 0} features
         </p>
@@ -168,6 +193,17 @@ export function LayerItem({ layer, className }: LayerItemProps) {
           >
             <Settings className="h-3 w-3" />
           </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            title={heightTooltip}
+            onClick={() => setHeightSettingsOpen(true)}
+            className="h-6 w-6 shrink-0"
+            style={{ color: hasUntransformedHeights ? '#e53935' : '#888' }}
+            aria-label="Height settings"
+          >
+            <ArrowUpNarrowWide className="h-3 w-3" />
+          </Button>
         </>
       )}
 
@@ -175,6 +211,12 @@ export function LayerItem({ layer, className }: LayerItemProps) {
         layerId={layer.id}
         open={settingsOpen}
         onOpenChange={setSettingsOpen}
+      />
+      <LayerSettingsDialog
+        layerId={layer.id}
+        open={heightSettingsOpen}
+        onOpenChange={setHeightSettingsOpen}
+        initialTab="3d"
       />
     </div>
   );

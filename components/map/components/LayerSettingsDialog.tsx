@@ -38,6 +38,7 @@ interface LayerSettingsDialogProps {
   layerId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  initialTab?: string;
 }
 
 const SOURCE = 'LayerSettingsDialog';
@@ -79,14 +80,14 @@ interface LayerCompatibility {
   };
 }
 
-export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettingsDialogProps) {
+export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }: LayerSettingsDialogProps) {
   // Get the base layer ID by removing any geometry type suffix
   const baseLayerId = layerId.replace(/-line$|-fill$|-circle$/, '');
   const { layer, updateStyle } = useLayer(baseLayerId);
   const { data } = useLayerData(baseLayerId);
   const [color, setColor] = useState("#088");
   const [heightConfigOpen, setHeightConfigOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("appearance");
+  const [activeTab, setActiveTab] = useState(initialTab || "appearance");
   const [showHeightUpdateAlert, setShowHeightUpdateAlert] = useState(false);
   const { toast } = useToast();
   
@@ -162,6 +163,13 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange }: LayerSettin
       setColor(currentColor);
     }
   }, [layer, baseLayerId, geometryTypes]);
+
+  // If initialTab changes while dialog is opened, update activeTab
+  useEffect(() => {
+    if (open && initialTab && initialTab !== activeTab) {
+      setActiveTab(initialTab);
+    }
+  }, [open, initialTab]);
 
   const handleSave = () => {
     if (!layer) {
