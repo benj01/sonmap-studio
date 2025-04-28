@@ -18,6 +18,8 @@ DECLARE
   v_new_values JSONB;
   v_rows_affected INTEGER;
   v_feature_exists BOOLEAN;
+  v_geometry_2d geometry;
+  v_srid INTEGER;
 BEGIN
   -- Check if feature exists
   SELECT EXISTS (
@@ -32,13 +34,19 @@ BEGIN
     );
   END IF;
 
+  -- Get the 2D geometry and SRID
+  SELECT geometry_2d, ST_SRID(geometry_2d) INTO v_geometry_2d, v_srid
+  FROM public.geo_features
+  WHERE id = p_feature_id;
+
   -- Store original values for comparison
   SELECT jsonb_build_object(
     'base_elevation_ellipsoidal', base_elevation_ellipsoidal,
     'height_mode', height_mode,
     'height_transformation_status', height_transformation_status,
     'height_transformed_at', height_transformed_at,
-    'height_transformation_batch_id', height_transformation_batch_id
+    'height_transformation_batch_id', height_transformation_batch_id,
+    'geometry_3d', ST_AsText(geometry_3d)
   ) INTO v_old_values
   FROM public.geo_features
   WHERE id = p_feature_id;
@@ -52,7 +60,15 @@ BEGIN
     height_transformed_at = NOW(),
     original_height_values = v_old_values,
     height_transformation_batch_id = p_batch_id,
-    updated_at = NOW()
+    updated_at = NOW(),
+    geometry_3d = ST_SetSRID(
+      ST_MakePoint(
+        ST_X(v_geometry_2d),
+        ST_Y(v_geometry_2d),
+        p_base_elevation_ellipsoidal
+      ),
+      v_srid
+    )
   WHERE id = p_feature_id;
   
   -- Get the number of rows affected
@@ -64,7 +80,8 @@ BEGIN
     'height_mode', height_mode,
     'height_transformation_status', height_transformation_status,
     'height_transformed_at', height_transformed_at,
-    'height_transformation_batch_id', height_transformation_batch_id
+    'height_transformation_batch_id', height_transformation_batch_id,
+    'geometry_3d', ST_AsText(geometry_3d)
   ) INTO v_new_values
   FROM public.geo_features
   WHERE id = p_feature_id;

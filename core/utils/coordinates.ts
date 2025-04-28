@@ -368,6 +368,14 @@ export async function processStoredLv95Coordinates(
       // Update feature with the transformed height
       const updatedFeature = {
         ...feature,
+        geometry: {
+          ...feature.geometry,
+          coordinates: [
+            feature.geometry.coordinates[0],
+            feature.geometry.coordinates[1],
+            result.ell_height
+          ]
+        },
         properties: {
           ...props,
           base_elevation_ellipsoidal: result.ell_height,
