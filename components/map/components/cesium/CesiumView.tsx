@@ -216,6 +216,7 @@ export function CesiumView() {
   const dataSourceMap = useRef(new Map<string, Cesium.DataSource>());
   const tilesetMap = useRef(new Map<string, Cesium.Cesium3DTileset>());
   const imageryLayerMap = useRef(new Map<string, Cesium.ImageryLayer>());
+  const [mousePosition, setMousePosition] = useState<{longitude: number; latitude: number; height: number} | null>(null);
   
   // Replace useMapView with direct store access
   const { setCesiumInstance, setCesiumStatus } = useMapInstanceStore();
@@ -737,6 +738,31 @@ export function CesiumView() {
     switchImagery();
   }, [mapType]);
 
+  useEffect(() => {
+    if (!cesiumInstance || cesiumInstance.isDestroyed()) return;
+
+    const handleMouseMove = (event: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
+      const scene = cesiumInstance.scene;
+      const cartesian = scene.pickPosition(event.endPosition);
+      
+      if (cartesian) {
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        const longitude = Cesium.Math.toDegrees(cartographic.longitude);
+        const latitude = Cesium.Math.toDegrees(cartographic.latitude);
+        const height = cartographic.height;
+        
+        setMousePosition({ longitude, latitude, height });
+      }
+    };
+
+    const handler = new Cesium.ScreenSpaceEventHandler(cesiumInstance.scene.canvas);
+    handler.setInputAction(handleMouseMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+    return () => {
+      handler.destroy();
+    };
+  }, [cesiumInstance]);
+
   // TODO: Directly manage Cesium layers based on Zustand layer state.
   //       When layers or their visibility change, update Cesium data sources/primitives/imagery.
   //       Remove any "sync to 3D" or Mapbox state logic.
@@ -813,6 +839,13 @@ export function CesiumView() {
         ref={cesiumContainer}
         className="w-full h-full"
       />
+      {mousePosition && (
+        <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-xs shadow z-30 select-none pointer-events-none" style={{ minWidth: 180, textAlign: 'center', fontSize: '11px', lineHeight: '1.2' }}>
+          <span>Lon: <b>{mousePosition.longitude.toFixed(6)}°</b></span> &nbsp;
+          <span>Lat: <b>{mousePosition.latitude.toFixed(6)}°</b></span> &nbsp;
+          <span>H: <b>{mousePosition.height.toFixed(2)} m</b></span>
+        </div>
+      )}
     </div>
   );
 } 

@@ -4,6 +4,7 @@ import { LogManager } from '@/core/logging/log-manager';
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
 import { getHeightTransformationStatus, HeightTransformationStatus } from './heightTransformService';
 import type { Feature, FeatureCollection } from 'geojson';
+import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
 
 const SOURCE = 'HeightTransformBatchService';
 const logManager = LogManager.getInstance();
@@ -594,9 +595,7 @@ export class HeightTransformBatchService {
       // Extract the transformed properties we need to save
       const { 
         base_elevation_ellipsoidal, 
-        height_mode,
-        height_transformed,
-        height_transformed_at
+        height_mode
       } = transformedFeature.properties || {};
       
       // Skip if we don't have the necessary height data
@@ -613,50 +612,45 @@ export class HeightTransformBatchService {
         featureId,
         batchId,
         height_mode,
-        base_elevation_ellipsoidal
+        base_elevation_ellipsoidal,
+        feature_properties: transformedFeature.properties
       });
+
+      // Create Supabase client
+      const supabase = createClientComponentClient();
       
-      // Call our update API endpoint
-      const response = await fetch('/api/height-transformation/update-feature', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      // Use the RLS bypass function
+      const { data, error } = await supabase.rpc(
+        'update_feature_height_bypass_rls',
+        { 
+          p_feature_id: featureId,
+          p_base_elevation_ellipsoidal: base_elevation_ellipsoidal,
+          p_height_mode: height_mode,
+          p_batch_id: batchId
+        }
+      );
+
+      if (error) {
+        logger.error('Failed to update feature with bypass function', { 
+          error,
           featureId,
-          batchId,
-          transformedData: {
-            base_elevation_ellipsoidal,
-            height_mode,
-            height_transformed,
-            height_transformed_at
-          }
-        }),
-      });
-      
-      if (!response.ok) {
-        const errorText = await response.text();
-        logger.error('Failed to save transformed feature', { 
-          featureId,
-          status: response.status,
-          error: errorText
+          batchId
         });
         return false;
       }
-      
-      const result = await response.json();
-      
-      logger.info('Feature transformed data saved to database', { 
+
+      logger.info('Feature transformed data saved to database', {
         featureId,
-        height_mode: result.updated.height_mode,
-        base_elevation_ellipsoidal: result.updated.base_elevation_ellipsoidal 
+        height_mode,
+        base_elevation_ellipsoidal
       });
-      
+
       return true;
     } catch (error) {
       logger.error('Error saving transformed feature', { 
+        error,
         featureId,
-        error 
+        batchId
       });
       return false;
     }
