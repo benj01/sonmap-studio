@@ -84,19 +84,24 @@ export function GeoImportDialog({
   const [progressMessage, setProgressMessage] = useState('');
   const [currentImportLogId, setCurrentImportLogId] = useState<string | null>(null);
   const { /* generatePreview, */ ...geoImportRest } = useGeoImport();
-  const { heightAttribute } = useWizard();
+  const {
+    fileInfo: wizardFileInfo,
+    dataset,
+    selectedFeatureIds: wizardSelectedFeatureIds,
+    targetSrid
+  } = useWizard();
 
   // Set log level for this component to DEBUG for detailed logs
   LogManager.getInstance().setComponentLogLevel('GeoImportDialog', LogLevel.DEBUG);
 
   const memoizedFileInfo = useMemo(() => 
-    fileInfo ? {
-      id: fileInfo.id,
-      name: fileInfo.name,
-      size: fileInfo.size,
-      type: fileInfo.type
+    wizardFileInfo ? {
+      id: wizardFileInfo.id,
+      name: wizardFileInfo.name,
+      size: wizardFileInfo.size,
+      type: wizardFileInfo.type
     } : undefined
-  , [fileInfo?.id, fileInfo?.name, fileInfo?.size, fileInfo?.type]);
+  , [wizardFileInfo?.id, wizardFileInfo?.name, wizardFileInfo?.size, wizardFileInfo?.type]);
 
   // Reset state when dialog closes
   useEffect(() => {
@@ -185,37 +190,24 @@ export function GeoImportDialog({
 
       setProgressMessage(`Importing ${selectedFeatures.length} features...`);
       
-      // Log the value of heightAttribute
-      LogManager.getInstance().debug('GeoImportDialog', 'handleImport: heightAttribute value', { heightAttribute });
-
       // Get the current session
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session?.access_token) {
-        throw new Error('No authentication token available');
+      if (!session) {
+        throw new Error('No active session');
       }
 
-      safeLogger.debug('Auth token available', { 
-        hasToken: !!session.access_token,
-        tokenLength: session.access_token.length
-      });
-
       // Prepare the request payload
-      const requestPayload = {
+      const payload = {
         projectFileId: importSession.fileId,
-        collectionName: fileInfo?.name || 'Imported Features',
-        features: selectedFeatures.map(f => ({
-          type: 'Feature' as const,
-          geometry: f.geometry,
-          properties: f.properties || {}
-        })),
-        sourceSrid: importSession.fullDataset.metadata?.srid || 2056,
+        collectionName: importSession.fullDataset?.sourceFile || 'Imported Features',
+        features: importSession.fullDataset?.features || [],
+        sourceSrid: importSession.fullDataset?.metadata?.srid || 2056,
         targetSrid: 4326,
-        batchSize: 100,
-        heightAttributeKey: heightAttribute
+        batchSize: 100
       };
 
       // Log the full payload
-      LogManager.getInstance().info('GeoImportDialog', 'handleImport: requestPayload', requestPayload);
+      LogManager.getInstance().info('GeoImportDialog', 'handleImport: requestPayload', payload);
 
       // Make a single API call instead of streaming
       const response = await fetch('/api/geo-import/stream', {
@@ -224,7 +216,7 @@ export function GeoImportDialog({
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
         },
-        body: JSON.stringify(requestPayload),
+        body: JSON.stringify(payload),
         signal: AbortSignal.timeout(300000) // 5 minute timeout
       });
 

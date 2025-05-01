@@ -9,7 +9,6 @@ export interface ImportParams {
   sourceSrid: number;
   batchSize?: number;
   targetSrid?: number;
-  heightAttributeKey?: string;
 }
 
 export interface ImportResult {

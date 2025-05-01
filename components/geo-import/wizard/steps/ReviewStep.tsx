@@ -19,11 +19,14 @@ logManager.setComponentLogLevel(LOG_SOURCE, LogLevel.DEBUG);
 export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps) {
   const {
     fileInfo,
-    dataset,
-    importDataset,
+    importDataset: datasetForImport,
     selectedFeatureIds,
     heightSource,
     targetSrid,
+    projectFileId,
+    collectionName,
+    sourceSrid,
+    batchSize,
   } = useWizard();
   const [result, setResult] = useState<null | {
     success: boolean;
@@ -60,85 +63,22 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       
       // IMPORTANT: Use importDataset instead of dataset for the import payload
       // This ensures original (untransformed) coordinates are sent to the backend
-      const datasetForImport = importDataset || dataset;
-      
-      // Prepare features to import (using original coordinates)
       const features = (datasetForImport?.features || []).filter((f: any) => selectedFeatureIds.includes(f.id));
       
-      // Determine height attribute key based on detection
-      // Always provide a non-empty value even when Z coordinates aren't detected
-      const heightAttributeKey = heightSource.type === 'z' ? 'z' : '_none';  // Use '_none' as a fallback instead of empty string
-      
-      // Prepare payload (include collectionName as required by backend)
       const payload = {
         projectFileId: fileInfo?.id,
         collectionName: fileInfo?.name || 'Imported Features',
-        features: features.map((f: any) => {
-          // Create a modified feature with additional metadata
-          const modifiedFeature = { ...f };
-          
-          // Add extra height information for z-coordinate features
-          if (heightSource.type === 'z') {
-            // Extract Z value based on geometry type
-            let zValue = null;
-            const geom = f.geometry;
-            
-            if (geom && geom.coordinates) {
-              // For Point geometries
-              if (geom.type === 'Point' && geom.coordinates.length >= 3) {
-                zValue = geom.coordinates[2];
-              }
-              // For LineString geometries - use first point
-              else if (geom.type === 'LineString' && geom.coordinates[0] && geom.coordinates[0].length >= 3) {
-                zValue = geom.coordinates[0][2];
-              }
-              // For Polygon geometries - use first point of outer ring
-              else if (geom.type === 'Polygon' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0].length >= 3) {
-                zValue = geom.coordinates[0][0][2];
-              }
-              // For MultiPoint geometries - use first point
-              else if (geom.type === 'MultiPoint' && geom.coordinates[0] && geom.coordinates[0].length >= 3) {
-                zValue = geom.coordinates[0][2];
-              }
-              // For MultiLineString geometries - use first point of first line
-              else if (geom.type === 'MultiLineString' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0].length >= 3) {
-                zValue = geom.coordinates[0][0][2];
-              }
-              // For MultiPolygon geometries - use first point of first polygon
-              else if (geom.type === 'MultiPolygon' && geom.coordinates[0] && geom.coordinates[0][0] && geom.coordinates[0][0][0] && geom.coordinates[0][0][0].length >= 3) {
-                zValue = geom.coordinates[0][0][0][2];
-              }
-            }
-            
-            // Add the height property if we found a Z value
-            if (zValue !== null && !isNaN(zValue)) {
-              modifiedFeature.properties = {
-                ...(modifiedFeature.properties || {}),
-                height: zValue
-              };
-              
-              logManager.debug(LOG_SOURCE, `Added z-height ${zValue} for feature ${f.id} (${f.geometry?.type})`, {
-                featureId: f.id,
-                geometryType: f.geometry?.type,
-                zValue
-              });
-            }
-          }
-          
-          return modifiedFeature;
-        }),
+        features: features,
         sourceSrid: datasetForImport?.metadata?.srid || 2056,
-        targetSrid,
-        heightAttributeKey
+        targetSrid: targetSrid,
+        batchSize: 100
       };
       
       // Log both datasets to confirm the correct one is being used
       logManager.info(LOG_SOURCE, 'Available datasets', {
-        hasPreviewDataset: !!dataset,
-        previewDatasetSrid: dataset?.metadata?.srid,
-        hasImportDataset: !!importDataset,
-        importDatasetSrid: importDataset?.metadata?.srid,
-        usingDataset: importDataset ? 'importDataset' : 'dataset',
+        hasPreviewDataset: !!datasetForImport,
+        previewDatasetSrid: datasetForImport?.metadata?.srid,
+        usingDataset: 'importDataset',
         selectedSrid: payload.sourceSrid,
         heightSource
       });
@@ -150,7 +90,6 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
         featureCount: payload.features.length,
         sourceSrid: payload.sourceSrid,
         targetSrid: payload.targetSrid,
-        heightAttributeKey: payload.heightAttributeKey,
         heightSource,
         // Show sample of first feature's coordinates
         features: payload.features.length > 0 

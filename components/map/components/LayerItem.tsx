@@ -107,10 +107,22 @@ export function LayerItem({ layer, className }: LayerItemProps) {
     }
   };
 
-  // Determine if the layer has untransformed heights
-  const hasUntransformedHeights = !!data?.features?.some(
-    (f) => f.properties?.height_mode === 'lv95_stored'
-  );
+  // Debug: Log the data and features array before processing
+  console.log('LayerItem Data:', data);
+  console.log('LayerItem Features Array:', data?.features);
+
+  // Determine if the layer has untransformed heights, with defensive checks and logging
+  const hasUntransformedHeights = !!data?.features?.some((f, idx) => {
+    if (!f) {
+      console.warn(`Null or undefined feature at index ${idx}:`, f);
+      return false;
+    }
+    if (!f.properties) {
+      console.warn(`Feature missing properties at index ${idx}:`, f);
+      return false;
+    }
+    return f.properties.height_mode === 'lv95_stored';
+  });
 
   // Tooltip text for the height icon
   const heightTooltip = hasUntransformedHeights
