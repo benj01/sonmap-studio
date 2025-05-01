@@ -80,8 +80,8 @@ BEGIN
 END;
 $$;
 
--- Create process_feature_geometry function (Corrected - No GOTO)
-CREATE OR REPLACE FUNCTION public.process_feature_geometry(
+-- Create update_feature_height function (renamed from process_feature_geometry)
+CREATE OR REPLACE FUNCTION public.update_feature_height(
     p_feature_id uuid,
     p_target_ellipsoidal_height double precision,
     p_display_object_height double precision,
@@ -95,73 +95,53 @@ SECURITY DEFINER
 SET search_path TO 'public'
 AS $$
 DECLARE
-    v_geometry_original geometry;
-    v_geometry_wgs84 geometry := NULL; -- Initialize to NULL
-    v_transformed_xy geometry;
+    v_existing_geom_wgs84 geometry;
+    v_new_geometry_wgs84 geometry;
     v_final_z double precision;
-    v_current_status text := p_status; -- Use a local variable for status changes
+    v_current_status text := p_status;
     v_current_error text := p_error_message;
 BEGIN
-    -- Only attempt geometry processing if the incoming status is not 'failed'
+    -- Only attempt height update if the incoming status is not 'failed'
     IF v_current_status != 'failed' THEN
-        -- Fetch original geometry
-        SELECT geometry_original INTO v_geometry_original
+        -- Fetch existing WGS84 geometry
+        SELECT geometry_wgs84 INTO v_existing_geom_wgs84
         FROM public.geo_features
         WHERE id = p_feature_id;
 
-        -- Check if original geometry exists
-        IF v_geometry_original IS NULL THEN
+        -- Check if existing geometry exists
+        IF v_existing_geom_wgs84 IS NULL THEN
             v_current_status := 'failed';
-            v_current_error := 'Original geometry not found';
+            v_current_error := 'Existing WGS84 geometry not found';
         ELSE
-            -- Perform horizontal transformation
+            -- Determine final Z value based on mode
+            IF p_display_height_mode = 'clamp_to_ground' THEN
+                v_final_z := 0.0;
+            ELSE
+                -- Use provided target height, default to 0 if NULL for absolute/relative
+                v_final_z := COALESCE(p_target_ellipsoidal_height, 0.0);
+            END IF;
+
+            -- Apply new Z value to existing geometry
             BEGIN
-                v_transformed_xy := ST_Transform(v_geometry_original, 4326);
+                v_new_geometry_wgs84 := ST_Force3D(v_existing_geom_wgs84, v_final_z);
             EXCEPTION WHEN OTHERS THEN
                 v_current_status := 'failed';
-                v_current_error := 'ST_Transform failed: ' || SQLERRM;
+                v_current_error := 'ST_Force3D failed: ' || SQLERRM;
+                v_new_geometry_wgs84 := NULL;
             END;
 
-            -- Proceed only if transform succeeded
+            -- If we reached here without errors, mark as complete
             IF v_current_status != 'failed' THEN
-                -- Determine final Z value based on mode
-                IF p_display_height_mode = 'clamp_to_ground' THEN
-                    v_final_z := 0.0;
-                ELSE
-                    -- Use provided target height, default to 0 if NULL for absolute/relative
-                    v_final_z := COALESCE(p_target_ellipsoidal_height, 0.0);
-                END IF;
+                v_current_status := 'complete';
+                v_current_error := NULL;
+            END IF;
+        END IF;
+    END IF;
 
-                -- Create final 3D WGS84 geometry
-                BEGIN
-                    -- Ensure transformed_xy is not null before forcing 3D
-                    IF v_transformed_xy IS NOT NULL THEN
-                         v_geometry_wgs84 := ST_Force3D(v_transformed_xy, v_final_z);
-                    ELSE
-                         -- This case should ideally be caught by ST_Transform exception,
-                         -- but adding safety check.
-                         RAISE EXCEPTION 'Transformed XY geometry is NULL after successful ST_Transform';
-                    END IF;
-                EXCEPTION WHEN OTHERS THEN
-                    v_current_status := 'failed';
-                    v_current_error := 'ST_Force3D failed: ' || SQLERRM;
-                    v_geometry_wgs84 := NULL; -- Ensure geom is null on failure
-                END;
-
-                 -- If we reached here without errors, mark as complete
-                IF v_current_status != 'failed' THEN
-                     v_current_status := 'complete';
-                     v_current_error := NULL; -- Clear error if completed successfully
-                END IF;
-
-            END IF; -- End if transform succeeded
-        END IF; -- End if original geometry exists
-    END IF; -- End if incoming status was not 'failed'
-
-    -- Always Update feature record with final status and geometry (which might be NULL)
+    -- Update feature record with final status and geometry
     UPDATE public.geo_features
     SET
-        geometry_wgs84 = v_geometry_wgs84, -- Will be NULL if any processing step failed
+        geometry_wgs84 = v_new_geometry_wgs84,
         display_base_elevation = CASE WHEN v_current_status = 'complete' THEN p_target_ellipsoidal_height ELSE NULL END,
         display_object_height = p_display_object_height,
         display_height_mode = p_display_height_mode,
@@ -170,7 +150,6 @@ BEGIN
         height_transformation_error = v_current_error,
         height_transformed_at = timezone('utc', now())
     WHERE id = p_feature_id;
-
 END;
 $$;
 
@@ -180,7 +159,7 @@ CREATE OR REPLACE FUNCTION public.import_geo_features_with_transform(
     p_collection_name text,
     p_features jsonb,
     p_source_srid integer,
-    p_target_srid integer DEFAULT 4326, -- Note: p_target_srid is unused here, kept for signature consistency maybe
+    p_target_srid integer DEFAULT 4326,
     p_batch_size integer DEFAULT 1000
 ) RETURNS TABLE(
     collection_id uuid,
@@ -199,7 +178,9 @@ DECLARE
     v_imported_count integer := 0;
     v_failed_count integer := 0;
     v_feature jsonb;
-    v_geometry geometry; -- Holds original geometry during processing
+    v_geometry geometry;
+    v_transformed_xy geometry;
+    v_initial_geom_wgs84 geometry;
     v_original_vertical_datum_id uuid;
     v_original_has_z boolean;
     v_feature_errors jsonb := '[]'::jsonb;
@@ -208,10 +189,10 @@ DECLARE
     v_total_features integer;
     v_batch_start integer;
     v_batch_end integer;
-    -- Removed v_batch_size local, using p_batch_size directly
     v_batch_count integer;
     v_current_batch integer;
     v_vertical_datum_name text;
+    v_feature_index integer;
 BEGIN
     -- Validate input parameters
     IF p_project_file_id IS NULL THEN
@@ -237,7 +218,7 @@ BEGIN
         RETURNING id INTO v_collection_id;
 
         INSERT INTO public.layers (name, collection_id, type)
-        VALUES (p_collection_name, v_collection_id, 'vector') -- Assuming vector for now
+        VALUES (p_collection_name, v_collection_id, 'vector')
         RETURNING id INTO v_layer_id;
     EXCEPTION WHEN OTHERS THEN
         RAISE EXCEPTION 'Failed to create collection/layer: % (State: %)', SQLERRM, SQLSTATE;
@@ -246,31 +227,22 @@ BEGIN
     -- Process features in batches
     FOR v_current_batch IN 0..v_batch_count-1 LOOP
         v_batch_start := v_current_batch * p_batch_size;
-        v_batch_end := LEAST(v_batch_start + p_batch_size, v_total_features); -- Corrected batch end logic
+        v_batch_end := LEAST(v_batch_start + p_batch_size, v_total_features);
 
-        FOR i IN v_batch_start..v_batch_end-1 LOOP
-            v_feature := p_features->i;
-            v_original_vertical_datum_id := NULL; -- Reset for each feature
-            v_vertical_datum_name := NULL; -- Reset for each feature
-
+        -- Process each feature in the current batch
+        FOR v_feature_index IN v_batch_start..v_batch_end-1 LOOP
+            v_feature := p_features->v_feature_index;
             BEGIN
-                -- Process geometry
-                v_geometry := ST_GeomFromGeoJSON(v_feature->>'geometry');
+                -- Extract and validate geometry
+                v_geometry := ST_SetSRID(ST_GeomFromGeoJSON(v_feature->>'geometry'), p_source_srid);
                 IF v_geometry IS NULL THEN
-                    RAISE EXCEPTION 'Failed to create geometry from GeoJSON';
+                    RAISE EXCEPTION 'Invalid geometry in feature';
                 END IF;
 
-                -- Set source SRID
-                v_geometry := ST_SetSRID(v_geometry, p_source_srid);
+                -- Store original geometry properties
+                v_original_has_z := ST_NDims(v_geometry) = 3; -- <<< CORRECT FUNCTION & LOGIC
 
-                -- Clean geometry (optional but good practice)
-                -- v_geometry := ST_MakeValid(ST_RemoveRepeatedPoints(v_geometry));
-                -- Consider adding ST_MakeValid if needed, but be aware of potential geometry changes
-
-                -- Check if geometry has Z values
-                v_original_has_z := ST_NDims(v_geometry) = 3;
-
-                -- Determine vertical datum based on source SRID and EPSG code
+                -- Determine vertical datum based on source SRID
                 IF v_original_has_z THEN
                     -- First try to find a vertical datum by EPSG code
                     SELECT id, name INTO v_original_vertical_datum_id, v_vertical_datum_name
@@ -293,35 +265,52 @@ BEGIN
 
                     -- Log if we couldn't determine the vertical datum
                     IF v_original_vertical_datum_id IS NULL THEN
-                         -- Store notice instead of raising warning which might interrupt transaction
-                         v_notices := v_notices || jsonb_build_object(
+                        v_notices := v_notices || jsonb_build_object(
                             'level', 'warning',
-                            'message', format('Could not determine vertical datum for feature %s with SRID %s', i, p_source_srid),
-                            'feature_index', i
-                         );
+                            'message', format('Could not determine vertical datum for feature %s with SRID %s', v_feature_index, p_source_srid),
+                            'feature_index', v_feature_index
+                        );
                     END IF;
-                END IF; -- End if v_original_has_z
+                END IF;
 
-                -- Insert feature using the NEW schema
+                -- Perform horizontal transformation
+                BEGIN
+                    v_transformed_xy := ST_Transform(v_geometry, 4326);
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE EXCEPTION 'ST_Transform failed: %', SQLERRM;
+                END;
+
+                -- Create initial WGS84 geometry with Z=0
+                BEGIN
+                    v_initial_geom_wgs84 := ST_Force3D(v_transformed_xy, 0.0);
+                EXCEPTION WHEN OTHERS THEN
+                    RAISE EXCEPTION 'ST_Force3D failed: %', SQLERRM;
+                END;
+
+                   -- Insert the feature with initial Z=0 (CORRECTED)
                 INSERT INTO public.geo_features (
-                    layer_id,
+                    layer_id,                       -- Order matters slightly but names are key
                     collection_id,
-                    geometry_original, -- Store original geometry
+                    geometry_original,
                     original_srid,
                     original_has_z,
                     original_vertical_datum_id,
-                    attributes, -- Store properties/attributes here
-                    height_transformation_status -- Set initial status
-                    -- geometry_wgs84, display_*, etc. are left NULL/default
+                    attributes,                     -- Changed from properties in original schema refactor
+                    geometry_wgs84,                 -- Insert the initial transformed geometry
+                    height_transformation_status,   -- Use allowed status value
+                    display_height_mode             -- Set initial mode
+                    -- display_base_elevation defaults to NULL, no need to specify unless non-NULL
                 ) VALUES (
                     v_layer_id,
                     v_collection_id,
-                    v_geometry, -- The original geometry with original SRID
+                    v_geometry,                     -- Original geometry with original SRID
                     p_source_srid,
                     v_original_has_z,
                     v_original_vertical_datum_id,
-                    COALESCE(v_feature->'properties', '{}'::jsonb), -- Use 'attributes' key if sent, else 'properties'
-                    'pending'
+                    COALESCE(v_feature->'properties', '{}'::jsonb), -- Use 'properties' from GeoJSON as attributes
+                    v_initial_geom_wgs84,           -- The XY transformed geom with Z=0
+                    'pending',                      -- <<< CORRECT STATUS ('pending' is allowed)
+                    'clamp_to_ground'               -- Set initial display mode
                 );
 
                 v_imported_count := v_imported_count + 1;
@@ -329,38 +318,25 @@ BEGIN
             EXCEPTION WHEN OTHERS THEN
                 v_failed_count := v_failed_count + 1;
                 v_feature_errors := v_feature_errors || jsonb_build_object(
-                    'feature_index', i,
-                    'error', SQLERRM,
-                    'error_state', SQLSTATE
+                    'feature_index', v_feature_index,
+                    'error', SQLERRM
                 );
-            END; -- End BEGIN block for single feature processing
-        END LOOP; -- End loop for features in batch
-    END LOOP; -- End loop for batches
-
-    -- Verify we have imported at least one feature (check moved outside loop)
-    IF v_imported_count = 0 AND v_total_features > 0 THEN
-        -- Clean up if no features were imported but some were expected
-        -- Note: This runs even if some failed; only deletes if ZERO succeeded.
-        DELETE FROM public.layers WHERE id = v_layer_id;
-        DELETE FROM public.feature_collections WHERE id = v_collection_id;
-        RAISE EXCEPTION 'No features were successfully imported. Failed count: %. Last error: %',
-            v_failed_count,
-            (SELECT error FROM jsonb_array_elements(v_feature_errors) ORDER BY (value->>'feature_index')::int DESC LIMIT 1);
-    END IF;
+            END;
+        END LOOP;
+    END LOOP;
 
     -- Prepare debug info
     v_debug_info := jsonb_build_object(
         'feature_errors', v_feature_errors,
         'notices', v_notices,
-        'source_srid', p_source_srid,
-        'target_srid', p_target_srid, -- Include target SRID for info, even if unused here
         'total_features', v_total_features,
-        'imported_count', v_imported_count,
-        'failed_count', v_failed_count
+        'batch_size', p_batch_size,
+        'batch_count', v_batch_count
     );
 
     -- Return results
-    RETURN QUERY SELECT
+    RETURN QUERY
+    SELECT
         v_collection_id,
         v_layer_id,
         v_imported_count,
@@ -369,117 +345,108 @@ BEGIN
 END;
 $$;
 
--- Function to get features as a single GeoJSON FeatureCollection
+-- Create get_layer_features_geojson function
 CREATE OR REPLACE FUNCTION public.get_layer_features_geojson(p_layer_id uuid) RETURNS jsonb
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
-    SET search_path TO 'public', 'extensions'
-    AS $$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
 DECLARE
     v_features jsonb;
-    v_feature_count integer;
 BEGIN
-    -- First check if the layer exists and has features
-    SELECT COUNT(*) INTO v_feature_count
-    FROM public.geo_features gf
-    WHERE gf.layer_id = p_layer_id;
-
-    -- If no features found, return empty FeatureCollection
-    IF v_feature_count = 0 THEN
-        RETURN jsonb_build_object(
-            'type', 'FeatureCollection',
-            'features', '[]'::jsonb
-        );
-    END IF;
-
-    -- Build the FeatureCollection with safety checks
-    SELECT jsonb_build_object(
-        'type', 'FeatureCollection',
-        'features', COALESCE(
-            jsonb_agg(
-                jsonb_build_object(
-                    'type', 'Feature',
-                    'id', gf.id,
-                    'geometry', COALESCE(ST_AsGeoJSON(gf.geometry_wgs84)::jsonb, 'null'::jsonb),
-                    'properties', COALESCE(gf.attributes, '{}'::jsonb) -- Ensure properties is never null
-                ) ORDER BY gf.id
-            ) FILTER (WHERE gf.id IS NOT NULL), -- Filter out any null features
-            '[]'::jsonb
+    SELECT jsonb_agg(
+        jsonb_build_object(
+            'type', 'Feature',
+            'geometry', ST_AsGeoJSON(geometry_wgs84)::jsonb,
+            'properties', attributes
         )
     )
     INTO v_features
+    FROM public.geo_features
+    WHERE layer_id = p_layer_id;
+
+    RETURN COALESCE(v_features, '[]'::jsonb);
+END;
+$$;
+
+-- Create get_layer_features function
+CREATE OR REPLACE FUNCTION public.get_layer_features(p_layer_id uuid) RETURNS TABLE(
+    id uuid,
+    properties jsonb,
+    geojson text,
+    srid integer
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        gf.id,
+        gf.attributes as properties,
+        ST_AsGeoJSON(gf.geometry_wgs84)::text as geojson,
+        4326 as srid  -- Always return 4326 since geometry_wgs84 is in WGS84
     FROM public.geo_features gf
     WHERE gf.layer_id = p_layer_id;
-
-    -- Ensure we always return a valid FeatureCollection
-    RETURN COALESCE(v_features, jsonb_build_object(
-        'type', 'FeatureCollection',
-        'features', '[]'::jsonb
-    ));
 END;
 $$;
 
--- Function to get features as individual rows
-CREATE OR REPLACE FUNCTION public.get_layer_features(p_layer_id uuid) RETURNS TABLE(id uuid, properties jsonb, geojson text, srid integer)
-    LANGUAGE plpgsql STABLE SECURITY DEFINER
-    SET search_path TO 'public', 'extensions'
-    AS $$
+-- Create get_available_layers function
+CREATE OR REPLACE FUNCTION public.get_available_layers() RETURNS TABLE(
+    layer_id uuid,
+    layer_name text,
+    feature_count bigint,
+    bounds jsonb,
+    properties jsonb
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
 BEGIN
     RETURN QUERY
-    SELECT
-        f.id,
-        f.attributes as properties,
-        ST_AsGeoJSON(f.geometry_wgs84) as geojson,
-        4326 as srid
-    FROM public.geo_features f
-    WHERE f.layer_id = p_layer_id;
-END;
-$$;
-
--- Function to get available layers with their metadata
-CREATE OR REPLACE FUNCTION public.get_available_layers() RETURNS TABLE(layer_id uuid, layer_name text, feature_count bigint, bounds jsonb, properties jsonb)
-    LANGUAGE plpgsql STABLE
-    SET search_path TO 'public', 'extensions'
-    AS $$
-BEGIN
-    RETURN QUERY
-    WITH layer_stats AS (
-        SELECT
+    WITH layer_extents AS (
+        SELECT 
             l.id,
             l.name,
-            COUNT(gf.id) as feature_count,
-            CASE
-                WHEN COUNT(gf.id) > 0 THEN
-                    jsonb_build_object(
-                        'bbox', ST_AsGeoJSON(ST_Extent(gf.geometry_wgs84))::jsonb,
-                        'center', jsonb_build_object(
-                            'lng', ST_X(ST_Centroid(ST_Extent(gf.geometry_wgs84))),
-                            'lat', ST_Y(ST_Centroid(ST_Extent(gf.geometry_wgs84)))
-                        )
-                    )
-                ELSE NULL
-            END as bounds,
-            l.properties
-        FROM
-            public.layers l
-            LEFT JOIN public.geo_features gf ON l.id = gf.layer_id
-        GROUP BY
-            l.id, l.name, l.properties
+            l.type,
+            l.collection_id,
+            COUNT(gf.id)::bigint as feature_count,
+            ST_Extent(gf.geometry_wgs84) as extent
+        FROM public.layers l
+        LEFT JOIN public.geo_features gf ON gf.layer_id = l.id
+        GROUP BY l.id, l.name, l.type, l.collection_id
     )
     SELECT
-        ls.id,
-        ls.name,
-        ls.feature_count,
-        ls.bounds,
-        ls.properties
-    FROM layer_stats ls
-    ORDER BY ls.name;
+        le.id as layer_id,
+        le.name as layer_name,
+        le.feature_count,
+        COALESCE(
+            jsonb_build_object(
+                'type', 'Polygon',
+                'coordinates', ARRAY[ARRAY[
+                    ARRAY[ST_XMin(le.extent), ST_YMin(le.extent)],
+                    ARRAY[ST_XMax(le.extent), ST_YMin(le.extent)],
+                    ARRAY[ST_XMax(le.extent), ST_YMax(le.extent)],
+                    ARRAY[ST_XMin(le.extent), ST_YMax(le.extent)],
+                    ARRAY[ST_XMin(le.extent), ST_YMin(le.extent)]
+                ]]
+            ),
+            '{}'::jsonb
+        ) as bounds,
+        jsonb_build_object(
+            'type', le.type,
+            'collection_id', le.collection_id
+        ) as properties
+    FROM layer_extents le;
 END;
 $$;
 
 -- Add comments for better documentation
 COMMENT ON FUNCTION public.trigger_set_timestamp IS 'Sets the updated_at column to the current UTC timestamp whenever a row is updated.';
-COMMENT ON FUNCTION public.process_feature_geometry IS 'Processes a feature''s geometry by performing horizontal transformation to WGS84 and applying the specified height configuration. Updates the feature record with the transformed geometry and height-related metadata.';
-COMMENT ON FUNCTION public.import_geo_features_with_transform IS 'Imports geospatial features into the geo_features table with support for the new schema including vertical datum handling. Features are stored in their original coordinate system and vertical datum, with transformation deferred to a separate process.';
+COMMENT ON FUNCTION public.update_feature_height IS 'Updates a feature''s height by applying the specified Z value to its existing WGS84 geometry. Updates the feature record with the new geometry and height-related metadata.';
+COMMENT ON FUNCTION public.import_geo_features_with_transform IS 'Imports geospatial features into the geo_features table. Performs horizontal transformation to WGS84 during import, with Z values set to 0. Height updates are handled separately through update_feature_height.';
 COMMENT ON FUNCTION public.get_layer_features_geojson(uuid) IS 'Retrieves all features for a given layer ID as a single GeoJSON FeatureCollection (using WGS84 geometry). Ensures properties are never null and handles edge cases safely.';
 COMMENT ON FUNCTION public.get_layer_features(uuid) IS 'Retrieves all features for a given layer ID as individual rows with GeoJSON geometry (using WGS84 geometry).';
 COMMENT ON FUNCTION public.get_available_layers() IS 'Retrieves a list of all available layers with their feature count, bounding box, and properties.'; 

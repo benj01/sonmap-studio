@@ -145,6 +145,10 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
   
   // Process all features
   features.forEach(feature => {
+    if (!feature) {
+      logger.warn('Null or undefined feature encountered in detectZCoordinates');
+      return;
+    }
     let hasProcessedZForFeature = false;
     
     // Check if feature has stored Z values in properties 
@@ -336,6 +340,10 @@ export function detectNumericAttributes(features: Feature[]): NumericAttributesI
   
   // Collect all numeric attributes and their ranges
   features.forEach(feature => {
+    if (!feature) {
+      logger.warn('Null or undefined feature encountered in detectNumericAttributes');
+      return;
+    }
     if (!feature.properties) return;
     
     // Check if this feature has LV95 stored height data
@@ -453,6 +461,10 @@ export function detectSwissCoordinates(features: any[]): SwissCoordinatesInfo {
   
   // Check each feature for Swiss coordinates
   for (const feature of features) {
+    if (!feature) {
+      logger.warn('Null or undefined feature encountered in detectSwissCoordinates');
+      continue;
+    }
     const props = feature.properties || {};
     let featureHasValidLv95Coords = false;
     
