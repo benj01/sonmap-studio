@@ -157,6 +157,20 @@ COMMENT ON COLUMN public.geo_features.height_transformation_status IS 'Status of
 COMMENT ON COLUMN public.geo_features.height_transformed_at IS 'Timestamp when height transformation was completed.';
 COMMENT ON COLUMN public.geo_features.height_transformation_error IS 'Error message if height transformation failed.';
 
+-- feature_terrain_cache: Caches per-vertex terrain heights for each feature
+CREATE TABLE public.feature_terrain_cache (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  feature_id uuid NOT NULL REFERENCES public.geo_features(id) ON DELETE CASCADE,
+  sampled_at timestamptz NOT NULL DEFAULT now(),
+  terrain_source text NOT NULL,
+  heights float8[] NOT NULL,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  UNIQUE (feature_id, terrain_source)
+);
+COMMENT ON TABLE public.feature_terrain_cache IS 'Caches per-vertex terrain heights for each feature, sampled from a terrain provider.';
+COMMENT ON COLUMN public.feature_terrain_cache.heights IS 'Array of terrain heights (meters) corresponding to each vertex of the feature geometry.';
+COMMENT ON COLUMN public.feature_terrain_cache.terrain_source IS 'Identifier for the terrain provider or method used for sampling.';
+
 -- import_logs: For general logging
 CREATE TABLE public.import_logs (
     id SERIAL PRIMARY KEY,

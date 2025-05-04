@@ -1,0 +1,204 @@
+# Product Requirements Document (PRD): Sonmap Studio
+
+## Project Overview
+
+**Sonmap Studio** is a web-based platform for interactive 3D geospatial data visualization, editing, and analysis. It enables users to import, transform, manage, and visualize geodata with advanced support for height configuration, coordinate systems (including Swiss-specific), and scalable data pipelines. The platform is designed for extensibility, performance, and robust state management.
+
+---
+
+## Current State
+
+Sonmap Studio is a mature, actively developed platform for 2D/3D geospatial data management and visualization.
+- **State Management:** Zustand-based normalized stores for layers, verification, map instances, and view state.
+- **UI:** Modular React/Next.js 15 components (FileManager for upload, ImportWizard for import pipeline, map preview, attribute/geometry editing, export UI).
+- **Import Pipeline:** Supports Shapefile, DXF, DWG, CSV, XYZ, QSI, and more. Imports are previewed on a 2D map, features/layers can be selected, and data is processed and stored in PostGIS.
+- **API:** RESTful endpoints for file management, import, height/coordinate transformation, and diagnostics.
+- **Store Redesign:** Previous state management issues (infinite render loops, complex updates) have been addressed with a new normalized store architecture.
+- **Testing:** Most testing is currently manual; automated tests are planned for the future.
+
+---
+
+## Core Features
+
+### 1. **Geodata Import Pipeline**
+- Upload and manage geospatial files (Shapefile, DXF, DWG, CSV, XYZ, QSI, etc.) via Supabase Storage.
+- Preview spatial data on a 2D map before import (Mapbox GL JS).
+- Select features/layers for import; support for property mapping and filtering.
+- Full import to PostGIS with coordinate transformation, batch processing, and progress tracking.
+- Support for large datasets with progressive loading, sampling, and web workers.
+
+### 2. **Coordinate Transformation**
+- Automatic detection and transformation between WGS84, Web Mercator, Swiss LV95/LV03, and custom CRS.
+- SwissTopo API integration for official Swiss coordinate and height transformations.
+- Batch and on-the-fly transformation for both preview and backend import.
+- Preservation of original coordinates for data integrity.
+
+### 3. **Height Configuration & 3D Geometry**
+- Flexible height source selection: Z-coordinates, feature attributes, or flat-on-terrain.
+- Modes: Absolute elevation, relative to ground, building extrusion.
+- Swiss height transformation (LHN95 to WGS84 ellipsoidal).
+- 3D geometry support: Store and visualize both 2D and 3D geometries.
+- Height configuration dialog and 3D settings in the UI.
+
+### 4. **Layer & Feature Management**
+- Layer visibility, ordering, and metadata management.
+- Efficient state management using Zustand with normalized stores for layers, verification, map instances, and view state.
+- Verification system for layer integrity and status tracking.
+
+### 5. **Visualization, Editing & Export**
+- Interactive 2D/3D map views (Mapbox for preview during import, Cesium).
+- Real-time feature editing, selection, and attribute updates.
+- Users can edit feature attributes and, to some extent, alter geometries (e.g., move points, edit shapes).
+- Snapping functionality for editing and adding features (e.g., emission points).
+- Height and coordinate diagnostics, error handling, and troubleshooting tools.
+- Support for Swiss coordinate systems and height data in visualization.
+- Users can select layers/attributes for download in various formats (especially shapefiles), with support for export profiles compatible with external tools (e.g., CandaA, SLIP).
+
+### 6. **API & Database**
+- RESTful API endpoints for height transformation, coordinate batch processing, diagnostics, and terrain management.
+- PostgreSQL/PostGIS schema for storing features, layers, transformation status, batch operations, and terrain/model/vector datasets.
+- Diagnostic endpoints and SQL helpers for troubleshooting and analytics.
+
+### 7. **Performance & Optimization**
+- Progressive data processing and preview.
+- Memoized selectors and hooks to minimize React re-renders.
+- Centralized, rate-limited logging system for debugging and performance monitoring.
+- Batch processing and caching for large imports and transformations.
+
+---
+
+## Key Use Case: Noise Calculation Projects
+
+One of the main use cases for Sonmap Studio is supporting noise calculation projects. The typical workflow includes:
+- **Data Upload & Import:**
+  - User uploads and imports terrain data (XYZ points), buildings (often as 2.5D shapefile), streets (polylines), and immission points (PointZ).
+- **Data Manipulation:**
+  - User can edit or add emission points, with snapping support for precise placement.
+  - User can edit attributes of selected features (e.g., emission strength, type).
+  - To some extent, user can alter geometries (move, add, or adjust points/lines/polygons).
+- **Export for Noise Calculation Software:**
+  - User can select which layers and attributes to download.
+  - Export supports multiple formats (especially shapefiles) and includes export profiles for CandaA, SLIP, and similar tools.
+  - Data is automatically formatted to be directly usable in these external noise calculation applications.
+
+---
+
+## Custom Terrain Data Support
+
+### Current File Upload/Import Logic
+- **Frontend:**
+  - File uploads are managed via the `FileManager` React component (`components/files/components/manager/index.tsx`), using hooks like `useFileActions` and `useFileOperations`.
+  - Users upload files (drag-and-drop or button), which are stored in Supabase Storage ("project-files" bucket implied by `storage_path`).
+  - Metadata is written to the `project_files` table, including project association, file details, and import status.
+  - Imported files are listed via `ImportedFilesList` and marked with `is_imported = true`.
+  - Multi-file formats (e.g., shapefiles) are handled via `main_file_id` and `component_type` fields.
+- **Backend:**
+  - API routes and backend logic process uploaded files, perform parsing, coordinate transformation, and write results to PostGIS.
+  - DB schema and policies are defined in `supabase/schema_dump.sql` and `supabase/migrations/00000000000001_initial_schema.sql`.
+  - Only project members/owners can upload, update, or delete files (see policies).
+
+### Extending for Terrain Data
+- **Parsing & Conversion:**
+  - Detect terrain-related uploads by file extension/content (e.g., .tif, .xyz, .terrain, .glb) in the frontend and backend.
+  - Prompt user to confirm terrain type if ambiguous.
+  - Backend (Node.js worker/serverless function) converts raw data (XYZ, CSV, etc.) to Cesium-compatible formats (quantized-mesh, glTF) using tools like tin-terrain, cesium-terrain-builder, pyntcloud, or obj2gltf.
+  - Use a queue (e.g., Supabase Edge Functions, BullMQ) for large/slow jobs; update DB with processing status and notify user on completion.
+- **Storage:**
+  - Store original uploads in "project-files" bucket.
+  - Store processed terrain tilesets in a dedicated "terrain-tiles" bucket.
+  - Extend `project_files` or create a new `datasets` table with fields: `type` ('vector' | 'terrain' | 'model'), `format` ('quantized-mesh' | 'glTF' | 'xyz' | ...), `status`, `source`, `project_id`, `location_id`, `import_metadata` (resolution, bounds, etc.).
+- **Tagging & Association:**
+  - Tag datasets by type/format/source in the DB.
+  - Allow associating multiple terrain datasets per project/location; set a default terrain per project/location in the UI.
+- **API & Workflow:**
+  - Expose clear API endpoints:
+    - `/api/upload` – Accepts all file types, returns file metadata and type guess.
+    - `/api/terrain/process` – Starts backend conversion for terrain files.
+    - `/api/terrain/status/:id` – Returns processing status.
+    - `/api/terrain/list?project_id=...` – Lists terrain datasets for a project.
+    - `/api/terrain/tiles/:id` – Serves quantized-mesh tiles (proxy or signed URL).
+  - Modularize file handling: separate logic for vector, terrain, and model data.
+  - Centralize dataset metadata in a `datasets` table with clear type/format fields.
+  - Use queues for heavy processing; never block user uploads.
+  - Document the workflow for users (e.g., "How to upload custom terrain").
+- **Cesium Integration:**
+  - When a terrain dataset is ready, expose its URL for use with CesiumTerrainProvider.
+  - For glTF models, use Cesium.Model.fromGltf.
+  - Allow users to select and activate terrain datasets per project/location in the UI.
+  - Support dynamic switching of terrain datasets in Cesium.
+
+---
+
+## Technical Implementation Details
+
+- **Frontend:**
+  - Next.js 15, React 19, Zustand, Tailwind CSS.
+  - FileManager and ImportWizard components orchestrate file upload, import, and preview.
+  - Map preview uses Mapbox GL JS and Cesium for 2D/3D visualization.
+  - Attribute and geometry editing is implemented with custom hooks and UI components, supporting snapping and validation.
+  - Export logic supports multiple formats and profiles, with backend API integration for format conversion.
+- **Backend:**
+  - Node.js API routes (Next.js API, Supabase Edge Functions) handle file processing, import, transformation, and export.
+  - Supabase Storage is used for file storage; project_files and datasets tables track metadata and status.
+  - PostGIS is used for spatial data storage and transformation.
+  - Backend processing for heavy tasks (terrain conversion, batch imports) is asynchronous and uses job queues.
+  - Logging is centralized via LogManager, with rate limiting and component-level log levels.
+- **Configuration:**
+  - Custom Next.js config for Cesium asset copying and WebAssembly support.
+  - Environment variables for Supabase, Cesium, and other service credentials.
+
+---
+
+## Technical Stack
+
+- **Frontend:** Next.js 15, React 19, Zustand, Mapbox GL JS, CesiumJS
+- **Backend:** Supabase, PostgreSQL/PostGIS, Node.js, custom API endpoints
+- **Other:** proj4 for coordinate transformations, SwissTopo APIs, web workers for parsing, tin-terrain, cesium-terrain-builder, pyntcloud, obj2gltf
+
+---
+
+## Dependencies
+
+- **Frontend:** next, react, react-dom, zustand, mapbox-gl, cesium, @supabase/supabase-js, @radix-ui/*, tailwindcss, shadcn-ui, @turf/*, dxf-parser, papaparse, file-saver, jszip, lodash, zod, react-hook-form, react-hot-toast, etc.
+- **Backend/Build:** Node.js, PostGIS, Supabase, ts-node, jest, ts-jest, babel-loader, copy-webpack-plugin, fs-extra, wasm-loader, etc.
+- **Other:** Cesium asset copying (copy-webpack-plugin), WebAssembly support, tin-terrain, cesium-terrain-builder, pyntcloud, obj2gltf for terrain/model conversion.
+
+---
+
+## Constraints & Requirements
+
+- Must support Edge, Chrome and Firefox; mobile-friendly design (though main use will be desktop or tablets).
+- All coordinate and height transformations must be accurate and auditable.
+- Swiss coordinate and height support is a first-class requirement.
+- Scalable to large datasets (100k+ features).
+- Robust error handling and diagnostics for all import and transformation steps.
+- Type safety and maintainability across the codebase.
+- Custom terrain data must be supported, with clear distinction and management of vector, terrain, and model datasets.
+- Asynchronous backend processing and status tracking for large terrain conversions.
+- UI must allow users to upload, manage, and select terrain datasets per project/location.
+- Users must be able to edit feature attributes and geometries, and select/download data in required formats for external tools.
+- Snapping must be available for editing/adding features.
+
+---
+
+## Acceptance Criteria
+
+- Users can upload, preview, and import geodata with correct coordinate and height transformations.
+- 2D (for preview during import) and 3D visualization is accurate and performant.
+- Swiss coordinate and height systems are supported.
+- State management is robust, with no infinite render loops or unnecessary re-renders.
+- Logging and diagnostics are centralized and actionable.
+- All API endpoints and database operations are secure and reliable.
+- Users can upload, process, and manage custom terrain datasets, with clear status tracking and Cesium integration.
+- Terrain, vector, and model datasets are clearly tagged and managed in the database and UI.
+- Backend processing for terrain data is asynchronous, with progress/status updates and error handling.
+- Users can edit feature attributes and geometries.
+- Users can select and download data in required formats for external tools (e.g., CandaA, SLIP), with automatic formatting.
+- Snapping is available for editing/adding features.
+
+---
+
+## References
+- documentation files might be outdated, so use carefully
+- See `components/files/components/manager/index.tsx` (FileManager), `components/files/hooks/useFileActions.ts`, `components/files/components/imported-files-list.tsx`, `supabase/schema_dump.sql`, `supabase/migrations/00000000000001_initial_schema.sql`, `project_files` table, and related API/database docs for detailed implementation notes.
+- See `docs/height-configuration/height-configuration-overview.md`, `docs/coordinate-transformations/CONCEPT.md`, `docs/geodata-import/CONCEPT.md`, `STORE_REDESIGN.md`, and related API/database docs for detailed implementation notes. 

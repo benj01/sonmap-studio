@@ -209,6 +209,25 @@ function applyAbsoluteHeight(feature: GeoJSON.Feature, heightValue: number): voi
   }
 }
 
+// Utility to fetch or sample terrain heights for a feature
+async function getTerrainHeights(featureId: string, geometry: any, terrainSource: string = 'CesiumWorldTerrain'): Promise<number[]> {
+  // 1. Try cache
+  const cacheRes = await fetch(`/api/feature-terrain-cache?feature_id=${featureId}&terrain_source=${terrainSource}`);
+  if (cacheRes.ok) {
+    const cache = await cacheRes.json();
+    return cache.heights;
+  }
+  // 2. Sample and cache
+  const sampleRes = await fetch('/api/sample-terrain', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ feature_id: featureId, geometry, terrain_source: terrainSource }),
+  });
+  if (!sampleRes.ok) throw new Error('Failed to sample terrain');
+  const { heights } = await sampleRes.json();
+  return heights;
+}
+
 export function CesiumView() {
   const cesiumContainer = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
@@ -523,6 +542,21 @@ export function CesiumView() {
                 });
                 
                 geojsonData = applyHeightToFeatures(geojsonData, heightConfig);
+              }
+
+              // If clamping to terrain, fetch or sample terrain heights
+              if (heightConfig && heightConfig.sourceType === 'none' && geojsonData.features) {
+                for (const feature of geojsonData.features) {
+                  if (feature.geometry.type === 'Polygon' && feature.id) {
+                    try {
+                      const heights = await getTerrainHeights(feature.id, feature.geometry, 'CesiumWorldTerrain');
+                      // Apply per-vertex heights
+                      feature.geometry.coordinates[0] = feature.geometry.coordinates[0].map((coord: number[], i: number) => [coord[0], coord[1], heights[i]]);
+                    } catch (e) {
+                      logger.warn('Failed to fetch/sample terrain heights', { featureId: feature.id, error: e });
+                    }
+                  }
+                }
               }
 
               const ds = await Cesium.GeoJsonDataSource.load(geojsonData, {

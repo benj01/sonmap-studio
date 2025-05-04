@@ -43,3 +43,7 @@ CREATE INDEX IF NOT EXISTS idx_feature_collections_name ON public.feature_collec
 -- Indexes for layers table
 CREATE INDEX IF NOT EXISTS idx_layers_name ON public.layers(name);
 CREATE INDEX IF NOT EXISTS idx_layers_type ON public.layers(type);
+
+-- Index for feature_terrain_cache table
+CREATE INDEX IF NOT EXISTS idx_feature_terrain_cache_feature_id 
+    ON public.feature_terrain_cache(feature_id);
