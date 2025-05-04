@@ -1,8 +1,4 @@
-import { S3Client } from '@aws-sdk/client-s3';
-import { createLogger } from '@/utils/logger';
-
-const SOURCE = 'S3Utils';
-const logger = createLogger(SOURCE);
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 export async function getSignedUploadUrl(fileName: string, projectId: string) {
   try {
@@ -22,7 +18,7 @@ export async function getSignedUploadUrl(fileName: string, projectId: string) {
     const data = await response.json();
     return data.signedUrl;
   } catch (error) {
-    logger.error('Failed to get signed URL', { error, fileName, projectId });
+    await dbLogger.error('Failed to get signed URL', { fileName, projectId, error });
     throw error;
   }
 }

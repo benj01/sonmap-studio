@@ -1,27 +1,19 @@
+// MIGRATION: Logger usage migrated to async/await dbLogger. Legacy LogManager and inline logger removed.
+// See debug.mdc and cursor_rules.mdc for migration details.
+
 import { create } from 'zustand';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import type { Viewer, Cesium3DTileset } from "cesium";
+import type { CesiumWidget } from "@cesium/engine";
 
 const SOURCE = 'mapInstanceStore';
-const logManager = LogManager.getInstance();
 
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+// Union type for all supported Cesium instance types
+export type CesiumInstance = Viewer | Cesium3DTileset | CesiumWidget | null;
 
 interface NormalizedMapInstanceState {
   cesium: {
-    instance: any | null;
+    instance: CesiumInstance;
     instanceId: string | null;
     status: 'initializing' | 'ready' | 'error' | 'destroyed';
     error?: string;
@@ -33,7 +25,7 @@ interface MapInstanceStore {
   mapInstances: NormalizedMapInstanceState;
   
   // Actions
-  setCesiumInstance: (instance: any | null, instanceId?: string) => void;
+  setCesiumInstance: (instance: CesiumInstance, instanceId?: string) => void;
   setCesiumStatus: (status: NormalizedMapInstanceState['cesium']['status'], error?: string) => void;
   cleanup: () => void;
   reset: () => void;
@@ -46,6 +38,11 @@ const initialState: NormalizedMapInstanceState = {
     status: 'initializing'
   }
 };
+
+// Type guard for Cesium instances with _removed
+function hasRemovedProp(obj: unknown): obj is { _removed: boolean } {
+  return typeof obj === 'object' && obj !== null && '_removed' in obj;
+}
 
 export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
   // Initial state
@@ -67,10 +64,13 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
         status: instance ? 'ready' as const : 'initializing' as const
       };
 
-      logger.debug('Cesium instance set', { 
-        hasInstance: !!instance,
-        instanceId: updatedCesium.instanceId
-      });
+      (async () => {
+        await dbLogger.debug('Cesium instance set', {
+          hasInstance: !!instance,
+          instanceId: updatedCesium.instanceId,
+          source: SOURCE
+        });
+      })();
       return {
         mapInstances: {
           ...state.mapInstances,
@@ -88,7 +88,9 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
         error
       };
 
-      logger.debug('Cesium status updated', { status, error });
+      (async () => {
+        await dbLogger.debug('Cesium status updated', { status, error, source: SOURCE });
+      })();
       return {
         mapInstances: {
           ...state.mapInstances,
@@ -100,22 +102,31 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
 
   cleanup: () => {
     set((state) => {
-      if (state.mapInstances.cesium.instance && 
-          (state.mapInstances.cesium.status === 'error' || 
-           state.mapInstances.cesium.status === 'destroyed' || 
-           state.mapInstances.cesium.instance._removed)) {
-        state.mapInstances.cesium.instance.destroy();
+      const cesiumInstance = state.mapInstances.cesium.instance;
+      const status = state.mapInstances.cesium.status;
+      let shouldDestroy = false;
+      let isRemoved = false;
+      if (cesiumInstance && (status === 'error' || status === 'destroyed')) {
+        shouldDestroy = true;
+      } else if (hasRemovedProp(cesiumInstance)) {
+        isRemoved = cesiumInstance._removed;
+        if (isRemoved) shouldDestroy = true;
+      }
+      if (shouldDestroy && cesiumInstance && typeof cesiumInstance.destroy === 'function') {
+        cesiumInstance.destroy();
       }
       return {
         mapInstances: {
           ...state.mapInstances,
-          cesium: state.mapInstances.cesium.instance?._removed ? 
-            { ...initialState.cesium, instanceId: null } : 
-            state.mapInstances.cesium
+          cesium: isRemoved
+            ? { ...initialState.cesium, instanceId: null }
+            : state.mapInstances.cesium
         }
       };
     });
-    logger.info('Cesium instance cleanup check complete');
+    (async () => {
+      await dbLogger.info('Cesium instance cleanup check complete', { action: 'cleanup', source: SOURCE });
+    })();
   },
 
   reset: () => {
@@ -127,7 +138,9 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
         mapInstances: initialState
       };
     });
-    logger.info('Map instance store reset');
+    (async () => {
+      await dbLogger.info('Map instance store reset', { action: 'reset', source: SOURCE });
+    })();
   }
 }));
 

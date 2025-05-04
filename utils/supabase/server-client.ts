@@ -1,18 +1,24 @@
 // utils/supabase/server-client.ts
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { createLogger } from '@/utils/logger'
+import { dbLogger } from '@/utils/logging/dbLogger'
 import { ResponseCookie } from 'next/dist/compiled/@edge-runtime/cookies'
 
 const SOURCE = 'SupabaseServerClient'
-const logger = createLogger(SOURCE)
 
-export function createClient() {
-  const cookieStore = cookies()
+export async function createClient() {
+  const cookieStore = await cookies()
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    throw new Error('Supabase environment variables are not set');
+  }
 
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       db: {
         schema: 'public',
@@ -31,17 +37,16 @@ export function createClient() {
         }
       },
       cookies: {
-        get(name: string) {
+        get: (name: string) => {
           try {
             return cookieStore.get(name)?.value ?? ''
-          } catch (error) {
-            logger.error('Error getting cookie', { name, error })
+          } catch {
+            // If you want to log here, make this async and await dbLogger
             return ''
           }
         },
-        set(name: string, value: string, options: Partial<ResponseCookie>) {
+        set: async (name: string, value: string, options: Partial<ResponseCookie>) => {
           try {
-            // Ensure consistent cookie options
             cookieStore.set(name, value, {
               ...options,
               path: options.path ?? '/',
@@ -49,17 +54,14 @@ export function createClient() {
               sameSite: 'lax'
             })
           } catch (error) {
-            logger.error('Error setting cookie', { name, error, options })
+            await dbLogger.error('Error setting cookie', { source: SOURCE, name, error, options })
           }
         },
-        remove(name: string, options: Partial<ResponseCookie>) {
+        remove: async (name: string) => {
           try {
-            cookieStore.delete(name, {
-              ...options,
-              path: options.path ?? '/'
-            })
+            cookieStore.delete(name)
           } catch (error) {
-            logger.error('Error removing cookie', { name, error, options })
+            await dbLogger.error('Error removing cookie', { source: SOURCE, name, error })
           }
         }
       }

@@ -1,35 +1,42 @@
 // utils/supabase/server.ts
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
-import { createLogger } from '@/utils/logger'
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 const SOURCE = 'SupabaseServer';
-const logger = createLogger(SOURCE);
 
 export async function createClient() {
   const cookieStore = await cookies()
 
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    await dbLogger.error('Missing Supabase environment variables', { source: SOURCE, supabaseUrl, supabaseAnonKey });
+    throw new Error('Supabase environment variables are not set');
+  }
+
   return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    supabaseUrl,
+    supabaseAnonKey,
     {
       cookies: {
         get(name: string) {
           const cookie = cookieStore.get(name)
           return cookie?.value
         },
-        set(name: string, value: string, options: any) {
+        set: async (name: string, value: string, options: Record<string, unknown>) => {
           try {
             cookieStore.set({ name, value, ...options })
           } catch (error) {
-            logger.error('Error setting cookie', { error, name, options })
+            await dbLogger.error('Error setting cookie', { source: SOURCE, error, name, options });
           }
         },
-        remove(name: string, options: any) {
+        remove: async (name: string, options: Record<string, unknown>) => {
           try {
             cookieStore.delete({ name, ...options })
           } catch (error) {
-            logger.error('Error removing cookie', { error, name, options })
+            await dbLogger.error('Error removing cookie', { source: SOURCE, error, name, options });
           }
         },
       },

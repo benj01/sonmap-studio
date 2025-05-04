@@ -1,24 +1,11 @@
+// MIGRATION: Logger usage migrated to async/await dbLogger. Legacy LogManager and inline logger removed.
+// See debug.mdc and cursor_rules.mdc for migration details.
+
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'viewStateStore';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 export interface ViewState2D {
   longitude: number;
@@ -76,17 +63,23 @@ export const useViewStateStore = create<ViewStateStore>()(
       // Actions
       setViewState2D: (state) => {
         set({ viewState2D: state });
-        logger.debug('2D view state updated', { state });
+        (async () => {
+          await dbLogger.debug('2D view state updated', { state, source: SOURCE });
+        })();
       },
 
       setViewState3D: (state) => {
         set({ viewState3D: state });
-        logger.debug('3D view state updated', { state });
+        (async () => {
+          await dbLogger.debug('3D view state updated', { state, source: SOURCE });
+        })();
       },
 
       reset: () => {
         set(initialState);
-        logger.info('View state store reset');
+        (async () => {
+          await dbLogger.info('View state store reset', { action: 'reset', source: SOURCE });
+        })();
       }
     }),
     {

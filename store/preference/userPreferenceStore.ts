@@ -2,22 +2,9 @@
 
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'userPreferenceStore';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
 
 /**
  * Height source preference configuration
@@ -92,7 +79,9 @@ export const usePreferenceStore = create<PreferenceStore>()(
       
       // Actions
       setHeightSourcePreference: (preference) => {
-        logger.info('Setting height source preference', preference);
+        (async () => {
+          await dbLogger.info('Setting height source preference', { preference, source: SOURCE });
+        })();
         set(state => ({
           preferences: {
             ...state.preferences,
@@ -103,7 +92,9 @@ export const usePreferenceStore = create<PreferenceStore>()(
       
       // Reset all preferences to defaults
       reset: () => {
-        logger.info('Resetting user preferences');
+        (async () => {
+          await dbLogger.info('Resetting user preferences', { action: 'reset', source: SOURCE });
+        })();
         set({ preferences: initialState });
       }
     }),
