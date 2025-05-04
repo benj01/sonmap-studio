@@ -3,15 +3,13 @@ import { SupabaseImportAdapter } from './supabase-import-adapter';
 import { SupabaseStorageAdapter } from './supabase-storage-adapter';
 import { SupabaseMetricsAdapter } from './supabase-metrics-adapter';
 import { createClient } from '@/utils/supabase/client';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { ImportProgress, ImportResult } from '../types/index';
 
 const SOURCE = 'LegacyStreamAdapter';
-const logger = LogManager.getInstance();
 
 export async function createImportService(): Promise<ImportService> {
   const supabase = createClient();
-  
   return new ImportService(
     new SupabaseImportAdapter(supabase),
     new SupabaseStorageAdapter(supabase),
@@ -35,26 +33,20 @@ export async function processImportStream(
   importLogId?: string
 ): Promise<ReadableStream> {
   const importService = await createImportService();
-  
-  // Create or get import log
   const supabase = createClient();
   let importLog;
-  
+
   if (importLogId) {
     const { data, error: getError } = await supabase
       .from('realtime_import_logs')
       .select()
       .eq('id', importLogId)
       .single();
-      
+
     if (getError) {
-      logger.error('Failed to get import log', SOURCE, {
-        error: getError,
-        importLogId
-      });
+      await dbLogger.error('Failed to get import log', { error: getError }, { importLogId, projectFileId, collectionName });
       throw new Error('Failed to get import log');
     }
-    
     importLog = data;
   } else {
     const { data, error: createError } = await supabase
@@ -70,16 +62,13 @@ export async function processImportStream(
       .single();
 
     if (createError) {
-      logger.error('Failed to create import log', SOURCE, {
-        error: createError,
-        projectFileId,
-        collectionName
-      });
+      await dbLogger.error('Failed to create import log', { error: createError }, { projectFileId, collectionName });
       throw new Error('Failed to create import log');
     }
-    
     importLog = data;
   }
+
+  await dbLogger.info('Import log ready', {}, { importLogId: importLog?.id, projectFileId, collectionName });
 
   // Use the new service layer for streaming
   return await importService.streamFeatures({
@@ -89,51 +78,63 @@ export async function processImportStream(
     sourceSrid,
     batchSize,
     onProgress: async (progress: ImportProgress) => {
-      // Update import log with progress
-      await supabase
-        .from('realtime_import_logs')
-        .update({
-          imported_count: progress.imported,
-          failed_count: progress.failed,
-          status: 'processing',
-          metadata: {
-            current_batch: progress.currentBatch,
-            total_batches: progress.totalBatches,
-            collection_id: progress.collectionId,
-            layer_id: progress.layerId,
-            debug_info: progress.debugInfo
-          }
-        })
-        .eq('id', importLog.id);
+      try {
+        await supabase
+          .from('realtime_import_logs')
+          .update({
+            imported_count: progress.imported,
+            failed_count: progress.failed,
+            status: 'processing',
+            metadata: {
+              current_batch: progress.currentBatch,
+              total_batches: progress.totalBatches,
+              collection_id: progress.collectionId,
+              layer_id: progress.layerId,
+              debug_info: progress.debugInfo
+            }
+          })
+          .eq('id', importLog.id);
+        await dbLogger.info('Import progress updated', { progress }, { importLogId: importLog.id, projectFileId, collectionName });
+      } catch (error) {
+        await dbLogger.error('Failed to update import progress', { error }, { importLogId: importLog.id, projectFileId, collectionName });
+      }
     },
     onComplete: async (result: ImportResult) => {
-      // Update import log with completion
-      await supabase
-        .from('realtime_import_logs')
-        .update({
-          imported_count: result.importedCount,
-          failed_count: result.failedCount,
-          status: 'completed',
-          metadata: {
-            collection_id: result.collectionId,
-            layer_id: result.layerId,
-            debug_info: result.debugInfo
-          }
-        })
-        .eq('id', importLog.id);
+      try {
+        await supabase
+          .from('realtime_import_logs')
+          .update({
+            imported_count: result.importedCount,
+            failed_count: result.failedCount,
+            status: 'completed',
+            metadata: {
+              collection_id: result.collectionId,
+              layer_id: result.layerId,
+              debug_info: result.debugInfo
+            }
+          })
+          .eq('id', importLog.id);
+        await dbLogger.info('Import completed', { result }, { importLogId: importLog.id, projectFileId, collectionName });
+      } catch (error) {
+        await dbLogger.error('Failed to update import completion', { error }, { importLogId: importLog.id, projectFileId, collectionName });
+      }
     },
     onError: async (error: Error) => {
-      // Update import log with error
-      await supabase
-        .from('realtime_import_logs')
-        .update({
-          status: 'failed',
-          metadata: {
-            error: error.message,
-            stack: error.stack
-          }
-        })
-        .eq('id', importLog.id);
+      try {
+        await supabase
+          .from('realtime_import_logs')
+          .update({
+            status: 'failed',
+            metadata: {
+              error: error.message,
+              stack: error.stack
+            }
+          })
+          .eq('id', importLog.id);
+        await dbLogger.error('Import failed', { error }, { importLogId: importLog.id, projectFileId, collectionName });
+      } catch (err) {
+        await dbLogger.error('Failed to update import error', { error: err }, { importLogId: importLog.id, projectFileId, collectionName });
+      }
     }
   });
 } 

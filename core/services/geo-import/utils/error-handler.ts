@@ -1,8 +1,7 @@
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { SupabaseClient } from '@supabase/supabase-js';
 
 const SOURCE = 'ImportErrorHandler';
-const logger = LogManager.getInstance();
 
 export interface ImportError extends Error {
   code?: string;
@@ -17,13 +16,13 @@ export class ImportErrorHandler {
   constructor(private supabase: SupabaseClient) {}
 
   async handleStreamError(error: ImportError, importLogId: string): Promise<void> {
-    logger.error('Import stream error', SOURCE, {
+    await dbLogger.error('Import stream error', {
       error,
       importLogId,
       details: error.details,
       hint: error.hint,
       code: error.code
-    });
+    }, { importLogId });
 
     await this.updateImportLog(importLogId, {
       status: 'failed',
@@ -45,14 +44,14 @@ export class ImportErrorHandler {
     start: number;
     end: number;
   }): Promise<void> {
-    logger.error('Batch import failed', SOURCE, {
+    await dbLogger.error('Batch import failed', {
       error,
       importLogId,
       ...batchInfo,
       details: error.details,
       hint: error.hint,
       code: error.code
-    });
+    }, { importLogId, ...batchInfo });
 
     await this.updateImportLog(importLogId, {
       status: 'failed',
@@ -67,7 +66,7 @@ export class ImportErrorHandler {
   }
 
   async handleAuthError(error: Error): Promise<void> {
-    logger.error('Authentication failed', SOURCE, { error });
+    await dbLogger.error('Authentication failed', { error }, {});
   }
 
   private async updateImportLog(importLogId: string, update: {
@@ -80,11 +79,11 @@ export class ImportErrorHandler {
       .eq('id', importLogId);
 
     if (error) {
-      logger.error('Failed to update import log', SOURCE, {
+      await dbLogger.error('Failed to update import log', {
         error,
         importLogId,
         update
-      });
+      }, { importLogId });
     }
   }
 } 

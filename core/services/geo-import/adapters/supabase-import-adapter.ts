@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import {
   ImportAdapter,
   ImportParams,
@@ -11,8 +11,6 @@ import {
 const SOURCE = 'SupabaseImportAdapter';
 
 export class SupabaseImportAdapter implements ImportAdapter {
-  private logger = LogManager.getInstance();
-
   constructor(private supabase: SupabaseClient) {}
 
   private getImportId(params: ImportParams): string {
@@ -21,7 +19,6 @@ export class SupabaseImportAdapter implements ImportAdapter {
 
   async importFeatures(params: ImportParams): Promise<ImportResult> {
     const importId = this.getImportId(params);
-    
     try {
       const { data: result, error } = await this.supabase.rpc(
         'import_geo_features_with_transform',
@@ -36,11 +33,12 @@ export class SupabaseImportAdapter implements ImportAdapter {
       );
 
       if (error) {
-        this.logger.error('Import RPC failed', SOURCE, error);
+        await dbLogger.error('Import RPC failed', { error }, { importId, params });
         throw error;
       }
 
       if (!result || !Array.isArray(result) || result.length === 0) {
+        await dbLogger.error('No results returned from import function', {}, { importId, params });
         throw new Error('No results returned from import function');
       }
 
@@ -62,21 +60,17 @@ export class SupabaseImportAdapter implements ImportAdapter {
       for (const batchResult of result) {
         aggregatedResult.importedCount += batchResult.imported_count || 0;
         aggregatedResult.failedCount += batchResult.failed_count || 0;
-        
         if (!aggregatedResult.collectionId && batchResult.collection_id) {
           aggregatedResult.collectionId = batchResult.collection_id;
         }
         if (!aggregatedResult.layerId && batchResult.layer_id) {
           aggregatedResult.layerId = batchResult.layer_id;
         }
-
         if (batchResult.debug_info) {
           const debug = aggregatedResult.debugInfo!;
           debug.repairedCount += batchResult.debug_info.repaired_count || 0;
           debug.cleanedCount += batchResult.debug_info.cleaned_count || 0;
           debug.skippedCount += batchResult.debug_info.skipped_count || 0;
-
-          // Merge summaries
           if (batchResult.debug_info.repair_summary) {
             debug.repairSummary = {
               ...debug.repairSummary,
@@ -89,17 +83,15 @@ export class SupabaseImportAdapter implements ImportAdapter {
               ...batchResult.debug_info.skipped_summary
             };
           }
-
-          // Collect notices
           if (batchResult.debug_info.notices) {
             debug.notices = debug.notices.concat(batchResult.debug_info.notices);
           }
         }
       }
-
+      await dbLogger.info('Import completed', { aggregatedResult }, { importId, params });
       return aggregatedResult;
     } catch (error) {
-      this.logger.error('Import failed', SOURCE, error);
+      await dbLogger.error('Import failed', { error }, { importId, params });
       throw error;
     }
   }
@@ -107,11 +99,11 @@ export class SupabaseImportAdapter implements ImportAdapter {
   async streamFeatures(params: StreamParams): Promise<ReadableStream> {
     const importId = this.getImportId(params);
     const totalFeatures = params.features.length;
-    const logger = this.logger;
     const supabase = this.supabase;
-    
+
     // Add validation and early error handling
     if (!params.projectFileId) {
+      await dbLogger.error('Project file ID is required', {}, { importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Project file ID is required',
@@ -121,8 +113,8 @@ export class SupabaseImportAdapter implements ImportAdapter {
         }
       }));
     }
-    
     if (!params.collectionName) {
+      await dbLogger.error('Collection name is required', {}, { importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Collection name is required',
@@ -132,8 +124,8 @@ export class SupabaseImportAdapter implements ImportAdapter {
         }
       }));
     }
-    
     if (!params.features || !Array.isArray(params.features) || params.features.length === 0) {
+      await dbLogger.error('Features array is required and must not be empty', {}, { importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Features array is required and must not be empty',
@@ -143,8 +135,8 @@ export class SupabaseImportAdapter implements ImportAdapter {
         }
       }));
     }
-    
     if (!params.sourceSrid) {
+      await dbLogger.error('Source SRID is required', {}, { importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Source SRID is required',
@@ -154,23 +146,21 @@ export class SupabaseImportAdapter implements ImportAdapter {
         }
       }));
     }
-    
     try {
-      // Log setup information
-      logger.debug('Setting up import stream', SOURCE, {
+      await dbLogger.debug('Setting up import stream', {
         importId,
         projectFileId: params.projectFileId,
         collectionName: params.collectionName,
         features: totalFeatures,
         sourceSrid: params.sourceSrid,
         targetSrid: params.targetSrid
-      });
+      }, { importId, params });
       
       // Create the transform stream with improved error handling
       const stream = new TransformStream({
         async start(controller) {
           // Stream initialization code goes here if needed
-          logger.debug('Stream started', SOURCE, { importId });
+          await dbLogger.debug('Stream started', { importId }, { importId });
         },
         async transform(chunk, controller) {
           try {
@@ -188,7 +178,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
             );
 
             if (error) {
-              logger.error('Import failed', SOURCE, {
+              await dbLogger.error('Import failed', { error }, {
                 importId,
                 error: error.message,
                 details: error.details
@@ -272,7 +262,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
             controller.terminate();
 
           } catch (error) {
-            logger.error('Stream processing failed', SOURCE, {
+            await dbLogger.error('Stream processing failed', { error }, {
               importId,
               error: error instanceof Error ? error.message : String(error)
             });
@@ -283,7 +273,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
 
       return stream.readable;
     } catch (error) {
-      logger.error('Stream setup failed', SOURCE, {
+      await dbLogger.error('Stream setup failed', { error }, {
         importId,
         error: error instanceof Error ? error.message : String(error)
       });

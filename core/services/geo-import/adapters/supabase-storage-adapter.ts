@@ -1,13 +1,11 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { StorageAdapter, ImportState } from '../types/index';
 
 const SOURCE = 'SupabaseStorageAdapter';
 const CHECKPOINT_TABLE = 'import_checkpoints';
 
 export class SupabaseStorageAdapter implements StorageAdapter {
-  private logger = LogManager.getInstance();
-
   constructor(private supabase: SupabaseClient) {}
 
   async saveCheckpoint(importId: string, state: ImportState): Promise<void> {
@@ -21,11 +19,12 @@ export class SupabaseStorageAdapter implements StorageAdapter {
         });
 
       if (error) {
-        this.logger.error('Failed to save checkpoint', SOURCE, error);
+        await dbLogger.error('Failed to save checkpoint', { error }, { importId, state });
         throw error;
       }
+      await dbLogger.info('Checkpoint saved', {}, { importId, state });
     } catch (error) {
-      this.logger.error('Checkpoint save failed', SOURCE, error);
+      await dbLogger.error('Checkpoint save failed', { error }, { importId, state });
       throw error;
     }
   }
@@ -39,13 +38,13 @@ export class SupabaseStorageAdapter implements StorageAdapter {
         .single();
 
       if (error) {
-        this.logger.error('Failed to load checkpoint', SOURCE, error);
+        await dbLogger.error('Failed to load checkpoint', { error }, { importId });
         throw error;
       }
-
+      await dbLogger.info('Checkpoint loaded', {}, { importId });
       return data?.state || null;
     } catch (error) {
-      this.logger.error('Checkpoint load failed', SOURCE, error);
+      await dbLogger.error('Checkpoint load failed', { error }, { importId });
       throw error;
     }
   }
@@ -58,11 +57,12 @@ export class SupabaseStorageAdapter implements StorageAdapter {
         .eq('import_id', importId);
 
       if (error) {
-        this.logger.error('Failed to clear checkpoint', SOURCE, error);
+        await dbLogger.error('Failed to clear checkpoint', { error }, { importId });
         throw error;
       }
+      await dbLogger.info('Checkpoint cleared', {}, { importId });
     } catch (error) {
-      this.logger.error('Checkpoint clear failed', SOURCE, error);
+      await dbLogger.error('Checkpoint clear failed', { error }, { importId });
       throw error;
     }
   }

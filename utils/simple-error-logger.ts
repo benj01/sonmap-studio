@@ -1,6 +1,7 @@
 import { createClient } from '@/utils/supabase/client';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
-export const logImportError = async (importLogId: string, error: any) => {
+export const logImportError = async (importLogId: string, error: any, context: any = {}) => {
   const supabase = createClient();
   
   // Extract the basic error information
@@ -21,8 +22,8 @@ export const logImportError = async (importLogId: string, error: any) => {
     errorMessage = String(error);
   }
   
-  // Log to console for immediate visibility
-  console.error(`Import Error (${importLogId}):`, errorMessage, errorDetails);
+  // Log to dbLogger for immediate visibility
+  await dbLogger.error('Import Error', { importLogId, errorMessage, errorDetails }, context);
   
   // Update the realtime_import_logs table
   try {
@@ -39,9 +40,9 @@ export const logImportError = async (importLogId: string, error: any) => {
       .eq('id', importLogId);
       
     if (updateError) {
-      console.error('Failed to update import log:', updateError);
+      await dbLogger.error('Failed to update import log', { updateError, importLogId }, context);
     }
   } catch (logError) {
-    console.error('Error logging to database:', logError);
+    await dbLogger.error('Error logging to database', { logError, importLogId }, context);
   }
 }; 

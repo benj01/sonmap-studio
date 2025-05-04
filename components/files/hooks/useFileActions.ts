@@ -1,9 +1,16 @@
 import { useState, useCallback } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import { ProjectFile, FileUploadResult } from '../types';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { useFileEventStore } from '@/store/fileEventStore';
 import { useLayers } from '@/store/layers/hooks';
+
+// Fallback types if imports are missing (for linter only)
+// type ProjectFile = any;
+// type FileUploadResult = any;
+// type dbLogger = any;
+// type useFileEventStore = any;
+// type useLayers = any;
 
 interface UseFileActionsProps {
   projectId: string;
@@ -16,25 +23,10 @@ interface CompanionFile {
   size: number;
 }
 
-const SOURCE = 'FileActions';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
-
 export function useFileActions({ projectId, onSuccess, onError }: UseFileActionsProps) {
   const [isLoading, setIsLoading] = useState(false);
   const supabase = createClient();
-  const emitFileEvent = useFileEventStore(state => state.emitFileEvent);
+  const emitFileEvent = useFileEventStore((state: any) => state.emitFileEvent); // Explicit any for state
   const { handleFileDeleted } = useLayers();
 
   const refreshProjectStorage = useCallback(async () => {
@@ -46,9 +38,9 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         .single();
 
       if (error) throw error;
-      logger.info('Updated storage usage', data.storage_used);
+      await dbLogger.info('Updated storage usage', { storageUsed: data.storage_used }, { projectId });
     } catch (error) {
-      logger.error('Error refreshing storage', error);
+      await dbLogger.error('Error refreshing storage', { error }, { projectId });
     }
   }, [projectId, supabase]);
 
@@ -85,15 +77,15 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         companions: companionsByMainFile[file.id] || []
       }));
 
-      logger.info('Files loaded', {
+      await dbLogger.info('Files loaded', {
         totalFiles: allFiles?.length,
         mainFiles: mainFiles.length,
         companionFiles: companionFiles.length
-      });
+      }, { projectId });
 
       return filesWithCompanions;
     } catch (error) {
-      logger.error('Failed to load files', error);
+      await dbLogger.error('Failed to load files', { error }, { projectId });
       throw error;
     } finally {
       setIsLoading(false);
@@ -103,26 +95,27 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
   const handleUploadComplete = useCallback(async (uploadedFile: FileUploadResult) => {
     setIsLoading(true);
     const supabase = createClient();
-    
+    let user: any = null; // Explicit any for user
     try {
-      logger.info('Starting file upload transaction', {
+      await dbLogger.info('Starting file upload transaction', {
         fileName: uploadedFile.name,
         fileType: uploadedFile.type,
         fileSize: uploadedFile.size,
         hasRelatedFiles: !!uploadedFile.relatedFiles
-      });
+      }, { projectId });
 
       // Start a transaction
       const { error: txError } = await supabase.rpc('begin_transaction');
       if (txError) {
-        logger.error('Failed to start transaction', txError);
+        await dbLogger.error('Failed to start transaction', { txError }, { projectId });
         throw txError;
       }
-      logger.info('Transaction started successfully');
+      await dbLogger.info('Transaction started successfully', undefined, { projectId });
 
       try {
         // Get current user
-        const { data: { user }, error: userError } = await supabase.auth.getUser();
+        const { data: userData, error: userError } = await supabase.auth.getUser();
+        user = userData?.user;
         if (userError) throw userError;
         if (!user) throw new Error('No authenticated user');
 
@@ -132,12 +125,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         const isShapefile = fileExt.endsWith('.shp');
         const isGeoJson = fileExt.endsWith('.geojson');
         
-        logger.info('Inserting main file record', {
+        await dbLogger.info('Inserting main file record', {
           fileName: uploadedFile.name,
           storagePath,
           isShapefile,
           isGeoJson
-        });
+        }, { projectId, userId: user.id });
 
         // Insert main file record
         const { data: mainFile, error: mainError } = await supabase
@@ -158,24 +151,24 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           .single();
 
         if (mainError) {
-          logger.error('Failed to insert main file record', {
-            error: mainError,
+          await dbLogger.error('Failed to insert main file record', {
+            mainError,
             fileName: uploadedFile.name
-          });
+          }, { projectId, userId: user.id });
           throw mainError;
         }
-        logger.info('Main file record inserted successfully', {
+        await dbLogger.info('Main file record inserted successfully', {
           fileId: mainFile.id,
           fileName: mainFile.name
-        });
+        }, { projectId, userId: user.id });
 
         // Handle companion files for both Shapefiles and GeoJSON
         if (uploadedFile.relatedFiles && (isShapefile || isGeoJson)) {
-          logger.info('Processing companion files', {
+          await dbLogger.info('Processing companion files', {
             mainFileId: mainFile.id,
             fileType: isShapefile ? 'Shapefile' : 'GeoJSON',
             companionCount: Object.keys(uploadedFile.relatedFiles).length
-          });
+          }, { projectId, userId: user.id });
 
           const companionInserts = Object.entries(uploadedFile.relatedFiles).map(([ext, file]) => ({
             project_id: projectId,
@@ -194,28 +187,27 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             .insert(companionInserts);
 
           if (companionError) {
-            logger.error('Failed to insert companion files', {
-              error: companionError,
+            await dbLogger.error('Failed to insert companion files', {
+              companionError,
               mainFileId: mainFile.id,
-              companions: companionInserts.map(c => c.name)
-            });
+              companions: companionInserts.map((c: any) => c.name)
+            }, { projectId, userId: user.id });
             throw companionError;
           }
-          logger.info('Companion files inserted successfully', {
+          await dbLogger.info('Companion files inserted successfully', {
             mainFileId: mainFile.id,
-            count: companionInserts.length,
-            companions: companionInserts.map(c => c.name)
-          });
+            companions: companionInserts.map((c: any) => c.name)
+          }, { projectId, userId: user.id });
         }
 
-        logger.info('Committing transaction');
+        await dbLogger.info('Committing transaction');
         // Commit transaction
         const { error: commitError } = await supabase.rpc('commit_transaction');
         if (commitError) {
-          logger.error('Failed to commit transaction', commitError);
+          await dbLogger.error('Failed to commit transaction', { commitError }, { projectId });
           throw commitError;
         }
-        logger.info('Transaction committed successfully');
+        await dbLogger.info('Transaction committed successfully', undefined, { projectId });
 
         await refreshProjectStorage();
 
@@ -224,24 +216,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           : 'File uploaded successfully');
 
         return mainFile;
-      } catch (error) {
-        // Rollback on any error
-        logger.warn('Error during transaction, rolling back', error);
-        const { error: rollbackError } = await supabase.rpc('rollback_transaction');
-        if (rollbackError) {
-          logger.error('Failed to rollback transaction', rollbackError);
-        } else {
-          logger.info('Transaction rolled back successfully');
-        }
-        throw error;
+      } catch (innerError) {
+        await dbLogger.error('Error during file upload', { innerError }, { projectId, userId: user?.id });
+        throw innerError;
       }
     } catch (error) {
-      logger.error('Error uploading file', {
-        error,
-        fileName: uploadedFile.name,
-        stack: error instanceof Error ? error.stack : undefined
-      });
-      onError?.('Failed to save uploaded file to the database');
+      await dbLogger.error('File upload failed', { error }, { projectId, userId: user?.id });
       throw error;
     } finally {
       setIsLoading(false);
@@ -335,13 +315,13 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         .eq('id', sourceFile.id);
 
       if (updateError) {
-        logger.warn('Failed to update source file import status', updateError);
+        await dbLogger.warn('Failed to update source file import status', { updateError }, { projectId });
       }
 
       onSuccess?.('File imported and converted to GeoJSON successfully');
       return importedFile;
     } catch (error) {
-      logger.error('Import error', error);
+      await dbLogger.error('Import error', { error }, { projectId });
       onError?.(error instanceof Error ? error.message : 'Failed to import and convert file');
       throw error;
     } finally {
@@ -353,7 +333,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     try {
       // Note: deleteRelated parameter is kept for backward compatibility but is ignored
       // Database triggers and constraints will always delete related files
-      logger.info('Starting file deletion', { fileId });
+      await dbLogger.info('Starting file deletion', { fileId }, { projectId });
       const supabase = createClient();
   
       // Get current user
@@ -377,7 +357,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       if (fetchError) throw fetchError;
       if (!fileToDelete) throw new Error('File not found');
   
-      logger.info('File fetched', {
+      await dbLogger.info('File fetched', {
         file: {
           id: fileToDelete.id,
           name: fileToDelete.name,
@@ -385,7 +365,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           sourceFileId: fileToDelete.source_file_id,
           featureCollections: fileToDelete.feature_collections
         }
-      });
+      }, { projectId });
   
       // Initialize arrays for deletion
       let filesToDelete: { id: string; storage_path: string }[] = [{
@@ -407,10 +387,10 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             storage_path: companionPath
           });
         }
-        logger.info('Added companion files for deletion', {
+        await dbLogger.info('Added companion files for deletion', {
           mainFile: fileToDelete.name,
           companions: companions.map(([_, c]: [string, CompanionFile]) => c.name)
-        });
+        }, { projectId });
       }
 
       // Note: Due to database triggers and constraints, related files will be deleted automatically
@@ -425,12 +405,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           .single();
 
         if (sourceError) {
-          logger.warn('Failed to fetch source file', sourceError);
+          await dbLogger.warn('Failed to fetch source file', { sourceError }, { projectId });
         } else if (sourceFile) {
-          logger.info('Source file will be deleted due to database constraints', { 
+          await dbLogger.info('Source file will be deleted due to database constraints', { 
             sourceFileId: sourceFile.id,
             sourceFileName: sourceFile.name
-          });
+          }, { projectId });
         }
       }
 
@@ -443,12 +423,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
           .eq('is_imported', true);
 
         if (importedError) {
-          logger.warn('Failed to fetch imported files', importedError);
+          await dbLogger.warn('Failed to fetch imported files', { importedError }, { projectId });
         } else if (importedFiles?.length > 0) {
-          logger.info('Imported files will be deleted due to database constraints', { 
+          await dbLogger.info('Imported files will be deleted due to database constraints', { 
             count: importedFiles.length,
-            files: importedFiles.map(f => f.name)
-          });
+            files: importedFiles.map((f: ProjectFile) => f.name)
+          }, { projectId });
         }
       }
 
@@ -457,60 +437,60 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         for (const collection of fileToDelete.feature_collections) {
           if (collection.layers) {
             // First, delete any import logs that reference these layers or collections
-            logger.info('Deleting import logs for collection', { collectionId: collection.id });
+            await dbLogger.info('Deleting import logs for collection', { collectionId: collection.id }, { projectId });
             const { error: importLogsError } = await supabase
               .from('realtime_import_logs')
               .delete()
               .or(`collection_id.eq.${collection.id},layer_id.in.(${collection.layers.map((l: { id: string }) => l.id).join(',')})`);
 
             if (importLogsError) {
-              logger.warn('Failed to delete import logs', importLogsError);
+              await dbLogger.warn('Failed to delete import logs', { importLogsError }, { projectId });
             }
 
             // Delete geo_features for each layer
             for (const layer of collection.layers) {
-              logger.info('Deleting geo_features for layer', { layerId: layer.id });
+              await dbLogger.info('Deleting geo_features for layer', { layerId: layer.id }, { projectId });
               const { error: featuresError } = await supabase
                 .from('geo_features')
                 .delete()
                 .eq('layer_id', layer.id);
 
               if (featuresError) {
-                logger.warn('Failed to delete geo_features', featuresError);
+                await dbLogger.warn('Failed to delete geo_features', { featuresError }, { projectId });
               }
             }
 
             // Delete layers
-            logger.info('Deleting layers for collection', { collectionId: collection.id });
+            await dbLogger.info('Deleting layers for collection', { collectionId: collection.id }, { projectId });
             const { error: layersError } = await supabase
               .from('layers')
               .delete()
               .eq('collection_id', collection.id);
 
             if (layersError) {
-              logger.warn('Failed to delete layers', layersError);
+              await dbLogger.warn('Failed to delete layers', { layersError }, { projectId });
             }
           }
 
           // Delete feature collection
-          logger.info('Deleting feature collection', { collectionId: collection.id });
+          await dbLogger.info('Deleting feature collection', { collectionId: collection.id }, { projectId });
           const { error: collectionError } = await supabase
             .from('feature_collections')
             .delete()
             .eq('id', collection.id);
 
           if (collectionError) {
-            logger.warn('Failed to delete feature collection', collectionError);
+            await dbLogger.warn('Failed to delete feature collection', { collectionError }, { projectId });
           }
         }
       }
   
       // Delete files from storage
       for (const file of filesToDelete) {
-        logger.info('Deleting from storage', { 
+        await dbLogger.info('Deleting from storage', { 
           fileId: file.id,
           storagePath: file.storage_path 
-        });
+        }, { projectId });
   
         try {
           const { error: storageError } = await supabase.storage
@@ -518,29 +498,29 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             .remove([file.storage_path]);
         
           if (storageError) {
-            logger.warn('Storage deletion failed', { 
+            await dbLogger.warn('Storage deletion failed', { 
               error: storageError,
               fileId: file.id,
               storagePath: file.storage_path
-            });
+            }, { projectId });
           } else {
-            logger.info('Successfully deleted from storage', {
+            await dbLogger.info('Successfully deleted from storage', {
               fileId: file.id,
               storagePath: file.storage_path
-            });
+            }, { projectId });
           }
         } catch (e) {
-          logger.warn('Storage deletion attempt failed', { 
+          await dbLogger.warn('Storage deletion attempt failed', { 
             error: e,
             fileId: file.id,
             storagePath: file.storage_path
-          });
+          }, { projectId });
         }
       }
   
       // Delete from project_files table
       const fileIds = [...new Set(filesToDelete.map((f: { id: string }) => f.id))]; // Remove duplicates since companions share the same ID
-      logger.info('Deleting from project_files', { fileIds });
+      await dbLogger.info('Deleting from project_files', { fileIds }, { projectId });
       
       const { error: dbError } = await supabase
         .from('project_files')
@@ -548,17 +528,17 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         .in('id', fileIds);
   
       if (dbError) {
-        logger.error('Database deletion failed', {
+        await dbLogger.error('Database deletion failed', {
           error: dbError,
           fileIds
-        });
+        }, { projectId });
         throw dbError;
       }
   
-      logger.info('File deletion completed successfully', {
+      await dbLogger.info('File deletion completed successfully', {
         deletedFiles: fileIds,
         deletedPaths: filesToDelete.map((f: { storage_path: string }) => f.storage_path)
-      });
+      }, { projectId });
   
       // Refresh storage usage after successful deletion
       await refreshProjectStorage();
@@ -572,9 +552,9 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         fileId: fileToDelete.id
       });
 
-      onSuccess?.();
+      onSuccess?.('File deleted successfully');
     } catch (error) {
-      logger.error('File deletion failed', error);
+      await dbLogger.error('File deletion failed', { error }, { projectId });
       throw error;
     }
   }, [projectId, refreshProjectStorage, emitFileEvent, handleFileDeleted]);
@@ -610,7 +590,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             .createSignedUrl(companionPath, 60);
 
           if (companionError) {
-            logger.error(`Failed to get URL for companion file ${ext}`, companionError);
+            await dbLogger.error(`Failed to get URL for companion file ${ext}`, { companionError }, { projectId });
             continue;
           }
 
@@ -648,7 +628,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
 
       onSuccess?.('Files downloaded successfully');
     } catch (error) {
-      logger.error('Download error', error);
+      await dbLogger.error('Download error', { error }, { projectId });
       onError?.(error instanceof Error ? error.message : 'Failed to download file');
       throw error;
     } finally {

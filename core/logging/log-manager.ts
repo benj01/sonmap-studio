@@ -1,4 +1,5 @@
 import { saveAs } from 'file-saver';
+import { LoggingConfig, LogEntry, ILogAdapter, LogContext } from './types';
 
 /**
  * Log levels for the logging system
@@ -8,17 +9,6 @@ export enum LogLevel {
   INFO = 'INFO',
   WARN = 'WARN',
   ERROR = 'ERROR'
-}
-
-/**
- * Log entry structure
- */
-export interface LogEntry {
-  timestamp: string;
-  level: 'debug' | 'info' | 'warn' | 'error';
-  source: string;
-  message: string;
-  data?: any;
 }
 
 /**
@@ -32,6 +22,8 @@ export class LogManager {
   private sourceFilters: Map<string, LogLevel> = new Map(); // Source-specific log levels
   private rateLimits: Map<string, number> = new Map(); // Track last log time for rate limiting
   private readonly RATE_LIMIT_MS = process.env.NODE_ENV === 'development' ? 100 : 1000; // Shorter rate limit in development
+  private config: LoggingConfig = loadLoggingConfig();
+  private adapters: ILogAdapter[] = this.config.adapters?.map(a => adapterRegistry[a]).filter(Boolean) || [adapterRegistry['console']];
 
   private constructor() {}
 
@@ -441,7 +433,7 @@ export class LogManager {
     return `[${entry.timestamp}] [${entry.level}] [${entry.source}] ${entry.message}${dataStr}\n`;
   }
 
-  private addLog(entry: LogEntry) {
+  private async addLog(entry: LogEntry) {
     try {
       // Validate entry
       if (!entry || typeof entry !== 'object') {
@@ -505,6 +497,9 @@ export class LogManager {
         }
       }
 
+      // Send to all adapters
+      await Promise.all(this.adapters.map(adapter => adapter.log(entry)));
+
       // Trim old logs if we exceed MAX_LOGS
       if (this.logs.length > this.MAX_LOGS) {
         this.logs = this.logs.slice(-this.MAX_LOGS);
@@ -517,96 +512,48 @@ export class LogManager {
   /**
    * Log a debug message
    */
-  public debug(source: string | undefined, message: string | undefined, data?: any): void {
-    try {
-      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
-        console.warn('Invalid log parameters:', { source, message });
-        return;
-      }
-
-      if (this.shouldLog(LogLevel.DEBUG, source)) {
-        this.addLog({
-          timestamp: new Date().toISOString(),
-          level: 'debug',
-          source: source.trim(),
-          message: message.trim(),
-          data: data === undefined ? undefined : data
-        });
-      }
-    } catch (error) {
-      console.error('Error in debug log:', { error, source, message, data });
+  public async debug(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    if (this.shouldLog(LogLevel.DEBUG, source)) {
+      await this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'debug', source, message, data, context
+      });
     }
   }
 
   /**
    * Log an info message
    */
-  public info(source: string | undefined, message: string | undefined, data?: any): void {
-    try {
-      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
-        console.warn('Invalid log parameters:', { source, message });
-        return;
-      }
-
-      if (this.shouldLog(LogLevel.INFO, source)) {
-        this.addLog({
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          source: source.trim(),
-          message: message.trim(),
-          data: data === undefined ? undefined : data
-        });
-      }
-    } catch (error) {
-      console.error('Error in info log:', { error, source, message, data });
+  public async info(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    if (this.shouldLog(LogLevel.INFO, source)) {
+      await this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'info', source, message, data, context
+      });
     }
   }
 
   /**
    * Log a warning message
    */
-  public warn(source: string | undefined, message: string | undefined, data?: any): void {
-    try {
-      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
-        console.warn('Invalid log parameters:', { source, message });
-        return;
-      }
-
-      if (this.shouldLog(LogLevel.WARN, source)) {
-        this.addLog({
-          timestamp: new Date().toISOString(),
-          level: 'warn',
-          source: source.trim(),
-          message: message.trim(),
-          data: data === undefined ? undefined : data
-        });
-      }
-    } catch (error) {
-      console.error('Error in warn log:', { error, source, message, data });
+  public async warn(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    if (this.shouldLog(LogLevel.WARN, source)) {
+      await this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'warn', source, message, data, context
+      });
     }
   }
 
   /**
    * Log an error message
    */
-  public error(source: string | undefined, message: string | undefined, data?: any): void {
-    try {
-      if (!source || typeof source !== 'string' || !message || typeof message !== 'string') {
-        console.warn('Invalid log parameters:', { source, message });
-        return;
-      }
-
-      if (this.shouldLog(LogLevel.ERROR, source)) {
-        this.addLog({
-          timestamp: new Date().toISOString(),
-          level: 'error',
-          source: source.trim(),
-          message: message.trim(),
-          data: data === undefined ? undefined : data
-        });
-      }
-    } catch (error) {
-      console.error('Error in error log:', { error, source, message, data });
+  public async error(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    if (this.shouldLog(LogLevel.ERROR, source)) {
+      await this.addLog({
+        timestamp: new Date().toISOString(),
+        level: 'error', source, message, data, context
+      });
     }
   }
 
@@ -647,4 +594,61 @@ export class LogManager {
     const blob = new Blob([fullLog], { type: 'text/plain;charset=utf-8' });
     saveAs(blob, filename);
   }
-} 
+}
+
+// Config loader (env or JSON)
+function loadLoggingConfig(): LoggingConfig {
+  // Try .env first
+  const logLevel = process.env.LOG_LEVEL as LoggingConfig['logLevel'] || 'INFO';
+  let sourceFilters: LoggingConfig['sourceFilters'] = undefined;
+  if (process.env.LOG_SOURCES) {
+    sourceFilters = process.env.LOG_SOURCES.split(',').reduce((acc, pair) => {
+      const [src, lvl] = pair.split(':');
+      if (src && lvl) acc[src.trim()] = lvl.trim() as any;
+      return acc;
+    }, {} as Record<string, any>);
+  }
+  // TODO: Optionally load from logging.config.json
+  return { logLevel, sourceFilters, adapters: ['console'] };
+}
+
+// Adapter registry
+const adapterRegistry: Record<string, ILogAdapter> = {};
+
+// Console adapter (default)
+class ConsoleAdapter implements ILogAdapter {
+  async log(entry: LogEntry): Promise<void> {
+    const { level, source, message, data, context } = entry;
+    const ctx = context ? ` | ctx: ${JSON.stringify(context)}` : '';
+    if (data) {
+      console[level](`[${source}] ${message}${ctx}`, data);
+    } else {
+      console[level](`[${source}] ${message}${ctx}`);
+    }
+  }
+}
+adapterRegistry['console'] = new ConsoleAdapter();
+
+// Supabase adapter (implementation)
+class SupabaseAdapter implements ILogAdapter {
+  async log(entry: LogEntry): Promise<void> {
+    try {
+      // You may want to make the endpoint configurable
+      const endpoint = process.env.SUPABASE_LOG_ENDPOINT || '/api/log';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(entry),
+      });
+      if (!res.ok) {
+        // Fallback: log to console if Supabase logging fails
+        console.warn('[SupabaseAdapter] Failed to log to Supabase:', res.status, await res.text());
+      }
+    } catch (err) {
+      // Fallback: log to console if fetch throws
+      console.error('[SupabaseAdapter] Error logging to Supabase:', err, entry);
+    }
+  }
+}
+adapterRegistry['supabase'] = new SupabaseAdapter();
+// To enable: add 'supabase' to adapters in LoggingConfig 

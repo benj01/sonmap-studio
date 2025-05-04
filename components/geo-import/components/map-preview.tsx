@@ -504,41 +504,38 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           };
         }
 
-        // Create a debug copy that can be safely stringified
-        const debugGeoJSON = {
-          type: sourceData.type,
-          features: sourceData.features.map(f => ({
-            type: f.type,
-            id: f.id,
-            geometry: {
-              type: f.geometry.type,
-              coordinates:
-                f.geometry.type !== 'GeometryCollection' && 'coordinates' in f.geometry
-                  ? (JSON.stringify((f.geometry as any).coordinates).length > 1000
-                      ? '[Coordinates too long to display]'
-                      : (f.geometry as any).coordinates)
-                  : '[GeometryCollection]'
-            },
-            properties: f.properties
-          }))
-        };
-
-        // Log the complete object in a structured way
-        logManager.info(SOURCE, 'FULL GeoJSON object being passed to Mapbox', {
-          featureCount: sourceData.features.length,
-          completeObject: debugGeoJSON
-        });
-
-        // Also log the raw stringified data (truncated for readability)
-        try {
-          const jsonString = JSON.stringify(sourceData);
-          logManager.info(SOURCE, 'Raw GeoJSON string (truncated)', {
-            totalLength: jsonString.length,
-            preview: jsonString.substring(0, 1000) + (jsonString.length > 1000 ? '...' : '')
-          });
-        } catch (error) {
-          logManager.error(SOURCE, 'Failed to stringify GeoJSON', { error });
+        // Instead of logging the full GeoJSON object, log only a concise summary
+        const geometryTypes = [...new Set(sourceData.features.map(f => f.geometry.type))];
+        const sampleFeature = sourceData.features[0];
+        let firstCoords: any = undefined;
+        if (
+          sampleFeature &&
+          sampleFeature.geometry &&
+          sampleFeature.geometry.type !== 'GeometryCollection' &&
+          'coordinates' in sampleFeature.geometry
+        ) {
+          const coords = (sampleFeature.geometry as any).coordinates;
+          firstCoords = Array.isArray(coords)
+            ? (Array.isArray(coords[0]) ? coords[0].slice(0, 2) : coords.slice(0, 2))
+            : undefined;
         }
+        const summary = {
+          featureCount: sourceData.features.length,
+          geometryTypes,
+          sampleFeature: sampleFeature
+            ? {
+                id: sampleFeature.id,
+                geometryType: sampleFeature.geometry.type,
+                firstCoords,
+                properties: {
+                  OBJECTID: sampleFeature.properties?.OBJECTID,
+                  OBJEKTART: sampleFeature.properties?.OBJEKTART,
+                  id: sampleFeature.properties?.id
+                }
+              }
+            : null
+        };
+        logManager.info(SOURCE, 'GeoJSON summary for Mapbox', summary);
 
         // Add a specific check for coordinate order issues in the first few features
         if (sourceData.features.length > 0) {

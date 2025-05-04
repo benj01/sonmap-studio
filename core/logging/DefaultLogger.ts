@@ -1,5 +1,6 @@
 import { LogManager } from './log-manager';
 import { ILogger } from './ILogger';
+import { LogContext } from './types';
 
 /**
  * Default implementation of ILogger that uses the LogManager singleton internally
@@ -14,8 +15,8 @@ export class DefaultLogger implements ILogger {
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  debug(source: string, message: string, data?: any): void {
-    this.logManager.debug(source, message, data);
+  async debug(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    await this.logManager.debug(source, message, data, context);
   }
 
   /**
@@ -24,8 +25,8 @@ export class DefaultLogger implements ILogger {
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  info(source: string, message: string, data?: any): void {
-    this.logManager.info(source, message, data);
+  async info(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    await this.logManager.info(source, message, data, context);
   }
 
   /**
@@ -34,8 +35,8 @@ export class DefaultLogger implements ILogger {
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  warn(source: string, message: string, data?: any): void {
-    this.logManager.warn(source, message, data);
+  async warn(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    await this.logManager.warn(source, message, data, context);
   }
 
   /**
@@ -44,7 +45,7 @@ export class DefaultLogger implements ILogger {
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  error(source: string, message: string, data?: any): void {
-    this.logManager.error(source, message, data);
+  async error(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+    await this.logManager.error(source, message, data, context);
   }
 } 

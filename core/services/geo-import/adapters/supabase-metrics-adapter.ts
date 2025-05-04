@@ -1,5 +1,5 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import {
   MetricsAdapter,
   ImportParams,
@@ -11,7 +11,6 @@ const SOURCE = 'SupabaseMetricsAdapter';
 const METRICS_TABLE = 'import_metrics';
 
 export class SupabaseMetricsAdapter implements MetricsAdapter {
-  private logger = LogManager.getInstance();
   private importStartTimes: Map<string, number> = new Map();
 
   constructor(private supabase: SupabaseClient) {}
@@ -40,11 +39,12 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         });
 
       if (error) {
-        this.logger.error('Failed to track import start', SOURCE, error);
+        await dbLogger.error('Failed to track import start', { error }, { importId, params });
         throw error;
       }
+      await dbLogger.info('Import start tracked', {}, { importId, params });
     } catch (error) {
-      this.logger.error('Import start tracking failed', SOURCE, error);
+      await dbLogger.error('Import start tracking failed', { error }, { importId, params });
       throw error;
     }
   }
@@ -67,11 +67,12 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         .eq('import_id', progress.importId);
 
       if (error) {
-        this.logger.error('Failed to track import progress', SOURCE, error);
+        await dbLogger.error('Failed to track import progress', { error }, { progress });
         throw error;
       }
+      await dbLogger.info('Import progress tracked', {}, { progress });
     } catch (error) {
-      this.logger.error('Import progress tracking failed', SOURCE, error);
+      await dbLogger.error('Import progress tracking failed', { error }, { progress });
       throw error;
     }
   }
@@ -93,14 +94,14 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         .eq('import_id', result.importId);
 
       if (error) {
-        this.logger.error('Failed to track import completion', SOURCE, error);
+        await dbLogger.error('Failed to track import completion', { error }, { result });
         throw error;
       }
-
+      await dbLogger.info('Import completion tracked', {}, { result });
       // Clean up start time
       this.importStartTimes.delete(result.importId);
     } catch (error) {
-      this.logger.error('Import completion tracking failed', SOURCE, error);
+      await dbLogger.error('Import completion tracking failed', { error }, { result });
       throw error;
     }
   }
@@ -118,12 +119,13 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         .eq('status', 'in_progress');
 
       if (dbError) {
-        this.logger.error('Failed to track import error', SOURCE, dbError);
+        await dbLogger.error('Failed to track import error', { dbError }, { error });
         throw dbError;
       }
-    } catch (error) {
-      this.logger.error('Import error tracking failed', SOURCE, error);
-      throw error;
+      await dbLogger.info('Import error tracked', {}, { error });
+    } catch (err) {
+      await dbLogger.error('Import error tracking failed', { error: err }, { error });
+      throw err;
     }
   }
 } 

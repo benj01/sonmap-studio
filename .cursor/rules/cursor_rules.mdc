@@ -3,7 +3,6 @@ description: Guidelines for creating and maintaining Cursor rules to ensure cons
 globs: .cursor/rules/*.mdc
 alwaysApply: true
 ---
-
 - **Required Rule Structure:**
   ```markdown
   ---
@@ -50,4 +49,10 @@ alwaysApply: true
   - Keep descriptions concise
   - Include both DO and DON'T examples
   - Reference actual code over theoretical examples
-  - Use consistent formatting across rules 
+  - Use consistent formatting across rules
+
+- **Async Logging Enforcement:**
+  - All DB, API, and utility code must use async/await dbLogger from `@/utils/logging/dbLogger` for all logging (info, warn, error, debug).
+  - All logger calls must be awaited and provide a structured context object (e.g., `{ userId, requestId, importLogId }`).
+  - `console.log`, `console.error`, and custom logger instances (LogManager, createLogger) are prohibited in production code.
+  - See [debug.mdc](mdc:debug.mdc) for full rule, migration guide, and DO/DON'T examples. 
