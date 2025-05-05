@@ -1,7 +1,10 @@
-import { EPSG } from '@/core/coordinates/coordinates';
-import { createLogger } from '@/utils/logger';
+// MIGRATION: Logger usage migrated to async/await dbLogger. Legacy createLogger removed.
+// See debug.mdc and cursor_rules.mdc for migration details.
 
-const logger = createLogger('CoordinateSystems');
+import { EPSG } from '@/core/coordinates/coordinates';
+import { dbLogger } from '@/utils/logger';
+
+const SOURCE = 'CoordinateSystems';
 
 interface CoordinateSystem {
   srid: number;
@@ -50,7 +53,7 @@ export async function getCoordinateSystem(srid: number): Promise<CoordinateSyste
       
       return data;
     } catch (error) {
-      logger.error(`Failed to fetch coordinate system for SRID ${srid}`, { error });
+      await dbLogger.error(`Failed to fetch coordinate system for SRID ${srid}`, { error, srid, source: SOURCE });
       throw error;
     } finally {
       // Clean up pending request
@@ -63,16 +66,6 @@ export async function getCoordinateSystem(srid: number): Promise<CoordinateSyste
   
   return request;
 }
-
-/**
- * List of commonly used coordinate systems that should be preloaded
- */
-const COMMON_SRIDS = [
-  EPSG.WGS84,      // WGS84
-  EPSG.WEB_MERCATOR, // Web Mercator
-  EPSG.SWISS_LV95,   // Swiss LV95
-  EPSG.SWISS_LV03    // Swiss LV03
-] as const;
 
 /**
  * Preloads commonly used coordinate systems into cache
@@ -88,6 +81,6 @@ export async function preloadCommonCoordinateSystems(): Promise<void> {
   try {
     await Promise.all(COMMON_SRIDS.map(srid => getCoordinateSystem(srid)));
   } catch (error) {
-    logger.warn('Failed to preload some coordinate systems', { error });
+    await dbLogger.warn('Failed to preload some coordinate systems', { error, source: SOURCE });
   }
 } 

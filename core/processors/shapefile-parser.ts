@@ -1,20 +1,16 @@
 import { BaseGeoDataParser, ParserOptions, ParserProgressEvent, InvalidFileFormatError } from './base-parser';
 import { FullDataset, GeoFeature } from '@/types/geo-import';
 import { read } from 'shapefile';
-import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, GeometryCollection } from 'geojson';
+import type { Geometry, GeoJsonProperties, Position, Point, FeatureCollection, Feature } from 'geojson';
 import proj4 from 'proj4';
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 import * as turf from '@turf/turf';
 import { detectSRIDFromCoordinates, detectSRIDFromWKT } from '@/core/coordinates/coordinate-detection';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 const SOURCE = 'ShapefileParser';
-const logger = createLogger(SOURCE);
 const DEFAULT_SRID = 2056; // Swiss LV95
-const logManager = LogManager.getInstance();
-logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 // Shape Type Definitions (based on shapefile spec)
 const SHAPE_TYPES = {
@@ -59,10 +55,10 @@ interface ShapefileReader {
   features: Array<{
     type: string;
     geometry: Geometry;
-    properties: Record<string, any>;
-    [key: string]: any;
+    properties: Record<string, unknown>;
+    [key: string]: unknown;
   }>;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -99,7 +95,7 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
       proj4.defs(`EPSG:${fromSrid}`, fromSystem.proj4);
     }
     const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, [coords[0], coords[1]]);
-    logManager.debug(SOURCE, 'Coordinate transformation', {
+    await dbLogger.debug(SOURCE, 'Coordinate transformation', {
       fromSrid,
       toSrid: 4326,
       input: coords,
@@ -107,11 +103,11 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
     });
     // Switzerland bounds check
     if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-      logManager.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
+      await dbLogger.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
     }
     return hasZ && z !== null ? [result[0], result[1], z] : result;
   } catch (error) {
-    logManager.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
+    await dbLogger.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
     return coords;
   }
 }
@@ -121,7 +117,7 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
  */
 async function transformGeometry(geometry: Geometry, srid: number): Promise<Geometry> {
   try {
-    logManager.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, srid });
+    await dbLogger.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, srid });
     switch (geometry.type) {
       case 'Point':
         return {
@@ -160,7 +156,7 @@ async function transformGeometry(geometry: Geometry, srid: number): Promise<Geom
         return geometry;
     }
   } catch (error) {
-    logger.warn('Failed to transform geometry', { error, geometryType: geometry.type, srid });
+    await dbLogger.warn('Failed to transform geometry', { error, geometryType: geometry.type, srid });
     return geometry;
   }
 }
@@ -172,7 +168,7 @@ function updateBounds(bounds: [number, number, number, number] | undefined, coor
   if (coords.length < 2) return bounds || [0, 0, 0, 0];
   
   const [minX, minY, maxX, maxY] = bounds || [Infinity, Infinity, -Infinity, -Infinity];
-  let newBounds: [number, number, number, number] = [minX, minY, maxX, maxY];
+  const newBounds: [number, number, number, number] = [minX, minY, maxX, maxY];
   
   for (let i = 0; i < coords.length; i += 2) {
     const x = coords[i];
@@ -203,11 +199,6 @@ export class ShapefileParser extends BaseGeoDataParser {
   private features: GeoFeature[] = [];
   private supportedExtension = 'shp';
 
-  constructor() {
-    // Call the parent constructor without arguments
-    super();
-  }
-
   /**
    * Parse a Shapefile and its companion files
    */
@@ -215,16 +206,17 @@ export class ShapefileParser extends BaseGeoDataParser {
     mainFile: ArrayBuffer,
     companionFiles?: Record<string, ArrayBuffer>,
     options?: ParserOptions,
-    onProgress?: (event: ParserProgressEvent) => void
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
     // CRITICAL DEBUG LOGS FOR TRANSFORMATION ISSUE - Using logger instead of console.log
-    logManager.debug(SOURCE, "🔍 TRANSFORMATION DEBUG: Received options", { 
+    await dbLogger.debug(SOURCE, "🔍 TRANSFORMATION DEBUG: Received options", { 
       options,
       optionsJSON: JSON.stringify(options, null, 2) 
     });
     
     const shouldTransform = options?.transformCoordinates !== false;
-    logManager.debug(SOURCE, "🚨 TRANSFORMATION DEBUG: shouldTransform calculation", { 
+    await dbLogger.debug(SOURCE, "🚨 TRANSFORMATION DEBUG: shouldTransform calculation", { 
       shouldTransform,
       transformCoordinatesOptionValue: options?.transformCoordinates,
       calculationLogic: "options?.transformCoordinates !== false" 
@@ -232,11 +224,11 @@ export class ShapefileParser extends BaseGeoDataParser {
     
     // Create simple stack trace
     const stackTrace = new Error().stack?.split('\n').slice(1, 5).join('\n');
-    logManager.debug(SOURCE, "📞 TRANSFORMATION DEBUG: Callstack", { stackTrace });
+    await dbLogger.debug(SOURCE, "📞 TRANSFORMATION DEBUG: Callstack", { stackTrace });
     // --- END OF CRITICAL DEBUG LOGS ---
 
     try {
-      logger.info('Starting parse operation', {
+      await dbLogger.info('Starting parse operation', {
         mainFileSize: mainFile.byteLength,
         companionFiles: companionFiles ? Object.keys(companionFiles) : [],
         options
@@ -245,14 +237,14 @@ export class ShapefileParser extends BaseGeoDataParser {
       // Validate companion files
       if (!companionFiles || !companionFiles['.dbf']) {
         const error = 'Missing required .dbf file';
-        logger.error('Invalid shapefile format', { error });
+        await dbLogger.error('Invalid shapefile format', { error });
         throw new InvalidFileFormatError('shapefile', error);
       }
 
       // First check if SRID is provided in options
       if (options?.srid) {
         this.srid = options.srid;
-        logger.info('Using provided coordinate system', { srid: this.srid });
+        await dbLogger.info('Using provided coordinate system', { srid: this.srid });
       }
       
       // If no SRID in options, try to detect from .prj file
@@ -262,25 +254,25 @@ export class ShapefileParser extends BaseGeoDataParser {
           const detectedSrid = this.parsePrjFile(prjContent);
           if (detectedSrid !== null) {
             this.srid = detectedSrid;
-            logger.info('Detected coordinate system from PRJ', {
+            await dbLogger.info('Detected coordinate system from PRJ', {
               srid: this.srid,
               prjContent
             });
           }
         } catch (error) {
-          logger.warn('Failed to parse .prj file', { error });
+          await dbLogger.warn('Failed to parse .prj file', { error });
         }
       }
 
       // Parse shapefile
-      logger.info('Reading shapefile data');
+      await dbLogger.info('Reading shapefile data');
       const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
       const geojson = {
         type: 'FeatureCollection',
         features: result.features || []
       } as FeatureCollection<Geometry, GeoJsonProperties>;
 
-      logger.info('Shapefile parsed successfully', {
+      await dbLogger.info('Shapefile parsed successfully', {
         featureCount: geojson.features.length
       });
       
@@ -289,7 +281,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       const view = new DataView(mainFile);
       const shapeType = view.getInt32(32, true);
       
-      logManager.info(SOURCE, `Detected shapefile type from header`, {
+      await dbLogger.info(SOURCE, `Detected shapefile type from header`, {
         shapeType,
         typeDescription: SHAPE_TYPE_NAMES[shapeType] || 'UNKNOWN',
         isPointZ: shapeType === SHAPE_TYPES.POINT_Z,
@@ -299,7 +291,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       
       // For PointZ types, we need to ensure Z values are preserved
       if (shapeType === SHAPE_TYPES.POINT_Z) {
-        logManager.info(SOURCE, `Processing PointZ shapefile type`, {
+        await dbLogger.info(SOURCE, `Processing PointZ shapefile type`, {
           totalFeatures: geojson.features.length
         });
         
@@ -322,7 +314,7 @@ export class ShapefileParser extends BaseGeoDataParser {
               // Read Z (8 bytes) - this is what's missing from the library parsing
               const z = view.getFloat64(offset + 16, true);
               
-              logManager.debug(SOURCE, `Extracted Z value for feature ${i}`, { 
+              await dbLogger.debug(SOURCE, `Extracted Z value for feature ${i}`, { 
                 x, y, z,
                 // Safe check before accessing coordinates
                 originalCoords: geojson.features[i].geometry.type === 'Point' ? 
@@ -345,11 +337,11 @@ export class ShapefileParser extends BaseGeoDataParser {
                 offset += 8;
               }
             } catch (e) {
-              logManager.warn(SOURCE, `Error reading Z value for feature ${i}`, { error: e });
+              await dbLogger.warn(SOURCE, `Error reading Z value for feature ${i}`, { error: e });
             }
           }
         } catch (e) {
-          logManager.warn(SOURCE, `Error processing Z values from PointZ shapefile`, { error: e });
+          await dbLogger.warn(SOURCE, `Error processing Z values from PointZ shapefile`, { error: e });
         }
       }
 
@@ -357,8 +349,8 @@ export class ShapefileParser extends BaseGeoDataParser {
       if (geojson.features.length > 0) {
         const firstFeature = geojson.features[0];
         const coords = getCoordinates(firstFeature.geometry);
-        logManager.debug(SOURCE, '📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
-        logManager.debug(SOURCE, '   First feature geometry type', { geometryType: firstFeature.geometry.type });
+        await dbLogger.debug(SOURCE, '📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
+        await dbLogger.debug(SOURCE, '   First feature geometry type', { geometryType: firstFeature.geometry.type });
       }
       // --- END OF CRITICAL DEBUG LOG ---
 
@@ -371,7 +363,7 @@ export class ShapefileParser extends BaseGeoDataParser {
           const detected = detectSRIDFromCoordinates(x, y);
           if (detected) {
             this.srid = detected.srid;
-            logger.info('Detected coordinate system from coordinates', {
+            await dbLogger.info('Detected coordinate system from coordinates', {
               name: detected.name,
               srid: detected.srid,
               coordinates: [x, y]
@@ -379,7 +371,7 @@ export class ShapefileParser extends BaseGeoDataParser {
           } else {
             // If no SRID detected, use default Swiss LV95
             this.srid = DEFAULT_SRID;
-            logger.info('Using default coordinate system', {
+            await dbLogger.info('Using default coordinate system', {
               srid: DEFAULT_SRID,
               system: 'Swiss LV95'
             });
@@ -388,16 +380,16 @@ export class ShapefileParser extends BaseGeoDataParser {
       }
 
       // Transform coordinates if SRID is detected and transformation is not explicitly disabled
-      let features = geojson.features.map((feature, index) => ({
-        id: index,
+      let features: GeoFeature[] = geojson.features.map((feature: Feature<Geometry, GeoJsonProperties>, index: number) => ({
+        id: typeof feature.id === 'number' ? feature.id : index,
         geometry: feature.geometry,
-        properties: feature.properties || {},
+        properties: feature.properties ?? undefined,
         originalIndex: index
       }));
 
       if (shouldTransform && this.srid !== undefined && this.srid !== 4326) {
         // CRITICAL DEBUG LOG FOR TRANSFORMATION ISSUE
-        logManager.debug(SOURCE, '🔄 ENTERING TRANSFORMATION block', {
+        await dbLogger.debug(SOURCE, '🔄 ENTERING TRANSFORMATION block', {
           shouldTransform,
           srid: this.srid,
           transformCondition: {
@@ -409,33 +401,47 @@ export class ShapefileParser extends BaseGeoDataParser {
         });
         // --- END OF CRITICAL DEBUG LOG ---
         try {
-          logger.info('Transforming coordinates for all features', {
+          if (this.srid === undefined) throw new Error('SRID is undefined');
+          await dbLogger.info('Transforming coordinates for all features', {
             fromSrid: this.srid,
             toSrid: 4326,
             featureCount: features.length
           });
-          features = await Promise.all(features.map(async feature => ({
+          features = await Promise.all(features.map(async (feature: GeoFeature) => ({
             ...feature,
-            geometry: await transformGeometry(feature.geometry, this.srid!)
+            geometry: await transformGeometry(feature.geometry, this.srid as number)
           })));
-          logger.info('Coordinate transformation complete');
+          await dbLogger.info('Coordinate transformation complete');
         } catch (error) {
-          logger.warn('Transformation failed, creating simplified fallback', { 
+          await dbLogger.warn('Transformation failed, creating simplified fallback', { 
             error,
             srid: this.srid,
             featureCount: features.length
           });
           features = features.map(f => ({
             ...f,
-            geometry: {
-              ...f.geometry,
-              coordinates: this.createFallbackCoordinates(f.geometry)
-            }
+            geometry: (() => {
+              const fallback = this.createFallbackCoordinates(f.geometry);
+              switch (f.geometry.type) {
+                case 'Point':
+                  return { ...f.geometry, coordinates: fallback as Position };
+                case 'LineString':
+                case 'MultiPoint':
+                  return { ...f.geometry, coordinates: fallback as Position[] };
+                case 'Polygon':
+                case 'MultiLineString':
+                  return { ...f.geometry, coordinates: fallback as Position[][] };
+                case 'MultiPolygon':
+                  return { ...f.geometry, coordinates: fallback as Position[][][] };
+                default:
+                  return f.geometry;
+              }
+            })()
           }));
         }
       } else {
         // CRITICAL DEBUG LOG FOR TRANSFORMATION ISSUE
-        logManager.debug(SOURCE, '⛔ SKIPPING TRANSFORMATION block', {
+        await dbLogger.debug(SOURCE, '⛔ SKIPPING TRANSFORMATION block', {
           reasons: {
             shouldTransform,
             srid: this.srid,
@@ -449,16 +455,16 @@ export class ShapefileParser extends BaseGeoDataParser {
       // Calculate metadata using all features
       const featureCollection: FeatureCollection = {
         type: 'FeatureCollection',
-        features: features.map(f => ({
+        features: features.map((f: GeoFeature) => ({
           type: 'Feature',
           geometry: f.geometry,
-          properties: f.properties
+          properties: f.properties ? f.properties : {}
         }))
       };
       const bbox = turf.bbox(featureCollection);
       const bounds: [number, number, number, number] = [bbox[0], bbox[1], bbox[2], bbox[3]];
       const geometryTypes = new Set(features.map(f => f.geometry.type));
-      const properties = features[0] ? Object.keys(features[0].properties) : [];
+      const properties = Object.keys(result.features[0].properties || {});
 
       return {
         sourceFile: options?.filename || 'unknown.shp',
@@ -467,14 +473,14 @@ export class ShapefileParser extends BaseGeoDataParser {
         metadata: {
           featureCount: features.length,
           bounds,
-          geometryTypes: Array.from(geometryTypes) as any[],
+          geometryTypes: Array.from(geometryTypes) as string[],
           properties,
           srid: this.srid
         }
       };
 
     } catch (error) {
-      logger.error('Failed to parse shapefile', { error });
+      await dbLogger.error('Failed to parse shapefile', { error });
       throw error;
     }
   }
@@ -495,7 +501,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
       return result.features.length > 0 && !!result.features[0].geometry;
     } catch (error) {
-      logger.warn('Validation failed', error);
+      await dbLogger.warn('Validation failed', error);
       return false;
     }
   }
@@ -539,7 +545,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       return {
         featureCount: result.features.length,
         bounds,
-        geometryTypes: Array.from(geometryTypes),
+        geometryTypes: Array.from(geometryTypes) as string[],
         properties,
         srid
       };
@@ -557,14 +563,14 @@ export class ShapefileParser extends BaseGeoDataParser {
     try {
       const detected = detectSRIDFromWKT(prjContent);
       if (detected) {
-        logger.info(`Detected coordinate system from PRJ content: ${detected.name} (EPSG:${detected.srid})`);
+        dbLogger.info(`Detected coordinate system from PRJ content: ${detected.name} (EPSG:${detected.srid})`).catch(() => {});
         return detected.srid;
       }
       
-      logger.warn('Could not determine coordinate system from PRJ file', { prjContent });
+      dbLogger.warn('Could not determine coordinate system from PRJ file', { prjContent }).catch(() => {});
       return undefined;
     } catch (error) {
-      logger.warn('Failed to parse PRJ file:', error);
+      dbLogger.warn('Failed to parse PRJ file:', error).catch(() => {});
       return undefined;
     }
   }
@@ -583,7 +589,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       }
       return undefined;
     } catch (error) {
-      logger.warn('Failed to get first feature coordinates:', error);
+      dbLogger.warn('Failed to get first feature coordinates:', error).catch(() => {});
       return undefined;
     }
   }
@@ -591,7 +597,7 @@ export class ShapefileParser extends BaseGeoDataParser {
   /**
    * Create fallback WGS84 coordinates for preview when transformation fails
    */
-  private createFallbackCoordinates(geometry: Geometry): any {
+  private createFallbackCoordinates(geometry: Geometry): Position | Position[] | Position[][] | Position[][][] {
     // Create a simple bounding box in Switzerland (roughly centered)
     const center = [8.2275, 46.8182]; // Center of Switzerland
     const offset = 0.01; // Small offset for visual separation

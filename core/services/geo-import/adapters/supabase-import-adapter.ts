@@ -8,8 +8,6 @@ import {
   ImportProgress
 } from '../types/index';
 
-const SOURCE = 'SupabaseImportAdapter';
-
 export class SupabaseImportAdapter implements ImportAdapter {
   constructor(private supabase: SupabaseClient) {}
 
@@ -66,8 +64,8 @@ export class SupabaseImportAdapter implements ImportAdapter {
         if (!aggregatedResult.layerId && batchResult.layer_id) {
           aggregatedResult.layerId = batchResult.layer_id;
         }
-        if (batchResult.debug_info) {
-          const debug = aggregatedResult.debugInfo!;
+        if (batchResult.debug_info && aggregatedResult.debugInfo) {
+          const debug = aggregatedResult.debugInfo;
           debug.repairedCount += batchResult.debug_info.repaired_count || 0;
           debug.cleanedCount += batchResult.debug_info.cleaned_count || 0;
           debug.skippedCount += batchResult.debug_info.skipped_count || 0;
@@ -158,7 +156,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
       
       // Create the transform stream with improved error handling
       const stream = new TransformStream({
-        async start(controller) {
+        async start() {
           // Stream initialization code goes here if needed
           await dbLogger.debug('Stream started', { importId }, { importId });
         },
@@ -216,8 +214,8 @@ export class SupabaseImportAdapter implements ImportAdapter {
                 aggregatedResult.layerId = batchResult.layer_id;
               }
 
-              if (batchResult.debug_info) {
-                const debug = aggregatedResult.debugInfo!;
+              if (batchResult.debug_info && aggregatedResult.debugInfo) {
+                const debug = aggregatedResult.debugInfo;
                 debug.repairedCount += batchResult.debug_info.repaired_count || 0;
                 debug.cleanedCount += batchResult.debug_info.cleaned_count || 0;
                 debug.skippedCount += batchResult.debug_info.skipped_count || 0;

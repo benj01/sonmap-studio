@@ -1,10 +1,8 @@
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { GeoFeature } from '@/types/geo';
 import { Geometry, LineString, MultiLineString, MultiPoint, MultiPolygon, Point, Polygon } from 'geojson';
 import * as turf from '@turf/turf';
 import { FeatureProcessor, ProcessingContext, ProcessingResult, GeometryValidationResult } from './types';
-
-const logger = createLogger('GeometryValidator');
 
 export class GeometryValidator implements FeatureProcessor {
   async process(feature: GeoFeature, context: ProcessingContext): Promise<ProcessingResult> {
@@ -31,16 +29,17 @@ export class GeometryValidator implements FeatureProcessor {
           result.feature.geometry = validationResult.repairedGeometry;
           result.wasRepaired = true;
           result.warnings.push('Geometry was automatically repaired');
-          logger.info('Geometry repaired', { featureId: feature.id });
+          await dbLogger.info('Geometry repaired', { featureId: feature.id }, { featureId: feature.id });
         }
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       result.isValid = false;
-      result.errors.push(`Geometry validation failed: ${error?.message || 'Unknown error'}`);
-      logger.error('Geometry validation failed', {
-        error: error?.message || 'Unknown error',
+      const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
+      result.errors.push(`Geometry validation failed: ${errorMessage}`);
+      await dbLogger.error('Geometry validation failed', {
+        error: errorMessage,
         featureId: feature.id
-      });
+      }, { featureId: feature.id });
     }
 
     return result;
@@ -66,7 +65,7 @@ export class GeometryValidator implements FeatureProcessor {
           }
           break;
 
-        case 'Polygon':
+        case 'Polygon': {
           const polygonValidation = this.validatePolygon((geometry as Polygon).coordinates);
           if (!polygonValidation.isValid) {
             result.isValid = false;
@@ -74,17 +73,19 @@ export class GeometryValidator implements FeatureProcessor {
             result.repairedGeometry = this.repairPolygon(geometry as Polygon);
           }
           break;
+        }
 
-        case 'MultiPoint':
+        case 'MultiPoint': {
           const multiPoint = geometry as MultiPoint;
           if (!multiPoint.coordinates.every(point => this.isValidPoint(point))) {
             result.isValid = false;
             result.reason = 'Invalid point in MultiPoint';
           }
           break;
+        }
 
         case 'MultiLineString':
-        case 'MultiPolygon':
+        case 'MultiPolygon': {
           const multiValidation = await this.validateMultiGeometry(geometry as MultiLineString | MultiPolygon);
           if (!multiValidation.isValid) {
             result.isValid = false;
@@ -92,6 +93,7 @@ export class GeometryValidator implements FeatureProcessor {
             result.repairedGeometry = multiValidation.repairedGeometry;
           }
           break;
+        }
 
         case 'GeometryCollection':
           for (const geom of geometry.geometries) {
@@ -106,11 +108,12 @@ export class GeometryValidator implements FeatureProcessor {
 
         default:
           result.isValid = false;
-          result.reason = `Unsupported geometry type: ${(geometry as any).type}`;
+          result.reason = `Unsupported geometry type: ${(geometry as Geometry).type}`;
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       result.isValid = false;
-      result.reason = `Validation error: ${error?.message || 'Unknown error'}`;
+      const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
+      result.reason = `Validation error: ${errorMessage}`;
     }
 
     return result;
@@ -192,9 +195,10 @@ export class GeometryValidator implements FeatureProcessor {
           coordinates: repairedParts.map(p => 'coordinates' in p ? p.coordinates : [])
         } as Geometry;
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       result.isValid = false;
-      result.reason = `Multi-geometry validation error: ${error?.message || 'Unknown error'}`;
+      const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
+      result.reason = `Multi-geometry validation error: ${errorMessage}`;
     }
 
     return result;
@@ -218,8 +222,7 @@ export class GeometryValidator implements FeatureProcessor {
         type: 'LineString',
         coordinates
       };
-    } catch (error) {
-      logger.warn('Failed to repair LineString', { error });
+    } catch {
       return geometry;
     }
   }
@@ -230,9 +233,17 @@ export class GeometryValidator implements FeatureProcessor {
       const cleaned = turf.cleanCoords(turfFeature);
       const buffered = turf.buffer(cleaned, 0);
       return (buffered?.geometry || geometry) as Polygon;
-    } catch (error) {
-      logger.warn('Failed to repair Polygon', { error });
+    } catch {
       return geometry;
     }
   }
+}
+
+function isErrorWithMessage(error: unknown): error is { message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  );
 } 

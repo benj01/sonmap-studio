@@ -1,11 +1,9 @@
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { GeoFeature } from '@/types/geo';
 import { FeatureProcessor, ProcessingContext, ProcessingResult } from './types';
 import { CoordinateTransformer } from './coordinate-transformer';
 import { GeometryValidator } from './geometry-validator';
 import { PropertyValidator } from './property-validator';
-
-const logger = createLogger('FeatureProcessingPipeline');
 
 export class FeatureProcessingPipeline {
   private processors: FeatureProcessor[];
@@ -46,48 +44,50 @@ export class FeatureProcessingPipeline {
 
         // Stop processing if feature is invalid and not repaired
         if (!processorResult.isValid && !processorResult.wasRepaired) {
-          logger.warn('Feature processing stopped due to unrecoverable error', {
+          await dbLogger.warn('Feature processing stopped due to unrecoverable error', {
             featureId: feature.id,
             errors: processorResult.errors
-          });
+          }, { featureId: feature.id });
           break;
         }
       }
 
       result.feature = currentFeature;
-    } catch (error: any) {
+    } catch (error: unknown) {
       result.isValid = false;
-      result.errors.push(`Pipeline processing failed: ${error?.message || 'Unknown error'}`);
-      logger.error('Pipeline processing failed', {
-        error: error?.message || 'Unknown error',
+      const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
+      result.errors.push(`Pipeline processing failed: ${errorMessage}`);
+      await dbLogger.error('Pipeline processing failed', {
+        error: errorMessage,
         featureId: feature.id
-      });
+      }, { featureId: feature.id });
     }
 
     return result;
   }
 
   async processFeatures(features: GeoFeature[], context: ProcessingContext): Promise<ProcessingResult[]> {
-    logger.info('Starting batch feature processing', {
+    await dbLogger.info('Starting batch feature processing', {
       featureCount: features.length,
       context
-    });
+    }, { featureCount: features.length });
 
     const results = await Promise.all(
       features.map(async (feature) => {
         try {
           return await this.processFeature(feature, context);
-        } catch (error: any) {
-          logger.error('Feature processing failed', {
-            error: error?.message || 'Unknown error',
+        } catch (error: unknown) {
+          const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
+          await dbLogger.error('Feature processing failed', {
+            error: errorMessage,
             featureId: feature.id
-          });
+          }, { featureId: feature.id });
           return {
             feature,
             isValid: false,
             wasRepaired: false,
             warnings: [],
-            errors: [`Processing failed: ${error?.message || 'Unknown error'}`]
+            errors: [`Processing failed: ${errorMessage}`]
           };
         }
       })
@@ -100,7 +100,16 @@ export class FeatureProcessingPipeline {
       failed: results.filter(r => !r.isValid && !r.wasRepaired).length
     };
 
-    logger.info('Batch feature processing completed', { summary });
+    await dbLogger.info('Batch feature processing completed', { summary }, { total: summary.total });
     return results;
   }
+}
+
+function isErrorWithMessage(error: unknown): error is { message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  );
 } 

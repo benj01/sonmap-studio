@@ -1,3 +1,5 @@
+/* eslint-disable no-restricted-syntax */
+// NOTE: LogManager is for internal logger system use only. All application logging must use dbLogger from @/utils/logging/dbLogger. Direct LogManager usage is prohibited in application code.
 import { saveAs } from 'file-saver';
 import { LoggingConfig, LogEntry, ILogAdapter, LogContext } from './types';
 
@@ -283,7 +285,7 @@ export class LogManager {
   /**
    * Safely stringify an object, handling circular references and large objects
    */
-  public safeStringify(obj: any, indent: number = 2): string {
+  public safeStringify(obj: unknown, indent: number = 2): string {
     const MAX_DEPTH = 3;
     const MAX_ARRAY_LENGTH = 10;
     const TRUNCATE_LENGTH = 100;
@@ -303,7 +305,7 @@ export class LogManager {
       };
     }
 
-    function isLargeObject(obj: any): boolean {
+    function isLargeObject(obj: unknown): boolean {
       return typeof obj === 'object' && 
              obj !== null && 
              !Array.isArray(obj) && 
@@ -394,7 +396,6 @@ export class LogManager {
 
         // Handle large objects
         if (isLargeObject(value)) {
-          const type = value.constructor ? value.constructor.name : 'Object';
           const keys = Object.keys(value);
           const preview = Object.fromEntries(
             keys.slice(0, MAX_OBJECT_KEYS).map(k => [k, value[k]])
@@ -423,12 +424,10 @@ export class LogManager {
 
   private formatLogEntry(entry: LogEntry): string {
     let dataStr = '';
-    if (entry.data) {
-      try {
-        dataStr = '\n' + this.safeStringify(entry.data);
-      } catch (error) {
-        dataStr = '\n[Error stringifying data]';
-      }
+    try {
+      dataStr = '\n' + this.safeStringify(entry.data);
+    } catch {
+      dataStr = '\n[Error stringifying data]';
     }
     return `[${entry.timestamp}] [${entry.level}] [${entry.source}] ${entry.message}${dataStr}\n`;
   }
@@ -472,28 +471,10 @@ export class LogManager {
                        ));
 
       if (isImportant) {
-        const consoleMethod = entry.level === 'error' ? 'error' : 
-                          entry.level === 'warn' ? 'warn' : 'info';
-        
-        let logData = undefined;
-        if (entry.data) {
-          try {
-            // For feature arrays, only show count
-            const data = { ...entry.data };
-            if (data?.features && Array.isArray(data.features)) {
-              data.featureCount = data.features.length;
-              delete data.features;
-            }
-            logData = data;
-          } catch (err) {
-            console.warn('Error processing log data:', err);
-          }
-        }
-
-        if (logData) {
-          console[consoleMethod](`[${entry.source}] ${entry.message}`, logData);
-        } else {
-          console[consoleMethod](`[${entry.source}] ${entry.message}`);
+        if (entry.level === 'warn') {
+          console.warn(`[${entry.source}] ${entry.message}`);
+        } else if (entry.level === 'error') {
+          console.error(`[${entry.source}] ${entry.message}`);
         }
       }
 
@@ -512,7 +493,7 @@ export class LogManager {
   /**
    * Log a debug message
    */
-  public async debug(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+  public async debug(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
     if (this.shouldLog(LogLevel.DEBUG, source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
@@ -524,7 +505,7 @@ export class LogManager {
   /**
    * Log an info message
    */
-  public async info(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+  public async info(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
     if (this.shouldLog(LogLevel.INFO, source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
@@ -536,7 +517,7 @@ export class LogManager {
   /**
    * Log a warning message
    */
-  public async warn(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+  public async warn(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
     if (this.shouldLog(LogLevel.WARN, source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
@@ -548,7 +529,7 @@ export class LogManager {
   /**
    * Log an error message
    */
-  public async error(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
+  public async error(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
     if (this.shouldLog(LogLevel.ERROR, source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
@@ -604,9 +585,9 @@ function loadLoggingConfig(): LoggingConfig {
   if (process.env.LOG_SOURCES) {
     sourceFilters = process.env.LOG_SOURCES.split(',').reduce((acc, pair) => {
       const [src, lvl] = pair.split(':');
-      if (src && lvl) acc[src.trim()] = lvl.trim() as any;
+      if (src && lvl) acc[src.trim()] = lvl.trim() as LoggingConfig['logLevel'];
       return acc;
-    }, {} as Record<string, any>);
+    }, {} as Record<string, LoggingConfig['logLevel']>);
   }
   // TODO: Optionally load from logging.config.json
   return { logLevel, sourceFilters, adapters: ['console'] };
@@ -620,11 +601,20 @@ class ConsoleAdapter implements ILogAdapter {
   async log(entry: LogEntry): Promise<void> {
     const { level, source, message, data, context } = entry;
     const ctx = context ? ` | ctx: ${JSON.stringify(context)}` : '';
-    if (data) {
-      console[level](`[${source}] ${message}${ctx}`, data);
-    } else {
-      console[level](`[${source}] ${message}${ctx}`);
+    if (level === 'warn') {
+      if (data) {
+        console.warn(`[${source}] ${message}${ctx}`, data);
+      } else {
+        console.warn(`[${source}] ${message}${ctx}`);
+      }
+    } else if (level === 'error') {
+      if (data) {
+        console.error(`[${source}] ${message}${ctx}`, data);
+      } else {
+        console.error(`[${source}] ${message}${ctx}`);
+      }
     }
+    // For info/debug, do not log to console
   }
 }
 adapterRegistry['console'] = new ConsoleAdapter();
@@ -652,3 +642,4 @@ class SupabaseAdapter implements ILogAdapter {
 }
 adapterRegistry['supabase'] = new SupabaseAdapter();
 // To enable: add 'supabase' to adapters in LoggingConfig 
+/* eslint-enable no-restricted-syntax */ 

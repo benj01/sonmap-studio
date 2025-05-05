@@ -2,7 +2,6 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { StorageAdapter, ImportState } from '../types/index';
 
-const SOURCE = 'SupabaseStorageAdapter';
 const CHECKPOINT_TABLE = 'import_checkpoints';
 
 export class SupabaseStorageAdapter implements StorageAdapter {

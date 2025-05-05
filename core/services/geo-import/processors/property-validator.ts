@@ -1,4 +1,4 @@
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { GeoFeature } from '@/types/geo';
 import {
   FeatureProcessor,
@@ -7,8 +7,6 @@ import {
   PropertyValidator as PropertyValidatorConfig,
   PropertyValidationResult
 } from './types';
-
-const logger = createLogger('PropertyValidator');
 
 export class PropertyValidator implements FeatureProcessor {
   async process(feature: GeoFeature, context: ProcessingContext): Promise<ProcessingResult> {
@@ -45,20 +43,21 @@ export class PropertyValidator implements FeatureProcessor {
         result.feature.properties = validationResult.transformedProperties;
         result.wasRepaired = true;
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       result.isValid = false;
-      result.errors.push(`Property validation failed: ${error?.message || 'Unknown error'}`);
-      logger.error('Property validation failed', {
-        error: error?.message || 'Unknown error',
+      const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
+      result.errors.push(`Property validation failed: ${errorMessage}`);
+      await dbLogger.error('Property validation failed', {
+        error: errorMessage,
         featureId: feature.id
-      });
+      }, { featureId: feature.id });
     }
 
     return result;
   }
 
   private validateProperties(
-    properties: Record<string, any>,
+    properties: Record<string, unknown>,
     validators: Record<string, PropertyValidatorConfig>,
     mapping?: Record<string, string>
   ): PropertyValidationResult {
@@ -71,7 +70,7 @@ export class PropertyValidator implements FeatureProcessor {
 
     // Apply property mapping if provided
     if (mapping) {
-      const mapped: Record<string, any> = {};
+      const mapped: Record<string, unknown> = {};
       for (const [oldKey, newKey] of Object.entries(mapping)) {
         if (oldKey in properties) {
           mapped[newKey] = properties[oldKey];
@@ -81,8 +80,9 @@ export class PropertyValidator implements FeatureProcessor {
     }
 
     // Validate properties
+    const transformedProps = result.transformedProperties ?? {};
     for (const [key, validator] of Object.entries(validators)) {
-      const value = result.transformedProperties![key];
+      const value = transformedProps[key];
 
       // Check required fields
       if (validator.required && (value === undefined || value === null)) {
@@ -146,13 +146,14 @@ export class PropertyValidator implements FeatureProcessor {
           }
           break;
 
-        case 'date':
+        case 'date': {
           const date = new Date(value);
           if (isNaN(date.getTime())) {
             result.isValid = false;
             result.errors.push(`Property ${key} must be a valid date`);
           }
           break;
+        }
       }
 
       // Validate enum values
@@ -164,4 +165,13 @@ export class PropertyValidator implements FeatureProcessor {
 
     return result;
   }
+}
+
+function isErrorWithMessage(error: unknown): error is { message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  );
 } 

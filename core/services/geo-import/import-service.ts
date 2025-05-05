@@ -1,9 +1,6 @@
-import { LogManager } from '@/core/logging/log-manager';
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import {
   ImportServiceConfig,
-  BatchProcessingConfig,
-  RetryConfig,
   ImportState,
   ImportProgress,
   ImportResult,
@@ -14,39 +11,7 @@ import {
   MetricsAdapter
 } from './types/index';
 
-const SOURCE = 'ImportService';
-const logger = createLogger(SOURCE);
-
-const DEFAULT_BATCH_CONFIG: BatchProcessingConfig = {
-  initialBatchSize: 100,
-  minBatchSize: 10,
-  maxBatchSize: 500,
-  batchSizeAdjustmentFactor: 1.5,
-  memoryThreshold: 0.8, // 80% of maxMemoryUsage
-  maxMemoryUsage: 512 * 1024 * 1024 // 512MB
-};
-
-const DEFAULT_RETRY_CONFIG: RetryConfig = {
-  maxRetries: 3,
-  initialDelay: 1000,
-  maxDelay: 10000,
-  backoffFactor: 2
-};
-
-const DEFAULT_CONFIG: ImportServiceConfig = {
-  defaultBatchSize: 100,
-  defaultTargetSrid: 4326,
-  maxRetries: 3,
-  retryDelay: 1000,
-  checkpointInterval: 5000,
-  batchProcessing: DEFAULT_BATCH_CONFIG,
-  retry: DEFAULT_RETRY_CONFIG,
-  pauseOnMemoryThreshold: true,
-  enableAutoResume: true
-};
-
 export class ImportService {
-  private readonly logger = createLogger(SOURCE);
   private readonly config: ImportServiceConfig;
   private readonly activeImports: Map<string, { 
     state: ImportState;
@@ -103,7 +68,7 @@ export class ImportService {
         batchProcessing.minBatchSize,
         Math.floor(currentBatchSize / batchProcessing.batchSizeAdjustmentFactor)
       );
-      logger.warn('Decreasing batch size due to high memory usage', {
+      await dbLogger.warn('Decreasing batch size due to high memory usage', {
         currentBatchSize,
         newBatchSize,
         memoryUsageRatio
@@ -115,7 +80,7 @@ export class ImportService {
         batchProcessing.maxBatchSize,
         Math.floor(currentBatchSize * batchProcessing.batchSizeAdjustmentFactor)
       );
-      logger.info('Increasing batch size due to low memory usage', {
+      await dbLogger.info('Increasing batch size due to low memory usage', {
         currentBatchSize,
         newBatchSize,
         memoryUsageRatio
@@ -145,7 +110,7 @@ export class ImportService {
       await this.metricsAdapter.trackImportComplete(result);
       return result;
     } catch (error) {
-      logger.error('Import failed', { error });
+      await dbLogger.error('Import failed', { error }, { projectFileId: params.projectFileId });
       await this.metricsAdapter.trackImportError(error as Error);
       throw error;
     }
@@ -167,13 +132,13 @@ export class ImportService {
       controller
     });
 
-    logger.debug('Starting import stream', {
+    await dbLogger.debug('Starting import stream', {
       importId,
       totalFeatures: params.features.length,
       batchSize: currentState.batchSize,
       sourceSrid: params.sourceSrid,
       targetSrid: params.targetSrid || this.config.defaultTargetSrid
-    });
+    }, { importId });
 
     try {
       await this.metricsAdapter.trackImportStart(params);
@@ -192,11 +157,11 @@ export class ImportService {
           this.activeImports.delete(importId);
           
           // Log the raw error
-          logger.error('Stream error occurred', { 
+          await dbLogger.error('Stream error occurred', {
             error: error.message,
             importId,
             stack: error.stack
-          });
+          }, { importId });
           
           await this.metricsAdapter.trackImportError(error);
           
@@ -205,10 +170,10 @@ export class ImportService {
             await params.onError(error);
           }
         } catch (handlerError) {
-          logger.error('Error in error handler', {
+          await dbLogger.error('Error in error handler', {
             originalError: error.message,
             handlerError: handlerError instanceof Error ? handlerError.message : String(handlerError)
-          });
+          }, { importId });
           
           // Still try to call the original handler
           if (params.onError) {
@@ -253,11 +218,11 @@ export class ImportService {
             this.config.pauseOnMemoryThreshold &&
             memoryUsage > this.config.batchProcessing.maxMemoryUsage
           ) {
-            logger.warn('Pausing import due to high memory usage', {
+            await dbLogger.warn('Pausing import due to high memory usage', {
               importId,
               memoryUsage,
               threshold: this.config.batchProcessing.maxMemoryUsage
-            });
+            }, { importId });
             await this.pauseImport(importId);
           }
 
@@ -267,11 +232,11 @@ export class ImportService {
             await params.onProgress(progress);
           }
         } catch (progressError) {
-          logger.error('Error in progress handler', {
+          await dbLogger.error('Error in progress handler', {
             error: progressError instanceof Error ? progressError.message : String(progressError),
             importId,
             currentBatch: progress.currentBatch
-          });
+          }, { importId });
         }
       };
 
@@ -290,11 +255,11 @@ export class ImportService {
         return await this.importAdapter.streamFeatures(streamParams);
       } catch (error) {
         // Log the raw error
-        logger.error('Stream setup failed', { 
+        await dbLogger.error('Stream setup failed', {
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
           importId
-        });
+        }, { importId });
         
         // Cleanup resources
         clearInterval(checkpointInterval);
@@ -310,10 +275,10 @@ export class ImportService {
       }
     } catch (error) {
       // Log the error
-      logger.error('Import setup failed', {
+      await dbLogger.error('Import setup failed', {
         error: error instanceof Error ? error.message : String(error),
         importId
-      });
+      }, { importId });
       
       this.activeImports.delete(importId);
       await this.metricsAdapter.trackImportError(
@@ -367,7 +332,7 @@ export class ImportService {
       importData.controller?.abort();
       this.activeImports.delete(importId);
       await this.storageAdapter.clearCheckpoint(importId);
-      logger.info('Import cancelled', { importId });
+      await dbLogger.info('Import cancelled', { importId }, { importId });
     }
   }
 } 

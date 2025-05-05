@@ -1,18 +1,14 @@
 import { BaseGeoDataParser, ParserOptions, ParserProgressEvent, InvalidFileFormatError } from './base-parser';
 import { FullDataset, GeoFeature } from '@/types/geo-import';
 import type { Feature, FeatureCollection, Geometry, GeoJsonProperties, Position } from 'geojson';
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import * as turf from '@turf/turf';
 import proj4 from 'proj4';
 import { XMLParser } from 'fast-xml-parser';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
 
 const SOURCE = 'GeoJsonParser';
-const logger = createLogger(SOURCE);
-const logManager = LogManager.getInstance();
-logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
 
 /**
  * Extract coordinate system information from QGIS metadata file
@@ -28,7 +24,7 @@ async function extractCRSFromQMD(qmdContent: string): Promise<{ srid: number; pr
     const crs = result?.qgis?.crs?.spatialrefsys;
     
     if (!crs) {
-      logger.warn('No CRS information found in QMD file');
+      await dbLogger.warn('No CRS information found in QMD file');
       return null;
     }
 
@@ -37,7 +33,7 @@ async function extractCRSFromQMD(qmdContent: string): Promise<{ srid: number; pr
       proj4String: crs.proj4
     };
   } catch (error) {
-    logger.warn('Failed to parse QMD file:', error);
+    await dbLogger.warn('Failed to parse QMD file:', error);
     return null;
   }
 }
@@ -52,18 +48,18 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
       proj4.defs(`EPSG:${fromSrid}`, fromSystem.proj4);
     }
     const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, coords);
-    logManager.debug(SOURCE, 'Coordinate transformation', {
+    await dbLogger.debug(SOURCE, 'Coordinate transformation', {
       fromSrid,
       toSrid: 4326,
       input: coords,
       output: result
     });
     if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-      logManager.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
+      await dbLogger.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
     }
     return result;
   } catch (error) {
-    logManager.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
+    await dbLogger.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
     return coords;
   }
 }
@@ -72,7 +68,7 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
  * Transform a GeoJSON geometry using the provided SRID
  */
 async function transformGeometry(geometry: Geometry, fromSrid: number): Promise<Geometry> {
-  logManager.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, fromSrid });
+  await dbLogger.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, fromSrid });
   switch (geometry.type) {
     case 'Point':
       return {
@@ -112,57 +108,6 @@ async function transformGeometry(geometry: Geometry, fromSrid: number): Promise<
   }
 }
 
-/**
- * Gets coordinates from a GeoJSON geometry
- */
-function getCoordinates(geometry: Geometry): number[] {
-  switch (geometry.type) {
-    case 'Point':
-      return geometry.coordinates;
-    case 'LineString':
-    case 'MultiPoint':
-      return geometry.coordinates.flat();
-    case 'Polygon':
-    case 'MultiLineString':
-      return geometry.coordinates.flat(2);
-    case 'MultiPolygon':
-      return geometry.coordinates.flat(3);
-    case 'GeometryCollection':
-      return geometry.geometries.flatMap(g => getCoordinates(g));
-    default:
-      return [];
-  }
-}
-
-/**
- * Updates bounds with new coordinates
- */
-function updateBounds(
-  bounds: [number, number, number, number] | undefined,
-  coordinates: number[]
-): [number, number, number, number] {
-  if (coordinates.length < 2) return bounds || [0, 0, 0, 0];
-
-  const pairs: [number, number][] = [];
-  for (let i = 0; i < coordinates.length; i += 2) {
-    pairs.push([coordinates[i], coordinates[i + 1]]);
-  }
-
-  if (!bounds) {
-    const [first] = pairs;
-    bounds = [first[0], first[1], first[0], first[1]];
-  }
-
-  for (const [x, y] of pairs) {
-    bounds[0] = Math.min(bounds[0], x); // min x
-    bounds[1] = Math.min(bounds[1], y); // min y
-    bounds[2] = Math.max(bounds[2], x); // max x
-    bounds[3] = Math.max(bounds[3], y); // max y
-  }
-
-  return bounds;
-}
-
 export class GeoJsonParser extends BaseGeoDataParser {
   async parse(
     mainFile: ArrayBuffer,
@@ -171,7 +116,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
     onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
     try {
-      logger.info('Starting GeoJSON parse operation', {
+      await dbLogger.info('Starting GeoJSON parse operation', {
         mainFileSize: mainFile.byteLength,
         companionFiles: companionFiles ? Object.keys(companionFiles) : []
       });
@@ -199,11 +144,11 @@ export class GeoJsonParser extends BaseGeoDataParser {
         } else {
           throw new Error(`Invalid GeoJSON type: ${parsed.type}`);
         }
-      } catch (error) {
+      } catch {
         throw new InvalidFileFormatError('geojson', 'Invalid GeoJSON format');
       }
 
-      logger.info('GeoJSON parsed', {
+      await dbLogger.info('GeoJSON parsed', {
         featureCount: geojson.features.length
       });
 
@@ -213,7 +158,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
         const qmdContent = await this.readFileAsText(companionFiles['.qmd']);
         sourceCRS = await extractCRSFromQMD(qmdContent);
         if (sourceCRS) {
-          logger.info('Found CRS information in QMD file', sourceCRS);
+          await dbLogger.info('Found CRS information in QMD file', sourceCRS);
         }
       }
 
@@ -222,7 +167,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
       if (!sourceSRID) {
         // Fallback to CH1903+/LV95 if no CRS information is available
         sourceSRID = 2056; // Swiss LV95
-        logger.info('No CRS information found, assuming CH1903+/LV95 (EPSG:2056)');
+        await dbLogger.info('No CRS information found, assuming CH1903+/LV95 (EPSG:2056)');
       }
 
       // Process GeoJSON into FullDataset WITHOUT transforming coordinates
@@ -234,12 +179,12 @@ export class GeoJsonParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
-      logger.info('Skipping coordinate transformation for main features array');
+      await dbLogger.info('Skipping coordinate transformation for main features array');
 
       // After features = geojson.features.map(...)
       if (sourceSRID !== 4326) {
         try {
-          logger.info('Transforming coordinates for all features', {
+          await dbLogger.info('Transforming coordinates for all features', {
             fromSrid: sourceSRID,
             toSrid: 4326,
             featureCount: features.length
@@ -248,9 +193,9 @@ export class GeoJsonParser extends BaseGeoDataParser {
             ...feature,
             geometry: await transformGeometry(feature.geometry, sourceSRID)
           })));
-          logger.info('Coordinate transformation complete');
+          await dbLogger.info('Coordinate transformation complete');
         } catch (error) {
-          logger.warn('Transformation failed, using original geometries', { 
+          await dbLogger.warn('Transformation failed, using original geometries', { 
             error,
             srid: sourceSRID,
             featureCount: features.length
@@ -279,7 +224,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
         metadata: {
           featureCount: features.length,
           bounds,
-          geometryTypes: Array.from(geometryTypes) as any[],
+          geometryTypes: Array.from(geometryTypes) as string[],
           properties,
           srid: sourceSRID // Use source SRID
         }
@@ -291,10 +236,10 @@ export class GeoJsonParser extends BaseGeoDataParser {
         message: 'Parsing complete'
       });
 
-      logger.info('Parse complete', dataset.metadata);
+      await dbLogger.info('Parse complete', dataset.metadata);
       return dataset;
     } catch (error) {
-      logger.error('Parse failed', error);
+      await dbLogger.error('Parse failed', error);
       throw new InvalidFileFormatError('geojson',
         error instanceof Error ? error.message : 'Unknown error'
       );
@@ -303,7 +248,8 @@ export class GeoJsonParser extends BaseGeoDataParser {
 
   async validate(
     mainFile: ArrayBuffer,
-    companionFiles?: Record<string, ArrayBuffer>
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _companionFiles?: Record<string, ArrayBuffer>
   ): Promise<boolean> {
     try {
       const content = await this.readFileAsText(mainFile);
@@ -324,14 +270,15 @@ export class GeoJsonParser extends BaseGeoDataParser {
       
       return false;
     } catch (error) {
-      logger.warn('Validation failed', error);
+      await dbLogger.warn('Validation failed', error);
       return false;
     }
   }
 
   async getMetadata(
     mainFile: ArrayBuffer,
-    companionFiles?: Record<string, ArrayBuffer>
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    _companionFiles?: Record<string, ArrayBuffer>
   ): Promise<{
     featureCount: number;
     bounds?: [number, number, number, number];
@@ -360,7 +307,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
       return {
         featureCount: geojson.features.length,
         bounds,
-        geometryTypes: Array.from(geometryTypes),
+        geometryTypes: Array.from(geometryTypes) as string[],
         properties,
         srid: 4326
       };

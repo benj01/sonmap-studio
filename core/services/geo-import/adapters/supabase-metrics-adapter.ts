@@ -7,7 +7,6 @@ import {
   ImportResult
 } from '../types/index';
 
-const SOURCE = 'SupabaseMetricsAdapter';
 const METRICS_TABLE = 'import_metrics';
 
 export class SupabaseMetricsAdapter implements MetricsAdapter {

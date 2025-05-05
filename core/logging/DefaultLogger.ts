@@ -1,22 +1,23 @@
-import { LogManager } from './log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { ILogger } from './ILogger';
 import { LogContext } from './types';
+
+// DefaultLogger is a thin wrapper for dbLogger for backward compatibility.
+// Direct LogManager usage is prohibited in application code. Use dbLogger or DefaultLogger only.
 
 /**
  * Default implementation of ILogger that uses the LogManager singleton internally
  * This maintains backward compatibility while providing a clean interface
  */
 export class DefaultLogger implements ILogger {
-  private logManager = LogManager.getInstance();
-
   /**
    * Log a debug level message
    * @param source - The source component or module generating the log
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  async debug(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
-    await this.logManager.debug(source, message, data, context);
+  async debug(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
+    await dbLogger.debug(`[${source}] ${message}`, data, context);
   }
 
   /**
@@ -25,8 +26,8 @@ export class DefaultLogger implements ILogger {
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  async info(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
-    await this.logManager.info(source, message, data, context);
+  async info(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
+    await dbLogger.info(`[${source}] ${message}`, data, context);
   }
 
   /**
@@ -35,8 +36,8 @@ export class DefaultLogger implements ILogger {
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  async warn(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
-    await this.logManager.warn(source, message, data, context);
+  async warn(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
+    await dbLogger.warn(`[${source}] ${message}`, data, context);
   }
 
   /**
@@ -45,7 +46,7 @@ export class DefaultLogger implements ILogger {
    * @param message - The log message
    * @param data - Optional additional data to log
    */
-  async error(source: string, message: string, data?: any, context?: LogContext): Promise<void> {
-    await this.logManager.error(source, message, data, context);
+  async error(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
+    await dbLogger.error(`[${source}] ${message}`, data, context);
   }
 } 

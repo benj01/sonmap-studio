@@ -2,7 +2,7 @@ export type LogContext = {
   userId?: string;
   sessionId?: string;
   requestId?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 };
 
 export interface LogEntry {
@@ -10,7 +10,7 @@ export interface LogEntry {
   level: 'debug' | 'info' | 'warn' | 'error';
   source: string;
   message: string;
-  data?: any;
+  data?: unknown;
   context?: LogContext;
 }
 
@@ -25,8 +25,8 @@ export type LoggingConfig = {
 };
 
 export interface ILogger {
-  debug(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
-  info(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
-  warn(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
-  error(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
+  debug(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
+  info(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
+  warn(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
+  error(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
 } 

@@ -5,8 +5,7 @@ import { SupabaseMetricsAdapter } from './supabase-metrics-adapter';
 import { createClient } from '@/utils/supabase/client';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { ImportProgress, ImportResult } from '../types/index';
-
-const SOURCE = 'LegacyStreamAdapter';
+import { GeoFeature } from '@/types/geo';
 
 export async function createImportService(): Promise<ImportService> {
   const supabase = createClient();
@@ -27,7 +26,7 @@ export async function createImportService(): Promise<ImportService> {
 export async function processImportStream(
   projectFileId: string,
   collectionName: string,
-  features: any[],
+  features: GeoFeature[],
   sourceSrid: number = 2056,
   batchSize: number = 100,
   importLogId?: string

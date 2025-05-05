@@ -1,14 +1,9 @@
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { GeoFeature } from '@/types/geo';
 import { Position, Geometry } from 'geojson';
 import proj4 from 'proj4';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { FeatureProcessor, ProcessingContext, ProcessingResult } from './types';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
-
-const logger = createLogger('CoordinateTransformer');
-const logManager = LogManager.getInstance();
-logManager.setComponentLogLevel('CoordinateTransformer', LogLevel.DEBUG);
 
 export class CoordinateTransformer implements FeatureProcessor {
   async process(feature: GeoFeature, context: ProcessingContext): Promise<ProcessingResult> {
@@ -30,13 +25,16 @@ export class CoordinateTransformer implements FeatureProcessor {
         context.sourceSrid,
         context.targetSrid
       );
-    } catch (error: any) {
+    } catch (error: unknown) {
       result.isValid = false;
-      result.errors.push(`Failed to transform coordinates: ${error?.message || 'Unknown error'}`);
-      logger.error('Coordinate transformation failed', { 
-        error: error?.message || 'Unknown error',
-        featureId: feature.id 
-      });
+      const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
+      result.errors.push(`Failed to transform coordinates: ${errorMessage}`);
+      await dbLogger.error('Coordinate transformation failed', {
+        error: errorMessage,
+        featureId: feature.id,
+        sourceSrid: context.sourceSrid,
+        targetSrid: context.targetSrid
+      }, { featureId: feature.id, sourceSrid: context.sourceSrid, targetSrid: context.targetSrid });
     }
 
     return result;
@@ -59,18 +57,18 @@ export class CoordinateTransformer implements FeatureProcessor {
       }
 
       const result = proj4(`EPSG:${fromSrid}`, `EPSG:${toSrid}`, coords);
-      logManager.debug('CoordinateTransformer', 'Coordinate transformation', {
+      await dbLogger.debug('Coordinate transformation', {
         fromSrid,
         toSrid,
         input: coords,
         output: result
-      });
+      }, { fromSrid, toSrid });
       if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-        logManager.warn('CoordinateTransformer', 'Transformed coordinates out of Swiss bounds', { result });
+        await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result }, { fromSrid, toSrid });
       }
       return result;
     } catch (error) {
-      logManager.warn('CoordinateTransformer', 'Failed to transform coordinates', { error, coords, fromSrid, toSrid });
+      await dbLogger.warn('Failed to transform coordinates', { error, coords, fromSrid, toSrid }, { fromSrid, toSrid });
       throw error;
     }
   }
@@ -80,7 +78,7 @@ export class CoordinateTransformer implements FeatureProcessor {
     fromSrid: number,
     toSrid: number
   ): Promise<Geometry> {
-    logManager.debug('CoordinateTransformer', 'Transforming geometry', { geometryType: geometry.type, fromSrid, toSrid });
+    await dbLogger.debug('Transforming geometry', { geometryType: geometry.type, fromSrid, toSrid }, { fromSrid, toSrid });
     switch (geometry.type) {
       case 'Point':
         return {
@@ -129,4 +127,13 @@ export class CoordinateTransformer implements FeatureProcessor {
         return geometry;
     }
   }
+}
+
+function isErrorWithMessage(error: unknown): error is { message: string } {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'message' in error &&
+    typeof (error as { message: unknown }).message === 'string'
+  );
 } 

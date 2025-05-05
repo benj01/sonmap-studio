@@ -3,7 +3,6 @@
 import React, { createContext, useContext, ReactNode } from 'react';
 import { ILogger } from './ILogger';
 import { DefaultLogger } from './DefaultLogger';
-import { LogContext } from './types';
 
 /**
  * Create a default logger instance that uses the LogManager singleton

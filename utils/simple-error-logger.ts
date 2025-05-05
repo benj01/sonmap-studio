@@ -1,22 +1,29 @@
 import { createClient } from '@/utils/supabase/client';
 import { dbLogger } from '@/utils/logging/dbLogger';
 
-export const logImportError = async (importLogId: string, error: any, context: any = {}) => {
+export const logImportError = async (
+  importLogId: string,
+  error: unknown,
+  context: Record<string, unknown> = {}
+) => {
   const supabase = createClient();
   
   // Extract the basic error information
   let errorMessage = 'Unknown error occurred';
-  let errorDetails = {};
+  let errorDetails: Record<string, unknown> = {};
   
   if (error instanceof Error) {
     errorMessage = error.message;
     errorDetails = {
       name: error.name,
       stack: error.stack?.split('\n')[0] || '',
-      code: (error as any).code,
+      code: (error as { code?: string }).code,
     };
   } else if (typeof error === 'object' && error !== null) {
-    errorMessage = String(error.message || error);
+    // Try to extract message if present
+    errorMessage = 'message' in error && typeof (error as { message?: unknown }).message === 'string'
+      ? String((error as { message?: unknown }).message)
+      : JSON.stringify(error);
     errorDetails = { ...error };
   } else {
     errorMessage = String(error);
@@ -42,7 +49,7 @@ export const logImportError = async (importLogId: string, error: any, context: a
     if (updateError) {
       await dbLogger.error('Failed to update import log', { updateError, importLogId }, context);
     }
-  } catch (logError) {
+  } catch (logError: unknown) {
     await dbLogger.error('Error logging to database', { logError, importLogId }, context);
   }
 }; 
