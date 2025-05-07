@@ -1,11 +1,9 @@
 import { create } from 'zustand'
 import type { CacheItem } from '@/types'
-import { createLogger } from '@/utils/logger'
-
-const logger = createLogger('DataStore')
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 export interface DataState {
-  cache: Record<string, CacheItem<any>>
+  cache: Record<string, CacheItem<unknown>>
   fetchData: <T>(key: string, query: () => Promise<T>, ttl?: number) => Promise<T>
   prefetchData: <T>(key: string, query: () => Promise<T>, ttl?: number) => Promise<void>
   invalidateCache: (key: string) => void
@@ -67,15 +65,15 @@ export const useDataStore = create<DataState>()((set, get) => ({
     try {
       await get().fetchData(key, query, ttl)
     } catch (error) {
-      logger.error('Prefetch failed', { key, error })
+      await dbLogger.error('Prefetch failed', { key, error, source: 'DataStore.prefetchData' }).catch(() => {})
     }
   },
 
   invalidateCache: (key: string) =>
     set((state) => {
-      const newCache = { ...state.cache }
-      delete newCache[key]
-      return { cache: newCache }
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { [key]: _, ...newCache } = state.cache;
+      return { cache: newCache };
     }),
 
   clearCache: () => set({ cache: {} })

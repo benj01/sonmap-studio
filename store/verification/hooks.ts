@@ -47,7 +47,6 @@ export const useVerification = (layerId: string) => {
 
 // Bulk verification operations
 export const useVerifications = () => {
-  const store = useVerificationStore();
   const pendingVerifications = useVerificationStore(verificationSelectors.getPendingVerifications);
   const inProgressVerifications = useVerificationStore(verificationSelectors.getInProgressVerifications);
   const layersNeedingVerification = useVerificationStore((state) => verificationSelectors.getLayersNeedingVerification(state)(30000));

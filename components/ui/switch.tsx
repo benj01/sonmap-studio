@@ -3,13 +3,14 @@
 import * as React from "react"
 import * as SwitchPrimitives from "@radix-ui/react-switch"
 import { cn } from "@/lib/utils"
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 const Switch = React.forwardRef<
   React.ElementRef<typeof SwitchPrimitives.Root>,
   React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>
 >(({ className, onCheckedChange, ...props }, ref) => {
-  const handleCheckedChange = (checked: boolean) => {
-    console.debug('[DEBUG] Switch toggled:', { checked, id: props.id });
+  const handleCheckedChange = async (checked: boolean) => {
+    await dbLogger.debug('Switch toggled', { checked, id: props.id, source: 'Switch' });
     if (onCheckedChange) {
       onCheckedChange(checked);
     }

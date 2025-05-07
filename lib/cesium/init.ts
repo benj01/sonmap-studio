@@ -1,28 +1,8 @@
 import * as Cesium from 'cesium';
 import { fullyDisableIon, verifyIonDisabled } from './ion-disable';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'CesiumInit';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-    console.log(`[${SOURCE}] ${message}`, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-    console.warn(`[${SOURCE}] ${message}`, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-    console.error(`[${SOURCE}] ${message}`, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-    console.debug(`[${SOURCE}] ${message}`, data);
-  }
-};
 
 // Declare the CESIUM_BASE_URL property on the Window interface
 declare global {
@@ -37,7 +17,7 @@ declare global {
 function verifyCesiumLoaded(): boolean {
   try {
     if (typeof Cesium === 'undefined') {
-      logger.error('Cesium is not defined');
+      dbLogger.error('Cesium is not defined', { source: SOURCE }).catch(() => {});
       return false;
     }
     
@@ -54,15 +34,15 @@ function verifyCesiumLoaded(): boolean {
     
     for (const component of requiredComponents) {
       if (!(component in Cesium)) {
-        logger.error(`Required Cesium component not found: ${component}`);
+        dbLogger.error(`Required Cesium component not found: ${component}`, { source: SOURCE }).catch(() => {});
         return false;
       }
     }
     
-    logger.debug('Cesium components verified');
+    dbLogger.debug('Cesium components verified', { source: SOURCE }).catch(() => {});
     return true;
-  } catch (error) {
-    logger.error('Error verifying Cesium components:', error);
+  } catch (error: unknown) {
+    dbLogger.error('Error verifying Cesium components', { error, source: SOURCE }).catch(() => {});
     return false;
   }
 }
@@ -73,7 +53,7 @@ function verifyCesiumLoaded(): boolean {
 function verifyBaseUrl(): boolean {
   try {
     if (!window.CESIUM_BASE_URL) {
-      logger.error('CESIUM_BASE_URL is not set');
+      dbLogger.error('CESIUM_BASE_URL is not set', { source: SOURCE }).catch(() => {});
       return false;
     }
     
@@ -84,56 +64,15 @@ function verifyBaseUrl(): boolean {
     xhr.send();
     
     if (xhr.status !== 200) {
-      logger.error(`Base URL verification failed: ${testUrl}`);
+      dbLogger.error(`Base URL verification failed: ${testUrl}`, { source: SOURCE }).catch(() => {});
       return false;
     }
     
-    logger.debug('Base URL verified');
+    dbLogger.debug('Base URL verified', { source: SOURCE }).catch(() => {});
     return true;
-  } catch (error) {
-    logger.error('Error verifying base URL:', error);
+  } catch (error: unknown) {
+    dbLogger.error('Error verifying base URL', { error, source: SOURCE }).catch(() => {});
     return false;
-  }
-}
-
-/**
- * Creates a set of offline imagery providers
- */
-function createOfflineImageryProviders(): Cesium.ImageryProvider[] {
-  const providers: Cesium.ImageryProvider[] = [];
-  
-  try {
-    // Natural Earth II (base layer)
-    providers.push(new Cesium.TileMapServiceImageryProvider({
-      url: Cesium.buildModuleUrl('Assets/Textures/NaturalEarthII'),
-      fileExtension: 'jpg',
-      maximumLevel: 5,
-      credit: new Cesium.Credit('Natural Earth II')
-    }));
-
-    // OpenStreetMap (as a fallback)
-    providers.push(new Cesium.OpenStreetMapImageryProvider({
-      url: 'https://tile.openstreetmap.org/',
-      fileExtension: 'png',
-      maximumLevel: 19,
-      credit: 'MapQuest, Open Street Map and contributors, CC-BY-SA'
-    } as any));
-
-    // Grid provider (ultimate fallback)
-    providers.push(new Cesium.GridImageryProvider({
-      cells: 4,
-      color: Cesium.Color.fromCssColorString('#aaaaaa')
-    }));
-
-    logger.debug('Offline imagery providers created successfully');
-    return providers;
-  } catch (error) {
-    logger.error('Error creating offline imagery providers:', error);
-    // Return just the grid provider as a fallback
-    return [new Cesium.GridImageryProvider({
-      cells: 4,
-      color: Cesium.Color.fromCssColorString('#aaaaaa')
-    })];
   }
 }
 
@@ -144,13 +83,11 @@ export function createDefaultImageryProvider(): Cesium.ImageryProvider {
   try {
     // Use OpenStreetMap as the default provider
     return new Cesium.OpenStreetMapImageryProvider({
-      url: 'https://tile.openstreetmap.org/',
       credit: new Cesium.Credit('© OpenStreetMap contributors'),
-      maximumLevel: 19,
-      enablePickFeatures: false
-    } as any);
-  } catch (error) {
-    logger.error('Failed to create default imagery provider:', error);
+      maximumLevel: 19
+    });
+  } catch (error: unknown) {
+    dbLogger.error('Failed to create default imagery provider', { error, source: SOURCE }).catch(() => {});
     // Fallback to grid if all else fails
     return new Cesium.GridImageryProvider({
       cells: 4,
@@ -162,7 +99,7 @@ export function createDefaultImageryProvider(): Cesium.ImageryProvider {
 /**
  * Creates a default viewer configuration
  */
-export function createDefaultViewerConfig(container: HTMLElement): any {
+export function createDefaultViewerConfig(container: HTMLElement): Record<string, unknown> {
   return {
     container: container,
     imageryProvider: createDefaultImageryProvider(),
@@ -201,11 +138,9 @@ export function configureViewer(viewer: Cesium.Viewer): void {
     // Add OpenStreetMap as the base layer
     const baseLayer = new Cesium.ImageryLayer(
       new Cesium.OpenStreetMapImageryProvider({
-        url: 'https://tile.openstreetmap.org/',
         credit: new Cesium.Credit('© OpenStreetMap contributors'),
-        maximumLevel: 19,
-        enablePickFeatures: false
-      } as any)
+        maximumLevel: 19
+      })
     );
     viewer.imageryLayers.add(baseLayer);
     
@@ -230,9 +165,9 @@ export function configureViewer(viewer: Cesium.Viewer): void {
       viewer.baseLayerPicker.viewModel.terrainProviderViewModels.length = 0;
     }
     
-    logger.debug('Viewer configured successfully');
-  } catch (error) {
-    logger.error('Error configuring viewer:', error);
+    dbLogger.debug('Viewer configured successfully', { source: SOURCE }).catch(() => {});
+  } catch (error: unknown) {
+    dbLogger.error('Error configuring viewer', { error, source: SOURCE }).catch(() => {});
   }
 }
 
@@ -247,10 +182,10 @@ export function createViewer(container: HTMLElement): Cesium.Viewer | null {
     // Configure the viewer
     configureViewer(viewer);
     
-    logger.info('Cesium viewer created successfully');
+    dbLogger.info('Cesium viewer created successfully', { source: SOURCE }).catch(() => {});
     return viewer;
-  } catch (error) {
-    logger.error('Error creating viewer:', error);
+  } catch (error: unknown) {
+    dbLogger.error('Error creating viewer', { error, source: SOURCE }).catch(() => {});
     return null;
   }
 }
@@ -260,30 +195,30 @@ export function createViewer(container: HTMLElement): Cesium.Viewer | null {
  * This setup avoids using Cesium Ion services and focuses on open-source data
  */
 export function initCesium(): boolean {
-  logger.info('Starting Cesium initialization');
+  dbLogger.info('Starting Cesium initialization', { source: SOURCE }).catch(() => {});
   
   // Step 1: Verify Cesium is loaded
   if (!verifyCesiumLoaded()) {
-    logger.error('Cesium initialization failed: Cesium not properly loaded');
+    dbLogger.error('Cesium initialization failed: Cesium not properly loaded', { source: SOURCE }).catch(() => {});
     return false;
   }
   
   // Step 2: Set and verify base URL
   window.CESIUM_BASE_URL = '/static/cesium';
   if (!verifyBaseUrl()) {
-    logger.error('Cesium initialization failed: Base URL verification failed');
+    dbLogger.error('Cesium initialization failed: Base URL verification failed', { source: SOURCE }).catch(() => {});
     return false;
   }
   
   // Step 3: Disable Cesium Ion
   if (!fullyDisableIon()) {
-    logger.error('Cesium initialization failed: Could not disable Ion services');
+    dbLogger.error('Cesium initialization failed: Could not disable Ion services', { source: SOURCE }).catch(() => {});
     return false;
   }
   
   // Step 4: Verify Ion is disabled
   if (!verifyIonDisabled()) {
-    logger.error('Cesium initialization failed: Ion services not properly disabled');
+    dbLogger.error('Cesium initialization failed: Ion services not properly disabled', { source: SOURCE }).catch(() => {});
     return false;
   }
   
@@ -292,7 +227,7 @@ export function initCesium(): boolean {
     -180.0, -90.0, 180.0, 90.0
   );
   
-  logger.info('Cesium initialization completed successfully');
+  dbLogger.info('Cesium initialization completed successfully', { source: SOURCE }).catch(() => {});
   return true;
 }
 
@@ -303,32 +238,32 @@ export function verifyViewer(viewer: Cesium.Viewer): boolean {
   try {
     // Check if viewer exists and is not destroyed
     if (!viewer || viewer.isDestroyed()) {
-      logger.error('Viewer is not available or has been destroyed');
+      dbLogger.error('Viewer is not available or has been destroyed', { source: SOURCE }).catch(() => {});
       return false;
     }
     
     // Check essential components
     if (!viewer.scene || !viewer.camera) {
-      logger.error('Viewer is missing essential components');
+      dbLogger.error('Viewer is missing essential components', { source: SOURCE }).catch(() => {});
       return false;
     }
     
     // Check if Ion is still disabled
     if (!verifyIonDisabled()) {
-      logger.error('Ion services are not properly disabled in viewer');
+      dbLogger.error('Ion services are not properly disabled in viewer', { source: SOURCE }).catch(() => {});
       return false;
     }
     
     // Check if imagery layers are properly configured
     if (!viewer.imageryLayers || viewer.imageryLayers.length === 0) {
-      logger.error('Viewer imagery layers are not properly configured');
+      dbLogger.error('Viewer imagery layers are not properly configured', { source: SOURCE }).catch(() => {});
       return false;
     }
 
     // Check for Ion-related DOM elements
     const cesiumCredit = document.querySelector('.cesium-credit-logoContainer');
     if (cesiumCredit) {
-      logger.warn('Cesium logo container found in DOM, hiding it');
+      dbLogger.warn('Cesium logo container found in DOM, hiding it', { source: SOURCE }).catch(() => {});
       (cesiumCredit as HTMLElement).style.display = 'none';
     }
 
@@ -350,102 +285,83 @@ export function verifyViewer(viewer: Cesium.Viewer): boolean {
     ionElements.forEach(selector => {
       const element = document.querySelector(selector);
       if (element) {
-        logger.warn(`Found Ion-related element: ${selector}, hiding it`);
+        dbLogger.warn(`Found Ion-related element: ${selector}, hiding it`, { source: SOURCE }).catch(() => {});
         (element as HTMLElement).style.display = 'none';
       }
     });
 
     // Verify viewer configuration
     if (viewer.baseLayerPicker) {
-      logger.warn('Base layer picker is enabled, disabling it');
-      viewer.baseLayerPicker = false;
+      dbLogger.warn('Base layer picker is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.geocoder) {
-      logger.warn('Geocoder is enabled, disabling it');
-      viewer.geocoder = false;
+      dbLogger.warn('Geocoder is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.homeButton) {
-      logger.warn('Home button is enabled, disabling it');
-      viewer.homeButton = false;
+      dbLogger.warn('Home button is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.sceneModePicker) {
-      logger.warn('Scene mode picker is enabled, disabling it');
-      viewer.sceneModePicker = false;
+      dbLogger.warn('Scene mode picker is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.navigationHelpButton) {
-      logger.warn('Navigation help button is enabled, disabling it');
-      viewer.navigationHelpButton = false;
+      dbLogger.warn('Navigation help button is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.animation) {
-      logger.warn('Animation widget is enabled, disabling it');
-      viewer.animation = false;
+      dbLogger.warn('Animation widget is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.timeline) {
-      logger.warn('Timeline widget is enabled, disabling it');
-      viewer.timeline = false;
+      dbLogger.warn('Timeline widget is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.fullscreenButton) {
-      logger.warn('Fullscreen button is enabled, disabling it');
-      viewer.fullscreenButton = false;
+      dbLogger.warn('Fullscreen button is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.infoBox) {
-      logger.warn('Info box is enabled, disabling it');
-      viewer.infoBox = false;
+      dbLogger.warn('Info box is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
-
     if (viewer.selectionIndicator) {
-      logger.warn('Selection indicator is enabled, disabling it');
-      viewer.selectionIndicator = false;
+      dbLogger.warn('Selection indicator is enabled (read-only property)', { source: SOURCE }).catch(() => {});
     }
 
     // Verify scene configuration
     if (viewer.scene.skyBox.show) {
-      logger.warn('Sky box is visible, hiding it');
+      dbLogger.warn('Sky box is visible, hiding it', { source: SOURCE }).catch(() => {});
       viewer.scene.skyBox.show = false;
     }
 
     if (viewer.scene.sun.show) {
-      logger.warn('Sun is visible, hiding it');
+      dbLogger.warn('Sun is visible, hiding it', { source: SOURCE }).catch(() => {});
       viewer.scene.sun.show = false;
     }
 
     if (viewer.scene.moon.show) {
-      logger.warn('Moon is visible, hiding it');
+      dbLogger.warn('Moon is visible, hiding it', { source: SOURCE }).catch(() => {});
       viewer.scene.moon.show = false;
     }
 
     if (viewer.scene.skyAtmosphere.show) {
-      logger.warn('Sky atmosphere is visible, hiding it');
+      dbLogger.warn('Sky atmosphere is visible, hiding it', { source: SOURCE }).catch(() => {});
       viewer.scene.skyAtmosphere.show = false;
     }
 
     if (viewer.scene.globe.enableLighting) {
-      logger.warn('Globe lighting is enabled, disabling it');
+      dbLogger.warn('Globe lighting is enabled, disabling it', { source: SOURCE }).catch(() => {});
       viewer.scene.globe.enableLighting = false;
     }
 
     if (viewer.scene.globe.showGroundAtmosphere) {
-      logger.warn('Ground atmosphere is visible, hiding it');
+      dbLogger.warn('Ground atmosphere is visible, hiding it', { source: SOURCE }).catch(() => {});
       viewer.scene.globe.showGroundAtmosphere = false;
     }
 
     if (viewer.scene.globe.depthTestAgainstTerrain) {
-      logger.warn('Terrain depth testing is enabled, disabling it');
+      dbLogger.warn('Terrain depth testing is enabled, disabling it', { source: SOURCE }).catch(() => {});
       viewer.scene.globe.depthTestAgainstTerrain = false;
     }
     
-    logger.debug('Viewer verification passed');
+    dbLogger.debug('Viewer verification passed', { source: SOURCE }).catch(() => {});
     return true;
-  } catch (error) {
-    logger.error('Error verifying viewer:', error);
+  } catch (error: unknown) {
+    dbLogger.error('Error verifying viewer', { error, source: SOURCE }).catch(() => {});
     return false;
   }
 } 

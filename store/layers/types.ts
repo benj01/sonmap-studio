@@ -1,11 +1,11 @@
 export interface LayerMetadata {
   name: string;
   type: string;
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
   fileId?: string;
   style?: {
-    paint?: Record<string, any>;
-    layout?: Record<string, any>;
+    paint?: Record<string, unknown>;
+    layout?: Record<string, unknown>;
   };
   geometryTypes?: {
     hasPolygons: boolean;

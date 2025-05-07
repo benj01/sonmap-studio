@@ -1,29 +1,11 @@
 import { create } from 'zustand';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
-import { shallow } from 'zustand/shallow';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { useCallback, useMemo } from 'react';
 import type { Layer, LayerMetadata } from './types';
 import { isEqual } from 'lodash';
 import type { FeatureCollection } from 'geojson';
 
 const SOURCE = 'layerStore';
-const logManager = LogManager.getInstance();
-logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 interface NormalizedLayerState {
   byId: Record<string, Layer>;
@@ -42,7 +24,7 @@ export interface LayerStore {
   removeLayer: (layerId: string) => void;
   updateLayerStatus: (layerId: string, status: Layer['setupStatus'], error?: string) => void;
   handleFileDeleted: (fileId: string) => void;
-  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => void;
+  updateLayerStyle: (layerId: string, style: { paint?: Record<string, unknown>; layout?: Record<string, unknown> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => void;
   updateLayerHeightSource: (layerId: string, heightSource: { 
     mode: 'simple' | 'advanced'; 
     type?: 'z_coord' | 'attribute' | 'none'; 
@@ -80,44 +62,30 @@ export const initialState: NormalizedLayerState = {
 // Layer selectors with detailed logging
 export const layerSelectors = {
   getLayerById: (state: LayerStore) => (layerId: string): Layer | undefined => {
-    logger.debug('SELECTOR RUN: getLayerById', { layerId });
     return state.layers.byId[layerId];
   },
 
   getAllLayers: (state: LayerStore): Layer[] => {
-    logger.debug('SELECTOR RUN: getAllLayers', { 
-      layerCount: state.layers.allIds.length
-    });
     return state.layers.allIds.map(id => state.layers.byId[id]);
   },
 
   getVisibleLayers: (state: LayerStore): Layer[] => {
-    logger.debug('SELECTOR RUN: getVisibleLayers', { 
-      totalLayers: state.layers.allIds.length,
-      visibleCount: state.layers.allIds.filter(id => state.layers.byId[id].visible).length
-    });
     return state.layers.allIds
       .map(id => state.layers.byId[id])
       .filter(layer => layer.visible);
   },
 
   getLayerMetadata: (state: LayerStore) => (layerId: string): LayerMetadata | undefined => {
-    logger.debug('SELECTOR RUN: getLayerMetadata', { layerId });
     return state.layers.metadata[layerId];
   },
 
   getLayersByStatus: (state: LayerStore) => (status: Layer['setupStatus']): Layer[] => {
-    logger.debug('SELECTOR RUN: getLayersByStatus', { status });
     return state.layers.allIds
       .map(id => state.layers.byId[id])
       .filter(layer => layer.setupStatus === status);
   },
 
   getLayersWithErrors: (state: LayerStore): Layer[] => {
-    logger.debug('SELECTOR RUN: getLayersWithErrors', { 
-      totalLayers: state.layers.allIds.length,
-      errorCount: state.layers.allIds.filter(id => state.layers.byId[id].error !== undefined).length
-    });
     return state.layers.allIds
       .map(id => state.layers.byId[id])
       .filter(layer => layer.error !== undefined);
@@ -132,289 +100,197 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
 
   // Actions
   setLayerVisibility: (layerId, visible) => {
-    logger.debug('ACTION START: setLayerVisibility', { layerId, visible });
-    set((state) => {
-      const layer = state.layers.byId[layerId];
-      logger.debug('LAYER BEFORE VISIBILITY TOGGLE', { layer });
-      if (!layer || layer.visible === visible) {
-        logger.debug('ACTION SKIP: setLayerVisibility - no change needed', { layerId, visible });
-        return state;
+    const layer = get().layers.byId[layerId];
+    if (!layer || layer.visible === visible) {
+      return;
+    }
+    const updatedLayer = { ...layer, visible };
+    const updatedById = {
+      ...get().layers.byId,
+      [layerId]: updatedLayer
+    };
+    set({
+      layers: {
+        ...get().layers,
+        byId: updatedById
       }
-      const updatedLayer = { ...layer, visible };
-      const updatedById = {
-        ...state.layers.byId,
-        [layerId]: updatedLayer
-      };
-      logger.debug('LAYER AFTER VISIBILITY TOGGLE', { updatedLayer });
-      logger.debug('ALL LAYERS AFTER VISIBILITY TOGGLE', {
-        allIds: state.layers.allIds,
-        byId: Object.entries(updatedById).map(([id, l]) => ({
-          id,
-          visible: l.visible,
-          setupStatus: l.setupStatus,
-          metadata: l.metadata
-        }))
-      });
-      logger.debug('ACTION END: setLayerVisibility', { layerId, visible });
-      return {
-        layers: {
-          ...state.layers,
-          byId: updatedById
-        }
-      };
     });
   },
 
   addLayer: (layerId, initialVisibility = true, sourceId, metadata) => {
-    logger.debug('ACTION START: addLayer', { layerId, initialVisibility, sourceId, hasMetadata: !!metadata });
-    set((state) => {
-      if (state.layers.byId[layerId]) {
-        logger.debug('ACTION SKIP: addLayer - layer already exists', { layerId });
-        return state;
+    if (get().layers.byId[layerId]) {
+      return;
+    }
+
+    const newLayer: Layer = {
+      id: layerId,
+      sourceId,
+      visible: initialVisibility,
+      added: false,
+      setupStatus: 'pending',
+      metadata
+    };
+
+    const updatedById = {
+      ...get().layers.byId,
+      [layerId]: newLayer
+    };
+
+    const updatedAllIds = [...get().layers.allIds, layerId];
+
+    const updatedMetadata = metadata
+      ? {
+          ...get().layers.metadata,
+          [layerId]: metadata
+        }
+      : get().layers.metadata;
+
+    set({
+      layers: {
+        byId: updatedById,
+        allIds: updatedAllIds,
+        metadata: updatedMetadata
       }
-
-      const newLayer: Layer = {
-        id: layerId,
-        sourceId,
-        visible: initialVisibility,
-        added: false,
-        setupStatus: 'pending',
-        metadata
-      };
-
-      const updatedById = {
-        ...state.layers.byId,
-        [layerId]: newLayer
-      };
-
-      const updatedAllIds = [...state.layers.allIds, layerId];
-
-      const updatedMetadata = metadata
-        ? {
-            ...state.layers.metadata,
-            [layerId]: metadata
-          }
-        : state.layers.metadata;
-
-      logger.debug('ACTION END: addLayer', { 
-        layerId, 
-        storeState: {
-          byId: Object.keys(updatedById),
-          allIds: updatedAllIds,
-          metadata: Object.keys(updatedMetadata)
-        }
-      });
-      return {
-        layers: {
-          byId: updatedById,
-          allIds: updatedAllIds,
-          metadata: updatedMetadata
-        }
-      };
     });
   },
 
   removeLayer: (layerId) => {
-    logger.debug('ACTION START: removeLayer', { layerId });
-    set((state) => {
-      if (!state.layers.byId[layerId]) {
-        logger.debug('ACTION SKIP: removeLayer - layer does not exist', { layerId });
-        return state;
+    if (!get().layers.byId[layerId]) {
+      return;
+    }
+
+    const updatedById = Object.fromEntries(Object.entries(get().layers.byId).filter(([id]) => id !== layerId));
+    const updatedAllIds = get().layers.allIds.filter(id => id !== layerId);
+    const updatedMetadata = Object.fromEntries(Object.entries(get().layers.metadata).filter(([id]) => id !== layerId));
+
+    set({
+      layers: {
+        byId: updatedById,
+        allIds: updatedAllIds,
+        metadata: updatedMetadata
       }
-
-      const { [layerId]: removedLayer, ...updatedById } = state.layers.byId;
-      const updatedAllIds = state.layers.allIds.filter(id => id !== layerId);
-      const { [layerId]: removedMetadata, ...updatedMetadata } = state.layers.metadata;
-
-      logger.debug('ACTION END: removeLayer', { layerId });
-      return {
-        layers: {
-          byId: updatedById,
-          allIds: updatedAllIds,
-          metadata: updatedMetadata
-        }
-      };
     });
   },
 
   updateLayerStatus: (layerId: string, status: Layer['setupStatus'], error?: string) => {
-    logger.debug('ACTION START: updateLayerStatus', { layerId, status, error });
-    set((state) => {
-      const layer = state.layers.byId[layerId];
-      if (!layer) {
-        logger.debug('ACTION SKIP: updateLayerStatus - layer not found', { layerId });
-        return state;
+    const layer = get().layers.byId[layerId];
+    if (!layer) {
+      return;
+    }
+
+    // Check if any relevant fields actually changed
+    const statusChanged = layer.setupStatus !== status;
+    const errorChanged = layer.error !== error;
+    const addedChanged = layer.added !== (status === 'complete');
+
+    if (!statusChanged && !errorChanged && !addedChanged) {
+      return;
+    }
+
+    // Create a new object ONLY for the updated layer
+    const updatedLayer = {
+      ...layer,
+      setupStatus: status,
+      error: error,
+      added: status === 'complete'
+    };
+
+    // Create a new byId object, replacing only the updated layer
+    const updatedById = {
+      ...get().layers.byId,
+      [layerId]: updatedLayer
+    };
+
+    set({
+      layers: {
+        ...get().layers,
+        byId: updatedById
       }
-
-      // Check if any relevant fields actually changed
-      const statusChanged = layer.setupStatus !== status;
-      const errorChanged = layer.error !== error;
-      const addedChanged = layer.added !== (status === 'complete');
-
-      if (!statusChanged && !errorChanged && !addedChanged) {
-        logger.debug('ACTION SKIP: updateLayerStatus - no changes needed', { 
-          layerId, 
-          status, 
-          error,
-          currentState: {
-            status: layer.setupStatus,
-            error: layer.error,
-            added: layer.added
-          }
-        });
-        return state;
-      }
-
-      // Create a new object ONLY for the updated layer
-      const updatedLayer = {
-        ...layer,
-        setupStatus: status,
-        error: error,
-        added: status === 'complete'
-      };
-
-      // Create a new byId object, replacing only the updated layer
-      const updatedById = {
-        ...state.layers.byId,
-        [layerId]: updatedLayer
-      };
-
-      logger.debug('ACTION END: updateLayerStatus', { 
-        layerId, 
-        status, 
-        error,
-        changes: {
-          statusChanged,
-          errorChanged,
-          addedChanged
-        },
-        references: {
-          layerRefChanged: layer !== updatedLayer,
-          byIdRefChanged: state.layers.byId !== updatedById,
-          layersRefChanged: state.layers.byId !== updatedById
-        }
-      });
-
-      // Return new state object, keeping refs for unchanged parts
-      return {
-        layers: {
-          ...state.layers,
-          byId: updatedById
-        }
-      };
     });
   },
 
   handleFileDeleted: (fileId: string) => {
-    logger.debug('ACTION START: handleFileDeleted', { fileId });
-    set((state) => {
-      const layersToRemove: string[] = [];
+    const layersToRemove: string[] = [];
 
-      // Find all layers associated with the deleted file
-      Object.entries(state.layers.metadata).forEach(([layerId, metadata]) => {
-        if (metadata.fileId === fileId) {
-          layersToRemove.push(layerId);
-        }
-      });
-
-      if (layersToRemove.length === 0) {
-        logger.debug('ACTION SKIP: handleFileDeleted - no layers to remove', { fileId });
-        return state;
+    // Find all layers associated with the deleted file
+    Object.entries(get().layers.metadata).forEach(([layerId, metadata]) => {
+      if (metadata.fileId === fileId) {
+        layersToRemove.push(layerId);
       }
+    });
 
-      // Remove each layer
-      const updatedById = { ...state.layers.byId };
-      const updatedAllIds = [...state.layers.allIds];
-      const updatedMetadata = { ...state.layers.metadata };
+    if (layersToRemove.length === 0) {
+      return;
+    }
 
-      layersToRemove.forEach(layerId => {
-        delete updatedById[layerId];
-        const index = updatedAllIds.indexOf(layerId);
-        if (index > -1) {
-          updatedAllIds.splice(index, 1);
-        }
-        delete updatedMetadata[layerId];
-      });
+    // Remove each layer
+    const updatedById = Object.fromEntries(Object.entries(get().layers.byId).filter(([id]) => !layersToRemove.includes(id)));
+    const updatedAllIds = get().layers.allIds.filter(id => !layersToRemove.includes(id));
+    const updatedMetadata = Object.fromEntries(Object.entries(get().layers.metadata).filter(([id]) => !layersToRemove.includes(id)));
 
-      logger.debug('ACTION END: handleFileDeleted', { fileId, removedLayers: layersToRemove });
-      return {
-        layers: {
-          byId: updatedById,
-          allIds: updatedAllIds,
-          metadata: updatedMetadata
-        }
-      };
+    set({
+      layers: {
+        byId: updatedById,
+        allIds: updatedAllIds,
+        metadata: updatedMetadata
+      }
     });
   },
 
-  updateLayerStyle: (layerId: string, style: { paint?: Record<string, any>; layout?: Record<string, any> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => {
-    logger.debug('ACTION START: updateLayerStyle', { layerId, style, geometryTypes });
-    set((state) => {
-      const layer = state.layers.byId[layerId];
-      if (!layer) {
-        logger.debug('ACTION SKIP: updateLayerStyle - layer does not exist', { layerId });
-        return state;
-      }
+  updateLayerStyle: (layerId: string, style: { paint?: Record<string, unknown>; layout?: Record<string, unknown> }, geometryTypes?: { hasPolygons: boolean; hasLines: boolean; hasPoints: boolean }) => {
+    const layer = get().layers.byId[layerId];
+    if (!layer) {
+      return;
+    }
 
-      // Create new style object with deep cloning of existing properties
-      const currentMetadata = state.layers.metadata[layerId] || { name: '', type: '', properties: {} };
-      const currentStyle = currentMetadata.style || {};
-      const currentPaint = currentStyle.paint || {};
-      const currentLayout = currentStyle.layout || {};
+    // Create new style object with deep cloning of existing properties
+    const currentMetadata = get().layers.metadata[layerId] || { name: '', type: '', properties: {} };
+    const currentStyle = currentMetadata.style || {};
+    const currentPaint = currentStyle.paint || {};
+    const currentLayout = currentStyle.layout || {};
 
-      // Create new paint and layout objects
-      const newPaint = style.paint 
-        ? { ...currentPaint, ...style.paint }
-        : currentPaint;
+    // Create new paint and layout objects
+    const newPaint = style.paint 
+      ? { ...currentPaint, ...style.paint }
+      : currentPaint;
 
-      const newLayout = style.layout
-        ? { ...currentLayout, ...style.layout }
-        : currentLayout;
+    const newLayout = style.layout
+      ? { ...currentLayout, ...style.layout }
+      : currentLayout;
 
-      // Create new style object
-      const newStyle = {
-        ...currentStyle,
-        paint: newPaint,
-        layout: newLayout
-      };
+    // Create new style object
+    const newStyle = {
+      ...currentStyle,
+      paint: newPaint,
+      layout: newLayout
+    };
 
-      // Create new metadata object
-      const newMetadata: LayerMetadata = {
-        ...currentMetadata,
-        style: newStyle,
-        geometryTypes: geometryTypes || currentMetadata.geometryTypes
-      };
+    // Create new metadata object
+    const newMetadata: LayerMetadata = {
+      ...currentMetadata,
+      style: newStyle,
+      geometryTypes: geometryTypes || currentMetadata.geometryTypes
+    };
 
-      logger.debug('ACTION UPDATE: updateLayerStyle', { 
-        layerId, 
-        oldPaint: currentPaint,
-        newPaint,
-        paintChanged: newPaint !== currentPaint,
-        styleChanged: newStyle !== currentStyle,
-        metadataChanged: newMetadata !== currentMetadata,
-        geometryTypesChanged: geometryTypes && !isEqual(geometryTypes, currentMetadata.geometryTypes)
-      });
+    // Create new layer object
+    const newLayer = {
+      ...layer,
+      metadata: newMetadata
+    };
 
-      // Create new layer object
-      const newLayer = {
-        ...layer,
-        metadata: newMetadata
-      };
-
-      // Create new state with all new objects
-      return {
-        layers: {
-          ...state.layers,
-          metadata: {
-            ...state.layers.metadata,
-            [layerId]: newMetadata
-          },
-          byId: {
-            ...state.layers.byId,
-            [layerId]: newLayer
-          }
+    // Create new state with all new objects
+    set({
+      layers: {
+        ...get().layers,
+        metadata: {
+          ...get().layers.metadata,
+          [layerId]: newMetadata
+        },
+        byId: {
+          ...get().layers.byId,
+          [layerId]: newLayer
         }
-      };
+      }
     });
   },
 
@@ -441,188 +317,152 @@ export const useLayerStore = create<LayerStore>()((set, get) => ({
       };
     };
   }) => {
-    logger.debug('ACTION START: updateLayerHeightSource', { layerId, heightSource });
-    set((state) => {
-      const layer = state.layers.byId[layerId];
-      if (!layer) {
-        logger.debug('ACTION SKIP: updateLayerHeightSource - layer does not exist', { layerId });
-        return state;
-      }
+    const layer = get().layers.byId[layerId];
+    if (!layer) {
+      return;
+    }
 
-      // Get current metadata or create new one
-      const currentMetadata = state.layers.metadata[layerId] || { name: layerId, type: 'vector', properties: {} };
-      
-      // Create new height configuration based on mode
-      let heightConfig: typeof currentMetadata.height = {
-        sourceType: 'none' // Default value to satisfy TypeScript
+    // Get current metadata or create new one
+    const currentMetadata = get().layers.metadata[layerId] || { name: layerId, type: 'vector', properties: {} };
+    
+    // Create new height configuration based on mode
+    let heightConfig: typeof currentMetadata.height = {
+      sourceType: 'none' // Default value to satisfy TypeScript
+    };
+    
+    if (heightSource.mode === 'simple') {
+      // Simple mode (backward compatible)
+      heightConfig = {
+        mode: 'simple',
+        sourceType: heightSource.type || 'none',
+        attributeName: heightSource.attributeName,
+        interpretationMode: heightSource.interpretationMode,
+        // Preserve existing transformation data if present
+        transformationStatus: currentMetadata.height?.transformationStatus,
+        transformationProgress: currentMetadata.height?.transformationProgress,
+        transformationError: currentMetadata.height?.transformationError
       };
-      
-      if (heightSource.mode === 'simple') {
-        // Simple mode (backward compatible)
-        heightConfig = {
-          mode: 'simple',
-          sourceType: heightSource.type || 'none',
-          attributeName: heightSource.attributeName,
-          interpretationMode: heightSource.interpretationMode,
-          // Preserve existing transformation data if present
-          transformationStatus: currentMetadata.height?.transformationStatus,
-          transformationProgress: currentMetadata.height?.transformationProgress,
-          transformationError: currentMetadata.height?.transformationError
-        };
-      } else {
-        // Advanced mode
-        heightConfig = {
-          mode: 'advanced',
-          // Keep sourceType for backward compatibility
-          sourceType: currentMetadata.height?.sourceType || 'none',
-          advanced: heightSource.advanced,
-          // Preserve existing transformation data if present
-          transformationStatus: currentMetadata.height?.transformationStatus,
-          transformationProgress: currentMetadata.height?.transformationProgress,
-          transformationError: currentMetadata.height?.transformationError
-        };
-      }
-
-      // Create new metadata object with the height source information
-      const newMetadata: LayerMetadata = {
-        ...currentMetadata,
-        height: heightConfig
+    } else {
+      // Advanced mode
+      heightConfig = {
+        mode: 'advanced',
+        // Keep sourceType for backward compatibility
+        sourceType: currentMetadata.height?.sourceType || 'none',
+        advanced: heightSource.advanced,
+        // Preserve existing transformation data if present
+        transformationStatus: currentMetadata.height?.transformationStatus,
+        transformationProgress: currentMetadata.height?.transformationProgress,
+        transformationError: currentMetadata.height?.transformationError
       };
+    }
 
-      // Create new layer object
-      const newLayer = {
-        ...layer,
-        metadata: newMetadata
-      };
+    // Create new metadata object with the height source information
+    const newMetadata: LayerMetadata = {
+      ...currentMetadata,
+      height: heightConfig
+    };
 
-      logger.debug('ACTION END: updateLayerHeightSource', { 
-        layerId,
-        mode: heightSource.mode,
-        simpleConfig: heightSource.mode === 'simple' ? {
-          sourceType: heightSource.type,
-          attributeName: heightSource.attributeName,
-          interpretationMode: heightSource.interpretationMode
-        } : null,
-        advancedConfig: heightSource.mode === 'advanced' ? heightSource.advanced : null
-      });
+    // Create new layer object
+    const newLayer = {
+      ...layer,
+      metadata: newMetadata
+    };
 
-      return {
-        layers: {
-          ...state.layers,
-          metadata: {
-            ...state.layers.metadata,
-            [layerId]: newMetadata
-          },
-          byId: {
-            ...state.layers.byId,
-            [layerId]: newLayer
-          }
+    set({
+      layers: {
+        ...get().layers,
+        metadata: {
+          ...get().layers.metadata,
+          [layerId]: newMetadata
+        },
+        byId: {
+          ...get().layers.byId,
+          [layerId]: newLayer
         }
-      };
+      }
     });
   },
 
   setInitialLoadComplete: (complete: boolean) => {
-    logger.debug('ACTION START: setInitialLoadComplete', { complete });
     set({ isInitialLoadComplete: complete });
-    logger.debug('ACTION END: setInitialLoadComplete', { complete });
   },
 
   setLayerGeoJsonData: (layerId, geojsonData) => {
-    logger.debug('ACTION START: setLayerGeoJsonData', { layerId, hasData: !!geojsonData });
-    set((state) => {
-      const layer = state.layers.byId[layerId];
-      if (!layer) {
-        logger.warn('ACTION SKIP: setLayerGeoJsonData - layer not found', { layerId });
-        return state;
+    const layer = get().layers.byId[layerId];
+    if (!layer) {
+      return;
+    }
+
+    // Get current metadata or create new one
+    const currentMetadata = layer.metadata || {
+      name: layerId,
+      type: 'vector',
+      properties: {}
+    };
+
+    // Check if data is identical
+    if (isEqual(currentMetadata.properties?.geojson, geojsonData)) {
+      return;
+    }
+
+    // Create new metadata object immutably
+    const newMetadata: LayerMetadata = {
+      ...currentMetadata,
+      properties: {
+        ...currentMetadata.properties,
+        geojson: geojsonData
       }
+    };
 
-      // Get current metadata or create new one
-      const currentMetadata = layer.metadata || {
-        name: layerId,
-        type: 'vector',
-        properties: {}
-      };
+    // Create new layer object with updated metadata
+    const newLayer: Layer = {
+      ...layer,
+      metadata: newMetadata
+    };
 
-      // Check if data is identical
-      if (isEqual(currentMetadata.properties?.geojson, geojsonData)) {
-        logger.debug('ACTION SKIP: setLayerGeoJsonData - GeoJSON data is already the same', { layerId });
-        return state;
+    set({
+      layers: {
+        ...get().layers,
+        byId: {
+          ...get().layers.byId,
+          [layerId]: newLayer
+        },
+        metadata: {
+          ...get().layers.metadata,
+          [layerId]: newMetadata
+        }
       }
-
-      // Create new metadata object immutably
-      const newMetadata: LayerMetadata = {
-        ...currentMetadata,
-        properties: {
-          ...currentMetadata.properties,
-          geojson: geojsonData
-        }
-      };
-
-      // Create new layer object with updated metadata
-      const newLayer: Layer = {
-        ...layer,
-        metadata: newMetadata
-      };
-
-      logger.debug('ACTION END: setLayerGeoJsonData', { 
-        layerId,
-        hasGeojson: !!geojsonData,
-        featureCount: geojsonData?.features?.length
-      });
-
-      return {
-        layers: {
-          ...state.layers,
-          byId: {
-            ...state.layers.byId,
-            [layerId]: newLayer
-          },
-          metadata: {
-            ...state.layers.metadata,
-            [layerId]: newMetadata
-          }
-        }
-      };
     });
   },
 
   reset: () => {
-    logger.debug('ACTION START: reset');
     set({ 
       layers: initialState,
       isInitialLoadComplete: false 
     });
-    logger.debug('ACTION END: reset');
   }
 }));
 
 // Custom hooks for layer operations
 export const useLayer = (layerId: string) => {
-  logger.debug('HOOK RUN: useLayer', { layerId });
-  const store = useLayerStore();
   const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
   const metadata = useLayerStore((state) => layerSelectors.getLayerMetadata(state)(layerId));
 
   const setVisibility = useCallback((visible: boolean) => {
-    logger.debug('HOOK ACTION: useLayer.setVisibility', { layerId, visible });
-    store.setLayerVisibility(layerId, visible);
-  }, [layerId, store]);
+    useLayerStore.getState().setLayerVisibility(layerId, visible);
+  }, [layerId]);
 
   const updateStatus = useCallback((status: Layer['setupStatus'], error?: string) => {
-    logger.debug('HOOK ACTION: useLayer.updateStatus', { layerId, status, error });
-    store.updateLayerStatus(layerId, status, error);
-  }, [layerId, store]);
+    useLayerStore.getState().updateLayerStatus(layerId, status, error);
+  }, [layerId]);
 
-  const updateStyle = useCallback((style: { paint?: Record<string, any>; layout?: Record<string, any> }) => {
-    logger.debug('HOOK ACTION: useLayer.updateStyle', { layerId, style });
-    store.updateLayerStyle(layerId, style);
-  }, [layerId, store]);
+  const updateStyle = useCallback((style: { paint?: Record<string, unknown>; layout?: Record<string, unknown> }) => {
+    useLayerStore.getState().updateLayerStyle(layerId, style);
+  }, [layerId]);
 
   const remove = useCallback(() => {
-    logger.debug('HOOK ACTION: useLayer.remove', { layerId });
-    store.removeLayer(layerId);
-  }, [layerId, store]);
+    useLayerStore.getState().removeLayer(layerId);
+  }, [layerId]);
 
   return {
     layer,
@@ -638,45 +478,25 @@ export const useLayer = (layerId: string) => {
 };
 
 export const useLayers = () => {
-  logger.debug('HOOK RUN: useLayers');
-  const store = useLayerStore();
-  
   // Select primitive state parts
-  const allIds = useLayerStore((state: LayerStore) => state.layers.allIds);
-  const byId = useLayerStore((state: LayerStore) => state.layers.byId);
+  const allIds = useLayerStore((state) => state.layers.allIds);
+  const byId = useLayerStore((state) => state.layers.byId);
 
   // Memoize the layers array construction with more granular dependencies
   const layers = useMemo(() => {
-    logger.debug('HOOK MEMO: Recomputing layers array', { 
-      idCount: allIds.length,
-      byIdKeys: Object.keys(byId)
-    });
     return allIds.map(id => byId[id]);
   }, [allIds, byId]);
 
   // Use selectors with built-in memoization
-  const visibleLayers = useLayerStore((state: LayerStore) => layerSelectors.getVisibleLayers(state));
-  const layersWithErrors = useLayerStore((state: LayerStore) => layerSelectors.getLayersWithErrors(state));
+  const visibleLayers = useLayerStore((state) => layerSelectors.getVisibleLayers(state));
+  const layersWithErrors = useLayerStore((state) => layerSelectors.getLayersWithErrors(state));
 
   // Select and stabilize store actions
-  const storeActions = useLayerStore((state: LayerStore) => ({
+  const storeActions = useLayerStore((state) => ({
     addLayer: state.addLayer,
     removeLayer: state.removeLayer,
     handleFileDeleted: state.handleFileDeleted
   }));
-
-  logger.debug('HOOK STATE: useLayers', {
-    layerCount: layers.length,
-    layers: layers.map(l => ({
-      id: l.id,
-      hasMetadata: !!l.metadata,
-      visible: l.visible,
-      setupStatus: l.setupStatus,
-      error: l.error
-    })),
-    visibleLayerCount: visibleLayers.length,
-    errorCount: layersWithErrors.length
-  });
 
   const addLayer = useCallback((
     layerId: string,
@@ -684,17 +504,10 @@ export const useLayers = () => {
     sourceId?: string,
     metadata?: LayerMetadata
   ) => {
-    logger.debug('HOOK ACTION: useLayers.addLayer', {
-      layerId,
-      initialVisibility,
-      sourceId,
-      hasMetadata: !!metadata
-    });
     storeActions.addLayer(layerId, initialVisibility, sourceId, metadata);
   }, [storeActions]);
 
   const removeLayer = useCallback((layerId: string) => {
-    logger.debug('HOOK ACTION: useLayers.removeLayer', { layerId });
     storeActions.removeLayer(layerId);
   }, [storeActions]);
 
@@ -709,14 +522,11 @@ export const useLayers = () => {
 };
 
 export const useLayerStatus = (layerId: string) => {
-  logger.debug('HOOK RUN: useLayerStatus', { layerId });
-  const store = useLayerStore();
   const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
 
   const updateStatus = useCallback((status: Layer['setupStatus'], error?: string) => {
-    logger.debug('HOOK ACTION: useLayerStatus.updateStatus', { layerId, status, error });
-    store.updateLayerStatus(layerId, status, error);
-  }, [layerId, store]);
+    useLayerStore.getState().updateLayerStatus(layerId, status, error);
+  }, [layerId]);
 
   return {
     status: layer?.setupStatus ?? 'pending',
@@ -726,14 +536,11 @@ export const useLayerStatus = (layerId: string) => {
 };
 
 export const useLayerVisibility = (layerId: string) => {
-  logger.debug('HOOK RUN: useLayerVisibility', { layerId });
-  const store = useLayerStore();
   const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
 
   const setVisibility = useCallback((visible: boolean) => {
-    logger.debug('HOOK ACTION: useLayerVisibility.setVisibility', { layerId, visible });
-    store.setLayerVisibility(layerId, visible);
-  }, [layerId, store]);
+    useLayerStore.getState().setLayerVisibility(layerId, visible);
+  }, [layerId]);
 
   return {
     isVisible: layer?.visible ?? false,

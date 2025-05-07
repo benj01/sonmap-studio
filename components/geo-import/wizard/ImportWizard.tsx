@@ -7,9 +7,7 @@ import { PreviewStep } from './steps/PreviewStep';
 import { ValidationStep } from './steps/ValidationStep';
 import { ConfirmStep } from './steps/ConfirmStep';
 import { ReviewStep } from './steps/ReviewStep';
-import { createLogger } from '@/utils/logger';
-
-const logger = createLogger('ImportWizard');
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const steps = [
   { label: 'Select File', component: FileSelectStep },
@@ -29,8 +27,8 @@ interface ImportWizardProps {
 }
 
 export function ImportWizard({ projectId, onClose, initialFileInfo, initialStep = 0, onRefreshFiles }: ImportWizardProps) {
-  logger.info('ImportWizard loaded');
-  logger.info('Import wizard component initialization started');
+  (async () => { await dbLogger.info('ImportWizard loaded', { projectId }); })();
+  (async () => { await dbLogger.info('Import wizard component initialization started', { projectId }); })();
   const [currentStep, setCurrentStep] = useState(initialStep);
   const StepComponent = steps[currentStep].component;
 

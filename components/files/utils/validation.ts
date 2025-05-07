@@ -1,9 +1,8 @@
 import { FileTypeUtil } from './file-types';
 import type { FileGroup, CompanionFileConfig } from '../types';
-import { createLogger } from '../../../utils/logger';
+import { dbLogger } from '../../../utils/logging/dbLogger';
 
-const SOURCE = 'FileValidator';
-const logger = createLogger(SOURCE);
+const LOG_SOURCE = 'FileValidator';
 
 export class ValidationError extends Error {
   constructor(message: string) {
@@ -18,7 +17,7 @@ export class FileValidator {
    * @param group FileGroup to validate
    * @throws ValidationError if validation fails
    */
-  static validateGroup(group: FileGroup): void {
+  static async validateGroup(group: FileGroup): Promise<void> {
     // Validate main file
     const mainConfig = FileTypeUtil.getConfigForFile(group.mainFile.name);
     if (!mainConfig) {
@@ -127,7 +126,7 @@ export class FileValidator {
    * @param companionExtension Required companion extension
    * @returns boolean indicating if the file is a matching companion
    */
-  static isMatchingCompanion(mainFileName: string, companionFile: File, companionExtension: string): boolean {
+  static async isMatchingCompanion(mainFileName: string, companionFile: File, companionExtension: string): Promise<boolean> {
     const mainBase = mainFileName.replace(/\.[^.]+$/, '');
     const companionBase = companionFile.name.replace(/\.[^.]+$/, '');
     const companionExt = FileTypeUtil.getExtension(companionFile.name);
@@ -135,7 +134,7 @@ export class FileValidator {
     const matches = companionBase.toLowerCase() === mainBase.toLowerCase() && 
            companionExt.toLowerCase() === companionExtension.toLowerCase();
            
-    logger.debug('Matching companion check', {
+    await dbLogger.debug('Matching companion check', {
       mainFile: mainFileName,
       companion: companionFile.name,
       mainBase: mainBase.toLowerCase(),
@@ -143,7 +142,7 @@ export class FileValidator {
       companionExt: companionExt.toLowerCase(),
       requiredExt: companionExtension.toLowerCase(),
       matches
-    });
+    }, { LOG_SOURCE });
     
     return matches;
   }

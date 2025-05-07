@@ -1,9 +1,6 @@
 import React from 'react';
 import { useWizard } from '../WizardContext';
-import { LogManager } from '@/core/logging/log-manager';
-
-const SOURCE = 'ConfirmStep';
-const logManager = LogManager.getInstance();
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 interface ConfirmStepProps {
   onNext: () => void;
@@ -27,15 +24,18 @@ export function ConfirmStep({ onNext, onBack, onClose, onRefreshFiles }: Confirm
   const featureCount = selectedFeatureIds.length;
   const sourceSrid = datasetForImport?.metadata?.srid || 2056;
   
-  logManager.debug(SOURCE, 'Confirm step data', {
-    hasPreviewDataset: !!dataset,
-    previewSrid: dataset?.metadata?.srid,
-    hasImportDataset: !!importDataset,
-    importSrid: importDataset?.metadata?.srid,
-    displayingSrid: sourceSrid,
-    usingDataset: importDataset ? 'importDataset' : 'dataset',
-    heightSource
-  });
+  (async () => {
+    await dbLogger.debug('Confirm step data', {
+      source: 'ConfirmStep',
+      hasPreviewDataset: !!dataset,
+      previewSrid: dataset?.metadata?.srid,
+      hasImportDataset: !!importDataset,
+      importSrid: importDataset?.metadata?.srid,
+      displayingSrid: sourceSrid,
+      usingDataset: importDataset ? 'importDataset' : 'dataset',
+      heightSource
+    });
+  })();
 
   // Function to render height source information
   const renderHeightSourceInfo = () => {

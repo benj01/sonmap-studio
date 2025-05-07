@@ -2,105 +2,60 @@ import React, { useEffect, useState } from 'react';
 import { useWizard } from '../WizardContext';
 import { ParserFactory } from '@/core/processors/parser-factory';
 import { createClient } from '@/utils/supabase/client';
-import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
-import * as turf from '@turf/turf';
 import proj4 from 'proj4';
-import { GeoFeature } from '@/types/geo-import';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 interface ParseStepProps {
   onNext: () => void;
   onBack: () => void;
 }
 
-const SOURCE = 'ParseStep';
-const logManager = LogManager.getInstance();
-logManager.setComponentLogLevel(SOURCE, LogLevel.INFO);
-
 // Helper function to detect Z coordinates in features
-function detectZCoordinates(features: any[]) {
-  if (!features || features.length === 0) return { hasZ: false, message: 'No features found' };
-  
+function detectZCoordinates(features: unknown[]): { hasZ: boolean; message: string } {
+  if (!Array.isArray(features) || features.length === 0) return { hasZ: false, message: 'No features found' };
   let zCount = 0;
-  let zSum = 0;
   let zMin = Infinity;
   let zMax = -Infinity;
   let totalCoords = 0;
-  let geometryTypes = new Set<string>();
-  
+  const geometryTypes = new Set<string>();
   // Function to process coordinates recursively
-  const processCoords = (coords: any[], geomType: string) => {
+  const processCoords = (coords: unknown[], geomType: string) => {
     if (!Array.isArray(coords)) return;
-    
     if (coords.length >= 3 && typeof coords[2] === 'number') {
-      // This is a coordinate with Z value
       const z = coords[2];
       if (!isNaN(z)) {
         zCount++;
-        zSum += z;
         zMin = Math.min(zMin, z);
         zMax = Math.max(zMax, z);
-        
-        logManager.debug(SOURCE, `Found Z coordinate: ${z} in ${geomType}`, { z, geomType });
+        (async () => { await dbLogger.debug('Found Z coordinate', { source: 'ParseStep', z, geomType }); })();
       }
       totalCoords++;
     } else if (Array.isArray(coords[0])) {
-      // This is a nested array of coordinates
-      coords.forEach(c => processCoords(c, geomType));
+      (coords as unknown[]).forEach((c) => processCoords(c as unknown[], geomType));
     }
   };
-  
-  // Process all features
-  features.forEach(feature => {
-    if (!feature.geometry || !feature.geometry.coordinates) return;
-    
-    const geomType = feature.geometry.type;
+  features.forEach((feature) => {
+    if (
+      typeof feature !== 'object' || feature === null ||
+      !('geometry' in feature) ||
+      typeof (feature as { geometry?: unknown }).geometry !== 'object' ||
+      (feature as { geometry?: unknown }).geometry === null ||
+      !('coordinates' in (feature as { geometry: { coordinates?: unknown } }).geometry)
+    ) return;
+    const geometry = (feature as { geometry: { type: string; coordinates: unknown } }).geometry;
+    const geomType = geometry.type;
     geometryTypes.add(geomType);
-    
     try {
-      processCoords(feature.geometry.coordinates, geomType);
+      processCoords(geometry.coordinates as unknown[], geomType);
     } catch (error) {
-      logManager.warn(SOURCE, `Error processing coordinates for geometry type ${geomType}`, { error });
+      (async () => { await dbLogger.warn('Error processing coordinates for geometry type', { source: 'ParseStep', error, geomType }); })();
     }
   });
-  
-  logManager.info(SOURCE, 'Z coordinate detection summary', { 
-    zCount, totalCoords, zMin, zMax, 
-    geometryTypes: Array.from(geometryTypes),
-    percentWithZ: totalCoords > 0 ? Math.round((zCount / totalCoords) * 100) : 0
-  });
-  
-  // Analyze results
+  (async () => { await dbLogger.info('Z coordinate detection summary', { source: 'ParseStep', zCount, totalCoords, zMin, zMax, geometryTypes: Array.from(geometryTypes), percentWithZ: totalCoords > 0 ? Math.round((zCount / totalCoords) * 100) : 0 }); })();
   const hasNonZeroZ = zMin !== 0 || zMax !== 0;
   const hasReasonableRange = zMin >= -100 && zMax <= 4000;
   const hasSufficientData = zCount > 0 && zCount >= 0.5 * totalCoords;
-  
-  if (zCount === 0) {
-    return { 
-      hasZ: false, 
-      message: 'No Z coordinates found' 
-    };
-  } else if (!hasNonZeroZ) {
-    return { 
-      hasZ: false, 
-      message: 'All Z coordinates are zero'
-    };
-  } else if (!hasReasonableRange) {
-    return { 
-      hasZ: false, 
-      message: `Z values outside reasonable range (${zMin.toFixed(1)} to ${zMax.toFixed(1)})`
-    };
-  } else if (!hasSufficientData) {
-    return { 
-      hasZ: false, 
-      message: `Insufficient Z data (${zCount}/${totalCoords} coordinates have Z values)`
-    };
-  }
-  
-  return { 
-    hasZ: true, 
-    message: `Valid Z coordinates detected (range: ${zMin.toFixed(1)} to ${zMax.toFixed(1)} meters)`
-  };
+  return { hasZ: hasSufficientData && hasNonZeroZ && hasReasonableRange, message: 'Z coordinate detection complete' };
 }
 
 export function ParseStep({ onNext, onBack }: ParseStepProps) {
@@ -112,7 +67,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
 
   useEffect(() => {
     const parseFile = async () => {
-      if (!fileInfo?.id || !fileInfo.name) return;
+      if (!fileInfo || typeof fileInfo !== 'object' || !('id' in fileInfo) || !('name' in fileInfo) || typeof fileInfo.id !== 'string' || typeof fileInfo.name !== 'string' || !fileInfo.name) return;
       setParsing(true);
       setError(null);
       setParseSummary(null);
@@ -129,12 +84,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           return;
         }
         
-        logManager.info(SOURCE, 'Processing file', { 
-          fileName: fileInfo.name,
-          fileId: fileInfo.id,
-          storagePath: mainFileRecord.storage_path,
-          fileExtension: fileInfo.name.split('.').pop()?.toLowerCase()
-        });
+        await dbLogger.info('Processing file', { source: 'ParseStep', fileName: fileInfo.name, fileId: fileInfo.id, storagePath: mainFileRecord.storage_path, fileExtension: fileInfo.name ? fileInfo.name.split('.').pop()?.toLowerCase() : undefined });
         
         // 2. Download main file using storage_path
         const { data, error: downloadError } = await supabase.storage
@@ -150,14 +100,10 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
         // Log file size and binary header data for debugging
         const fileSize = arrayBuffer.byteLength;
         const headerBytes = new Uint8Array(arrayBuffer.slice(0, Math.min(50, fileSize)));
-        logManager.info(SOURCE, 'File binary information', {
-          fileName: fileInfo.name,
-          fileSize,
-          headerHex: Array.from(headerBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')
-        });
+        await dbLogger.info('File binary information', { source: 'ParseStep', fileName: fileInfo.name, fileSize, headerHex: Array.from(headerBytes).map(b => b.toString(16).padStart(2, '0')).join(' ') });
         
         // 3. Download companion files using their storage_path
-        let companionBuffers: Record<string, ArrayBuffer> = {};
+        const companionBuffers: Record<string, ArrayBuffer> = {};
         if (fileInfo.companions && fileInfo.companions.length > 0) {
           for (const companion of fileInfo.companions) {
             const { data: compRecord, error: compDbError } = await supabase
@@ -176,13 +122,10 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           }
         }
         // Use parser factory to parse the file
-        const parser = ParserFactory.createParser(fileInfo.name);
+        const parser = ParserFactory.createParser(typeof fileInfo.name === 'string' ? fileInfo.name : '');
         
         // Enable more verbose debugging for parsing
-        logManager.info(SOURCE, 'Using parser', { 
-          parserType: parser.constructor.name,
-          fileExtension: fileInfo.name.split('.').pop()?.toLowerCase()
-        });
+        await dbLogger.info('Using parser', { source: 'ParseStep', parserType: parser.constructor.name, fileExtension: fileInfo.name ? fileInfo.name.split('.').pop()?.toLowerCase() : undefined });
         
         const fullDataset = await parser.parse(arrayBuffer, companionBuffers, { 
           maxFeatures: 10000,
@@ -192,49 +135,30 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
         // Log raw dataset details including first feature
         if (fullDataset.features && fullDataset.features.length > 0) {
           const firstFeature = fullDataset.features[0];
-          logManager.info(SOURCE, 'First parsed feature', {
-            hasGeometry: !!firstFeature.geometry,
-            geometryType: firstFeature.geometry?.type,
-            coordinates: firstFeature.geometry && 'coordinates' in firstFeature.geometry ? 
-              JSON.stringify(firstFeature.geometry.coordinates).substring(0, 500) : 'No coordinates',
+          await dbLogger.info('First parsed feature', { source: 'ParseStep', hasGeometry: !!firstFeature.geometry, geometryType: firstFeature.geometry?.type, coordinates: firstFeature.geometry && 'coordinates' in firstFeature.geometry ? 
+            JSON.stringify(firstFeature.geometry.coordinates).substring(0, 500) : 'No coordinates',
             properties: firstFeature.properties ? 
-              JSON.stringify(firstFeature.properties).substring(0, 500) : 'No properties'
+            JSON.stringify(firstFeature.properties).substring(0, 500) : 'No properties'
           });
         }
 
         // Add a special-case path for shapefiles specifically to check if coordinates are in array form
         // Some shapefile parsers might return Z coordinates in a different format
         if (fileInfo.name.toLowerCase().endsWith('.shp')) {
-          logManager.info(SOURCE, 'Special shapefile processing', {
-            featureCount: fullDataset.features?.length || 0,
-            hasFeatures: !!fullDataset.features && fullDataset.features.length > 0
-          });
-          
+          await dbLogger.info('Special shapefile processing', { source: 'ParseStep', featureCount: fullDataset.features?.length || 0, hasFeatures: !!fullDataset.features && fullDataset.features.length > 0 });
           // Force deep inspection of the first few features
           if (fullDataset.features && fullDataset.features.length > 0) {
-            for (let i = 0; i < Math.min(5, fullDataset.features.length); i++) {
+            const maxFeatures = Math.min(5, fullDataset.features.length);
+            for (let i = 0; i < maxFeatures; i++) {
               const feature = fullDataset.features[i];
-              // Log the entire feature structure for debugging
-              logManager.info(SOURCE, `Full shapefile feature ${i} data`, {
-                feature: JSON.stringify(feature),
-                featureType: feature.geometry?.type,
-                coordsType: feature.geometry && 'coordinates' in feature.geometry ? 
-                  typeof feature.geometry.coordinates : 'undefined'
-              });
-              
+              await dbLogger.info('Full shapefile feature', { source: 'ParseStep', i, data: JSON.stringify(feature), featureType: feature.geometry?.type, coordsType: feature.geometry && 'coordinates' in feature.geometry ? 
+                typeof feature.geometry.coordinates : 'undefined' });
               // Check if Z values might be stored in feature properties
               const propKeys = Object.keys(feature.properties || {});
-              const possibleZProps = propKeys.filter(k => 
-                /^(z|height|elevation|altitude|h|hoehe|z_value|z_coord)$/i.test(k)
-              );
-              
-              if (possibleZProps.length > 0) {
-                logManager.info(SOURCE, `Feature ${i} has possible Z properties`, {
-                  zProperties: possibleZProps.map(k => ({
-                    key: k,
-                    value: feature.properties?.[k]
-                  }))
-                });
+              for (const k of propKeys) {
+                if (/^(z|height|elevation|altitude|h|hoehe|z_value|z_coord)$/i.test(k)) {
+                  await dbLogger.info('Feature', { source: 'ParseStep', i, zProperties: [{ key: k, value: feature.properties?.[k] }] });
+                }
               }
             }
           }
@@ -242,66 +166,54 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
 
         // Detect Z coordinates
         const zDetection = detectZCoordinates(fullDataset.features || []);
-        logManager.info(SOURCE, 'Z coordinate detection result', zDetection);
+        await dbLogger.info('Z coordinate detection result', { source: 'ParseStep', zDetection });
 
         // Now that we have the original zDetection, run enhanced detection if needed
         if (fileInfo.name.toLowerCase().endsWith('.shp') && !zDetection.hasZ) {
           try {
             // Some formats might store Z in properties or special structure
-            const enhancedFeatures = fullDataset.features.map(feature => {
+            const enhancedFeatures: typeof fullDataset.features = [];
+            for (const feature of fullDataset.features) {
               // Clone the feature to avoid modifying original
               const enhancedFeature = { ...feature };
-              
               // Check for Z value in properties that might indicate height
               const props = feature.properties || {};
               const zProps = ['z', 'height', 'elevation', 'altitude', 'hoehe', 'h'];
-              let zValue = null;
-              
+              let zValue: number | null = null;
               // Find first property that might contain Z value
               for (const prop of zProps) {
                 if (prop in props && typeof props[prop] === 'number') {
                   zValue = props[prop];
-                  logManager.debug(SOURCE, `Found Z value in property`, { 
-                    property: prop, 
-                    value: zValue,
-                    featureId: feature.id
-                  });
+                  await dbLogger.debug('Found Z value in property', { source: 'ParseStep', property: prop, value: zValue, featureId: feature.id });
                   break;
                 }
               }
-              
               // If Z value found in properties but not in coords, add it
               if (zValue !== null && enhancedFeature.geometry && 'coordinates' in enhancedFeature.geometry) {
-                const coords = enhancedFeature.geometry.coordinates;
-                
-                // Handle different geometry types
-                if (enhancedFeature.geometry.type === 'Point' && Array.isArray(coords) && coords.length === 2) {
-                  // Add Z to Point coordinates - fix type error by creating a proper Position array
-                  // @ts-ignore - We know we're dealing with a Point geometry with coordinates
-                  enhancedFeature.geometry.coordinates = [coords[0], coords[1], zValue];
-                  logManager.debug(SOURCE, 'Added Z coordinate to Point', { 
-                    original: coords, 
-                    enhanced: enhancedFeature.geometry.coordinates 
-                  });
+                const coordsArr = (enhancedFeature.geometry as { coordinates: unknown[] }).coordinates;
+                if (
+                  enhancedFeature.geometry &&
+                  'coordinates' in enhancedFeature.geometry &&
+                  Array.isArray(coordsArr)
+                ) {
+                  if (enhancedFeature.geometry.type === 'Point' && coordsArr.length === 2) {
+                    (enhancedFeature.geometry as { coordinates: unknown[] }).coordinates = [coordsArr[0], coordsArr[1], zValue];
+                    await dbLogger.debug('Added Z coordinate to Point', { source: 'ParseStep', original: coordsArr, enhanced: (enhancedFeature.geometry as { coordinates: unknown[] }).coordinates });
+                  }
+                  // Could add more cases for other geometry types
                 }
-                // Could add more cases for other geometry types
               }
-              
-              return enhancedFeature;
-            });
-            
+              enhancedFeatures.push(enhancedFeature);
+            }
             // Run Z detection on enhanced features, but only update if more Z values found
             const enhancedZDetection = detectZCoordinates(enhancedFeatures);
             if (enhancedZDetection.hasZ) {
-              logManager.info(SOURCE, 'Enhanced Z detection found Z values', enhancedZDetection);
-              
+              await dbLogger.info('Enhanced Z detection found Z values', { source: 'ParseStep', enhancedZDetection });
               // Update the dataset with enhanced features
               fullDataset.features = enhancedFeatures;
-              
               // Replace original detection result
               const updatedZDetection = enhancedZDetection;
-              logManager.info(SOURCE, 'Updated Z detection result', updatedZDetection);
-              
+              await dbLogger.info('Updated Z detection result', { source: 'ParseStep', updatedZDetection });
               // Set height source based on the enhanced detection
               if (updatedZDetection.hasZ) {
                 setHeightSource({
@@ -312,7 +224,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
               }
             }
           } catch (err) {
-            logManager.warn(SOURCE, 'Enhanced Z detection failed', { error: err });
+            await dbLogger.warn('Enhanced Z detection failed', { source: 'ParseStep', error: err });
             // Continue with original detection, don't fail the process
           }
         } else {
@@ -334,18 +246,14 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
 
         // IMPORTANT: Store the original dataset for import (with untransformed coordinates)
         setImportDataset(fullDataset);
-        logManager.info(SOURCE, 'Stored original dataset for import', { 
-          srid: fullDataset.metadata?.srid, 
-          featureCount: fullDataset.features?.length,
-          heightSource: zDetection.hasZ ? 'z' : 'none'
-        });
+        await dbLogger.info('Stored original dataset for import', { source: 'ParseStep', srid: fullDataset.metadata?.srid, featureCount: fullDataset.features?.length, heightSource: zDetection.hasZ ? 'z' : 'none' });
 
         // Create a transformed copy of the dataset for map preview if needed
         const previewDataset = { ...fullDataset };
-        if (fullDataset.metadata?.srid && fullDataset.metadata.srid !== 4326) {
-          const sourceSrid = fullDataset.metadata.srid;
+        const sourceSrid = fullDataset.metadata && typeof fullDataset.metadata.srid === 'number' ? fullDataset.metadata.srid : undefined;
+        if (sourceSrid) {
           try {
-            logManager.info(SOURCE, 'Transforming coordinates for preview', { sourceSrid });
+            await dbLogger.info('Transforming coordinates for preview', { source: 'ParseStep', srid: sourceSrid });
             
             // Simplified approach - use proj4 directly with common projections
             // Swiss LV95 (EPSG:2056)
@@ -357,152 +265,114 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
             previewDataset.features = await Promise.all(fullDataset.features.map(async (feature) => {
               // Create a clone of the feature to avoid modifying the original
               const transformedFeature = { ...feature, geometry: { ...feature.geometry } };
-              
-              // Use a helper function to transform coordinates based on geometry type
-              const transformCoords = (coords: any[], srid: number): any => {
-                if (Array.isArray(coords[0])) {
-                  // Handle nested arrays (LineString, Polygon, etc.)
-                  return coords.map((c: any) => transformCoords(c, srid));
-                } else {
-                  try {
-                    // Log input coordinates - use INFO level for better visibility during debugging
-                    logManager.info(SOURCE, 'Transforming point coordinate', { 
-                      input: coords,
-                      inputType: typeof coords[0],
-                      srid 
-                    });
-                    
-                    // Check if coords are valid numbers
-                    if (typeof coords[0] !== 'number' || typeof coords[1] !== 'number' || 
-                        isNaN(coords[0]) || isNaN(coords[1])) {
-                      logManager.warn(SOURCE, 'Invalid coordinate values', { coords });
-                      return coords;
+              // Use type guards for transformCoords
+              const isNumberArray = (arr: unknown): arr is number[] => Array.isArray(arr) && arr.every((v) => typeof v === 'number');
+              const transformCoords = async (coords: unknown, srid: number): Promise<unknown> => {
+                if (Array.isArray(coords) && Array.isArray(coords[0])) {
+                  return Promise.all((coords as unknown[]).map((c) => transformCoords(c, srid)));
+                } else if (isNumberArray(coords)) {
+                  // Now coords is number[]
+                  if (
+                    typeof coords[0] !== 'number' || typeof coords[1] !== 'number' ||
+                    isNaN(coords[0]) || isNaN(coords[1])
+                  ) {
+                    await dbLogger.warn('Invalid coordinate values', { source: 'ParseStep', coords });
+                    return coords;
+                  }
+                  // Try to verify if these are already WGS84 coordinates
+                  if (coords[0] >= -180 && coords[0] <= 180 && 
+                      coords[1] >= -90 && coords[1] <= 90) {
+                    await dbLogger.info('Coordinate appears to already be in WGS84 range', { source: 'ParseStep', input: coords });
+                    // Continue with transformation anyway to be sure
+                  }
+                  // Verify this is actually an LV95 coordinate (should be in expected range)
+                  if (srid === 2056) {
+                    const validLV95 = coords[0] >= 2485000 && coords[0] <= 2835000 &&
+                                      coords[1] >= 1075000 && coords[1] <= 1295000;
+                    if (!validLV95) {
+                      await dbLogger.warn('Coordinates outside expected LV95 range', { source: 'ParseStep', input: coords, expectedRange: "X: 2485000-2835000, Y: 1075000-1295000" });
+                      // Continue with transformation anyway
                     }
-                    
-                    // Try to verify if these are already WGS84 coordinates
-                    if (coords[0] >= -180 && coords[0] <= 180 && 
-                        coords[1] >= -90 && coords[1] <= 90) {
-                      logManager.info(SOURCE, 'Coordinate appears to already be in WGS84 range', { 
-                        input: coords 
-                      });
-                      // Continue with transformation anyway to be sure
+                  }
+                  // Log the exact proj4 definition being used
+                  const fromDef = proj4.defs(`EPSG:${srid}`);
+                  await dbLogger.info('Using projection definition', { source: 'ParseStep', fromSrid: srid, definition: fromDef });
+                  // Transform from source SRID to WGS84
+                  const transformed = proj4(`EPSG:${srid}`, 'EPSG:4326', coords as [number, number]);
+                  // Verify transformed coordinates are valid
+                  if (
+                    !Array.isArray(transformed) ||
+                    typeof transformed[0] !== 'number' || typeof transformed[1] !== 'number' ||
+                    isNaN(transformed[0]) || isNaN(transformed[1])
+                  ) {
+                    await dbLogger.warn('Invalid transformed coordinate values', { source: 'ParseStep', input: coords, output: transformed });
+                    return coords;
+                  }
+                  // Verify lat/lng values are in valid ranges
+                  if (transformed[0] < -180 || transformed[0] > 180 || 
+                      transformed[1] < -90 || transformed[1] > 90) {
+                    await dbLogger.warn('Transformed coordinates out of valid range', { source: 'ParseStep', input: coords, output: transformed });
+                    // Try flipping the input coordinates if they might be in wrong order
+                    const flippedInput: [number, number] = [coords[1], coords[0]];
+                    await dbLogger.info('Trying with flipped input coordinates', { source: 'ParseStep', originalInput: coords, flippedInput });
+                    const transformedFlipped = proj4(`EPSG:${srid}`, 'EPSG:4326', flippedInput);
+                    if (
+                      Array.isArray(transformedFlipped) &&
+                      transformedFlipped[0] >= -180 && transformedFlipped[0] <= 180 && 
+                      transformedFlipped[1] >= -90 && transformedFlipped[1] <= 90
+                    ) {
+                      await dbLogger.info('Flipped coordinates transformation successful', { source: 'ParseStep', flippedInput, transformedFlipped });
+                      return transformedFlipped;
                     }
-                    
-                    // Verify this is actually an LV95 coordinate (should be in expected range)
-                    if (srid === 2056) {
-                      const validLV95 = coords[0] >= 2485000 && coords[0] <= 2835000 &&
-                                        coords[1] >= 1075000 && coords[1] <= 1295000;
-                      if (!validLV95) {
-                        logManager.warn(SOURCE, 'Coordinates outside expected LV95 range', { 
-                          input: coords,
-                          expectedRange: "X: 2485000-2835000, Y: 1075000-1295000"
-                        });
-                        // Continue with transformation anyway
-                      }
-                    }
-                    
-                    // Log the exact proj4 definition being used
-                    const fromDef = proj4.defs(`EPSG:${srid}`);
-                    logManager.info(SOURCE, 'Using projection definition', { 
-                      fromSrid: srid, 
-                      definition: fromDef
-                    });
-                    
-                    // Transform from source SRID to WGS84
-                    const transformed = proj4(`EPSG:${srid}`, 'EPSG:4326', coords);
-                    
-                    // Verify transformed coordinates are valid
-                    if (typeof transformed[0] !== 'number' || typeof transformed[1] !== 'number' ||
-                        isNaN(transformed[0]) || isNaN(transformed[1])) {
-                      logManager.warn(SOURCE, 'Invalid transformed coordinate values', { 
-                        input: coords, 
-                        output: transformed 
-                      });
-                      return coords;
-                    }
-                    
-                    // Verify lat/lng values are in valid ranges
-                    if (transformed[0] < -180 || transformed[0] > 180 || 
-                        transformed[1] < -90 || transformed[1] > 90) {
-                      logManager.warn(SOURCE, 'Transformed coordinates out of valid range', { 
-                        input: coords, 
-                        output: transformed 
-                      });
-                      
-                      // Try flipping the input coordinates if they might be in wrong order
-                      const flippedInput = [coords[1], coords[0]];
-                      logManager.info(SOURCE, 'Trying with flipped input coordinates', { 
-                        originalInput: coords, 
-                        flippedInput 
-                      });
-                      
-                      const transformedFlipped = proj4(`EPSG:${srid}`, 'EPSG:4326', flippedInput);
-                      
-                      if (transformedFlipped[0] >= -180 && transformedFlipped[0] <= 180 && 
-                          transformedFlipped[1] >= -90 && transformedFlipped[1] <= 90) {
-                        logManager.info(SOURCE, 'Flipped coordinates transformation successful', { 
-                          flippedInput, 
-                          transformedFlipped 
-                        });
-                        return transformedFlipped;
-                      }
-                      
-                      // Return a safe fallback in Switzerland
-                      return [8.5, 47.0]; // Default to somewhere in Switzerland
-                    }
-                    
-                    // Log successful transformation
-                    logManager.info(SOURCE, 'Transformed coordinate', { 
-                      input: coords, 
-                      output: transformed 
-                    });
-                    
-                    return transformed;
-                  } catch (error) {
-                    logManager.error(SOURCE, 'Coordinate transformation failed', { coords, srid, error });
                     // Return a safe fallback in Switzerland
                     return [8.5, 47.0]; // Default to somewhere in Switzerland
                   }
+                  // Log successful transformation
+                  await dbLogger.info('Transformed coordinate', { source: 'ParseStep', input: coords, output: transformed });
+                  return transformed;
                 }
+                return coords;
               };
-              
               // Transform specific geometry types
               if (feature.geometry) {
                 transformedFeature.geometry = { ...feature.geometry };
                 if ('coordinates' in transformedFeature.geometry) {
-                  transformedFeature.geometry.coordinates = transformCoords(
-                    transformedFeature.geometry.coordinates, 
+                  const transformed = await transformCoords(
+                    transformedFeature.geometry.coordinates,
                     sourceSrid
                   );
+                  // Only assign if transformed is a valid GeoJSON coordinates type
+                  if (
+                    Array.isArray(transformed) ||
+                    (Array.isArray(transformed) && Array.isArray(transformed[0]))
+                  ) {
+                    (transformedFeature.geometry as { coordinates: typeof transformed }).coordinates = transformed;
+                  }
                 }
               }
-              
               return transformedFeature;
             }));
             
             // Update metadata
-            previewDataset.metadata = { 
+            previewDataset.metadata = {
               ...fullDataset.metadata,
-              srid: 4326
+              srid: 4326,
+              featureCount: typeof previewDataset.features?.length === 'number' ? previewDataset.features.length : 0,
+              geometryTypes: Array.isArray(fullDataset.metadata?.geometryTypes) ? fullDataset.metadata.geometryTypes : [],
+              properties: Array.isArray(fullDataset.metadata?.properties) ? fullDataset.metadata.properties : []
             };
             
-            logManager.info(SOURCE, 'Preview dataset transformation complete', {
-              originalSrid: sourceSrid,
-              featureCount: previewDataset.features.length
-            });
+            await dbLogger.info('Preview dataset transformation complete', { source: 'ParseStep', originalSrid: sourceSrid, featureCount: previewDataset.features.length });
             
             // Log first feature geometry to verify transformation
             if (previewDataset.features && previewDataset.features.length > 0) {
               const firstFeature = previewDataset.features[0];
-              logManager.debug(SOURCE, 'First preview feature geometry sample', {
-                type: firstFeature.geometry.type,
-                coordinates: 'coordinates' in firstFeature.geometry ? 
-                  JSON.stringify(firstFeature.geometry.coordinates).substring(0, 100) + '...' : 
-                  'No coordinates property'
-              });
+              await dbLogger.debug('First preview feature geometry sample', { source: 'ParseStep', type: firstFeature.geometry.type, coordinates: 'coordinates' in firstFeature.geometry ? 
+                JSON.stringify(firstFeature.geometry.coordinates).substring(0, 100) + '...' : 
+                'No coordinates property' });
             }
           } catch (error) {
-            logManager.error(SOURCE, 'Failed to transform coordinates for preview', { error });
+            await dbLogger.error('Failed to transform coordinates for preview', { source: 'ParseStep', error });
             // If transformation fails, use the original dataset for preview too
             // This will likely cause map display issues but prevents total failure
           }
@@ -510,34 +380,49 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
         
         // Set the preview dataset for the map view
         setDataset(previewDataset);
-        logManager.info(SOURCE, 'Preview dataset set for UI', { 
-          previewSrid: previewDataset.metadata?.srid 
-        });
+        await dbLogger.info('Preview dataset set for UI', { source: 'ParseStep', previewSrid: previewDataset.metadata?.srid });
 
         // Set parse summary
         const featureCount = fullDataset.features?.length ?? 0;
         let geometryType = 'unknown';
         if (fullDataset.metadata) {
-          if (typeof (fullDataset.metadata as any)?.geometryType === 'string') {
-            geometryType = (fullDataset.metadata as any).geometryType;
-          } else if (Array.isArray((fullDataset.metadata as any)?.geometryTypes)) {
-            geometryType = (fullDataset.metadata as any).geometryTypes.join(', ');
-          } else if (typeof (fullDataset.metadata as any)?.geometryTypes === 'string') {
-            geometryType = (fullDataset.metadata as any).geometryTypes;
+          if (
+            Object.prototype.hasOwnProperty.call(fullDataset.metadata, 'geometryType') &&
+            typeof (fullDataset.metadata as { geometryType?: unknown }).geometryType === 'string'
+          ) {
+            geometryType = (fullDataset.metadata as { geometryType?: string }).geometryType as string;
+          } else if (
+            Object.prototype.hasOwnProperty.call(fullDataset.metadata, 'geometryTypes')
+          ) {
+            const gTypes = (fullDataset.metadata as { geometryTypes?: unknown }).geometryTypes;
+            if (Array.isArray(gTypes)) {
+              geometryType = gTypes.join(', ');
+            } else if (typeof gTypes === 'string') {
+              geometryType = gTypes;
+            }
           }
         }
-        const srid = fullDataset.metadata?.srid || 'unknown';
+        let srid: number | string = 'unknown';
+        if (fullDataset.metadata && typeof fullDataset.metadata.srid === 'number') {
+          srid = fullDataset.metadata.srid;
+        }
+        await dbLogger.info('Parsing completed successfully', { source: 'ParseStep', featureCount, geometryType, srid });
+        await dbLogger.info('Stored original dataset for import', { source: 'ParseStep', srid, featureCount, heightSource: zDetection.hasZ ? 'z' : 'none' });
         setParseSummary(
           `Parsing completed successfully: ${featureCount} features, geometry type: ${geometryType}, SRID: ${srid}.`
         );
         setParsing(false);
-      } catch (err: any) {
-        setError(err.message || 'Parsing failed');
+      } catch (err: unknown) {
+        if (err instanceof Error) {
+          setError(err.message);
+        } else {
+          setError('Parsing failed');
+        }
         setParsing(false);
       }
     };
-    if (fileInfo?.id && fileInfo.name) {
-      parseFile();
+    if (fileInfo && typeof fileInfo === 'object' && 'id' in fileInfo && 'name' in fileInfo && typeof fileInfo.id === 'string' && typeof fileInfo.name === 'string') {
+      (async () => { await parseFile(); })();
     }
   }, [fileInfo, setDataset, onNext, supabase, setImportDataset, setHeightSource]);
 

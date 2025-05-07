@@ -34,7 +34,7 @@ export const useUIStore = create<UIState>((set) => ({
       },
     })),
   closeAllModals: () =>
-    set((state) => ({
+    set(() => ({
       modals: {
         login: false,
         register: false,

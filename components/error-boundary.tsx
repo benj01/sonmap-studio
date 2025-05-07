@@ -4,7 +4,7 @@ import { Component, ErrorInfo, ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { XCircle } from 'lucide-react'
-import { LogManager } from '@/core/logging/log-manager'
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 interface Props {
   children: ReactNode
@@ -18,19 +18,6 @@ interface State {
 }
 
 const SOURCE = 'ErrorBoundary'
-const logManager = LogManager.getInstance()
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
 
 export class ErrorBoundary extends Component<Props, State> {
   public state: State = {
@@ -42,8 +29,8 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error }
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    logger.error('Uncaught error', { error, errorInfo })
+  public async componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    await dbLogger.error('Uncaught error', { error, errorInfo }, { source: SOURCE })
     this.props.onError?.(error, errorInfo)
   }
 

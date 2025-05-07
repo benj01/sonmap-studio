@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { createClient } from '@/utils/supabase/client';
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { 
   generateTestPoints, 
   generateTestPolygon, 
@@ -21,8 +21,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 
-const logger = createLogger('TestImport');
-
 type GeometryType = 'points' | 'polygon' | 'linestring' | 'mixed';
 
 export function TestImport({ projectId }: { projectId: string }) {
@@ -30,7 +28,7 @@ export function TestImport({ projectId }: { projectId: string }) {
   const [featureCount, setFeatureCount] = useState(50);
   const [batchSize, setBatchSize] = useState(10);
   const [geometryType, setGeometryType] = useState<GeometryType>('points');
-  const [results, setResults] = useState<any>(null);
+  const [results, setResults] = useState<unknown>(null);
 
   const generateFeatures = (type: GeometryType, count: number) => {
     switch (type) {
@@ -60,7 +58,7 @@ export function TestImport({ projectId }: { projectId: string }) {
       // Get current user
       const { data: { user }, error: userError } = await supabase.auth.getUser();
       if (userError || !user) {
-        logger.error('Failed to get current user', { error: userError });
+        await dbLogger.error('TestImport', 'Failed to get current user', { error: userError, projectId });
         throw new Error('Authentication required');
       }
       
@@ -75,24 +73,17 @@ export function TestImport({ projectId }: { projectId: string }) {
         .limit(1);
         
       if (filesError || !projectFiles || projectFiles.length === 0) {
-        logger.error('Failed to find a suitable project file', { 
-          error: filesError, 
-          projectId 
-        });
+        await dbLogger.error('TestImport', 'Failed to find a suitable project file', { error: filesError, projectId, userId: user.id });
         throw new Error('No suitable project file found for the current user');
       }
       
       const projectFileId = projectFiles[0].id;
-      logger.info('Found suitable project file', { projectFileId });
+      await dbLogger.info('TestImport', 'Found suitable project file', { projectFileId, projectId, userId: user.id });
       
       // Generate features based on selected type and count
       const features = generateFeatures(geometryType, featureCount);
       
-      logger.info('Starting batch import test', { 
-        featureCount: features.length,
-        geometryType,
-        batchSize
-      });
+      await dbLogger.info('TestImport', 'Starting batch import test', { featureCount: features.length, geometryType, batchSize, projectId, userId: user.id });
 
       // Call the import function directly
       const { data, error } = await supabase.rpc(
@@ -108,11 +99,11 @@ export function TestImport({ projectId }: { projectId: string }) {
       );
 
       if (error) {
-        logger.error('Batch import failed', { error });
+        await dbLogger.error('TestImport', 'Batch import failed', { error, projectId, userId: user.id });
         throw new Error(error.message);
       }
 
-      logger.info('Batch import successful', { result: data });
+      await dbLogger.info('TestImport', 'Batch import successful', { result: data, projectId, userId: user.id });
       setResults(data);
 
       // Verify the import by checking the geo_features table
@@ -141,22 +132,22 @@ export function TestImport({ projectId }: { projectId: string }) {
         .limit(5);
 
       if (featuresError) {
-        logger.error('Error fetching imported features', { error: featuresError });
+        await dbLogger.error('TestImport', 'Error fetching imported features', { error: featuresError, projectId, userId: user.id });
       } else {
-        logger.info('Verified imported features', { 
-          sampleFeatures: importedFeatures,
-          totalImported: data[0]?.imported_count || 0
-        });
+        await dbLogger.info('TestImport', 'Verified imported features', { sampleFeatures: importedFeatures, totalImported: data[0]?.imported_count || 0, projectId, userId: user.id });
       }
 
     } catch (error) {
-      logger.error('Test import failed', { 
-        error: error instanceof Error ? error.message : 'Unknown error' 
-      });
+      await dbLogger.error('TestImport', 'Test import failed', { error: error instanceof Error ? error.message : 'Unknown error', projectId });
     } finally {
       setIsLoading(false);
     }
   };
+
+  // Type guard for import results
+  function isImportResultsArray(val: unknown): val is Array<{ imported_count?: number; failed_count?: number; collection_id?: string; layer_id?: string }> {
+    return Array.isArray(val) && val.length > 0 && typeof val[0] === 'object' && val[0] !== null;
+  }
 
   return (
     <Card className="w-full max-w-md">
@@ -209,7 +200,7 @@ export function TestImport({ projectId }: { projectId: string }) {
           />
         </div>
 
-        {results && (
+        {isImportResultsArray(results) && (
           <div className="mt-4 p-3 bg-muted rounded-md">
             <h4 className="font-medium mb-2">Import Results:</h4>
             <ul className="text-sm space-y-1">

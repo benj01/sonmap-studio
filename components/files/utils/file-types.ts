@@ -1,8 +1,7 @@
 import type { FileTypeConfig, CompanionFileConfig } from '../types';
-import { createLogger } from '../../../utils/logger';
+import { dbLogger } from '../../../utils/logging/dbLogger';
 
-const SOURCE = 'FileTypeUtil';
-const logger = createLogger(SOURCE);
+const LOG_SOURCE = 'FileTypeUtil';
 
 /**
  * Utility class for handling file types and MIME types
@@ -54,7 +53,7 @@ export class FileTypeUtil {
               const content = await file.text();
               return content.includes('<!DOCTYPE qgis') || content.includes('<qgis');
             } catch (error) {
-              logger.error('QMD validation error', { error });
+              await dbLogger.error('QMD validation error', { error }, { LOG_SOURCE });
               return false;
             }
           }
@@ -67,7 +66,7 @@ export class FileTypeUtil {
           try {
             json = JSON.parse(content);
           } catch (e) {
-            logger.warn('Failed to parse GeoJSON', { error: e });
+            await dbLogger.warn('Failed to parse GeoJSON', { error: e }, { LOG_SOURCE });
             return false;
           }
 
@@ -76,23 +75,23 @@ export class FileTypeUtil {
                             ['Point', 'LineString', 'Polygon', 'MultiPoint', 'MultiLineString', 'MultiPolygon'].includes(json.type);
 
           if (!isValidType) {
-            logger.warn('Invalid GeoJSON type', { type: json.type });
+            await dbLogger.warn('Invalid GeoJSON type', { type: json.type }, { LOG_SOURCE });
             return false;
           }
 
           if (json.type === 'FeatureCollection' && !Array.isArray(json.features)) {
-            logger.warn('FeatureCollection missing features array');
+            await dbLogger.warn('FeatureCollection missing features array', { LOG_SOURCE });
             return false;
           }
 
           if (json.type === 'Feature' && !json.geometry) {
-            logger.warn('Feature missing geometry');
+            await dbLogger.warn('Feature missing geometry', { LOG_SOURCE });
             return false;
           }
 
           return true;
         } catch (error) {
-          logger.error('GeoJSON validation error', { error });
+          await dbLogger.error('GeoJSON validation error', { error }, { LOG_SOURCE });
           return false;
         }
       }
@@ -135,7 +134,7 @@ export class FileTypeUtil {
           const header = lines[0].toLowerCase();
           return /\b(lat|latitude|lon|longitude|x|y|z|easting|northing|elevation)\b/.test(header);
         } catch (error) {
-          logger.error('CSV validation error', { error });
+          await dbLogger.error('CSV validation error', { error }, { LOG_SOURCE });
           return false;
         }
       }
@@ -162,7 +161,7 @@ export class FileTypeUtil {
           const firstLine = lines[0].trim();
           return /^-?\d+(\.\d+)?\s+-?\d+(\.\d+)?\s+-?\d+(\.\d+)?(\s+.*)?$/.test(firstLine);
         } catch (error) {
-          logger.error('XYZ validation error', { error });
+          await dbLogger.error('XYZ validation error', { error }, { LOG_SOURCE });
           return false;
         }
       }

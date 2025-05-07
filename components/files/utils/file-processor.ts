@@ -1,10 +1,9 @@
 import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
 import { FileTypeUtil } from './file-types';
-import { createLogger } from '../../../utils/logger';
+import { dbLogger } from '../../../utils/logging/dbLogger';
 import { FileValidator } from './validation';
 
-const SOURCE = 'FileProcessor';
-const logger = createLogger(SOURCE);
+const LOG_SOURCE = 'FileProcessor';
 
 /**
  * Custom error for file processing
@@ -26,9 +25,10 @@ export class FileProcessor {
    * @returns Array of file groups
    */
   static async groupFiles(files: File[]): Promise<FileGroup[]> {
-    logger.debug('Starting file grouping', {
+    await dbLogger.debug('Starting file grouping', {
       fileCount: files.length,
-      files: files.map(f => ({ name: f.name, type: f.type }))
+      files: files.map(f => ({ name: f.name, type: f.type })),
+      LOG_SOURCE
     });
     
     const groups: FileGroup[] = [];
@@ -37,10 +37,10 @@ export class FileProcessor {
     // First pass: identify main files
     for (const file of files) {
       if (FileTypeUtil.isMainGeoFile(file.name)) {
-        logger.debug('Found main geo file', { 
+        await dbLogger.debug('Found main geo file', { 
           fileName: file.name,
           type: FileTypeUtil.getExtension(file.name)
-        });
+        }, { LOG_SOURCE });
         const group: FileGroup = {
           mainFile: file,
           companions: []
@@ -48,7 +48,7 @@ export class FileProcessor {
         groups.push(group);
         remainingFiles.delete(file);
       } else {
-        logger.debug('Skipping non-main file', { fileName: file.name });
+        await dbLogger.debug('Skipping non-main file', { fileName: file.name }, { LOG_SOURCE });
       }
     }
 
@@ -57,13 +57,13 @@ export class FileProcessor {
       const config = FileTypeUtil.getConfigForFile(group.mainFile.name);
       const baseFileName = group.mainFile.name.replace(/\.[^.]+$/, '');
       
-      logger.debug('Looking for companions', {
+      await dbLogger.debug('Looking for companions', {
         mainFile: group.mainFile.name,
         fileType: FileTypeUtil.getExtension(group.mainFile.name),
         config: config?.companionFiles?.map(c => c.extension),
         baseFileName,
         remainingFiles: Array.from(remainingFiles).map(f => f.name)
-      });
+      }, { LOG_SOURCE });
 
       if (config?.companionFiles) {
         // Process each required companion type
@@ -74,21 +74,21 @@ export class FileProcessor {
           );
 
           if (matchingCompanion) {
-            logger.debug('Found matching companion', {
+            await dbLogger.debug('Found matching companion', {
               mainFile: group.mainFile.name,
               companion: matchingCompanion.name,
               extension: companionConfig.extension,
               required: companionConfig.required
-            });
+            }, { LOG_SOURCE });
             group.companions.push(matchingCompanion);
             remainingFiles.delete(matchingCompanion);
           } else if (companionConfig.required) {
-            logger.warn('Missing required companion', {
+            await dbLogger.warn('Missing required companion', {
               mainFile: group.mainFile.name,
               extension: companionConfig.extension,
               required: true,
               remainingFiles: Array.from(remainingFiles).map(f => f.name)
-            });
+            }, { LOG_SOURCE });
           }
         }
 
@@ -101,10 +101,10 @@ export class FileProcessor {
           FileValidator.validateCompanions(group.mainFile.name, group.companions, requiredExtensions);
         } catch (error) {
           if (error instanceof Error) {
-            logger.warn('Missing required companion files', {
+            await dbLogger.warn('Missing required companion files', {
               mainFile: group.mainFile.name,
               error: error.message
-            });
+            }, { LOG_SOURCE });
             throw new FileProcessingError(error.message, 'MISSING_REQUIRED_COMPANIONS');
           }
           throw error;
@@ -112,14 +112,15 @@ export class FileProcessor {
       }
     }
 
-    logger.debug('File grouping complete', {
+    await dbLogger.debug('File grouping complete', {
       groupCount: groups.length,
       groups: groups.map(g => ({
         mainFile: g.mainFile.name,
         fileType: FileTypeUtil.getExtension(g.mainFile.name),
         companionCount: g.companions.length,
         companions: g.companions.map(c => c.name)
-      }))
+      })),
+      LOG_SOURCE
     });
 
     return groups;
@@ -132,10 +133,10 @@ export class FileProcessor {
    * @returns ProcessedFiles object
    */
   static async processFiles(mainFile: File, companions: File[]): Promise<ProcessedFiles> {
-    logger.info('Processing file group', {
+    await dbLogger.info('Processing file group', {
       mainFile: mainFile.name,
       companions: companions.map(c => c.name)
-    });
+    }, { LOG_SOURCE });
 
     const processedMain = await this.processFile(mainFile);
     const processedCompanions: ProcessedFile[] = [];
@@ -145,7 +146,7 @@ export class FileProcessor {
       processedCompanions.push(processed);
     }
 
-    logger.info('File processing complete', {
+    await dbLogger.info('File processing complete', {
       mainFile: {
         name: processedMain.file.name,
         isValid: processedMain.isValid,
@@ -155,7 +156,8 @@ export class FileProcessor {
         name: c.file.name,
         isValid: c.isValid,
         error: c.error
-      }))
+      })),
+      LOG_SOURCE
     });
 
     return {
@@ -171,37 +173,37 @@ export class FileProcessor {
    */
   private static async processFile(file: File): Promise<ProcessedFile> {
     try {
-      logger.info('Processing individual file', { fileName: file.name });
+      await dbLogger.info('Processing individual file', { fileName: file.name }, { LOG_SOURCE });
       const config = FileTypeUtil.getConfigForFile(file.name);
       let isValid = true;
       let error: string | undefined;
 
       if (config?.validateContent) {
         try {
-          logger.info('Validating file content', { fileName: file.name });
+          await dbLogger.info('Validating file content', { fileName: file.name }, { LOG_SOURCE });
           isValid = await config.validateContent(file);
           if (!isValid) {
             error = 'File content validation failed';
-            logger.warn('File content validation failed', { fileName: file.name });
+            await dbLogger.warn('File content validation failed', { fileName: file.name }, { LOG_SOURCE });
           }
         } catch (e) {
           isValid = false;
           error = e instanceof Error ? e.message : 'Validation error';
-          logger.error('File validation error', {
+          await dbLogger.error('File validation error', {
             fileName: file.name,
             error: error
-          });
+          }, { LOG_SOURCE });
         }
       }
 
       if (config?.maxSize && file.size > config.maxSize) {
         isValid = false;
         error = `File size exceeds maximum allowed size of ${config.maxSize} bytes`;
-        logger.warn('File size validation failed', {
+        await dbLogger.warn('File size validation failed', {
           fileName: file.name,
           size: file.size,
           maxSize: config.maxSize
-        });
+        }, { LOG_SOURCE });
       }
 
       return {
@@ -212,10 +214,10 @@ export class FileProcessor {
         error
       };
     } catch (e) {
-      logger.error('File processing error', {
+      await dbLogger.error('File processing error', {
         fileName: file.name,
         error: e instanceof Error ? e.message : 'Unknown error'
-      });
+      }, { LOG_SOURCE });
       throw new FileProcessingError(
         e instanceof Error ? e.message : 'Failed to process file',
         'PROCESSING_ERROR'

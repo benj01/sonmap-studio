@@ -3,7 +3,7 @@
  * Contains sample GeoJSON features in Swiss LV95 (EPSG:2056) coordinate system
  */
 
-import type { Feature, Point, Polygon, LineString } from 'geojson';
+import type { Feature, Point, Polygon, LineString, Geometry } from 'geojson';
 
 // Generate a grid of points around a center point
 export const generateTestPoints = (
@@ -105,6 +105,15 @@ export const generateTestLineString = (
     }
   };
 };
+
+// Type guard for GeoJSON Feature
+function isFeature(val: unknown): val is Feature {
+  return (
+    typeof val === 'object' && val !== null &&
+    'type' in val && (val as { type: unknown }).type === 'Feature' &&
+    'geometry' in val && typeof (val as { geometry: unknown }).geometry === 'object'
+  );
+}
 
 // Sample dataset with mixed geometry types
 export const generateMixedDataset = (

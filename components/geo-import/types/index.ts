@@ -3,14 +3,14 @@ import { ImportSession, GeoFeature as ImportGeoFeature } from '@/types/geo-impor
 import { ImportResult as ServiceImportResult, FeatureError } from '@/core/services/geo-import/types/index';
 
 export interface ImportLoaderResult {
-  features: any[];
+  features: LoaderGeoFeature[];
   bounds: {
     minX: number;
     minY: number;
     maxX: number;
     maxY: number;
   };
-  layers: any[];
+  layers: string[];
   statistics: {
     pointCount: number;
     layerCount: number;
@@ -43,7 +43,7 @@ export interface ImportResult {
   notices: Array<{
     level: string;
     message: string;
-    details?: any;
+    details?: unknown;
   }>;
   featureErrors: Array<{
     feature_index: number;

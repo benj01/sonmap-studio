@@ -1,4 +1,5 @@
 import * as Cesium from 'cesium';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 /**
  * Create a point cloud tileset from a local point cloud
@@ -19,7 +20,7 @@ export function createPointCloudTileset(url: string): Cesium.Cesium3DTileset {
   };
   
   // Create the tileset with the URL directly
-  // @ts-ignore - Ignoring TypeScript error for now
+  // @ts-expect-error - Ignoring TypeScript error for now
   const tileset = new Cesium.Cesium3DTileset(url, options);
   
   return tileset;
@@ -31,14 +32,18 @@ export function createPointCloudTileset(url: string): Cesium.Cesium3DTileset {
  * @param pointCloudData Raw point cloud data
  * @returns Processed point cloud data
  */
-export function processPointCloudData(pointCloudData: ArrayBuffer): any {
+export async function processPointCloudData(pointCloudData: ArrayBuffer): Promise<{
+  points: unknown[];
+  bounds: [number, number, number, number, number, number];
+}> {
   // This is a placeholder for the actual implementation
   // In a real implementation, this would:
   // 1. Parse the point cloud data
   // 2. Convert to a format suitable for Cesium
-  
-  console.log('Processing point cloud data', {
-    size: pointCloudData.byteLength
+
+  await dbLogger.debug('Processing point cloud data', {
+    size: pointCloudData.byteLength,
+    source: 'pointcloud.processPointCloudData'
   });
   
   // For now, just return a placeholder object
@@ -87,12 +92,12 @@ export function generateColorRamp(
  * @returns Point cloud data with colors
  */
 export function applyColorRampToPointCloud(
-  points: any[],
-  valueAccessor: (point: any) => number,
+  points: unknown[],
+  valueAccessor: (point: unknown) => number,
   colorRamp: Array<[number, number, number, number]>,
   min: number,
   max: number
-): any[] {
+): unknown[] {
   // Apply the color ramp to each point
   return points.map(point => {
     const value = valueAccessor(point);
@@ -101,11 +106,14 @@ export function applyColorRampToPointCloud(
       Math.floor(normalizedValue * colorRamp.length),
       colorRamp.length - 1
     );
-    
     // Clone the point and add the color
-    return {
-      ...point,
-      color: colorRamp[colorIndex]
-    };
+    if (typeof point === 'object' && point !== null) {
+      return {
+        ...(point as Record<string, unknown>),
+        color: colorRamp[colorIndex]
+      };
+    }
+    // If point is not an object, just return it as is
+    return point;
   });
 } 

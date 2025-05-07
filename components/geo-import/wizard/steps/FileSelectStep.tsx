@@ -4,9 +4,7 @@ import { createClient } from '@/utils/supabase/client';
 import { FileTypeUtil } from '../../../files/utils/file-types';
 import { FileProcessor } from '../../../files/utils/file-processor';
 import { Alert, AlertTitle, AlertDescription } from '../../../ui/alert';
-import { createLogger } from '@/utils/logger';
-
-const logger = createLogger('FileSelectStep');
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 interface FileSelectStepProps {
   onNext: () => void;
@@ -14,7 +12,6 @@ interface FileSelectStepProps {
 }
 
 export function FileSelectStep({ onNext }: FileSelectStepProps) {
-  logger.info('FileSelectStep loaded');
   const { fileInfo, setFileInfo, projectId } = useWizard();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
@@ -191,6 +188,8 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
       setUploading(false);
     }
   };
+
+  (async () => { await dbLogger.info('FileSelectStep loaded', { projectId }); })();
 
   return (
     <div className="space-y-4">

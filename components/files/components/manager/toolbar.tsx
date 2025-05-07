@@ -1,4 +1,6 @@
 import React, { useRef, useCallback } from 'react';
+import { dbLogger } from '../../../../utils/logging/dbLogger';
+const LOG_SOURCE = 'FileManager.Toolbar';
 
 interface ToolbarProps {
   onFileSelect: (files: FileList) => void;
@@ -9,14 +11,15 @@ export function Toolbar({ onFileSelect, isProcessing }: ToolbarProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const processingRef = useRef(false);
 
-  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     // Prevent duplicate processing
     if (processingRef.current) {
-      console.info('[Toolbar] Skipping duplicate file change event');
+      await dbLogger.debug('handleFileChange.duplicateEvent', { LOG_SOURCE });
       return;
     }
 
-    console.info('[Toolbar] File input change event', {
+    await dbLogger.debug('handleFileChange.inputChange', {
+      LOG_SOURCE,
       hasFiles: !!event.target.files,
       fileCount: event.target.files?.length || 0
     });
@@ -24,29 +27,26 @@ export function Toolbar({ onFileSelect, isProcessing }: ToolbarProps) {
     const files = event.target.files;
     if (files && files.length > 0) {
       processingRef.current = true;
-      console.info('[Toolbar] Files selected', {
+      await dbLogger.debug('handleFileChange.filesSelected', {
+        LOG_SOURCE,
         count: files.length,
         names: Array.from(files).map(f => f.name)
       });
       onFileSelect(files);
-      
-      // Reset processing flag after a short delay
       setTimeout(() => {
         processingRef.current = false;
       }, 1000);
-      
-      // Reset input value to allow selecting the same file again
       event.target.value = '';
     }
   }, [onFileSelect]);
 
-  const handleButtonClick = useCallback(() => {
+  const handleButtonClick = useCallback(async () => {
     if (isProcessing || processingRef.current) {
-      console.info('[Toolbar] Skipping button click - processing in progress');
+      await dbLogger.debug('handleButtonClick.processingInProgress', { LOG_SOURCE, isProcessing });
       return;
     }
-    
-    console.info('[Toolbar] Select Files button clicked', {
+    await dbLogger.debug('handleButtonClick.selectFilesClicked', {
+      LOG_SOURCE,
       isProcessing,
       hasInputRef: !!fileInputRef.current
     });

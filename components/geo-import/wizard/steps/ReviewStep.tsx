@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 import { createClient } from '@/utils/supabase/client';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 
@@ -12,10 +12,6 @@ interface ReviewStepProps {
   onRefreshFiles?: () => void;
 }
 
-const LOG_SOURCE = 'GeoImportReviewStep';
-const logManager = LogManager.getInstance();
-logManager.setComponentLogLevel(LOG_SOURCE, LogLevel.DEBUG);
-
 export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps) {
   const {
     fileInfo,
@@ -23,10 +19,6 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
     selectedFeatureIds,
     heightSource,
     targetSrid,
-    projectFileId,
-    collectionName,
-    sourceSrid,
-    batchSize,
   } = useWizard();
   const [result, setResult] = useState<null | {
     success: boolean;
@@ -52,7 +44,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
   }, [result, onClose, onRefreshFiles]);
 
   const handleImport = async () => {
-    logManager.info(LOG_SOURCE, 'handleImport: ENTERED', {});
+    await dbLogger.info('handleImport: ENTERED', { source: 'GeoImportReviewStep' });
     setImporting(true);
     setError(null);
     setResult(null);
@@ -75,7 +67,8 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       };
       
       // Log both datasets to confirm the correct one is being used
-      logManager.info(LOG_SOURCE, 'Available datasets', {
+      await dbLogger.info('Available datasets', {
+        source: 'GeoImportReviewStep',
         hasPreviewDataset: !!datasetForImport,
         previewDatasetSrid: datasetForImport?.metadata?.srid,
         usingDataset: 'importDataset',
@@ -84,14 +77,14 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       });
       
       // Log the payload
-      logManager.info(LOG_SOURCE, 'Import payload', {
+      await dbLogger.info('Import payload', {
+        source: 'GeoImportReviewStep',
         projectFileId: payload.projectFileId,
         collectionName: payload.collectionName,
         featureCount: payload.features.length,
         sourceSrid: payload.sourceSrid,
         targetSrid: payload.targetSrid,
         heightSource,
-        // Show sample of first feature's coordinates
         features: payload.features.length > 0 
           ? [{ 
               id: payload.features[0].id, 
@@ -113,7 +106,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
           sourceSrid: payload.sourceSrid,
           targetSrid: payload.targetSrid
         };
-        logManager.error(LOG_SOURCE, 'Missing required parameters', missing);
+        await dbLogger.error('Missing required parameters', { source: 'GeoImportReviewStep', ...missing });
         setError('Missing required parameters: ' + JSON.stringify(missing));
         setImporting(false);
         return;
@@ -133,7 +126,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       } catch (e) {
         responseData = await response.text();
       }
-      logManager.info(LOG_SOURCE, 'Backend response', { status: response.status, response: responseData });
+      await dbLogger.info('Backend response', { source: 'GeoImportReviewStep', status: response.status, response: responseData });
       if (!response.ok) {
         throw new Error(typeof responseData === 'string' ? responseData : JSON.stringify(responseData));
       }
@@ -145,7 +138,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
         errors: responseData.errors || [],
       });
     } catch (err: any) {
-      logManager.error(LOG_SOURCE, 'Import failed', { error: err.message, stack: err.stack });
+      await dbLogger.error('Import failed', { source: 'GeoImportReviewStep', error: err.message, stack: err.stack });
       setResult({
         success: false,
         imported: 0,

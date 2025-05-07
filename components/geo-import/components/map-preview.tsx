@@ -9,6 +9,7 @@ import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle } from 'lucide-react';
 import bbox from '@turf/bbox';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 interface MapPreviewProps {
   features: GeoFeature[];
@@ -263,9 +264,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
     });
 
     try {
-      const handleMapInitializationError = (error: any) => {
+      const handleMapInitializationError = async (error: any) => {
         const errorMessage = error?.message || 'Unknown map initialization error';
-        logManager.error(SOURCE, 'Map initialization error', { 
+        await dbLogger.error(SOURCE, 'Map initialization error', { 
           error, 
           message: errorMessage,
           stack: error.stack
@@ -277,7 +278,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
 
       if (!process.env.NEXT_PUBLIC_MAPBOX_TOKEN) {
         const tokenError = "Missing Mapbox token. Please check your environment variables.";
-        logManager.error(SOURCE, tokenError);
+        (async () => {
+          await dbLogger.error(SOURCE, tokenError);
+        })();
         setMapError(tokenError);
         return;
       }
@@ -293,7 +296,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
 
       map.current.on('error', (e) => {
         const errorMessage = e.error?.message || 'Unknown mapbox error';
-        logManager.error(SOURCE, 'Mapbox runtime error', {
+        dbLogger.error(SOURCE, 'Mapbox runtime error', {
           error: e.error,
           message: errorMessage
         });
@@ -394,27 +397,24 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
   useEffect(() => {
     if (!map.current || !loadedFeatures.length || !mapInitialized.current) return;
 
-    const updateMapData = () => {
+    const updateMapData = async () => {
       const mapInstance = map.current;
       if (!mapInstance) return;
 
       try {
         if (loadedFeatures.length > 0) {
           const sampleFeatures = loadedFeatures.slice(0, Math.min(3, loadedFeatures.length));
-          
-          sampleFeatures.forEach((feature, index) => {
-            logManager.info(SOURCE, `Feature ${index} details:`, {
+          for (const [index, feature] of sampleFeatures.entries()) {
+            await dbLogger.info(SOURCE, `Feature ${index} details:`, {
               id: feature.id,
               geometryType: feature.geometry.type
             });
-            
             if (feature.geometry.type === 'Point' && 'coordinates' in feature.geometry) {
               const coords = feature.geometry.coordinates;
-              logManager.info(SOURCE, `Feature ${index} Point coordinates:`, { coordinates: coords });
-              
+              await dbLogger.info(SOURCE, `Feature ${index} Point coordinates:`, { coordinates: coords });
               if (Array.isArray(coords) && coords.length >= 2) {
                 const [lng, lat] = coords;
-                logManager.info(SOURCE, `Feature ${index} coordinate validation:`, {
+                await dbLogger.info(SOURCE, `Feature ${index} coordinate validation:`, {
                   lng, lat,
                   isLngValid: lng >= -180 && lng <= 180,
                   isLatValid: lat >= -90 && lat <= 90,
@@ -424,13 +424,12 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             } else if ((feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiPoint') && 
                         'coordinates' in feature.geometry) {
               const coords = feature.geometry.coordinates.slice(0, 3);
-              logManager.info(SOURCE, `Feature ${index} ${feature.geometry.type} coordinates (first 3 points):`, { 
+              await dbLogger.info(SOURCE, `Feature ${index} ${feature.geometry.type} coordinates (first 3 points):`, { 
                 coordinates: coords
               });
-              
               if (Array.isArray(coords) && coords.length > 0 && Array.isArray(coords[0]) && coords[0].length >= 2) {
                 const [lng, lat] = coords[0];
-                logManager.info(SOURCE, `Feature ${index} first point validation:`, {
+                await dbLogger.info(SOURCE, `Feature ${index} first point validation:`, {
                   lng, lat,
                   isLngValid: lng >= -180 && lng <= 180,
                   isLatValid: lat >= -90 && lat <= 90,
@@ -438,7 +437,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 });
               }
             }
-          });
+          }
         }
 
         const source = mapInstance.getSource('preview') as mapboxgl.GeoJSONSource;
@@ -446,11 +445,11 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
         let sourceData: GeoJSON.FeatureCollection<GeoJSON.Geometry>;
 
         if (DEBUG_USE_FALLBACK_GEOJSON) {
-          logManager.info(SOURCE, 'Using fallback GeoJSON for debugging', { fallbackGeoJSON: FALLBACK_GEOJSON });
+          await dbLogger.info(SOURCE, 'Using fallback GeoJSON for debugging', { fallbackGeoJSON: FALLBACK_GEOJSON });
           sourceData = FALLBACK_GEOJSON as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
         } else {
-          // First create basic features from the loaded data
-          const basicFeatures = loadedFeatures.map(f => {
+          const basicFeatures = [];
+          for (const f of loadedFeatures) {
             const feature = {
               type: 'Feature' as const,
               id: f.id,
@@ -464,12 +463,11 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 issues: f.validation?.issues || []
               }
             };
-            
             // Apply coordinate swapping for debugging if enabled
             if (DEBUG_SWAP_COORDINATES) {
               if (feature.geometry.type === 'Point' && 'coordinates' in feature.geometry) {
                 const [lng, lat] = feature.geometry.coordinates as [number, number];
-                logManager.info(SOURCE, 'Swapping Point coordinates for debugging', {
+                await dbLogger.info(SOURCE, 'Swapping Point coordinates for debugging', {
                   original: [lng, lat],
                   swapped: [lat, lng]
                 });
@@ -478,21 +476,19 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
               else if ((feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiPoint') && 
                         'coordinates' in feature.geometry) {
                 const coords = feature.geometry.coordinates as [number, number][];
-                logManager.info(SOURCE, `Swapping ${feature.geometry.type} coordinates for debugging`, {
+                await dbLogger.info(SOURCE, `Swapping ${feature.geometry.type} coordinates for debugging`, {
                   original: coords.slice(0, 2),
                   swapped: coords.slice(0, 2).map(([lng, lat]) => [lat, lng])
                 });
                 feature.geometry.coordinates = coords.map(([lng, lat]) => [lat, lng]);
               }
             }
-            
             // Apply any other needed transformations
             if (feature.geometry && 'coordinates' in feature.geometry) {
               feature.geometry.coordinates = sanitizeCoordinates(feature.geometry.coordinates);
             }
-            
-            return feature;
-          });
+            basicFeatures.push(feature);
+          }
           
           // Now apply the final validation to ensure Mapbox-compatible coordinates
           const validatedFeatures = basicFeatures.map(ensureValidMapboxCoordinates);
@@ -535,7 +531,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
               }
             : null
         };
-        logManager.info(SOURCE, 'GeoJSON summary for Mapbox', summary);
+        await dbLogger.info(SOURCE, 'GeoJSON summary for Mapbox', summary);
 
         // Add a specific check for coordinate order issues in the first few features
         if (sourceData.features.length > 0) {
@@ -590,7 +586,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           }
           
           if (sampleCoords.length > 0) {
-            logManager.info(SOURCE, 'Coordinate order analysis', { 
+            await dbLogger.info(SOURCE, 'Coordinate order analysis', { 
               samples: sampleCoords,
               conclusion: sampleCoords.every(s => s.analysis.suspectedFormat === "Appears to be [lng, lat] (correct)")
                 ? "All sampled coordinates appear to be in correct [longitude, latitude] format"
@@ -602,11 +598,11 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
         // Add a highly visible debug log before passing data to Mapbox (log raw string directly)
         try {
           // Only log this in debug mode, and truncate/clean the output
-          const debugDump = logManager.safeStringify(sourceData, 2);
+          const debugDump = JSON.stringify(sourceData, null, 2).slice(0, 2000);
           // This log is intentionally debug-level to avoid log spam. Enable debug for 'MapPreview' to see full dumps.
-          logger.debug('MAPBOX GEOJSON RAW DUMP STRING (truncated sample)', debugDump);
+          await dbLogger.debug('MAPBOX GEOJSON RAW DUMP STRING (truncated sample)', debugDump);
         } catch (err) {
-          logger.debug('MAPBOX GEOJSON RAW DUMP STRING FAILED TO STRINGIFY', String(err));
+          await dbLogger.debug('MAPBOX GEOJSON RAW DUMP STRING FAILED TO STRINGIFY', String(err));
         }
 
         // --- Start: Remove existing preview layers and source ---
@@ -615,22 +611,22 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           'preview-line', 'preview-line-issues',
           'preview-point', 'preview-point-issues'
         ];
-        previewLayerIds.forEach(layerId => {
+        for (const layerId of previewLayerIds) {
           if (mapInstance.getLayer(layerId)) {
             try {
               mapInstance.removeLayer(layerId);
-              logger.info('Removed existing layer', { layerId });
+              await dbLogger.info(SOURCE, 'Removed existing layer', { layerId });
             } catch (err) {
-              logger.warn('Failed to remove layer', { layerId, error: err });
+              await dbLogger.warn(SOURCE, 'Failed to remove layer', { layerId, error: err });
             }
           }
-        });
+        }
         if (mapInstance.getSource('preview')) {
           try {
             mapInstance.removeSource('preview');
-            logger.info('Removed existing source', { sourceId: 'preview' });
+            await dbLogger.info(SOURCE, 'Removed existing source', { sourceId: 'preview' });
           } catch (err) {
-            logger.warn('Failed to remove source', { sourceId: 'preview', error: err });
+            await dbLogger.warn(SOURCE, 'Failed to remove source', { sourceId: 'preview', error: err });
           }
         }
         // --- End: Remove existing preview layers and source ---
@@ -641,9 +637,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             type: 'geojson',
             data: sourceData
           });
-          logger.info('Added new preview source');
+          await dbLogger.info(SOURCE, 'Added new preview source');
         } catch (err) {
-          logger.error('Failed to add new preview source', { error: err });
+          await dbLogger.error(SOURCE, 'Failed to add new preview source', { error: err });
           return;
         }
 
@@ -753,13 +749,13 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           }
         ];
 
-        [...normalLayers, ...issueLayers].forEach(layer => {
+        for (const layer of [...normalLayers, ...issueLayers]) {
           try {
             mapInstance.addLayer(layer as AnyLayer);
           } catch (err) {
-            logger.warn('Failed to add layer', { layerId: layer.id, error: err });
+            await dbLogger.warn(SOURCE, 'Failed to add layer', { layerId: layer.id, error: err });
           }
-        });
+        }
 
         const popup = new mapboxgl.Popup({
           closeButton: false,
@@ -791,8 +787,8 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           });
         });
 
-        loadedFeatures.forEach(feature => {
-          logger.debug('setFeatureState call', {
+        for (const feature of loadedFeatures) {
+          await dbLogger.debug('setFeatureState call', {
             id: feature.id,
             selected: !!selectedFeatureIds.includes(feature.id),
             type: feature.geometry.type
@@ -802,9 +798,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             { selected: !!selectedFeatureIds.includes(feature.id) }
           );
           const state = mapInstance.getFeatureState({ source: 'preview', id: feature.id });
-          logger.debug('getFeatureState result', { id: feature.id, state });
+          await dbLogger.debug('getFeatureState result', { id: feature.id, state });
           mapInstance.triggerRepaint();
-        });
+        }
 
         if (!didFitInitialBounds.current && !isLoading && bounds) {
           try {
@@ -822,16 +818,16 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
               ] as [mapboxgl.LngLatLike, mapboxgl.LngLatLike];
               mapInstance.fitBounds(mapboxBounds, { padding: 50, duration: 0 });
               didFitInitialBounds.current = true;
-              logger.info('fitBounds successful', { bounds: mapboxBounds });
+              await dbLogger.info(SOURCE, 'fitBounds successful', { bounds: mapboxBounds });
             } else {
-              logger.warn('Invalid calculated bounds, skipping fitBounds', { calculatedBbox });
+              await dbLogger.warn(SOURCE, 'Invalid calculated bounds, skipping fitBounds', { calculatedBbox });
             }
           } catch (boundsError) {
-            logger.error('Error calculating or using bounds', { error: boundsError });
+            await dbLogger.error(SOURCE, 'Error calculating or using bounds', { error: boundsError });
           }
         }
       } catch (error) {
-        logger.error('Failed to update map data', {
+        await dbLogger.error(SOURCE, 'Failed to update map data', {
           error: error instanceof Error
             ? { name: error.name, message: error.message, stack: error.stack }
             : error,
@@ -841,7 +837,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
     };
 
     if (map.current.loaded()) {
-      updateMapData();
+      (async () => { await updateMapData(); })();
     } else {
       map.current.once('load', updateMapData);
     }

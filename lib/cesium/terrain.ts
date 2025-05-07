@@ -26,12 +26,19 @@ export async function generateTerrainFromHeightData(
   // 1. Process the height data into a terrain format
   // 2. Save the terrain data to a file or database
   // 3. Return the URL to the terrain data
-  
-  console.log('Generating terrain from height data', {
-    points: heightData.length,
-    bounds,
-    resolution
-  });
+
+  // Replace legacy console.log with awaited dbLogger.debug
+  try {
+    const { dbLogger } = await import('@/utils/logging/dbLogger');
+    await dbLogger.debug('Generating terrain from height data', {
+      points: heightData.length,
+      bounds,
+      resolution,
+      source: 'terrain.generateTerrainFromHeightData'
+    });
+  } catch {
+    // Intentionally ignore logging errors
+  }
   
   // For now, just return a placeholder URL
   return '/terrain/generated';
@@ -76,9 +83,9 @@ export function processCSVData(
   const header = lines[0].split(',');
   
   // Determine column indices if column names were provided
-  let xIndex = typeof xColumn === 'number' ? xColumn : header.indexOf(xColumn);
-  let yIndex = typeof yColumn === 'number' ? yColumn : header.indexOf(yColumn);
-  let zIndex = typeof zColumn === 'number' ? zColumn : header.indexOf(zColumn);
+  const xIndex = typeof xColumn === 'number' ? xColumn : header.indexOf(xColumn);
+  const yIndex = typeof yColumn === 'number' ? yColumn : header.indexOf(yColumn);
+  const zIndex = typeof zColumn === 'number' ? zColumn : header.indexOf(zColumn);
   
   // Process each line into a point, skipping the header
   const points = lines.slice(1).map(line => {

@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Eye, Trash2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { createClient } from '@/utils/supabase/client';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { ProjectFile } from '@/components/files/types';
 import { FileIcon } from '@/components/files/components/item/file-icon';
 import { Badge } from '@/components/ui/badge';
@@ -34,16 +34,6 @@ interface ImportedFile {
 }
 
 const SOURCE = 'ImportedFilesList';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
 
 export interface ImportedFilesListRef {
   refreshFiles: () => Promise<void>;
@@ -60,7 +50,6 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
       try {
         setIsLoading(true);
         const supabase = createClient();
-        
         const { data, error } = await supabase
           .from('project_files')
           .select(`
@@ -77,14 +66,18 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
 
         if (error) throw error;
 
-        logger.info('Loaded imported files', {
+        await dbLogger.info('importedFilesList.loaded', {
+          projectId,
           count: data?.length,
           files: data?.map((f: ImportedFile) => ({ id: f.id, name: f.name }))
-        });
+        }, { SOURCE });
 
         setImportedFiles(data || []);
-      } catch (error) {
-        logger.error('Failed to load imported files', error);
+      } catch (error: unknown) {
+        await dbLogger.error('importedFilesList.loadError', {
+          projectId,
+          error: error instanceof Error ? error.message : error
+        }, { SOURCE });
       } finally {
         setIsLoading(false);
       }

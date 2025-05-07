@@ -84,10 +84,16 @@ export interface ProjectFile {
   storage_path: string;         // text
   uploaded_by?: string;         // uuid, nullable
   uploaded_at: string;          // timestamp with time zone
-  metadata?: Record<string, any>;  // jsonb, default '{}'
+  /**
+   * Untyped JSONB metadata from the database. Use type guards when accessing properties.
+   */
+  metadata?: Record<string, unknown>;  // jsonb, default '{}'
   source_file_id?: string;     // uuid, nullable
   is_imported?: boolean;       // boolean, default false
-  import_metadata?: Record<string, any>;  // jsonb, nullable
+  /**
+   * Untyped JSONB import metadata from the database. Use type guards when accessing properties.
+   */
+  import_metadata?: Record<string, unknown>;  // jsonb, nullable
   is_shapefile_component?: boolean; // boolean, default false
   main_file_id?: string;      // uuid, nullable
   component_type?: 'shp' | 'shx' | 'dbf' | 'prj' | 'qmd'; // text, nullable with check constraint

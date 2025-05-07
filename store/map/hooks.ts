@@ -1,32 +1,19 @@
 import { useCallback } from 'react';
 import { useMapInstanceStore } from './mapInstanceStore';
 import { mapInstanceSelectors } from './mapInstanceStore';
-import type { Map } from 'mapbox-gl';
 import { useViewStateStore } from './viewStateStore';
 import { viewStateSelectors } from './viewStateStore';
+import type { CesiumInstance } from './mapInstanceStore';
 
-// Map instance operations
+// Map instance operations (Cesium only, Mapbox selectors/actions removed)
 export const useMapInstance = () => {
   const store = useMapInstanceStore();
-  const mapboxInstance = useMapInstanceStore(mapInstanceSelectors.getMapboxInstance);
   const cesiumInstance = useMapInstanceStore(mapInstanceSelectors.getCesiumInstance);
-  const mapboxStatus = useMapInstanceStore(mapInstanceSelectors.getMapboxStatus);
   const cesiumStatus = useMapInstanceStore(mapInstanceSelectors.getCesiumStatus);
-  const mapboxError = useMapInstanceStore(mapInstanceSelectors.getMapboxError);
   const cesiumError = useMapInstanceStore(mapInstanceSelectors.getCesiumError);
-  const areInstancesReady = useMapInstanceStore(mapInstanceSelectors.areInstancesReady);
-  const hasInstanceError = useMapInstanceStore(mapInstanceSelectors.hasInstanceError);
 
-  const setMapboxInstance = useCallback((instance: Map | null) => {
-    store.setMapboxInstance(instance);
-  }, [store]);
-
-  const setCesiumInstance = useCallback((instance: any | null) => {
+  const setCesiumInstance = useCallback((instance: CesiumInstance | null) => {
     store.setCesiumInstance(instance);
-  }, [store]);
-
-  const setMapboxStatus = useCallback((status: 'initializing' | 'ready' | 'error', error?: string) => {
-    store.setMapboxStatus(status, error);
   }, [store]);
 
   const setCesiumStatus = useCallback((status: 'initializing' | 'ready' | 'error', error?: string) => {
@@ -38,43 +25,12 @@ export const useMapInstance = () => {
   }, [store]);
 
   return {
-    mapboxInstance,
     cesiumInstance,
-    mapboxStatus,
     cesiumStatus,
-    mapboxError,
     cesiumError,
-    areInstancesReady,
-    hasInstanceError,
-    setMapboxInstance,
     setCesiumInstance,
-    setMapboxStatus,
     setCesiumStatus,
     cleanup
-  };
-};
-
-// Mapbox instance operations
-export const useMapboxInstance = () => {
-  const store = useMapInstanceStore();
-  const instance = useMapInstanceStore(mapInstanceSelectors.getMapboxInstance);
-  const status = useMapInstanceStore(mapInstanceSelectors.getMapboxStatus);
-  const error = useMapInstanceStore(mapInstanceSelectors.getMapboxError);
-
-  const setInstance = useCallback((instance: Map | null) => {
-    store.setMapboxInstance(instance);
-  }, [store]);
-
-  const setStatus = useCallback((status: 'initializing' | 'ready' | 'error', error?: string) => {
-    store.setMapboxStatus(status, error);
-  }, [store]);
-
-  return {
-    instance,
-    status,
-    error,
-    setInstance,
-    setStatus
   };
 };
 
@@ -85,7 +41,7 @@ export const useCesiumInstance = () => {
   const status = useMapInstanceStore(mapInstanceSelectors.getCesiumStatus);
   const error = useMapInstanceStore(mapInstanceSelectors.getCesiumError);
 
-  const setInstance = useCallback((instance: any | null) => {
+  const setInstance = useCallback((instance: CesiumInstance | null) => {
     store.setCesiumInstance(instance);
   }, [store]);
 
