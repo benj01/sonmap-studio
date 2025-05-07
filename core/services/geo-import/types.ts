@@ -1,4 +1,3 @@
-import { SupabaseClient } from '@supabase/supabase-js';
 import { GeoFeature } from '@/types/geo';
 
 export interface BatchProcessingConfig {

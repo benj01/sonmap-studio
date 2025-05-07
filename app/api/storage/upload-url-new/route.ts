@@ -1,46 +1,45 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import { v4 as uuidv4 } from 'uuid';
+import type { User, PostgrestError } from '@supabase/supabase-js';
+import type { AuthError } from '@supabase/auth-js';
+import type { StorageError } from '@supabase/storage-js';
 
 const SOURCE = 'UploadUrlEndpoint';
-const logManager = LogManager.getInstance();
 
-const logger = {
-  info: (message: string, data?: any) => {
-    console.info(`[${SOURCE}] ${message}`, data);
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    console.warn(`[${SOURCE}] ${message}`, error);
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    console.error(`[${SOURCE}] ${message}`, error);
-    logManager.error(SOURCE, message, error);
-  }
-};
+interface UploadUrlRequestBody {
+  filename: string;
+  projectId: string;
+  contentType?: string;
+}
 
 export async function POST(request: Request) {
-  logger.info('Starting upload-url endpoint');
-  
+  const requestId = uuidv4();
+  let userId: string | undefined = undefined;
+  let projectId: string | undefined = undefined;
+  let filename: string | undefined = undefined;
   try {
+    await dbLogger.info('Starting upload-url endpoint', { SOURCE, requestId });
     // Get auth token from request header
     const authHeader = request.headers.get('authorization');
     if (!authHeader) {
-      logger.warn('No authorization header present');
+      await dbLogger.warn('No authorization header present', { SOURCE, requestId });
       return NextResponse.json(
         { error: 'Unauthorized - No authorization header' },
         { status: 401 }
       );
     }
 
-    const body = await request.json();
-    const { filename, projectId, contentType } = body;
+    const body: UploadUrlRequestBody = await request.json();
+    filename = body.filename;
+    projectId = body.projectId;
+    const contentType = body.contentType;
 
-    logger.info('Upload URL request', { filename, projectId, contentType });
+    await dbLogger.info('Upload URL request', { SOURCE, requestId, filename, projectId, contentType });
 
     if (!filename || !projectId) {
-      logger.warn('Missing required parameters', { filename, projectId });
+      await dbLogger.warn('Missing required parameters', { SOURCE, requestId, filename, projectId });
       return NextResponse.json(
         { error: 'Filename and projectId are required' },
         { status: 400 }
@@ -48,39 +47,43 @@ export async function POST(request: Request) {
     }
 
     // Create Supabase client with auth context
-    logger.info('Creating Supabase client...');
+    await dbLogger.info('Creating Supabase client...', { SOURCE, requestId });
     const token = authHeader.replace('Bearer ', '');
     const supabase = await createClient();
 
     // Verify user authentication
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    const userResponse: { data: { user: User | null }; error: AuthError | null } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = userResponse;
     if (authError) {
-      logger.error('Auth error', { error: authError, token: token.substring(0, 10) + '...' });
+      await dbLogger.error('Auth error', { SOURCE, requestId, error: authError, token: token.substring(0, 10) + '...' });
       return NextResponse.json(
         { error: 'Authentication failed: ' + authError.message },
         { status: 401 }
       );
     }
     if (!user) {
-      logger.error('No user found with token', { token: token.substring(0, 10) + '...' });
+      await dbLogger.error('No user found with token', { SOURCE, requestId, token: token.substring(0, 10) + '...' });
       return NextResponse.json(
         { error: 'No authenticated user found' },
         { status: 401 }
       );
     }
-    logger.info('User authenticated', { userId: user.id });
+    userId = user.id;
+    await dbLogger.info('User authenticated', { SOURCE, requestId, userId });
 
     // Verify project access
-    const { data: project, error: projectError } = await supabase
+    const { data: project, error: projectError }: { data: { id: string; owner_id: string } | null; error: PostgrestError | null } = await supabase
       .from('projects')
       .select('id, owner_id')
       .eq('id', projectId)
       .single();
 
     if (projectError) {
-      logger.error('Project access check failed', { 
+      await dbLogger.error('Project access check failed', { 
+        SOURCE,
+        requestId,
         error: projectError,
-        userId: user.id,
+        userId,
         projectId
       });
       return NextResponse.json(
@@ -90,7 +93,7 @@ export async function POST(request: Request) {
     }
 
     if (!project) {
-      logger.warn('Project not found', { projectId });
+      await dbLogger.warn('Project not found', { SOURCE, requestId, projectId });
       return NextResponse.json(
         { error: 'Project not found' },
         { status: 404 }
@@ -99,8 +102,10 @@ export async function POST(request: Request) {
 
     // Verify project ownership
     if (project.owner_id !== user.id) {
-      logger.warn('User does not own project', { 
-        userId: user.id,
+      await dbLogger.warn('User does not own project', { 
+        SOURCE,
+        requestId,
+        userId,
         projectId,
         ownerId: project.owner_id
       });
@@ -110,30 +115,32 @@ export async function POST(request: Request) {
       );
     }
 
-    logger.info('Project access verified', { projectId, userId: user.id });
+    await dbLogger.info('Project access verified', { SOURCE, requestId, projectId, userId });
 
     // Create the full storage path including user ID
     const storagePath = `${user.id}/${projectId}/${filename}`;
-    logger.info('Storage path constructed', { storagePath });
+    await dbLogger.info('Storage path constructed', { SOURCE, requestId, storagePath });
 
     // Create a signed URL for uploading
-    logger.info('Creating signed upload URL...');
-    const { data: uploadData, error: signedUrlError } = await supabase.storage
+    await dbLogger.info('Creating signed upload URL...', { SOURCE, requestId });
+    const uploadUrlResponse: { data: { signedUrl: string; token: string; path: string } | null; error: StorageError | null } = await supabase.storage
       .from('project-files')
       .createSignedUploadUrl(storagePath, {
-        upsert: true,
-        contentType: contentType || 'application/octet-stream'
+        upsert: true
       });
 
+    const { data: uploadData, error: signedUrlError } = uploadUrlResponse;
+
     if (signedUrlError) {
-      logger.error('Failed to create signed URL', {
+      await dbLogger.error('Failed to create signed URL', {
+        SOURCE,
+        requestId,
         error: signedUrlError,
         path: storagePath,
-        userId: user.id,
+        userId,
         projectId,
         contentType
       });
-
       return NextResponse.json(
         { error: 'Failed to create upload URL: ' + signedUrlError.message },
         { status: 500 }
@@ -141,14 +148,16 @@ export async function POST(request: Request) {
     }
 
     if (!uploadData?.signedUrl) {
-      logger.error('No signed URL in response', { uploadData });
+      await dbLogger.error('No signed URL in response', { SOURCE, requestId, uploadData });
       return NextResponse.json(
         { error: 'No signed URL received from storage service' },
         { status: 500 }
       );
     }
 
-    logger.info('Successfully created signed URL', {
+    await dbLogger.info('Successfully created signed URL', {
+      SOURCE,
+      requestId,
       path: storagePath,
       contentType,
       expiresIn: '10 minutes'
@@ -161,12 +170,16 @@ export async function POST(request: Request) {
       }
     });
   } catch (error) {
-    logger.error('Unexpected error in upload-url route', {
+    await dbLogger.error('Unexpected error in upload-url route', {
+      SOURCE,
+      requestId,
       error,
       message: error instanceof Error ? error.message : 'Unknown error',
-      stack: error instanceof Error ? error.stack : undefined
+      stack: error instanceof Error ? error.stack : undefined,
+      userId,
+      projectId,
+      filename
     });
-
     return NextResponse.json(
       { error: 'Internal server error: ' + (error instanceof Error ? error.message : 'Unknown error') },
       { status: 500 }

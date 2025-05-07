@@ -1,5 +1,8 @@
 import { cookies } from 'next/headers';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { dbLogger } from '@/utils/logging/dbLogger';
+
+const SOURCE = 'CookieManager';
 
 export class CookieManager {
   private static instance: CookieManager;
@@ -14,8 +17,6 @@ export class CookieManager {
   }
 
   async createClient(supabaseUrl: string, supabaseKey: string) {
-    const cookieStore = await cookies();
-
     return createServerClient(
       supabaseUrl,
       supabaseKey,
@@ -30,8 +31,7 @@ export class CookieManager {
               const cookieStore = await cookies();
               cookieStore.set({ name, value, ...options });
             } catch (error) {
-              // Handle edge cases where cookies cannot be set
-              console.error('Failed to set cookie:', error);
+              await dbLogger.error('Failed to set cookie', { SOURCE, error, name });
             }
           },
           async remove(name: string, options: CookieOptions) {
@@ -39,7 +39,7 @@ export class CookieManager {
               const cookieStore = await cookies();
               cookieStore.set({ name, value: '', ...options });
             } catch (error) {
-              console.error('Failed to remove cookie:', error);
+              await dbLogger.error('Failed to remove cookie', { SOURCE, error, name });
             }
           },
         },
@@ -65,7 +65,7 @@ export class CookieManager {
         ...options
       });
     } catch (error) {
-      console.error('Failed to set auth cookie:', error);
+      await dbLogger.error('Failed to set auth cookie', { SOURCE, error });
       throw error;
     }
   }
@@ -80,7 +80,7 @@ export class CookieManager {
         path: '/'
       });
     } catch (error) {
-      console.error('Failed to clear auth cookie:', error);
+      await dbLogger.error('Failed to clear auth cookie', { SOURCE, error });
       throw error;
     }
   }

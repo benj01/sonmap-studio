@@ -1,31 +1,39 @@
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { ImportNotice } from '../types/index';
 
 const SOURCE = 'ImportNoticeHandler';
-const logger = LogManager.getInstance();
 
 export class NoticeHandler {
   constructor(private supabase: SupabaseClient) {}
 
-  async processNotices(notices: ImportNotice[], context: {
-    importLogId: string;
-    batchIndex?: number;
-  }): Promise<void> {
+  async processNotices(
+    notices: ImportNotice[],
+    context: {
+      importLogId: string;
+      batchIndex?: number;
+    }
+  ): Promise<void> {
     // Log notices based on level
     for (const notice of notices) {
+      const logContext = {
+        SOURCE,
+        importLogId: context.importLogId,
+        batchIndex: context.batchIndex,
+        notice
+      };
       switch (notice.level) {
         case 'error':
-          logger.error(notice.message, SOURCE, notice.details);
+          await dbLogger.error(notice.message, logContext);
           break;
         case 'warning':
-          logger.warn(notice.message, SOURCE, notice.details);
+          await dbLogger.warn(notice.message, logContext);
           break;
         case 'info':
-          logger.info(notice.message, SOURCE, notice.details);
+          await dbLogger.info(notice.message, logContext);
           break;
         case 'debug':
-          logger.debug(notice.message, SOURCE, notice.details);
+          await dbLogger.debug(notice.message, logContext);
           break;
       }
     }
@@ -42,15 +50,17 @@ export class NoticeHandler {
       .eq('id', context.importLogId);
 
     if (error) {
-      logger.error('Failed to update import log with notices', SOURCE, {
+      await dbLogger.error('Failed to update import log with notices', {
+        SOURCE,
         error,
-        importLogId: context.importLogId
+        importLogId: context.importLogId,
+        batchIndex: context.batchIndex
       });
     }
   }
 
   async captureNotices<T>(
-    rpcCall: () => Promise<{ data: T; error: any }>,
+    rpcCall: () => Promise<{ data: T; error: unknown }>,
     context: { importLogId: string; batchIndex?: number }
   ): Promise<T> {
     try {
@@ -62,16 +72,20 @@ export class NoticeHandler {
       }
 
       // Check for notices in the response data
-      if (data && typeof data === 'object' && 'notices' in data) {
-        const notices = (data as any).notices as ImportNotice[];
-        if (Array.isArray(notices)) {
-          await this.processNotices(notices, context);
-        }
+      if (
+        data &&
+        typeof data === 'object' &&
+        'notices' in data &&
+        Array.isArray((data as Record<string, unknown>).notices)
+      ) {
+        const notices = (data as Record<string, unknown>).notices as ImportNotice[];
+        await this.processNotices(notices, context);
       }
 
       return data;
     } catch (e) {
-      logger.error('Failed to capture notices', SOURCE, {
+      await dbLogger.error('Failed to capture notices', {
+        SOURCE,
         error: e,
         context
       });

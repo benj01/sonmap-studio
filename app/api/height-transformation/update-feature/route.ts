@@ -1,34 +1,31 @@
 import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import { v4 as uuidv4 } from 'uuid';
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 
 const SOURCE = 'api/height-transformation/update-feature';
-const logManager = LogManager.getInstance();
 
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, data?: any) => {
-    logManager.warn(SOURCE, message, data);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+interface UpdateFeatureHeightResponse {
+  success: boolean;
+  featureId: string;
+  data: unknown;
+}
 
 export async function POST(req: NextRequest) {
+  const requestId = uuidv4();
+  let featureId: string | undefined = undefined;
+  let batchId: string | undefined = undefined;
   try {
     const requestBody = await req.json();
-    const { featureId, batchId, transformedData } = requestBody;
+    featureId = requestBody.featureId;
+    batchId = requestBody.batchId;
+    const transformedData = requestBody.transformedData;
     
     // Validate required parameters
     if (!featureId) {
-      logger.warn('Missing required parameter: featureId');
+      await dbLogger.warn('Missing required parameter: featureId', { SOURCE, requestId });
       return NextResponse.json(
         { error: 'Missing required parameter: featureId' },
         { status: 400 }
@@ -36,7 +33,7 @@ export async function POST(req: NextRequest) {
     }
     
     if (!transformedData) {
-      logger.warn('Missing required parameter: transformedData');
+      await dbLogger.warn('Missing required parameter: transformedData', { SOURCE, requestId, featureId });
       return NextResponse.json(
         { error: 'Missing required parameter: transformedData' },
         { status: 400 }
@@ -49,7 +46,9 @@ export async function POST(req: NextRequest) {
       height_mode
     } = transformedData;
     
-    logger.info('Updating feature with transformed height data', { 
+    await dbLogger.info('Updating feature with transformed height data', { 
+      SOURCE,
+      requestId,
       featureId, 
       batchId,
       transformedData: {
@@ -62,7 +61,7 @@ export async function POST(req: NextRequest) {
     const supabase = createRouteHandlerClient({ cookies });
     
     // Use the RLS bypass function directly
-    const { data, error } = await supabase.rpc(
+    const { data, error }: { data: unknown; error: PostgrestError | null } = await supabase.rpc(
       'update_feature_height_bypass_rls',
       { 
         p_feature_id: featureId,
@@ -73,7 +72,9 @@ export async function POST(req: NextRequest) {
     );
 
     if (error) {
-      logger.error('Failed to update feature with bypass function', { 
+      await dbLogger.error('Failed to update feature with bypass function', { 
+        SOURCE,
+        requestId,
         error,
         featureId,
         batchId
@@ -87,9 +88,11 @@ export async function POST(req: NextRequest) {
     // Update batch progress if batch ID is provided
     if (batchId) {
       try {
-        await updateBatchProgress(supabase, batchId, featureId);
+        await updateBatchProgress(supabase, batchId, featureId, requestId);
       } catch (batchError) {
-        logger.warn('Failed to update batch progress', {
+        await dbLogger.warn('Failed to update batch progress', {
+          SOURCE,
+          requestId,
           error: batchError,
           batchId,
           featureId
@@ -102,9 +105,9 @@ export async function POST(req: NextRequest) {
       success: true,
       featureId,
       data
-    });
+    } as UpdateFeatureHeightResponse);
   } catch (error) {
-    logger.error('Error in height transformation update', { error });
+    await dbLogger.error('Error in height transformation update', { SOURCE, requestId, error, featureId, batchId });
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
@@ -112,28 +115,15 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function getLayerIdFromBatchId(supabase: any, batchId: string): Promise<string | null> {
-  try {
-    const { data, error } = await supabase
-      .from('height_transformation_batches')
-      .select('layer_id')
-      .eq('id', batchId)
-      .single();
-      
-    if (error || !data) {
-      return null;
-    }
-    
-    return data.layer_id;
-  } catch (error) {
-    return null;
-  }
-}
-
-async function updateBatchProgress(supabase: any, batchId: string, featureId: string) {
+async function updateBatchProgress(
+  supabase: SupabaseClient,
+  batchId: string,
+  featureId: string,
+  requestId: string
+) {
   try {
     // Get current counts
-    const { data: batchData, error: batchError } = await supabase
+    const { data: batchData, error: batchError }: { data: { processed_features: number; failed_features: number; total_features: number } | null; error: PostgrestError | null } = await supabase
       .from('height_transformation_batches')
       .select('processed_features, failed_features, total_features')
       .eq('id', batchId)
@@ -151,16 +141,18 @@ async function updateBatchProgress(supabase: any, batchId: string, featureId: st
         p_failed: batchData.failed_features || 0
       });
       
-      logger.info('Updated batch progress', { 
+      await dbLogger.info('Updated batch progress', { 
+        SOURCE,
+        requestId,
         batchId, 
         processedFeatures, 
         totalFeatures: batchData.total_features,
         isComplete
       });
     } else {
-      logger.warn('Failed to update batch progress', { error: batchError, batchId });
+      await dbLogger.warn('Failed to update batch progress', { SOURCE, requestId, error: batchError, batchId });
     }
   } catch (error) {
-    logger.error('Error updating batch progress', { error, batchId, featureId });
+    await dbLogger.error('Error updating batch progress', { SOURCE, requestId, error, batchId, featureId });
   }
 } 

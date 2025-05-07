@@ -5,7 +5,7 @@ const SOURCE = 'ImportErrorHandler';
 
 export interface ImportError extends Error {
   code?: string;
-  details?: any;
+  details?: unknown;
   hint?: string;
   batchIndex?: number;
   start?: number;
@@ -17,12 +17,13 @@ export class ImportErrorHandler {
 
   async handleStreamError(error: ImportError, importLogId: string): Promise<void> {
     await dbLogger.error('Import stream error', {
+      SOURCE,
       error,
       importLogId,
       details: error.details,
       hint: error.hint,
       code: error.code
-    }, { importLogId });
+    });
 
     await this.updateImportLog(importLogId, {
       status: 'failed',
@@ -45,13 +46,14 @@ export class ImportErrorHandler {
     end: number;
   }): Promise<void> {
     await dbLogger.error('Batch import failed', {
+      SOURCE,
       error,
       importLogId,
       ...batchInfo,
       details: error.details,
       hint: error.hint,
       code: error.code
-    }, { importLogId, ...batchInfo });
+    });
 
     await this.updateImportLog(importLogId, {
       status: 'failed',
@@ -66,12 +68,12 @@ export class ImportErrorHandler {
   }
 
   async handleAuthError(error: Error): Promise<void> {
-    await dbLogger.error('Authentication failed', { error }, {});
+    await dbLogger.error('Authentication failed', { SOURCE, error });
   }
 
   private async updateImportLog(importLogId: string, update: {
     status: string;
-    metadata: Record<string, any>;
+    metadata: Record<string, unknown>;
   }): Promise<void> {
     const { error } = await this.supabase
       .from('realtime_import_logs')
@@ -80,10 +82,11 @@ export class ImportErrorHandler {
 
     if (error) {
       await dbLogger.error('Failed to update import log', {
+        SOURCE,
         error,
         importLogId,
         update
-      }, { importLogId });
+      });
     }
   }
 } 

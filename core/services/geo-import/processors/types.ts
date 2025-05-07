@@ -26,7 +26,7 @@ export interface PropertyValidator {
   min?: number;
   max?: number;
   pattern?: string;
-  enum?: any[];
+  enum?: Array<string | number | boolean | null>;
 }
 
 export interface FeatureProcessor {
@@ -43,5 +43,5 @@ export interface PropertyValidationResult {
   isValid: boolean;
   errors: string[];
   warnings: string[];
-  transformedProperties?: Record<string, any>;
+  transformedProperties?: Record<string, unknown>;
 } 

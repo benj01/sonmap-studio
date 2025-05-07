@@ -1,6 +1,4 @@
-import { SupabaseClient } from '@supabase/supabase-js';
 import { GeoFeature } from '@/types/geo';
-import { ImportError } from '../utils/error-handler';
 
 export interface ImportParams {
   projectFileId: string;
@@ -24,15 +22,15 @@ export interface ImportDebugInfo {
   repairedCount: number;
   cleanedCount: number;
   skippedCount: number;
-  repairSummary: Record<string, any>;
-  skippedSummary: Record<string, any>;
+  repairSummary: Record<string, unknown>;
+  skippedSummary: Record<string, unknown>;
   notices: ImportNotice[];
 }
 
 export interface ImportNotice {
   level: 'error' | 'warning' | 'info' | 'debug';
   message: string;
-  details?: Record<string, any>;
+  details?: Record<string, unknown>;
 }
 
 export interface ImportState {
