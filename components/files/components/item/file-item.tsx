@@ -1,5 +1,4 @@
 import React from 'react';
-import { FileTypeUtil } from '../../utils/file-types';
 import { FileIcon } from './file-icon';
 import { FileActions } from './file-actions';
 import { FileMetadata } from './file-metadata';

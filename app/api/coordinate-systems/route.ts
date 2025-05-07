@@ -1,9 +1,6 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
-import { createLogger } from '@/utils/logger';
-
-const SOURCE = 'CoordinateSystemsEndpoint';
-const logger = createLogger(SOURCE);
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 // Add rate limiting for coordinate system requests
 const requestCache = new Map<string, number>();
@@ -27,7 +24,7 @@ export async function GET(request: Request) {
     const lastLog = requestCache.get(srid);
     
     if (!lastLog || now - lastLog > RATE_LIMIT_MS) {
-      logger.debug('Coordinate system request', { srid });
+      await dbLogger.debug('Coordinate system request', { srid });
       requestCache.set(srid, now);
     }
   }
@@ -42,7 +39,7 @@ export async function GET(request: Request) {
       .single();
 
     if (error) {
-      logger.error('Failed to fetch coordinate system', { error, srid });
+      await dbLogger.error('Failed to fetch coordinate system', { error, srid });
       return NextResponse.json(
         { error: 'Failed to fetch coordinate system' },
         { status: 500 }
@@ -64,7 +61,7 @@ export async function GET(request: Request) {
       proj4: data.proj4text
     });
   } catch (error) {
-    logger.error('Unexpected error fetching coordinate system', { error, srid });
+    await dbLogger.error('Unexpected error fetching coordinate system', { error, srid });
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }

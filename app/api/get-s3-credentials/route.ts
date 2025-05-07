@@ -1,15 +1,5 @@
-import { createClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
-import { LogManager } from '@/core/logging/log-manager';
-
-const SOURCE = 'GetS3CredentialsRoute';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 export async function POST(request: Request) {
   try {
@@ -54,10 +44,17 @@ export async function POST(request: Request) {
 
     const data = await response.json();
     return NextResponse.json(data);
-  } catch (error: any) {
-    logger.error('Error in get-s3-credentials route', error);
+  } catch (error: unknown) {
+    await dbLogger.error('Error in get-s3-credentials route', {
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error,
+      // Optionally add fileName, projectId if available in scope
+    });
     return NextResponse.json(
-      { error: error.message },
+      { error: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }

@@ -8,7 +8,15 @@ export type LayerRow = Database['public']['Tables']['layers']['Row'];
 export type LayerInsert = Database['public']['Tables']['layers']['Insert'];
 export type LayerUpdate = Database['public']['Tables']['layers']['Update'];
 
-export async function getAllLayers(context?: any) {
+// Type for structured logging context
+export type DbLoggerContext = {
+  userId?: string;
+  requestId?: string;
+  importLogId?: string;
+  [key: string]: unknown;
+};
+
+export async function getAllLayers(context?: DbLoggerContext): Promise<{ data: LayerRow[] | null; error: Error | null }> {
   const supabase = createClient();
   await dbLogger.info('getAllLayers: start', undefined, context);
   try {
@@ -16,26 +24,26 @@ export async function getAllLayers(context?: any) {
     if (error) throw error;
     await dbLogger.info('getAllLayers: success', { count: data?.length }, context);
     return { data, error: null };
-  } catch (error) {
-    await dbLogger.error('getAllLayers: failed', { error }, context);
-    return { data: null, error };
+  } catch (error: unknown) {
+    await dbLogger.error('getAllLayers: failed', { error: error instanceof Error ? error.message : error }, context);
+    return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
 }
 
-export async function getLayerById(id: string) {
+export async function getLayerById(id: string): Promise<{ data: LayerRow | null; error: Error | null }> {
   const supabase = createClient();
   try {
     const { data, error } = await supabase.from('layers').select('*').eq('id', id).single();
     if (error) throw error;
     return { data, error: null };
-  } catch (error) {
+  } catch (error: unknown) {
     // dbLogger.error('getLayerById failed', { error, id });
     // return handleDbError(error);
-    return { data: null, error };
+    return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
 }
 
-export async function insertLayer(layer: LayerInsert, context?: any) {
+export async function insertLayer(layer: LayerInsert, context?: DbLoggerContext): Promise<{ data: LayerRow | null; error: Error | null }> {
   const supabase = createClient();
   await dbLogger.info('insertLayer: start', { layer }, context);
   try {
@@ -43,13 +51,13 @@ export async function insertLayer(layer: LayerInsert, context?: any) {
     if (error) throw error;
     await dbLogger.info('insertLayer: success', { data }, context);
     return { data, error: null };
-  } catch (error) {
-    await dbLogger.error('insertLayer: failed', { error, layer }, context);
-    return { data: null, error };
+  } catch (error: unknown) {
+    await dbLogger.error('insertLayer: failed', { error: error instanceof Error ? error.message : error, layer }, context);
+    return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
 }
 
-export async function updateLayer(id: string, updates: LayerUpdate, context?: any) {
+export async function updateLayer(id: string, updates: LayerUpdate, context?: DbLoggerContext): Promise<{ data: LayerRow | null; error: Error | null }> {
   const supabase = createClient();
   await dbLogger.info('updateLayer: start', { id, updates }, context);
   try {
@@ -57,13 +65,13 @@ export async function updateLayer(id: string, updates: LayerUpdate, context?: an
     if (error) throw error;
     await dbLogger.info('updateLayer: success', { data }, context);
     return { data, error: null };
-  } catch (error) {
-    await dbLogger.error('updateLayer: failed', { error, id, updates }, context);
-    return { data: null, error };
+  } catch (error: unknown) {
+    await dbLogger.error('updateLayer: failed', { error: error instanceof Error ? error.message : error, id, updates }, context);
+    return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
 }
 
-export async function deleteLayer(id: string, context?: any) {
+export async function deleteLayer(id: string, context?: DbLoggerContext): Promise<{ data: LayerRow | null; error: Error | null }> {
   const supabase = createClient();
   await dbLogger.info('deleteLayer: start', { id }, context);
   try {
@@ -71,21 +79,21 @@ export async function deleteLayer(id: string, context?: any) {
     if (error) throw error;
     await dbLogger.info('deleteLayer: success', { data }, context);
     return { data, error: null };
-  } catch (error) {
-    await dbLogger.error('deleteLayer: failed', { error, id }, context);
-    return { data: null, error };
+  } catch (error: unknown) {
+    await dbLogger.error('deleteLayer: failed', { error: error instanceof Error ? error.message : error, id }, context);
+    return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
 }
 
-export async function getLayersByProject(projectId: string) {
+export async function getLayersByProject(projectId: string): Promise<{ data: LayerRow[] | null; error: Error | null }> {
   const supabase = createClient();
   try {
     const { data, error } = await supabase.from('layers').select('*').eq('project_id', projectId);
     if (error) throw error;
     return { data, error: null };
-  } catch (error) {
+  } catch (error: unknown) {
     // dbLogger.error('getLayersByProject failed', { error, projectId });
     // return handleDbError(error);
-    return { data: null, error };
+    return { data: null, error: error instanceof Error ? error : new Error(String(error)) };
   }
 } 

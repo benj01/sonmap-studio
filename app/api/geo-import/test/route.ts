@@ -1,18 +1,6 @@
 import { createClient } from '@/utils/supabase/server';
 import { NextResponse } from 'next/server';
-import { LogManager } from '@/core/logging/log-manager';
-
-const SOURCE = 'TestImportEndpoint';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  }
-};
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 export async function POST(req: Request) {
   try {
@@ -21,14 +9,14 @@ export async function POST(req: Request) {
     // Check authentication
     const { data: { session }, error: authError } = await supabase.auth.getSession();
     if (authError || !session) {
-      logger.error('Authentication failed', { error: authError });
+      await dbLogger.error('Authentication failed', { error: authError });
       return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
     }
 
     const body = await req.json();
     const { projectId, layerName, geometry, properties, sourceSrid = 2056 } = body;
 
-    logger.info('Testing import with single feature', {
+    await dbLogger.info('Testing import with single feature', {
       projectId,
       layerName,
       sourceSrid,
@@ -46,15 +34,15 @@ export async function POST(req: Request) {
     });
 
     if (error) {
-      logger.error('Import test failed', { error });
+      await dbLogger.error('Import test failed', { error });
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    logger.info('Import test successful', { layerId: data });
+    await dbLogger.info('Import test successful', { layerId: data });
     return NextResponse.json({ success: true, layerId: data });
 
-  } catch (error) {
-    logger.error('Request error', {
+  } catch (error: unknown) {
+    await dbLogger.error('Request error', {
       error: error instanceof Error ? {
         message: error.message,
         stack: error.stack,

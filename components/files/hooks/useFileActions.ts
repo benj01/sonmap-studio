@@ -2,8 +2,10 @@ import { useState, useCallback } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import { ProjectFile, FileUploadResult } from '../types';
 import { dbLogger } from '@/utils/logging/dbLogger';
-import { useFileEventStore } from '@/store/fileEventStore';
+import { useFileEventStore, type FileEventState } from '@/store/fileEventStore';
 import { useLayers } from '@/store/layers/hooks';
+import type { User } from '@supabase/supabase-js';
+import type { Feature } from 'geojson';
 
 // Fallback types if imports are missing (for linter only)
 // type ProjectFile = any;
@@ -23,10 +25,26 @@ interface CompanionFile {
   size: number;
 }
 
+// Define ImportResult type for legacyHandleImport
+interface ImportResult {
+  features: Feature[];
+  layers?: string[];
+  statistics?: {
+    featureTypes?: Record<string, unknown>;
+    failedTransformations?: number;
+    errors?: string[];
+  };
+}
+
+// Locally extend ProjectFile to allow uploaded_by: string | null for DB results
+interface DBProjectFile extends Omit<ProjectFile, 'uploaded_by'> {
+  uploaded_by: string | null;
+}
+
 export function useFileActions({ projectId, onSuccess, onError }: UseFileActionsProps) {
   const [isLoading, setIsLoading] = useState(false);
   const supabase = createClient();
-  const emitFileEvent = useFileEventStore((state: any) => state.emitFileEvent); // Explicit any for state
+  const emitFileEvent = useFileEventStore((state: FileEventState) => state.emitFileEvent);
   const { handleFileDeleted } = useLayers();
 
   const refreshProjectStorage = useCallback(async () => {
@@ -48,7 +66,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     setIsLoading(true);
     try {
       // Get all files for the project
-      const { data: allFiles, error: filesError } = await supabase
+      const { data: allFilesRaw, error: filesError } = await supabase
         .from('project_files')
         .select('*')
         .eq('project_id', projectId)
@@ -57,24 +75,32 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       if (filesError) throw filesError;
 
       // Separate files into main files and their companions
-      const mainFiles = allFiles?.filter((file: ProjectFile) => !file.main_file_id) || [];
-      const companionFiles = allFiles?.filter((file: ProjectFile) => file.main_file_id) || [];
+      const allFiles = (allFilesRaw as DBProjectFile[]) || [];
+      const mainFiles = allFiles.filter((file) => !file.main_file_id);
+      const companionFiles = allFiles.filter((file) => file.main_file_id);
 
       // Create a map of companion files by main file ID
-      const companionsByMainFile = companionFiles.reduce((acc: Record<string, ProjectFile[]>, file: ProjectFile) => {
+      const companionsByMainFile = companionFiles.reduce((acc: Record<string, ProjectFile[]>, file) => {
         if (file.main_file_id) {
           if (!acc[file.main_file_id]) {
             acc[file.main_file_id] = [];
           }
-          acc[file.main_file_id].push(file);
+          acc[file.main_file_id].push({
+            ...file,
+            uploaded_by: file.uploaded_by ?? undefined,
+          });
         }
         return acc;
       }, {});
 
       // Attach companion files to their main files
-      const filesWithCompanions = mainFiles.map((file: ProjectFile) => ({
+      const filesWithCompanions = mainFiles.map((file) => ({
         ...file,
-        companions: companionsByMainFile[file.id] || []
+        uploaded_by: file.uploaded_by ?? undefined,
+        companions: companionsByMainFile[file.id]?.map((c) => ({
+          ...c,
+          uploaded_by: c.uploaded_by ?? undefined,
+        })) || [],
       }));
 
       await dbLogger.info('Files loaded', {
@@ -90,12 +116,11 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     } finally {
       setIsLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, supabase]);
 
   const handleUploadComplete = useCallback(async (uploadedFile: FileUploadResult) => {
     setIsLoading(true);
-    const supabase = createClient();
-    let user: any = null; // Explicit any for user
+    let user: User | null = null; // Explicit any for user
     try {
       await dbLogger.info('Starting file upload transaction', {
         fileName: uploadedFile.name,
@@ -120,7 +145,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         if (!user) throw new Error('No authenticated user');
 
         // Update storage path to include user ID
-        const storagePath = `${user.id}/${projectId}/${uploadedFile.name}`;
+        const storagePath = `${user ? user.id : 'unknown-user'}/${projectId}/${uploadedFile.name}`;
         const fileExt = uploadedFile.name.toLowerCase();
         const isShapefile = fileExt.endsWith('.shp');
         const isGeoJson = fileExt.endsWith('.geojson');
@@ -170,12 +195,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             companionCount: Object.keys(uploadedFile.relatedFiles).length
           }, { projectId, userId: user.id });
 
-          const companionInserts = Object.entries(uploadedFile.relatedFiles).map(([ext, file]) => ({
+          const companionInserts = Object.entries(uploadedFile.relatedFiles).map(([ext, file]: [string, CompanionFile]) => ({
             project_id: projectId,
             name: file.name,
             size: file.size,
             file_type: ext === '.qmd' ? 'application/xml' : 'application/octet-stream',
-            storage_path: `${user.id}/${projectId}/${file.name}`,
+            storage_path: `${user ? user.id : 'unknown-user'}/${projectId}/${file.name}`,
             is_imported: false,
             is_shapefile_component: isShapefile,
             main_file_id: mainFile.id,
@@ -190,13 +215,13 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
             await dbLogger.error('Failed to insert companion files', {
               companionError,
               mainFileId: mainFile.id,
-              companions: companionInserts.map((c: any) => c.name)
+              companions: companionInserts.map((c: CompanionFile) => c.name)
             }, { projectId, userId: user.id });
             throw companionError;
           }
           await dbLogger.info('Companion files inserted successfully', {
             mainFileId: mainFile.id,
-            companions: companionInserts.map((c: any) => c.name)
+            companions: companionInserts.map((c: CompanionFile) => c.name)
           }, { projectId, userId: user.id });
         }
 
@@ -221,19 +246,19 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         throw innerError;
       }
     } catch (error) {
-      await dbLogger.error('File upload failed', { error }, { projectId, userId: user?.id });
+      await dbLogger.error('File upload failed', { error }, { projectId, userId: user && typeof user === 'object' && 'id' in user ? (user as User).id : undefined });
       throw error;
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, onSuccess, onError, refreshProjectStorage]);
+  }, [projectId, onSuccess, refreshProjectStorage, supabase]);
 
   /**
    * @deprecated This function is deprecated and should not be used. 
    * Use the streaming import flow in GeoImportDialog instead.
    * This remains only for reference on how to update file relationships after import.
    */
-  const legacyHandleImport = useCallback(async (result: any, sourceFile: ProjectFile) => {
+  const legacyHandleImport = useCallback(async (result: ImportResult, sourceFile: ProjectFile) => {
     setIsLoading(true);
     try {
       // Get current user
@@ -279,7 +304,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         },
         importedLayers: result.layers?.map((layer: string) => ({
           name: layer,
-          featureCount: result.features.filter((f: any) => f.properties?.layer === layer).length,
+          featureCount: result.features.filter((f: Feature) => f.properties?.layer === layer).length,
           featureTypes: result.statistics?.featureTypes || {}
         })) || [],
         statistics: {
@@ -329,12 +354,12 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     }
   }, [projectId, supabase, onSuccess, onError]);
 
-  const handleDelete = useCallback(async (fileId: string, deleteRelated: boolean = true) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _deleteRelated is kept for API compatibility
+  const handleDelete = useCallback(async (fileId: string, _deleteRelated: boolean = true) => {
     try {
       // Note: deleteRelated parameter is kept for backward compatibility but is ignored
       // Database triggers and constraints will always delete related files
       await dbLogger.info('Starting file deletion', { fileId }, { projectId });
-      const supabase = createClient();
   
       // Get current user
       const { data: { user }, error: userError } = await supabase.auth.getUser();
@@ -368,7 +393,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       }, { projectId });
   
       // Initialize arrays for deletion
-      let filesToDelete: { id: string; storage_path: string }[] = [{
+      const filesToDelete: Array<{ id: string; storage_path: string }> = [{
         id: fileToDelete.id,
         storage_path: fileToDelete.storage_path
       }];
@@ -376,7 +401,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       // Add companion files if this is a main file
       if (!fileToDelete.main_file_id && fileToDelete.metadata?.relatedFiles) {
         const companions = Object.entries(fileToDelete.metadata.relatedFiles) as [string, CompanionFile][];
-        for (const [_, companion] of companions) {
+        for (const [, companion] of companions) {
           // Get companion file path using the same pattern as the main file
           const companionPath = fileToDelete.storage_path.replace(
             fileToDelete.name,
@@ -389,7 +414,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         }
         await dbLogger.info('Added companion files for deletion', {
           mainFile: fileToDelete.name,
-          companions: companions.map(([_, c]: [string, CompanionFile]) => c.name)
+          companions: companions.map(([, c]: [string, CompanionFile]) => c.name)
         }, { projectId });
       }
 
@@ -427,7 +452,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         } else if (importedFiles?.length > 0) {
           await dbLogger.info('Imported files will be deleted due to database constraints', { 
             count: importedFiles.length,
-            files: importedFiles.map((f: ProjectFile) => f.name)
+            files: importedFiles.map((f: { id: string; name: string; storage_path: string }) => f.name)
           }, { projectId });
         }
       }
@@ -519,7 +544,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       }
   
       // Delete from project_files table
-      const fileIds = [...new Set(filesToDelete.map((f: { id: string }) => f.id))]; // Remove duplicates since companions share the same ID
+      const fileIds: string[] = filesToDelete.length > 0 ? [...new Set(filesToDelete.map((f) => f.id))] : [];
       await dbLogger.info('Deleting from project_files', { fileIds }, { projectId });
       
       const { error: dbError } = await supabase
@@ -557,7 +582,8 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
       await dbLogger.error('File deletion failed', { error }, { projectId });
       throw error;
     }
-  }, [projectId, refreshProjectStorage, emitFileEvent, handleFileDeleted]);
+  }, [projectId, refreshProjectStorage, emitFileEvent, handleFileDeleted, supabase, onSuccess]);
+
 
   const handleDownload = useCallback(async (fileId: string) => {
     setIsLoading(true);

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { useAuth } from '@/components/providers/auth-provider'
+// import { useAuth } from '@/components/providers/auth-provider' // Removed unused import
 import type { ActionResponse } from '@/types'
 
 interface UseFormOptions<T> {
@@ -9,7 +9,7 @@ interface UseFormOptions<T> {
 }
 
 export function useForm<T = unknown>(options: UseFormOptions<T> = {}) {
-  const { user } = useAuth()
+  // const { user } = useAuth() // Removed unused variable
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formMessage, setFormMessage] = useState<string | null>(null)
 

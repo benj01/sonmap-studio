@@ -1,9 +1,6 @@
 import { NextResponse } from 'next/server';
 import axios from 'axios';
-import { LogManager } from '@/core/logging/log-manager';
-
-const SOURCE = 'api/coordinates/transform';
-const logManager = LogManager.getInstance();
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 export async function POST(request: Request) {
   try {
@@ -14,14 +11,14 @@ export async function POST(request: Request) {
     const requestId = `transform_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     
     // Log incoming request details
-    logManager.info(SOURCE, `Swiss transformation request received ${requestId}`, {
+    await dbLogger.info('Swiss transformation request received', {
       requestId,
       input: { eastingLv95, northingLv95, lhn95Height }
     });
     
     // Validate input
     if (!eastingLv95 || !northingLv95 || lhn95Height === undefined) {
-      logManager.warn(SOURCE, `Invalid transformation request ${requestId} - missing parameters`, {
+      await dbLogger.warn('Invalid transformation request - missing parameters', {
         requestId,
         parameters: { eastingLv95, northingLv95, lhn95Height }
       });
@@ -36,7 +33,7 @@ export async function POST(request: Request) {
     const besselUrl = `https://geodesy.geo.admin.ch/reframe/lhn95tobessel?easting=${eastingLv95}&northing=${northingLv95}&altitude=${lhn95Height}&format=json`;
     
     // Log the first API call
-    logManager.debug(SOURCE, `Making first API call to Swiss Reframe (LHN95 to Bessel) ${requestId}`, {
+    await dbLogger.debug('Making first API call to Swiss Reframe (LHN95 to Bessel)', {
       requestId,
       url: besselUrl,
       input: { eastingLv95, northingLv95, altitude: lhn95Height }
@@ -47,7 +44,7 @@ export async function POST(request: Request) {
     const besselDuration = Date.now() - besselStart;
     
     // Log the first API response
-    logManager.debug(SOURCE, `Received Bessel response ${requestId}`, {
+    await dbLogger.debug('Received Bessel response', {
       requestId,
       status: besselResponse.status,
       duration: `${besselDuration}ms`,
@@ -55,7 +52,7 @@ export async function POST(request: Request) {
     });
     
     if (besselResponse.status !== 200) {
-      logManager.error(SOURCE, `Bessel API failed ${requestId}:`, {
+      await dbLogger.error('Bessel API failed', {
         requestId,
         status: besselResponse.status,
         statusText: besselResponse.statusText,
@@ -71,7 +68,7 @@ export async function POST(request: Request) {
     const besselHeight = besselResponse.data.altitude;
     
     if (besselHeight === undefined) {
-      logManager.error(SOURCE, `Invalid Bessel API response ${requestId}:`, {
+      await dbLogger.error('Invalid Bessel API response', {
         requestId,
         responseData: besselResponse.data,
         url: besselUrl
@@ -87,7 +84,7 @@ export async function POST(request: Request) {
     const wgs84Url = `https://geodesy.geo.admin.ch/reframe/lv95towgs84?easting=${eastingLv95}&northing=${northingLv95}&altitude=${besselHeight}&format=json`;
     
     // Log the second API call
-    logManager.debug(SOURCE, `Making second API call to Swiss Reframe (LV95 to WGS84) ${requestId}`, {
+    await dbLogger.debug('Making second API call to Swiss Reframe (LV95 to WGS84)', {
       requestId,
       url: wgs84Url,
       input: { eastingLv95, northingLv95, altitude: besselHeight }
@@ -98,7 +95,7 @@ export async function POST(request: Request) {
     const wgs84Duration = Date.now() - wgs84Start;
     
     // Log the second API response
-    logManager.debug(SOURCE, `Received WGS84 response ${requestId}`, {
+    await dbLogger.debug('Received WGS84 response', {
       requestId,
       status: wgs84Response.status,
       duration: `${wgs84Duration}ms`,
@@ -106,7 +103,7 @@ export async function POST(request: Request) {
     });
     
     if (wgs84Response.status !== 200) {
-      logManager.error(SOURCE, `WGS84 API failed ${requestId}:`, {
+      await dbLogger.error('WGS84 API failed', {
         requestId,
         status: wgs84Response.status,
         statusText: wgs84Response.statusText,
@@ -128,7 +125,7 @@ export async function POST(request: Request) {
     
     // Log successful transformation with complete input/output data
     const totalDuration = besselDuration + wgs84Duration;
-    logManager.info(SOURCE, `Transformation complete ${requestId}`, {
+    await dbLogger.info('Transformation complete', {
       requestId,
       input: { eastingLv95, northingLv95, lhn95Height },
       intermediate: { besselHeight },
@@ -145,7 +142,7 @@ export async function POST(request: Request) {
     // Generate error ID for tracking
     const errorId = `err_${Date.now()}`;
     
-    logManager.error(SOURCE, `Coordinate transformation error ${errorId}`, {
+    await dbLogger.error('Coordinate transformation error', {
       errorId,
       error: error instanceof Error ? {
         message: error.message,

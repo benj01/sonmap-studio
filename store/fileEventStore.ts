@@ -9,7 +9,7 @@ export interface FileEvent {
   timestamp: number;
 }
 
-interface FileEventState {
+export interface FileEventState {
   lastEvent: FileEvent | null;
   emitFileEvent: (event: Omit<FileEvent, 'timestamp'>) => void;
 }

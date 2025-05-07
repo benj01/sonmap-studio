@@ -3,7 +3,6 @@ import { FileIcon } from '../item/file-icon';
 import { ChevronDown, ChevronRight, Import, Trash2, Info } from 'lucide-react';
 import { ProjectFile } from '../../types';
 import { Button } from '../../../ui/button';
-import { cn } from '../../../../lib/utils';
 import { Badge } from '../../../ui/badge';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription, CardFooter } from '../../../ui/card';
 import { DeleteConfirmationDialog } from '../delete-confirmation-dialog';
@@ -71,7 +70,7 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
             <CardHeader className="pb-2">
               <div className="flex items-start gap-3">
                 <div className="flex items-center gap-2">
-                  {file.companions?.length > 0 && (
+                  {(file.companions?.length ?? 0) > 0 && (
                     <Button
                       variant="ghost"
                       size="icon"
@@ -93,7 +92,7 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
                   </CardTitle>
                   <CardDescription className="text-sm">
                     {formatSize(file.size)}
-                    {file.companions && file.companions.length > 0 && (
+                    {file.companions && (file.companions?.length ?? 0) > 0 && (
                       <span className="ml-2">
                         ({file.companions?.length} related {file.companions?.length === 1 ? 'file' : 'files'})
                       </span>
@@ -103,7 +102,7 @@ export function FileList({ files = [], onDelete, onImport, isLoading }: FileList
               </div>
             </CardHeader>
 
-            {file.companions && file.companions.length > 0 && expandedFiles[file.id] && (
+            {file.companions && (file.companions?.length ?? 0) > 0 && expandedFiles[file.id] && (
               <CardContent className="pb-2">
                 <div
                   className="pl-8 space-y-2 border-l-2 border-blue-200 bg-blue-50/50 rounded-md relative"

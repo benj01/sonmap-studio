@@ -66,26 +66,33 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
   }, [projectId, loadFiles]);
 
   useEffect(() => {
-    if (projectId) {
-      (async () => {
+    if (!projectId) return;
+    (async () => {
+      try {
         await loadExistingFiles();
-      })().catch(() => {});
-    }
+      } catch {
+        // Optionally handle error here
+      }
+    })().catch(() => {});
   }, [projectId, loadExistingFiles]);
 
-  const handleFileDelete = useCallback(async (file: ProjectFile) => {
-    try {
-      await handleDelete(file.id, true);
-      const updatedFiles = await loadFiles();
-      setFiles(updatedFiles);
-      setImportedFilesKey(prev => prev + 1);
-    } catch {
-      const errorMessage = 'Failed to delete file';
-      onError?.(errorMessage);
-    }
-  }, [handleDelete, loadFiles, onError]);
+  const handleFileDelete = useCallback(
+    async (file: ProjectFile, _deleteRelated?: boolean) => {
+      void _deleteRelated;
+      try {
+        await handleDelete(file.id, true);
+        const updatedFiles = await loadFiles();
+        setFiles(updatedFiles);
+        setImportedFilesKey(prev => prev + 1);
+      } catch {
+        const errorMessage = 'Failed to delete file';
+        onError?.(errorMessage);
+      }
+    },
+    [handleDelete, loadFiles, onError]
+  );
 
-  const handleFileImport = async (fileId: string) => {
+  const handleFileImport = async (fileId: string): Promise<void> => {
     const file = files.find(f => f.id === fileId);
     if (file) {
       const fileType = FileTypeUtil.getConfigForFile(file.name);
@@ -101,24 +108,35 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
       });
       setImportWizardStep(1); // Start at Parse & Analyze
       setShowImportWizard(true);
+      return;
     }
+    return Promise.resolve();
   };
 
   const handleViewLayer = (layerId: string) => {
     // TODO: Implement layer viewing functionality
-    void dbLogger.info(SOURCE, 'View layer requested', { layerId });
+    (async () => {
+      try {
+        await dbLogger.info(SOURCE, 'View layer requested', { layerId });
+      } catch {
+        // Optionally handle error here
+      }
+    })().catch(() => {});
   };
 
   // Use main files as returned from the DB, which already have companions attached
   const groupedFiles = files.filter(f => !f.main_file_id);
 
   useEffect(() => {
-    if (files && files.length > 0) {
-      (async () => {
+    if (!(files && files.length > 0)) return;
+    (async () => {
+      try {
         await dbLogger.debug(LOG_SOURCE, 'Raw files from DB (truncated sample)', { files: JSON.stringify(files, null, 2) });
         await dbLogger.debug(LOG_SOURCE, 'Grouped files for FileList', { groupedFiles });
-      })().catch(() => {});
-    }
+      } catch {
+        // Optionally handle error here
+      }
+    })().catch(() => {});
   }, [files, groupedFiles]);
 
   // Handler to close the import wizard
@@ -129,8 +147,8 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
   }, []);
 
   // Handler to refresh files after import
-  const handleWizardRefreshFiles = useCallback(() => {
-    void loadExistingFiles();
+  const handleWizardRefreshFiles = useCallback(async () => {
+    await loadExistingFiles();
   }, [loadExistingFiles]);
 
   return (
@@ -197,7 +215,7 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
                 ref={importedFilesRef}
                 key={importedFilesKey}
                 projectId={projectId}
-                onViewLayer={handleViewLayer}
+                onViewLayer={(layerId) => void handleViewLayer(layerId)}
                 onDelete={handleFileDelete}
               />
             )}

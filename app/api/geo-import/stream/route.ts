@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-import { createLogger } from '@/utils/logger';
-
-const logger = createLogger('GeoImportAPI');
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 // Environment variables for Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -10,7 +8,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Check if we have the required environment variables
 if (!supabaseUrl || !supabaseServiceKey) {
-  logger.error('Missing Supabase environment variables');
+  await dbLogger.error('Missing Supabase environment variables');
 }
 
 export async function POST(request: NextRequest) {
@@ -19,7 +17,7 @@ export async function POST(request: NextRequest) {
     const authHeader = request.headers.get('Authorization');
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      logger.error('Missing or invalid Authorization header');
+      await dbLogger.error('Missing or invalid Authorization header');
       return NextResponse.json(
         { error: 'Missing or invalid Authorization header' },
         { status: 401 }
@@ -47,21 +45,21 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
     
     if (userError || !user) {
-      logger.error('Authentication error', { error: userError });
+      await dbLogger.error('Authentication error', { error: userError });
       return NextResponse.json(
         { error: 'Authentication error', details: userError },
         { status: 401 }
       );
     }
     
-    logger.info('Authenticated user', { userId: user.id });
+    await dbLogger.info('Authenticated user', { userId: user.id });
     
     // Parse request body
     let requestBody;
     try {
       requestBody = await request.json();
     } catch (jsonError) {
-      logger.error('Invalid JSON in request body', { error: jsonError });
+      await dbLogger.error('Invalid JSON in request body', { error: jsonError });
       return NextResponse.json(
         { error: 'Invalid JSON in request body' },
         { status: 400 }
@@ -107,14 +105,14 @@ export async function POST(request: NextRequest) {
       .single();
       
     if (logError) {
-      logger.error('Failed to create import log', { error: logError });
+      await dbLogger.error('Failed to create import log', { error: logError });
       return NextResponse.json(
         { error: 'Failed to create import log', details: logError },
         { status: 500 }
       );
     }
     
-    logger.info('Starting import', { 
+    await dbLogger.info('Starting import', { 
       importLogId: importLog.id,
       featureCount: features.length,
       batchSize
@@ -134,7 +132,7 @@ export async function POST(request: NextRequest) {
     );
     
     if (error) {
-      logger.error('Import failed', { error, importLogId: importLog.id });
+      await dbLogger.error('Import failed', { error, importLogId: importLog.id });
       
       // Update import log with error
       await supabase
@@ -156,7 +154,7 @@ export async function POST(request: NextRequest) {
     }
     
     if (!data || !Array.isArray(data) || data.length === 0) {
-      logger.error('No results returned from import function', { importLogId: importLog.id });
+      await dbLogger.error('No results returned from import function', { importLogId: importLog.id });
       
       // Update import log with error
       await supabase
@@ -177,7 +175,7 @@ export async function POST(request: NextRequest) {
     }
     
     const result = data[0];
-    logger.info('Import successful', { 
+    await dbLogger.info('Import successful', { 
       importLogId: importLog.id,
       importedCount: result.imported_count,
       failedCount: result.failed_count,
@@ -216,13 +214,13 @@ export async function POST(request: NextRequest) {
       .eq('id', projectFileId);
     
     if (updateError) {
-      logger.warn('Failed to update project_files record', { 
+      await dbLogger.warn('Failed to update project_files record', { 
         error: updateError, 
         projectFileId 
       });
       // Continue anyway as the import was successful
     } else {
-      logger.info('Updated project_files record', { 
+      await dbLogger.info('Updated project_files record', { 
         projectFileId,
         is_imported: true,
         import_metadata: importMetadata
@@ -242,7 +240,7 @@ export async function POST(request: NextRequest) {
     });
     
   } catch (error) {
-    logger.error('Unhandled import error', { 
+    await dbLogger.error('Unhandled import error', { 
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined
     });

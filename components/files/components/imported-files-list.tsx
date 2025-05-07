@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useImperativeHandle, forwardRef } from 'react';
+import { useEffect, useState, useImperativeHandle, forwardRef, useCallback } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Eye, Trash2 } from 'lucide-react';
@@ -9,7 +9,6 @@ import { createClient } from '@/utils/supabase/client';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { ProjectFile } from '@/components/files/types';
 import { FileIcon } from '@/components/files/components/item/file-icon';
-import { Badge } from '@/components/ui/badge';
 import { DeleteConfirmationDialog } from './delete-confirmation-dialog';
 
 interface ImportedFilesListProps {
@@ -33,6 +32,21 @@ interface ImportedFile {
   };
 }
 
+type SupabaseProjectFileRow = {
+  id: string;
+  name: string;
+  source_file_id: string | null;
+  is_imported: boolean | null;
+  uploaded_at: string;
+  import_metadata: {
+    collection_id: string;
+    layer_id: string;
+    imported_count: number;
+    failed_count: number;
+    imported_at: string;
+  };
+};
+
 const SOURCE = 'ImportedFilesList';
 
 export interface ImportedFilesListRef {
@@ -46,7 +60,7 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
     const [fileToDelete, setFileToDelete] = useState<ImportedFile | null>(null);
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
-    const loadImportedFiles = async () => {
+    const loadImportedFiles = useCallback(async () => {
       try {
         setIsLoading(true);
         const supabase = createClient();
@@ -69,10 +83,13 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
         await dbLogger.info('importedFilesList.loaded', {
           projectId,
           count: data?.length,
-          files: data?.map((f: ImportedFile) => ({ id: f.id, name: f.name }))
+          files: (data || []).map((f: SupabaseProjectFileRow) => ({ id: f.id, name: f.name })),
         }, { SOURCE });
 
-        setImportedFiles(data || []);
+        setImportedFiles((data || []).map((f: SupabaseProjectFileRow) => ({
+          ...f,
+          is_imported: !!f.is_imported,
+        })));
       } catch (error: unknown) {
         await dbLogger.error('importedFilesList.loadError', {
           projectId,
@@ -81,7 +98,7 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
       } finally {
         setIsLoading(false);
       }
-    };
+    }, [projectId]);
 
     // Expose the refreshFiles method via ref
     useImperativeHandle(ref, () => ({
@@ -91,8 +108,10 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
     }));
 
     useEffect(() => {
-      loadImportedFiles();
-    }, [projectId]);
+      (async () => {
+        await loadImportedFiles();
+      })().catch(() => {});
+    }, [projectId, loadImportedFiles]);
 
     const handleDeleteClick = (file: ImportedFile) => {
       setFileToDelete(file);
