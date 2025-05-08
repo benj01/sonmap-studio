@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/client';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
+import { GeoFeature } from '@/types/geo';
 
 interface ReviewStepProps {
   onNext: () => void;
@@ -38,7 +39,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       toast.success(`Import successful: ${result.imported} features imported.`);
       if (onRefreshFiles) onRefreshFiles();
       setTimeout(() => {
-        onClose && onClose();
+        if (onClose) onClose();
       }, 1500);
     }
   }, [result, onClose, onRefreshFiles]);
@@ -55,7 +56,9 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       
       // IMPORTANT: Use importDataset instead of dataset for the import payload
       // This ensures original (untransformed) coordinates are sent to the backend
-      const features = (datasetForImport?.features || []).filter((f: any) => selectedFeatureIds.includes(f.id));
+      const features = (datasetForImport?.features || []).filter(
+        (f: GeoFeature): f is GeoFeature & { id: number } => typeof f.id === 'number' && selectedFeatureIds.includes(f.id as number)
+      );
       
       const payload = {
         projectFileId: fileInfo?.id,
@@ -90,7 +93,9 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
               id: payload.features[0].id, 
               geometry: { 
                 type: payload.features[0].geometry.type,
-                coordinates: JSON.stringify(payload.features[0].geometry.coordinates).substring(0, 100) + '...' 
+                coordinates: 'coordinates' in payload.features[0].geometry
+                  ? JSON.stringify((payload.features[0].geometry as { coordinates: unknown }).coordinates).substring(0, 100) + '...'
+                  : undefined
               },
               properties: payload.features[0].properties
             }] 
@@ -123,7 +128,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       let responseData;
       try {
         responseData = await response.json();
-      } catch (e) {
+      } catch {
         responseData = await response.text();
       }
       await dbLogger.info('Backend response', { source: 'GeoImportReviewStep', status: response.status, response: responseData });
@@ -137,16 +142,24 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
         warnings: responseData.warnings || [],
         errors: responseData.errors || [],
       });
-    } catch (err: any) {
-      await dbLogger.error('Import failed', { source: 'GeoImportReviewStep', error: err.message, stack: err.stack });
+    } catch (err: unknown) {
+      let errorMsg = 'Import failed';
+      let errorStack = undefined;
+      if (err instanceof Error) {
+        errorMsg = err.message;
+        errorStack = err.stack;
+      } else if (typeof err === 'string') {
+        errorMsg = err;
+      }
+      await dbLogger.error('Import failed', { source: 'GeoImportReviewStep', error: errorMsg, stack: errorStack });
       setResult({
         success: false,
         imported: 0,
         failed: selectedFeatureIds.length,
         warnings: [],
-        errors: [err.message || 'Import failed'],
+        errors: [errorMsg],
       });
-      setError(err.message || 'Import failed');
+      setError(errorMsg);
     } finally {
       setImporting(false);
     }

@@ -1,28 +1,39 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useWizard } from '../WizardContext';
+import { GeoFeature } from '@/types/geo';
 
 interface AttributeMappingStepProps {
   onNext: () => void;
   onBack: () => void;
-  onClose?: () => void;
-  onRefreshFiles?: () => void;
 }
 
-export function AttributeMappingStep({ onNext, onBack, onClose, onRefreshFiles }: AttributeMappingStepProps) {
-  const { dataset, heightAttribute, setHeightAttribute } = useWizard();
-  const properties: string[] = dataset?.metadata?.properties || [];
-  const features = dataset?.features || [];
-  const [selected, setSelected] = useState<string | 'z' | ''>(heightAttribute || '');
+function isStringArray(val: unknown): val is string[] {
+  return Array.isArray(val) && val.every((p) => typeof p === 'string');
+}
 
-  useEffect(() => {
-    setHeightAttribute(selected);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selected]);
+function isPointGeometry(geometry: GeoFeature['geometry']): geometry is import('geojson').Point {
+  return geometry !== null && typeof geometry === 'object' && geometry.type === 'Point' && Array.isArray(geometry.coordinates);
+}
+
+export function AttributeMappingStep({ onNext, onBack }: AttributeMappingStepProps) {
+  const { dataset } = useWizard();
+  const properties: string[] = isStringArray(dataset?.metadata?.properties)
+    ? dataset?.metadata?.properties
+    : [];
+  const features = dataset?.features || [];
+  const [selected, setSelected] = useState<string | 'z' | ''>('');
+
+  function getZCoordinate(geometry: GeoFeature['geometry']): number | undefined {
+    if (isPointGeometry(geometry)) {
+      return geometry.coordinates[2];
+    }
+    return undefined;
+  }
 
   // Preview: show first 5 features with the selected attribute or Z
-  const preview = features.slice(0, 5).map((f: any) => ({
+  const preview = features.slice(0, 5).map((f: GeoFeature) => ({
     id: f.id,
-    value: selected === 'z' ? f.geometry?.coordinates?.[2] : f.properties?.[selected]
+    value: selected === 'z' ? getZCoordinate(f.geometry) : f.properties?.[selected]
   }));
 
   return (

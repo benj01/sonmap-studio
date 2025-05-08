@@ -19,9 +19,6 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { useForm } from 'react-hook-form'
 import * as z from 'zod'
 import { Eye, EyeOff, Loader2, Check, X } from 'lucide-react'
-import type { SignUpCredentials } from '@/types'
-import type { FieldValues, Path } from 'react-hook-form'
-import type { User } from '@supabase/supabase-js'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -91,7 +88,7 @@ export function RegisterForm() {
     setError(null)
 
     try {
-      const { data: authData, error: authError } = await supabase.auth.signUp({
+      const { error: authError } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
         options: {
@@ -105,7 +102,7 @@ export function RegisterForm() {
       }
 
       router.push('/dashboard')
-    } catch (err) {
+    } catch {
       setError('An unexpected error occurred')
     } finally {
       setIsSubmitting(false)

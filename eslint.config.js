@@ -1,6 +1,7 @@
 // ESLint Flat Config for Sonmap Studio (ESLint 9+)
 // See: https://eslint.org/docs/latest/use/configure/configuration-files
 
+import { defineConfig, globalIgnores } from 'eslint/config';
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import react from 'eslint-plugin-react';
@@ -12,7 +13,30 @@ import reactHooks from 'eslint-plugin-react-hooks';
  * (For now, use no-restricted-syntax and no-console as a baseline. Custom rule can be added later.)
  */
 
-export default [
+export default defineConfig([
+  globalIgnores([
+    'node_modules/',
+    '.next/',
+    'dist/',
+    'build/',
+    'public/',
+    'public/static/',
+    'public/cesium/',
+    'public/static/cesium/',
+    'public/static/cesium/Workers/',
+    'supabase/.branches/',
+    'supabase/.temp/',
+    'supabase/legacy_migrations/',
+    'supabase/migrations/',
+    'test-data/',
+    'db_logs.txt',
+    'scripts/',
+    '*.tsbuildinfo',
+    '.codegpt/',
+    '.cursor/',
+    '.roo/',
+    '.vscode/'
+  ]),
   js.configs.recommended,
   ...tseslint.configs.recommended,
   ...tseslint.configs.strict,
@@ -83,4 +107,4 @@ export default [
       },
     },
   },
-]; 
+]); 

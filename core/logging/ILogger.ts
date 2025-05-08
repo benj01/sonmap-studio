@@ -12,7 +12,7 @@ export interface ILogger {
    * @param data - Optional additional data to log
    * @param context - Optional log context
    */
-  debug(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
+  debug(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
 
   /**
    * Log an info level message
@@ -21,7 +21,7 @@ export interface ILogger {
    * @param data - Optional additional data to log
    * @param context - Optional log context
    */
-  info(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
+  info(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
 
   /**
    * Log a warning level message
@@ -30,7 +30,7 @@ export interface ILogger {
    * @param data - Optional additional data to log
    * @param context - Optional log context
    */
-  warn(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
+  warn(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
 
   /**
    * Log an error level message
@@ -39,5 +39,5 @@ export interface ILogger {
    * @param data - Optional additional data to log
    * @param context - Optional log context
    */
-  error(source: string, message: string, data?: any, context?: LogContext): Promise<void>;
+  error(source: string, message: string, data?: unknown, context?: LogContext): Promise<void>;
 } 

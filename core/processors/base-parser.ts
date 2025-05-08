@@ -1,4 +1,4 @@
-import { GeoFeature, FullDataset } from '@/types/geo-import';
+import { FullDataset } from '@/types/geo-import';
 
 /**
  * Progress event for parser operations
@@ -18,7 +18,7 @@ export class ParserError extends Error {
   constructor(
     message: string,
     public code: string,
-    public details?: Record<string, any>
+    public details?: Record<string, unknown>
   ) {
     super(message);
     this.name = 'ParserError';

@@ -1,8 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatBytes } from "@/lib/utils"
-import { Database } from '@/types/supabase'
-
-type Project = Database['public']['Tables']['projects']['Row']
 
 export interface DashboardStats {
   totalProjects: number

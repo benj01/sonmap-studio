@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { WizardProvider } from './WizardContext';
+import { WizardProvider, WizardFileInfo } from './WizardContext';
 import { WizardStepper } from './WizardStepper';
 import { FileSelectStep } from './steps/FileSelectStep';
 import { ParseStep } from './steps/ParseStep';
@@ -21,7 +21,7 @@ const steps = [
 interface ImportWizardProps {
   projectId: string;
   onClose?: () => void;
-  initialFileInfo?: any;
+  initialFileInfo?: WizardFileInfo;
   initialStep?: number;
   onRefreshFiles?: () => void;
 }

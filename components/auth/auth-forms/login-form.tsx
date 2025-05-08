@@ -4,9 +4,7 @@ import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import * as z from 'zod'
-import { useAuth } from '@/components/providers/auth-provider'
 import { createClient } from '@/utils/supabase/client'
-import { useUIStore } from '@/lib/stores/ui'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -19,7 +17,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Eye, EyeOff, Loader2 } from 'lucide-react'
-import { LogManager } from '@/core/logging/log-manager'
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 const formSchema = z.object({
   email: z.string().email('Please enter a valid email'),
@@ -27,8 +25,6 @@ const formSchema = z.object({
 })
 
 type FormValues = z.infer<typeof formSchema>
-
-const logger = LogManager.getInstance()
 
 export function LoginForm() {
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -55,12 +51,17 @@ export function LoginForm() {
       })
 
       if (authError) {
-        logger.error('LoginForm', 'Login failed', authError.message)
+        await dbLogger.error('LoginForm.loginFailed', {
+          email: data.email,
+          error: authError,
+        })
         setFormError(authError.message)
         return
       }
     } catch (err) {
-      logger.error('LoginForm', 'Unexpected error during login', err)
+      await dbLogger.error('LoginForm.unexpectedError', {
+        error: err,
+      })
       setFormError('An unexpected error occurred')
     } finally {
       setIsSubmitting(false)

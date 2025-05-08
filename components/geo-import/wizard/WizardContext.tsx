@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode } from 'react';
+import { GeoFeature } from '@/types/geo';
 
 // Types for wizard state (expand as needed)
 export interface WizardFileInfo {
@@ -15,9 +16,8 @@ export interface WizardFileInfo {
 }
 
 export interface WizardDataset {
-  // Add fields as needed (features, metadata, etc.)
-  features?: any[];
-  metadata?: any;
+  features?: GeoFeature[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface HeightSource {

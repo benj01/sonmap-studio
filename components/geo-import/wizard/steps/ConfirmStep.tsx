@@ -5,11 +5,9 @@ import { dbLogger } from '@/utils/logging/dbLogger';
 interface ConfirmStepProps {
   onNext: () => void;
   onBack: () => void;
-  onClose?: () => void;
-  onRefreshFiles?: () => void;
 }
 
-export function ConfirmStep({ onNext, onBack, onClose, onRefreshFiles }: ConfirmStepProps) {
+export function ConfirmStep({ onNext, onBack }: ConfirmStepProps) {
   const {
     fileInfo,
     dataset,

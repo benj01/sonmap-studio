@@ -1,13 +1,9 @@
-import type { FullDataset, PreviewDataset, PreviewFeature, PreviewConfig } from '@/types/geo-import';
+import type { FullDataset } from '@/types/geo-import';
 import simplify from '@turf/simplify';
 import kinks from '@turf/kinks';
-import unkink from '@turf/unkink-polygon';
-import area from '@turf/area';
-import cleanCoords from '@turf/clean-coords';
-import type { Feature, Geometry, GeoJsonProperties, Polygon, MultiPolygon } from 'geojson';
-import { createLogger } from '@/utils/logger';
 import buffer from '@turf/buffer';
-import explode from '@turf/explode';
+import type { Feature, Geometry, Polygon, MultiPolygon } from 'geojson';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const DEFAULT_CONFIG: Required<PreviewConfig> = {
   maxFeatures: 500,
@@ -17,11 +13,46 @@ const DEFAULT_CONFIG: Required<PreviewConfig> = {
 };
 
 const SOURCE = 'PreviewGenerator';
-const logger = createLogger(SOURCE);
 
 interface ValidationResult {
   hasIssues: boolean;
   issues: string[];
+}
+
+// Local type definitions for preview generation
+export interface PreviewConfig {
+  maxFeatures: number;
+  simplificationTolerance: number;
+  randomSampling: boolean;
+  chunkSize: number;
+}
+
+export interface PreviewFeature {
+  id: number;
+  previewId: number;
+  originalFeatureIndex: number;
+  geometry: Geometry;
+  properties: Record<string, unknown> & {
+    wasRepaired: boolean;
+    wasCleaned: boolean;
+    validation?: ValidationResult;
+  };
+}
+
+export interface PreviewDataset {
+  sourceFile: string;
+  features: PreviewFeature[];
+  metadata: {
+    featureCount: number;
+    bounds?: [number, number, number, number];
+    geometryTypes: string[];
+    properties: string[];
+    srid?: number;
+    validationSummary?: {
+      featuresWithIssues: number;
+      totalFeatures: number;
+    };
+  };
 }
 
 /**
@@ -45,7 +76,7 @@ export async function validateAndRepairGeometry(geometry: Geometry): Promise<{
 
   // Skip validation for very complex geometries (more than 1000 points)
   if (pointCount > 1000) {
-    logger.warn('Skipping validation for complex geometry', { pointCount });
+    await dbLogger.warn('Skipping validation for complex geometry', { pointCount }, { source: SOURCE });
     return { geometry, wasRepaired: false, wasCleaned: false };
   }
 
@@ -120,10 +151,10 @@ export async function validateAndRepairGeometry(geometry: Geometry): Promise<{
       wasCleaned = JSON.stringify(cleaned.geometry) !== JSON.stringify(feature.geometry);
       
       if (wasCleaned) {
-        logger.info('Cleaned duplicate/near-duplicate vertices from geometry');
+        await dbLogger.info('Cleaned duplicate/near-duplicate vertices from geometry', {}, { source: SOURCE });
       }
     } catch (error) {
-      logger.warn('Failed to clean vertices', { error });
+      await dbLogger.warn('Failed to clean vertices', { error }, { source: SOURCE });
       cleaned = feature;
     }
 
@@ -137,7 +168,7 @@ export async function validateAndRepairGeometry(geometry: Geometry): Promise<{
       const kinksPromise = Promise.resolve(kinks(cleaned.geometry));
       intersections = await Promise.race([timeoutPromise, kinksPromise]);
     } catch (error) {
-      logger.warn('Failed or timed out checking for self-intersections', { error });
+      await dbLogger.warn('Failed or timed out checking for self-intersections', { error }, { source: SOURCE });
       return { 
         geometry: cleaned.geometry,
         wasRepaired: false,
@@ -146,9 +177,9 @@ export async function validateAndRepairGeometry(geometry: Geometry): Promise<{
     }
     
     if (intersections.features.length > 0) {
-      logger.info('Found self-intersections in geometry', {
+      await dbLogger.info('Found self-intersections in geometry', {
         intersectionCount: intersections.features.length
-      });
+      }, { source: SOURCE });
 
       try {
         // Try to repair using buffer with a small value
@@ -168,7 +199,7 @@ export async function validateAndRepairGeometry(geometry: Geometry): Promise<{
           wasCleaned 
         };
       } catch (error) {
-        logger.warn('Failed to repair geometry', { error });
+        await dbLogger.warn('Failed to repair geometry', { error }, { source: SOURCE });
         return { 
           geometry: cleaned.geometry,
           wasRepaired: false,
@@ -184,7 +215,7 @@ export async function validateAndRepairGeometry(geometry: Geometry): Promise<{
     };
 
   } catch (error) {
-    logger.warn('Failed to validate/repair geometry', { error });
+    await dbLogger.warn('Failed to validate/repair geometry', { error }, { source: SOURCE });
     return { 
       geometry: null, 
       wasRepaired: false,
@@ -196,7 +227,7 @@ export async function validateAndRepairGeometry(geometry: Geometry): Promise<{
 /**
  * Validates a geometry and returns any issues found
  */
-function validateGeometry(geometry: Geometry): ValidationResult {
+async function validateGeometry(geometry: Geometry): Promise<ValidationResult> {
   const issues: string[] = [];
   
   // Check for self-intersections in polygons
@@ -213,7 +244,7 @@ function validateGeometry(geometry: Geometry): ValidationResult {
         issues.push(`Has ${intersections.features.length} self-intersection${intersections.features.length > 1 ? 's' : ''}`);
       }
     } catch (error) {
-      logger.warn('Failed to check for self-intersections', { error });
+      await dbLogger.warn('Failed to check for self-intersections', { error }, { source: SOURCE });
       issues.push('Failed to validate geometry');
     }
   }
@@ -241,7 +272,7 @@ function validateGeometry(geometry: Geometry): ValidationResult {
 /**
  * Simplifies a GeoJSON geometry using the Douglas-Peucker algorithm
  */
-function simplifyGeometry(geometry: Geometry, tolerance: number): Geometry {
+async function simplifyGeometry(geometry: Geometry, tolerance: number): Promise<Geometry> {
   try {
     const feature: Feature = {
       type: 'Feature',
@@ -252,7 +283,7 @@ function simplifyGeometry(geometry: Geometry, tolerance: number): Geometry {
     const simplified = simplify(feature, { tolerance });
     return simplified.geometry;
   } catch (error) {
-    logger.warn('Failed to simplify geometry', { error, geometryType: geometry.type });
+    await dbLogger.warn('Failed to simplify geometry', { error, geometryType: geometry.type }, { source: SOURCE });
     return geometry;
   }
 }
@@ -260,20 +291,20 @@ function simplifyGeometry(geometry: Geometry, tolerance: number): Geometry {
 /**
  * Samples features from a dataset
  */
-function sampleFeatures(features: Feature[], maxFeatures: number, random: boolean): Feature[] {
+async function sampleFeatures(features: Feature[], maxFeatures: number, random: boolean): Promise<Feature[]> {
   if (features.length <= maxFeatures) {
-    logger.info('No sampling needed, feature count within limit', {
+    await dbLogger.info('No sampling needed, feature count within limit', {
       featureCount: features.length,
       maxFeatures
-    });
+    }, { source: SOURCE });
     return features;
   }
 
-  logger.info('Sampling features', {
+  await dbLogger.info('Sampling features', {
     totalFeatures: features.length,
     targetCount: maxFeatures,
     method: random ? 'random' : 'systematic'
-  });
+  }, { source: SOURCE });
 
   let sampledFeatures: Feature[];
   if (random) {
@@ -289,23 +320,13 @@ function sampleFeatures(features: Feature[], maxFeatures: number, random: boolea
     sampledFeatures = features.filter((_, i) => i % step === 0);
   }
 
-  logger.info('Sampling complete', {
+  await dbLogger.info('Sampling complete', {
     sampledCount: sampledFeatures.length,
     reductionRatio: (sampledFeatures.length / features.length).toFixed(2)
-  });
+  }, { source: SOURCE });
 
   return sampledFeatures;
 }
-
-interface ProcessedFeature extends PreviewFeature {
-  properties: Record<string, any> & {
-    wasRepaired: boolean;
-    wasCleaned: boolean;
-    validation?: ValidationResult;
-  };
-}
-
-type ProcessingResult = ProcessedFeature | null;
 
 /**
  * Process features in chunks to avoid blocking the UI
@@ -314,9 +335,9 @@ async function processChunks(
   features: Feature[],
   tolerance: number,
   chunkSize: number,
-  onChunkProcessed?: (chunk: ProcessedFeature[]) => void
+  onChunkProcessed?: (chunk: PreviewFeature[]) => void
 ): Promise<{ 
-  features: ProcessedFeature[];
+  features: PreviewFeature[];
   stats: { 
     processed: number;
     repaired: number;
@@ -331,7 +352,7 @@ async function processChunks(
     chunks.push(features.slice(i, i + chunkSize));
   }
 
-  const results: ProcessedFeature[] = [];
+  const results: PreviewFeature[] = [];
   let repairedCount = 0;
   let cleanedCount = 0;
   let failedCount = 0;
@@ -346,37 +367,37 @@ async function processChunks(
         const { geometry: repairedGeometry, wasRepaired, wasCleaned, error } = await validateAndRepairGeometry(feature.geometry);
         
         if (error || !repairedGeometry) {
-          logger.warn('Geometry repair failed', { 
+          await dbLogger.warn('Geometry repair failed', { 
             featureId: feature.id, 
             error 
-          });
+          }, { source: SOURCE });
           failedCount++;
           return null;
         }
 
         if (wasRepaired) {
           repairedCount++;
-          logger.info('Geometry repaired', { featureId: feature.id });
+          await dbLogger.info('Geometry repaired', { featureId: feature.id }, { source: SOURCE });
         }
 
         if (wasCleaned) {
           cleanedCount++;
-          logger.info('Geometry cleaned', { featureId: feature.id });
+          await dbLogger.info('Geometry cleaned', { featureId: feature.id }, { source: SOURCE });
         }
 
         // Then simplify the repaired geometry
-        const simplifiedGeometry = simplifyGeometry(repairedGeometry, tolerance);
+        const simplifiedGeometry = await simplifyGeometry(repairedGeometry, tolerance);
         if (JSON.stringify(simplifiedGeometry) !== JSON.stringify(repairedGeometry)) {
           simplifiedCount++;
         }
         
         // Validate the simplified geometry
-        const validation = validateGeometry(simplifiedGeometry);
+        const validation = await validateGeometry(simplifiedGeometry);
         if (validation.hasIssues) {
           issuesCount++;
         }
         
-        const processedFeature: ProcessedFeature = {
+        const processedFeature: PreviewFeature = {
           id: feature.id as number,
           previewId: i * chunkSize + index,
           originalFeatureIndex: feature.id as number,
@@ -391,14 +412,14 @@ async function processChunks(
 
         return processedFeature;
       } catch (error) {
-        logger.warn('Failed to process feature', { featureId: feature.id, error });
+        await dbLogger.warn('Failed to process feature', { featureId: feature.id, error }, { source: SOURCE });
         failedCount++;
         return null;
       }
     }));
 
     // Filter out null results from failed processing
-    const validResults = chunkResults.filter((result): result is ProcessedFeature => result !== null);
+    const validResults = chunkResults.filter((result): result is PreviewFeature => result !== null);
     results.push(...validResults);
     
     if (onChunkProcessed) {
@@ -409,7 +430,7 @@ async function processChunks(
     await new Promise(resolve => setTimeout(resolve, 0));
   }
 
-  logger.info('Chunk processing complete', {
+  await dbLogger.info('Chunk processing complete', {
     totalFeatures: features.length,
     processedFeatures: results.length,
     repairedCount,
@@ -417,7 +438,7 @@ async function processChunks(
     failedCount,
     simplifiedCount,
     issuesCount
-  });
+  }, { source: SOURCE });
 
   return {
     features: results,
@@ -438,7 +459,7 @@ async function processChunks(
 export async function generatePreview(
   dataset: FullDataset,
   config: Partial<PreviewConfig> = {},
-  onProgress?: (features: ProcessedFeature[]) => void
+  onProgress?: (features: PreviewFeature[]) => void
 ): Promise<PreviewDataset & { 
   stats?: { 
     processed: number; 
@@ -448,14 +469,14 @@ export async function generatePreview(
     withIssues: number;
   }; 
 }> {
-  logger.info('Starting preview generation', {
+  await dbLogger.info('Starting preview generation', {
     sourceDataset: {
       featureCount: dataset.features.length,
       geometryTypes: dataset.metadata?.geometryTypes,
       sourceFile: dataset.sourceFile
     },
     config
-  });
+  }, { source: SOURCE });
 
   const finalConfig: Required<PreviewConfig> = {
     ...DEFAULT_CONFIG,
@@ -466,10 +487,10 @@ export async function generatePreview(
     chunkSize: config.chunkSize || DEFAULT_CONFIG.chunkSize
   };
 
-  logger.info('Using configuration', finalConfig);
+  await dbLogger.info('Using configuration', finalConfig, { source: SOURCE });
 
   // Sample features
-  const sampledFeatures = sampleFeatures(
+  const sampledFeatures = await sampleFeatures(
     dataset.features.map(f => ({
       type: 'Feature' as const,
       geometry: f.geometry,
@@ -490,12 +511,12 @@ export async function generatePreview(
   );
 
   const processingTime = Date.now() - startTime;
-  logger.info('Preview generation complete', {
+  await dbLogger.info('Preview generation complete', {
     originalFeatures: dataset.features.length,
     previewFeatures: previewFeatures.length,
     processingTimeMs: processingTime,
     stats
-  });
+  }, { source: SOURCE });
 
   return {
     sourceFile: dataset.sourceFile,

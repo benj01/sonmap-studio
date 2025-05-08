@@ -2,14 +2,11 @@ import { useState, useCallback } from 'react';
 import { createClient } from '@/utils/supabase/client';
 import type { 
   ImportSession, 
-  FullDataset,
   CreateImportSessionParams
 } from '@/types/geo-import';
-import { createLogger } from '@/utils/logger';
-import { generatePreview as generatePreviewDataset } from '@/core/processors/preview-generator';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const supabase = createClient();
-const logger = createLogger('GeoImport');
 
 /**
  * Hook for managing geodata import sessions
@@ -22,7 +19,7 @@ export function useGeoImport() {
    * Creates a new import session for a file
    */
   const createImportSession = useCallback(async (params: CreateImportSessionParams): Promise<ImportSession> => {
-    logger.info('Creating import session', {
+    await dbLogger.info('Creating import session', {
       fileId: params.fileId,
       hasFullDataset: !!params.fullDataset
     });
@@ -38,7 +35,7 @@ export function useGeoImport() {
       updatedAt: now
     };
 
-    logger.info('Import session created', {
+    await dbLogger.info('Import session created', {
       fileId: session.fileId,
       status: session.status,
       featureCount: session.fullDataset?.features.length || 0,
@@ -58,12 +55,12 @@ export function useGeoImport() {
       .download(fileId);
 
     if (error) {
-      logger.error('Failed to download file', { error, fileId });
+      await dbLogger.error('Failed to download file', { error, fileId });
       throw new Error(`Failed to download file: ${error.message}`);
     }
 
     if (!data) {
-      logger.error('No data received from storage', { fileId });
+      await dbLogger.error('No data received from storage', { fileId });
       throw new Error('No data received from storage');
     }
 

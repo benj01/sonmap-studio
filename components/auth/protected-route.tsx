@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
-import { useRouter, usePathname } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { useAuth } from '@/lib/stores/auth'
 import { LoadingState } from '@/components/shared/loading-state'
 
@@ -12,7 +11,6 @@ interface ProtectedRouteProps {
 
 export function ProtectedRoute({ children, allowedRoles }: ProtectedRouteProps) {
   const router = useRouter()
-  const pathname = usePathname()
   const { user, initialized } = useAuth()
 
   if (!initialized) {

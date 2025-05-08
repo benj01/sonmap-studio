@@ -1,8 +1,12 @@
 import React, { useRef, useState, useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 import { createClient } from '@/utils/supabase/client';
-import { FileTypeUtil } from '../../../files/utils/file-types';
-import { FileProcessor } from '../../../files/utils/file-processor';
+import {
+  getRequiredCompanions,
+  getExtension,
+  getAllConfigs
+} from '../../../files/utils/file-types';
+import { groupFiles } from '../../../files/utils/file-processor';
 import { Alert, AlertTitle, AlertDescription } from '../../../ui/alert';
 import { dbLogger } from '@/utils/logging/dbLogger';
 
@@ -40,7 +44,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
     setUploading(true);
     try {
       // Group files and validate companions
-      const groups = await FileProcessor.groupFiles(files);
+      const groups = await groupFiles(files);
       if (groups.length === 0) {
         setUploadError('No supported geodata files found.');
         setUploading(false);
@@ -49,10 +53,9 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
       // Only support one group at a time for now
       const group = groups[0];
       // Validate companions
-      const mainConfig = FileTypeUtil.getConfigForFile(group.mainFile.name);
-      const requiredCompanions = FileTypeUtil.getRequiredCompanions(group.mainFile.name);
-      const missingCompanions = requiredCompanions.filter(ext =>
-        !group.companions.some(f => FileTypeUtil.getExtension(f.name) === ext)
+      const requiredCompanions = getRequiredCompanions(group.mainFile.name);
+      const missingCompanions = requiredCompanions.filter((ext: string) =>
+        !group.companions.some((f: File) => getExtension(f.name) === ext)
       );
       if (missingCompanions.length > 0) {
         setUploadError(`Missing required companion files: ${missingCompanions.join(', ')}`);
@@ -61,13 +64,13 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
       }
       // Show summary
       setFileSummary(
-        `Main file: ${group.mainFile.name}\nCompanions: ${group.companions.map(f => f.name).join(', ') || 'None'}`
+        `Main file: ${group.mainFile.name}\nCompanions: ${group.companions.map((f: File) => f.name).join(', ') || 'None'}`
       );
       // Upload all files (main + companions)
       // Helper to wait for DB record
       async function waitForFileRecord(filePath: string, maxAttempts = 10, delayMs = 300) {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          const { data: fileRecord, error } = await supabase
+          const { data: fileRecord } = await supabase
             .from('project_files')
             .select('id, name, size, file_type')
             .eq('storage_path', filePath)
@@ -109,21 +112,21 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
       let mainFileRecord;
       try {
         mainFileRecord = await waitForFileRecord(mainFilePath);
-      } catch (waitError) {
-        let errorMsg = 'Unknown error';
-        if (waitError instanceof Error) {
-          errorMsg = waitError.message;
-        } else if (typeof waitError === 'string') {
-          errorMsg = waitError;
+      } catch (err: unknown) {
+        let errorMsg = 'Upload failed';
+        if (err instanceof Error) {
+          errorMsg = err.message;
+        } else if (typeof err === 'string') {
+          errorMsg = err;
         }
-        setUploadError(`Failed to retrieve file record for ${mainFile.name}: ${errorMsg}`);
+        setUploadError(errorMsg);
         setUploading(false);
         return;
       }
 
       // 2. Upload and insert companions with main_file_id set
       const companionFileInfos = [];
-      for (const companion of group.companions) {
+      for (const companion of group.companions as File[]) {
         const companionPath = `uploads/${Date.now()}_${companion.name}`;
         const { error: compUploadError } = await supabase.storage
           .from('project-files')
@@ -155,14 +158,14 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         let compFileRecord;
         try {
           compFileRecord = await waitForFileRecord(companionPath);
-        } catch (waitError) {
-          let errorMsg = 'Unknown error';
-          if (waitError instanceof Error) {
-            errorMsg = waitError.message;
-          } else if (typeof waitError === 'string') {
-            errorMsg = waitError;
+        } catch (err: unknown) {
+          let errorMsg = 'Upload failed';
+          if (err instanceof Error) {
+            errorMsg = err.message;
+          } else if (typeof err === 'string') {
+            errorMsg = err;
           }
-          setUploadError(`Failed to retrieve file record for ${companion.name}: ${errorMsg}`);
+          setUploadError(errorMsg);
           setUploading(false);
           return;
         }
@@ -182,14 +185,24 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         companions: companionFileInfos
       });
       setUploaded(true);
-    } catch (err: any) {
-      setUploadError(err.message || 'Upload failed');
+    } catch (err: unknown) {
+      let errorMsg = 'Upload failed';
+      if (err instanceof Error) {
+        errorMsg = err.message;
+      } else if (typeof err === 'string') {
+        errorMsg = err;
+      }
+      setUploadError(errorMsg);
     } finally {
       setUploading(false);
     }
   };
 
-  (async () => { await dbLogger.info('FileSelectStep loaded', { projectId }); })();
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    handleFileChange(e).catch(() => { setUploadError('File selection failed'); });
+  };
+
+  void (async () => { await dbLogger.info('FileSelectStep loaded', { projectId }); })().catch(() => {});
 
   return (
     <div className="space-y-4">
@@ -197,9 +210,9 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
       <input
         type="file"
         ref={fileInputRef}
-        onChange={handleFileChange}
+        onChange={handleInputChange}
         className="block"
-        accept={FileTypeUtil.getAllConfigs().map(c => c.mainExtension).join(',') + ',' + FileTypeUtil.getAllConfigs().flatMap(c => c.companionFiles?.map(cf => cf.extension) || []).join(',')}
+        accept={getAllConfigs().map((c) => c.mainExtension).join(',') + ',' + getAllConfigs().flatMap((c) => (c.companionFiles?.map((cf: { extension: string }) => cf.extension) || [])).join(',')}
         multiple
         disabled={uploading}
       />
@@ -213,7 +226,12 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
             onClick={() => {
               // Retry: re-trigger file input if files are still selected
               if (fileInputRef.current && selectedFiles.length > 0) {
-                handleFileChange({ target: { files: selectedFiles } } as any);
+                // Create a synthetic event with the correct type
+                const syntheticEvent = {
+                  target: { files: (selectedFiles as unknown as FileList) }
+                } as React.ChangeEvent<HTMLInputElement>;
+                // Intentionally fire-and-forget: handleFileChange is async, but React event handler cannot be awaited
+                void handleFileChange(syntheticEvent).catch(() => { setUploadError('Retry failed'); });
               } else {
                 setUploadError(null);
               }

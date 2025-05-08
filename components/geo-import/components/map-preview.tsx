@@ -2,10 +2,8 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import mapboxgl from 'mapbox-gl';
-import type { AnyLayer } from 'mapbox-gl';
 import 'mapbox-gl/dist/mapbox-gl.css';
 import type { GeoFeature } from '@/types/geo-import';
-import { LogManager, LogLevel } from '@/core/logging/log-manager';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle } from 'lucide-react';
 import bbox from '@turf/bbox';
@@ -20,25 +18,6 @@ interface MapPreviewProps {
 }
 
 const SOURCE = 'MapPreview';
-const logManager = LogManager.getInstance();
-
-// Set to INFO level for better visibility
-logManager.setComponentLogLevel(SOURCE, LogLevel.INFO);
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 // Add these constants for debugging purposes
 const DEBUG_USE_FALLBACK_GEOJSON = false; // Set to true to test with hardcoded GeoJSON
@@ -94,108 +73,124 @@ interface LayerSpecification {
   id: string;
   type: MapboxLayerType;
   source: string;
-  filter?: any[];
-  paint?: Record<string, any>;
-  layout?: Record<string, any>;
+  filter?: unknown[];
+  paint?: Record<string, unknown>;
+  layout?: Record<string, unknown>;
 }
 
 // Helper to flatten coordinates for any geometry type
-function flattenCoordinates(geometry: any) {
-  if (geometry.type === 'Point') return [geometry.coordinates];
-  if (geometry.type === 'GeometryCollection') {
-    return geometry.geometries.flatMap(flattenCoordinates);
+function flattenCoordinates(geometry: unknown): number[][] {
+  if (
+    typeof geometry === 'object' &&
+    geometry !== null &&
+    'type' in geometry &&
+    (geometry as { type: string }).type
+  ) {
+    const geom = geometry as { type: string; coordinates?: unknown; geometries?: unknown[] };
+    if (geom.type === 'Point' && Array.isArray(geom.coordinates)) {
+      return [geom.coordinates as number[]];
+    }
+    if (geom.type === 'GeometryCollection' && Array.isArray(geom.geometries)) {
+      return geom.geometries.flatMap(flattenCoordinates);
+    }
+    if (Array.isArray(geom.coordinates)) {
+      // For all other types, flatten deeply
+      return (geom.coordinates as unknown[]).flat(Infinity) as number[][];
+    }
   }
-  // For all other types, flatten deeply
-  return geometry.coordinates.flat(Infinity);
+  return [];
 }
 
 // Add a specific validation function after the sanitizeCoordinates function
-const sanitizeCoordinates = (coords: any): any => {
+const sanitizeCoordinates = async (coords: unknown): Promise<unknown> => {
   if (Array.isArray(coords)) {
     if (coords.length === 0) return coords;
-    
     if (typeof coords[0] === 'number') {
       if (coords.length >= 2) {
-        const [x, y] = coords;
+        const [x, y] = coords as [number, number];
         if (isNaN(x) || isNaN(y)) {
-          logManager.warn(SOURCE, 'Found invalid coordinates, using fallback', { coords });
+          await dbLogger.warn('Found invalid coordinates, using fallback', { source: SOURCE, coords });
           return [8.5, 47.0];
         }
       }
       return coords;
     } else {
-      return coords.map(sanitizeCoordinates);
+      // Recursively sanitize all sub-coordinates
+      return Promise.all(coords.map(sanitizeCoordinates));
     }
   }
   return coords;
 };
 
-// Add a special validation function to ensure coordinates are valid for Mapbox
-const ensureValidMapboxCoordinates = (feature: any): any => {
-  if (!feature || !feature.geometry) return feature;
-  
-  const validateCoordPair = (coord: any): [number, number] => {
-    // Ensure coordinates are valid numbers and in proper range
-    if (!Array.isArray(coord) || coord.length < 2) {
-      return [8.5, 47.0]; // Default to Switzerland
-    }
-    
-    let [lng, lat] = coord;
-    
-    // Fix NaN values
-    if (isNaN(lng) || isNaN(lat)) {
-      return [8.5, 47.0];
-    }
-    
-    // Check if values appear to be reversed
-    if (Math.abs(lng) > 90 && Math.abs(lat) <= 180) {
-      // These might be reversed (Lat/Lng instead of Lng/Lat)
-      [lng, lat] = [lat, lng];
-    }
-    
-    // Ensure values are in valid ranges for WGS84
-    lng = Math.max(-180, Math.min(180, lng));
-    lat = Math.max(-90, Math.min(90, lat));
-    
-    return [lng, lat];
-  };
-  
-  const validateCoords = (coords: any): any => {
-    if (!coords) return coords;
-    
-    if (!Array.isArray(coords)) return coords;
-    
-    if (coords.length === 0) return coords;
-    
-    // Check if this is a single coordinate pair
-    if (typeof coords[0] === 'number') {
-      return validateCoordPair(coords);
-    }
-    
-    // Otherwise it's an array of coordinates or arrays of coordinates
-    return coords.map(validateCoords);
-  };
-  
-  // Clone to avoid mutations
-  const safeFeature = { ...feature };
-  
-  if (safeFeature.geometry && 'coordinates' in safeFeature.geometry) {
-    const originalCoords = safeFeature.geometry.coordinates;
+const ensureValidMapboxCoordinates = async (feature: unknown): Promise<GeoJSON.Feature | unknown> => {
+  if (!feature || typeof feature !== 'object' || !('geometry' in feature)) return feature;
+  const safeFeature = { ...(feature as GeoJSON.Feature) };
+  const geometry = (safeFeature as GeoJSON.Feature).geometry;
+  if (geometry && 'coordinates' in geometry) {
+    const validateCoordPair = (coord: unknown): [number, number] => {
+      if (!Array.isArray(coord) || coord.length < 2) {
+        return [8.5, 47.0];
+      }
+      let [lng, lat] = coord as [number, number];
+      if (isNaN(lng) || isNaN(lat)) {
+        return [8.5, 47.0];
+      }
+      if (Math.abs(lng) > 90 && Math.abs(lat) <= 180) {
+        [lng, lat] = [lat, lng];
+      }
+      lng = Math.max(-180, Math.min(180, lng));
+      lat = Math.max(-90, Math.min(90, lat));
+      return [lng, lat];
+    };
+    const validateCoords = (coords: unknown): unknown => {
+      if (!coords) return coords;
+      if (!Array.isArray(coords)) return coords;
+      if (coords.length === 0) return coords;
+      if (typeof coords[0] === 'number') {
+        return validateCoordPair(coords);
+      }
+      return coords.map(validateCoords);
+    };
+    const originalCoords = geometry.coordinates;
     const validatedCoords = validateCoords(originalCoords);
-    
-    // Only log if we made changes
     if (JSON.stringify(originalCoords) !== JSON.stringify(validatedCoords)) {
-      logManager.info(SOURCE, 'Corrected invalid coordinates', {
-        featureId: safeFeature.id,
-        geometryType: safeFeature.geometry.type,
+      await dbLogger.info('Corrected invalid coordinates', {
+        source: SOURCE,
+        featureId: (safeFeature as GeoJSON.Feature).id,
+        geometryType: geometry.type,
         originalSample: JSON.stringify(originalCoords).substring(0, 100) + '...',
         correctedSample: JSON.stringify(validatedCoords).substring(0, 100) + '...'
       });
     }
-    
-    safeFeature.geometry.coordinates = validatedCoords;
+    switch (geometry.type) {
+      case 'Point':
+        (safeFeature as GeoJSON.Feature).geometry = {
+          ...geometry,
+          coordinates: validatedCoords as GeoJSON.Position
+        };
+        break;
+      case 'LineString':
+      case 'MultiPoint':
+        (safeFeature as GeoJSON.Feature).geometry = {
+          ...geometry,
+          coordinates: validatedCoords as GeoJSON.Position[]
+        };
+        break;
+      case 'Polygon':
+      case 'MultiLineString':
+        (safeFeature as GeoJSON.Feature).geometry = {
+          ...geometry,
+          coordinates: validatedCoords as GeoJSON.Position[][]
+        };
+        break;
+      case 'MultiPolygon':
+        (safeFeature as GeoJSON.Feature).geometry = {
+          ...geometry,
+          coordinates: validatedCoords as GeoJSON.Position[][][]
+        };
+        break;
+    }
   }
-  
   return safeFeature;
 };
 
@@ -209,21 +204,25 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
   const [mapError, setMapError] = useState<string | null>(null);
   const didFitInitialBounds = useRef(false);
 
-  const handleFeatureClick = (featureId: number) => {
-    onFeaturesSelected?.((prev: number[]) => {
+  const handleFeatureClick = useCallback((featureId: number) => {
+    if (!onFeaturesSelected) return;
+    onFeaturesSelected((prev: number[]) => {
+      let newSelection: number[];
       if (prev.includes(featureId)) {
-        logger.info('Feature deselected', { featureId });
-        return prev.filter((id: number) => id !== featureId);
+        newSelection = prev.filter((id: number) => id !== featureId);
+        (async () => { await dbLogger.info('Feature deselected', { source: SOURCE, featureId }); })();
       } else {
-        logger.info('Feature selected', { featureId });
-        return [...prev, featureId];
+        newSelection = [...prev, featureId];
+        (async () => { await dbLogger.info('Feature selected', { source: SOURCE, featureId }); })();
       }
+      return newSelection;
     });
-  };
+  }, [onFeaturesSelected]);
 
-  const handleSelectAll = () => {
+  const handleSelectAll = async () => {
     const allIds = loadedFeatures.map(f => f.id);
-    logger.debug('Select All clicked', {
+    await dbLogger.debug('Select All clicked', {
+      source: SOURCE,
       allIds,
       loadedFeaturesCount: loadedFeatures.length,
       featuresCount: features.length,
@@ -232,8 +231,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
     onFeaturesSelected?.(allIds);
   };
 
-  const handleDeselectAll = () => {
-    logger.debug('Deselect All clicked', {
+  const handleDeselectAll = async () => {
+    await dbLogger.debug('Deselect All clicked', {
+      source: SOURCE,
       loadedFeaturesCount: loadedFeatures.length,
       featuresCount: features.length,
       selectedFeatureIds
@@ -247,8 +247,13 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
     if (!selected.length) return;
     const coords = selected.map(f => flattenCoordinates(f.geometry)).flat();
     if (coords.length < 4) return;
+    const flatCoords = coords.flat();
+    if (flatCoords.length < 4) return;
     map.current.fitBounds(
-      [[coords[0], coords[1]], [coords[2], coords[3]]],
+      [
+        [flatCoords[0], flatCoords[1]],
+        [flatCoords[2], flatCoords[3]]
+      ],
       { padding: 50, animate: true }
     );
   };
@@ -258,23 +263,35 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
 
     setMapError(null);
 
-    logger.debug('Initializing map', {
-      featureCount: features.length,
-      hasBounds: !!bounds
-    });
+    (async () => {
+      await dbLogger.debug('Initializing map', {
+        source: SOURCE,
+        featureCount: features.length,
+        hasBounds: !!bounds
+      });
+    })();
 
     try {
-      const handleMapInitializationError = async (error: any) => {
-        const errorMessage = error?.message || 'Unknown map initialization error';
+      const handleMapInitializationError = async (error: unknown) => {
+        let errorMessage = 'Unknown map initialization error';
+        let stack: string | undefined = undefined;
+        if (typeof error === 'object' && error !== null && 'message' in error) {
+          errorMessage = (error as { message: string }).message;
+          stack = (error as { stack?: string }).stack;
+        }
         await dbLogger.error(SOURCE, 'Map initialization error', { 
           error, 
           message: errorMessage,
-          stack: error.stack
+          stack
         });
         setMapError(`Map initialization failed: ${errorMessage}`);
       };
 
-      window.addEventListener('error', handleMapInitializationError);
+      window.addEventListener('error', (e: unknown) => {
+        (async () => {
+          await handleMapInitializationError(e);
+        })();
+      });
 
       if (!process.env.NEXT_PUBLIC_MAPBOX_TOKEN) {
         const tokenError = "Missing Mapbox token. Please check your environment variables.";
@@ -294,49 +311,77 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
         preserveDrawingBuffer: true
       });
 
-      map.current.on('error', (e) => {
-        const errorMessage = e.error?.message || 'Unknown mapbox error';
-        dbLogger.error(SOURCE, 'Mapbox runtime error', {
-          error: e.error,
-          message: errorMessage
-        });
-        setMapError(`Map error: ${errorMessage}`);
+      map.current.on('error', (e: unknown) => {
+        (async () => {
+          let errorMessage = 'Unknown mapbox error';
+          let errorObj: unknown = undefined;
+          if (typeof e === 'object' && e !== null && 'error' in e) {
+            errorObj = (e as { error: unknown }).error;
+            if (typeof errorObj === 'object' && errorObj !== null && 'message' in errorObj) {
+              errorMessage = (errorObj as { message: string }).message;
+            }
+          }
+          await dbLogger.error(SOURCE, 'Mapbox runtime error', {
+            error: errorObj,
+            message: errorMessage
+          });
+          setMapError(`Map error: ${errorMessage}`);
+        })();
       });
 
       map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
       mapInitialized.current = true;
 
       ['preview-fill', 'preview-fill-issues', 'preview-line', 'preview-line-issues', 'preview-point', 'preview-point-issues'].forEach(layerId => {
-        map.current?.on('click', layerId, (e) => {
-          if (e.features?.[0]?.properties) {
-            logger.debug('Mapbox click event', { layerId, properties: e.features[0].properties });
+        map.current?.on('click', layerId, (e: unknown) => {
+          (async () => {
+            if (
+              typeof e === 'object' &&
+              e !== null &&
+              'features' in e &&
+              Array.isArray((e as { features: { properties?: { [key: string]: unknown } }[] }).features) &&
+              (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0]?.properties
+            ) {
+              await dbLogger.debug('Mapbox click event', { source: SOURCE, layerId, properties: (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0].properties });
+            }
+            if (
+              typeof e === 'object' &&
+              e !== null &&
+              'features' in e &&
+              Array.isArray((e as { features: { properties?: { id?: number } }[] }).features) &&
+              (e as { features: { properties?: { id?: number } }[] }).features[0]?.properties?.id !== undefined
+            ) {
+              handleFeatureClick((e as { features: { properties: { id: number } }[] }).features[0].properties.id);
+            }
+          })();
+          if (e instanceof MouseEvent) {
+            if (e.type === 'mouseenter') {
+              if (map.current) map.current.getCanvas().style.cursor = 'pointer';
+            } else if (e.type === 'mouseleave') {
+              if (map.current) map.current.getCanvas().style.cursor = '';
+            }
           }
-          if (e.features?.[0]?.properties?.id) {
-            handleFeatureClick(e.features[0].properties.id);
-          }
-        });
-        map.current?.on('mouseenter', layerId, () => {
-          if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-        });
-        map.current?.on('mouseleave', layerId, () => {
-          if (map.current) map.current.getCanvas().style.cursor = '';
         });
       });
 
       return () => {
         window.removeEventListener('error', handleMapInitializationError);
         
-        logger.debug('Cleaning up map');
-        if (map.current) {
-          logger.debug('Map is being removed');
-          map.current.remove();
-          map.current = null;
-        }
+        (async () => {
+          await dbLogger.debug('Cleaning up map');
+          if (map.current) {
+            await dbLogger.debug('Map is being removed');
+            map.current.remove();
+            map.current = null;
+          }
+        })();
       };
     } catch (error) {
-      logger.error('Failed to initialize map', { error });
+      (async () => {
+        await dbLogger.error('Failed to initialize map', { error });
+      })();
     }
-  }, [mapContainer]);
+  }, [mapContainer, bounds, features.length, handleFeatureClick]);
 
   useEffect(() => {
     if (!map.current || !features.length || !mapInitialized.current) return;
@@ -353,17 +398,18 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
       const chunkWithIssues = chunk.filter(f => f.validation?.hasIssues).length;
       totalWithIssues += chunkWithIssues;
 
-      setLoadedFeatures(prev => {
-        const updated = [...prev, ...chunk];
-        logger.debug('Chunk loaded', {
+      const updated = [...loadedFeatures, ...chunk];
+      setLoadedFeatures(updated);
+      (async () => {
+        await dbLogger.debug('Chunk loaded', {
+          source: SOURCE,
           chunkStart: start,
           chunkEnd: end,
           chunkLength: chunk.length,
           loadedFeaturesCount: updated.length,
           featuresCount: features.length
         });
-        return updated;
-      });
+      })();
       setValidationStats({
         total: end,
         withIssues: totalWithIssues
@@ -383,15 +429,18 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
     setLoadedFeatures([]);
     setIsLoading(true);
     loadNextChunk();
-  }, [features]);
+  }, [features, loadedFeatures, onProgress]);
 
   useEffect(() => {
-    logger.debug('Render state', {
-      selectedFeatureIds,
-      selectedCount: selectedFeatureIds.length,
-      loadedFeaturesCount: loadedFeatures.length,
-      featuresCount: features.length
-    });
+    (async () => {
+      await dbLogger.debug('Render state', {
+        source: SOURCE,
+        selectedFeatureIds,
+        selectedCount: selectedFeatureIds.length,
+        loadedFeaturesCount: loadedFeatures.length,
+        featuresCount: features.length
+      });
+    })();
   }, [selectedFeatureIds, loadedFeatures, features]);
 
   useEffect(() => {
@@ -440,21 +489,19 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           }
         }
 
-        const source = mapInstance.getSource('preview') as mapboxgl.GeoJSONSource;
-        
         let sourceData: GeoJSON.FeatureCollection<GeoJSON.Geometry>;
 
         if (DEBUG_USE_FALLBACK_GEOJSON) {
           await dbLogger.info(SOURCE, 'Using fallback GeoJSON for debugging', { fallbackGeoJSON: FALLBACK_GEOJSON });
           sourceData = FALLBACK_GEOJSON as GeoJSON.FeatureCollection<GeoJSON.Geometry>;
         } else {
-          const basicFeatures = [];
+          const basicFeatures: GeoJSON.Feature[] = [];
           for (const f of loadedFeatures) {
-            const feature = {
-              type: 'Feature' as const,
+            const feature: GeoJSON.Feature = {
+              type: 'Feature',
               id: f.id,
               geometry: { ...f.geometry },
-              properties: { 
+              properties: {
                 ...f.properties,
                 id: f.id,
                 previewId: 'previewId' in f ? f.previewId : undefined,
@@ -467,53 +514,55 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             if (DEBUG_SWAP_COORDINATES) {
               if (feature.geometry.type === 'Point' && 'coordinates' in feature.geometry) {
                 const [lng, lat] = feature.geometry.coordinates as [number, number];
-                await dbLogger.info(SOURCE, 'Swapping Point coordinates for debugging', {
-                  original: [lng, lat],
-                  swapped: [lat, lng]
-                });
-                feature.geometry.coordinates = [lat, lng];
-              }
-              else if ((feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiPoint') && 
-                        'coordinates' in feature.geometry) {
+                feature.geometry.coordinates = [lat, lng] as GeoJSON.Position;
+              } else if ((feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiPoint') && 'coordinates' in feature.geometry) {
                 const coords = feature.geometry.coordinates as [number, number][];
-                await dbLogger.info(SOURCE, `Swapping ${feature.geometry.type} coordinates for debugging`, {
-                  original: coords.slice(0, 2),
-                  swapped: coords.slice(0, 2).map(([lng, lat]) => [lat, lng])
-                });
-                feature.geometry.coordinates = coords.map(([lng, lat]) => [lat, lng]);
+                feature.geometry.coordinates = coords.map(([lng, lat]) => [lat, lng]) as GeoJSON.Position[];
               }
             }
             // Apply any other needed transformations
             if (feature.geometry && 'coordinates' in feature.geometry) {
-              feature.geometry.coordinates = sanitizeCoordinates(feature.geometry.coordinates);
+              feature.geometry.coordinates = await sanitizeCoordinates(feature.geometry.coordinates) as GeoJSON.Position | GeoJSON.Position[] | GeoJSON.Position[][] | GeoJSON.Position[][][];
             }
             basicFeatures.push(feature);
           }
           
           // Now apply the final validation to ensure Mapbox-compatible coordinates
-          const validatedFeatures = basicFeatures.map(ensureValidMapboxCoordinates);
+          const validatedFeatures: GeoJSON.Feature[] = await Promise.all(basicFeatures.map(f => ensureValidMapboxCoordinates(f))) as GeoJSON.Feature[];
           
           // Construct the final GeoJSON object
           sourceData = {
             type: 'FeatureCollection',
-            features: validatedFeatures
+            features: validatedFeatures as GeoJSON.Feature[]
           };
         }
 
         // Instead of logging the full GeoJSON object, log only a concise summary
         const geometryTypes = [...new Set(sourceData.features.map(f => f.geometry.type))];
         const sampleFeature = sourceData.features[0];
-        let firstCoords: any = undefined;
+        let firstCoords: number[] | undefined = undefined;
         if (
           sampleFeature &&
           sampleFeature.geometry &&
           sampleFeature.geometry.type !== 'GeometryCollection' &&
           'coordinates' in sampleFeature.geometry
         ) {
-          const coords = (sampleFeature.geometry as any).coordinates;
-          firstCoords = Array.isArray(coords)
-            ? (Array.isArray(coords[0]) ? coords[0].slice(0, 2) : coords.slice(0, 2))
-            : undefined;
+          const coords = (sampleFeature.geometry as GeoJSON.Point | GeoJSON.LineString | GeoJSON.Polygon | GeoJSON.MultiPoint | GeoJSON.MultiLineString | GeoJSON.MultiPolygon).coordinates;
+          if (Array.isArray(coords)) {
+            if (Array.isArray(coords[0])) {
+              // Multi-coords (e.g., LineString, Polygon)
+              const first = coords[0];
+              if (Array.isArray(first) && typeof first[0] === 'number') {
+                firstCoords = (first as number[]).slice(0, 2);
+              } else if (Array.isArray(first) && Array.isArray(first[0]) && typeof first[0][0] === 'number') {
+                // For MultiPolygon
+                firstCoords = (first[0] as number[]).slice(0, 2);
+              }
+            } else if (typeof coords[0] === 'number') {
+              // Point
+              firstCoords = (coords as number[]).slice(0, 2);
+            }
+          }
         }
         const summary = {
           featureCount: sourceData.features.length,
@@ -655,7 +704,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 ['==', ['get', 'geometry-type'], 'MultiPolygon']
               ],
               ['==', ['get', 'hasIssues'], false]
-            ] as unknown as any[],
+            ] as unknown as unknown[],
             paint: {
               'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
               'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
@@ -671,7 +720,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 ['==', ['get', 'geometry-type'], 'MultiLineString']
               ],
               ['==', ['get', 'hasIssues'], false]
-            ] as unknown as any[],
+            ] as unknown as unknown[],
             paint: {
               'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
               'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2]
@@ -687,7 +736,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 ['==', ['get', 'geometry-type'], 'MultiPoint']
               ],
               ['==', ['get', 'hasIssues'], false]
-            ] as unknown as any[],
+            ] as unknown as unknown[],
             paint: {
               'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#4CAF50', '#088'],
               'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5]
@@ -706,7 +755,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 ['==', ['get', 'geometry-type'], 'MultiPolygon']
               ],
               ['==', ['get', 'hasIssues'], true]
-            ] as unknown as any[],
+            ] as unknown as unknown[],
             paint: {
               'fill-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
               'fill-opacity': ['case', ['boolean', ['feature-state', 'selected'], false], 0.8, 0.4]
@@ -722,7 +771,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 ['==', ['get', 'geometry-type'], 'MultiLineString']
               ],
               ['==', ['get', 'hasIssues'], true]
-            ] as unknown as any[],
+            ] as unknown as unknown[],
             paint: {
               'line-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
               'line-width': ['case', ['boolean', ['feature-state', 'selected'], false], 3, 2],
@@ -739,7 +788,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                 ['==', ['get', 'geometry-type'], 'MultiPoint']
               ],
               ['==', ['get', 'hasIssues'], true]
-            ] as unknown as any[],
+            ] as unknown as unknown[],
             paint: {
               'circle-color': ['case', ['boolean', ['feature-state', 'selected'], false], '#FF5722', '#F44336'],
               'circle-radius': ['case', ['boolean', ['feature-state', 'selected'], false], 7, 5],
@@ -751,7 +800,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
 
         for (const layer of [...normalLayers, ...issueLayers]) {
           try {
-            mapInstance.addLayer(layer as AnyLayer);
+            mapInstance.addLayer(layer as unknown as mapboxgl.Layer);
           } catch (err) {
             await dbLogger.warn(SOURCE, 'Failed to add layer', { layerId: layer.id, error: err });
           }
@@ -763,12 +812,18 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
         });
 
         issueLayers.forEach(layer => {
-          mapInstance.on('mouseenter', layer.id, (e) => {
-            if (e.features?.[0]) {
-              const feature = e.features[0];
+          mapInstance.on('mouseenter', layer.id, (e: unknown) => {
+            if (
+              typeof e === 'object' &&
+              e !== null &&
+              'features' in e &&
+              Array.isArray((e as { features: unknown[] }).features) &&
+              (e as { features: { properties?: { issues?: string[] } }[] }).features[0]
+            ) {
+              const feature = (e as { features: { properties?: { issues?: string[] } }[] }).features[0];
               const issues = feature.properties?.issues;
-              if (issues) {
-                popup.setLngLat(e.lngLat)
+              if (issues && 'lngLat' in e) {
+                popup.setLngLat((e as { lngLat: mapboxgl.LngLatLike }).lngLat)
                   .setHTML(`
                     <div class="p-2">
                       <strong>Geometry Issues:</strong>
@@ -841,11 +896,11 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
     } else {
       map.current.once('load', updateMapData);
     }
-  }, [loadedFeatures, selectedFeatureIds, bounds, isLoading]);
+  }, [loadedFeatures, selectedFeatureIds, bounds, isLoading, features.length]);
 
   useEffect(() => {
     didFitInitialBounds.current = false;
-  }, [features, bounds]);
+  }, [features, bounds, features.length]);
 
   return (
     <div className="space-y-2">

@@ -2,18 +2,17 @@ import React, { useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 import { MapPreview } from '../../components/map-preview';
 import { dbLogger } from '@/utils/logging/dbLogger';
+import { GeoFeature, DatasetMetadata } from '@/types/geo-import';
 
 interface PreviewStepProps {
   onNext: () => void;
   onBack: () => void;
-  onClose?: () => void;
-  onRefreshFiles?: () => void;
 }
 
-export function PreviewStep({ onNext, onBack, onClose, onRefreshFiles }: PreviewStepProps) {
+export function PreviewStep({ onNext, onBack }: PreviewStepProps) {
   const { dataset, selectedFeatureIds, setSelectedFeatureIds } = useWizard();
-  const features = dataset?.features || [];
-  const meta = dataset?.metadata || {};
+  const features: GeoFeature[] = (dataset?.features as GeoFeature[]) || [];
+  const meta: DatasetMetadata | undefined = dataset?.metadata as DatasetMetadata | undefined;
 
   // Log received dataset coordinates for debugging
   useEffect(() => {
@@ -63,18 +62,15 @@ export function PreviewStep({ onNext, onBack, onClose, onRefreshFiles }: Preview
     );
   };
 
-  const handleSelectAll = () => setSelectedFeatureIds(features.map((f: any) => f.id));
-  const handleDeselectAll = () => setSelectedFeatureIds([]);
-
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Step 3: Preview & Feature Selection</h2>
       <div className="text-sm text-gray-700">
-        Features: {meta.featureCount || features.length} | Types: {(meta.geometryTypes || []).join(', ')}
+        Features: {meta?.featureCount ?? features.length} | Types: {Array.isArray(meta?.geometryTypes) ? meta.geometryTypes.join(', ') : ''}
       </div>
       <MapPreview
         features={features}
-        bounds={meta.bounds}
+        bounds={Array.isArray(meta?.bounds) ? meta.bounds : undefined}
         selectedFeatureIds={selectedFeatureIds}
         onFeaturesSelected={(featureIdsOrUpdater) =>
           setSelectedFeatureIds((prev: number[]) =>
@@ -85,7 +81,7 @@ export function PreviewStep({ onNext, onBack, onClose, onRefreshFiles }: Preview
         }
       />
       <div className="max-h-48 overflow-y-auto border rounded p-2 bg-gray-50">
-        {features.map((f: any) => (
+        {features.filter(f => typeof f.id === 'number').map((f) => (
           <div key={f.id} className="flex items-center gap-2">
             <input
               type="checkbox"
