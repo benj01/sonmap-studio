@@ -1,4 +1,4 @@
-import { Feature, FeatureCollection } from 'geojson';
+import { FeatureCollection } from 'geojson';
 
 /**
  * Configuration for height source settings

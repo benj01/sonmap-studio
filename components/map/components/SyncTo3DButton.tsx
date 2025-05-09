@@ -4,30 +4,12 @@ import { useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useSyncTo3D } from '../hooks/useSyncTo3D';
-import { useCesium } from '../context/CesiumContext';
 import { useLayers } from '@/store/layers/hooks';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'SyncTo3DButton';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 export function SyncTo3DButton() {
-  const mapboxInstance = useMapInstanceStore(state => state.mapInstances.mapbox.instance);
   const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
   const { layers } = useLayers();
@@ -35,74 +17,85 @@ export function SyncTo3DButton() {
 
   // Check if all layers are ready
   const areLayersReady = useCallback(() => {
-    if (!layers.length) {
-      logger.debug('No layers available');
-      return false;
-    }
+    (async () => {
+      if (!layers.length) {
+        await dbLogger.debug(SOURCE, 'No layers available', {});
+        return false;
+      }
 
-    // Check if all layers have their required data
-    const allReady = layers.every(layer => {
-      // For vector layers, check both setup status and GeoJSON data
-      if (layer.metadata?.type === 'vector') {
-        const isReady = layer.setupStatus === 'complete' && !!layer.metadata?.properties?.geojson;
+      // Check if all layers have their required data
+      const allReady = layers.every(layer => {
+        // For vector layers, check both setup status and GeoJSON data
+        if (layer.metadata?.type === 'vector') {
+          const isReady = layer.setupStatus === 'complete' && !!layer.metadata?.properties?.geojson;
+          
+          if (!isReady) {
+            (async () => {
+              await dbLogger.debug(SOURCE, 'Vector layer not ready', {
+                layerId: layer.id,
+                name: layer.metadata?.name,
+                setupStatus: layer.setupStatus,
+                hasGeoJson: !!layer.metadata?.properties?.geojson
+              });
+            })();
+          }
+          return isReady;
+        }
+
+        // For other layer types, just check setup status
+        const isReady = layer.setupStatus === 'complete';
         
         if (!isReady) {
-          logger.debug('Vector layer not ready', { 
-            layerId: layer.id, 
-            name: layer.metadata?.name,
-            setupStatus: layer.setupStatus,
-            hasGeoJson: !!layer.metadata?.properties?.geojson
-          });
+          (async () => {
+            await dbLogger.debug(SOURCE, 'Layer not ready', {
+              layerId: layer.id,
+              name: layer.metadata?.name,
+              type: layer.metadata?.type,
+              setupStatus: layer.setupStatus
+            });
+          })();
         }
         return isReady;
-      }
-
-      // For other layer types, just check setup status
-      const isReady = layer.setupStatus === 'complete';
-      
-      if (!isReady) {
-        logger.debug('Layer not ready', { 
-          layerId: layer.id, 
+      });
+      await dbLogger.debug(SOURCE, 'Layer readiness check', {
+        totalLayers: layers.length,
+        allReady,
+        layerDetails: layers.map(layer => ({
+          id: layer.id,
           name: layer.metadata?.name,
           type: layer.metadata?.type,
-          setupStatus: layer.setupStatus
-        });
+          setupStatus: layer.setupStatus,
+          hasGeoJson: layer.metadata?.type === 'vector' ? !!layer.metadata?.properties?.geojson : 'N/A'
+        }))
+      });
+      return allReady;
+    })();
+    // Synchronous return for button state
+    return layers.length > 0 && layers.every(layer => {
+      if (layer.metadata?.type === 'vector') {
+        return layer.setupStatus === 'complete' && !!layer.metadata?.properties?.geojson;
       }
-      return isReady;
+      return layer.setupStatus === 'complete';
     });
-
-    logger.debug('Layer readiness check', {
-      totalLayers: layers.length,
-      allReady,
-      layerDetails: layers.map(layer => ({
-        id: layer.id,
-        name: layer.metadata?.name,
-        type: layer.metadata?.type,
-        setupStatus: layer.setupStatus,
-        hasGeoJson: layer.metadata?.type === 'vector' ? !!layer.metadata?.properties?.geojson : 'N/A'
-      }))
-    });
-
-    return allReady;
   }, [layers]);
 
   // Check if all map instances are ready
   const isMapReady = useCallback(() => {
-    const isReady = !!mapboxInstance && !!cesiumInstance && cesiumStatus === 'ready';
-    
-    logger.debug('Map readiness check', {
-      hasMapbox: !!mapboxInstance,
-      hasCesium: !!cesiumInstance,
-      cesiumStatus,
-      isReady
-    });
-    
-    return isReady;
-  }, [mapboxInstance, cesiumInstance, cesiumStatus]);
+    (async () => {
+      const isReady = !!cesiumInstance && cesiumStatus === 'ready';
+      await dbLogger.debug(SOURCE, 'Map readiness check', {
+        hasCesium: !!cesiumInstance,
+        cesiumStatus,
+        isReady
+      });
+    })();
+    // Synchronous return for button state
+    return !!cesiumInstance && cesiumStatus === 'ready';
+  }, [cesiumInstance, cesiumStatus]);
 
   const handleSync = useCallback(async () => {
     if (!isMapReady() || !areLayersReady()) {
-      logger.warn('Cannot sync: Not all prerequisites are ready', {
+      await dbLogger.warn(SOURCE, 'Cannot sync: Not all prerequisites are ready', {
         isMapReady: isMapReady(),
         areLayersReady: areLayersReady()
       });
@@ -110,11 +103,11 @@ export function SyncTo3DButton() {
     }
 
     try {
-      logger.info('Starting sync to 3D');
+      await dbLogger.info(SOURCE, 'Starting sync to 3D', {});
       await syncTo3D({ syncView: true, syncLayers: true });
-      logger.info('Successfully synced to 3D view');
+      await dbLogger.info(SOURCE, 'Successfully synced to 3D view', {});
     } catch (error) {
-      logger.error('Failed to sync to 3D view', error);
+      await dbLogger.error(SOURCE, 'Failed to sync to 3D view', { error });
     }
   }, [syncTo3D, isMapReady, areLayersReady]);
 

@@ -2,61 +2,57 @@
 
 import { useState, useEffect } from 'react';
 import * as Cesium from 'cesium';
-import { useCesium } from '../context/CesiumContext';
-import { LogManager } from '@/core/logging/log-manager';
+import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'useCesiumLayers';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-    console.log(`[${SOURCE}] ${message}`, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-    console.warn(`[${SOURCE}] ${message}`, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-    console.error(`[${SOURCE}] ${message}`, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-    console.debug(`[${SOURCE}] ${message}`, data);
-  }
-};
 
 export interface CesiumLayer {
   id: string;
   name: string;
   type: '3d-tiles' | 'terrain' | 'point-cloud' | 'imagery' | 'vector';
   visible: boolean;
-  source: any; // This could be a Cesium3DTileset, TerrainProvider, etc.
+  source: Cesium.TerrainProvider | Cesium.ImageryLayer | Cesium.Cesium3DTileset | Cesium.Entity | Cesium.DataSource;
   entity?: Cesium.Entity;
   dataSource?: Cesium.DataSource;
   imageryProvider?: Cesium.ImageryProvider;
   tileset?: Cesium.Cesium3DTileset;
-  options?: any;
+  options?: {
+    maximumScreenSpaceError?: number;
+    maximumMemoryUsage?: number;
+    shadows?: boolean;
+    [key: string]: unknown;
+  };
+}
+
+// Type guard for Cesium Viewer
+function isCesiumViewer(instance: unknown): instance is Cesium.Viewer {
+  return instance !== null && 
+         typeof instance === 'object' && 
+         'terrainProvider' in instance && 
+         'imageryLayers' in instance &&
+         'scene' in instance &&
+         'entities' in instance &&
+         'dataSources' in instance;
 }
 
 export function useCesiumLayers(projectId: string) {
-  const { viewer, isInitialized } = useCesium();
+  const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
+  const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
   const [layers, setLayers] = useState<CesiumLayer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Load layers from the database
   useEffect(() => {
-    if (!isInitialized || !viewer) return;
+    if (!cesiumInstance || cesiumStatus !== 'ready' || !isCesiumViewer(cesiumInstance)) return;
+
+    const viewer = cesiumInstance as Cesium.Viewer;
 
     async function loadLayers() {
       try {
         setLoading(true);
-        logger.debug('Loading 3D layers for project', { projectId });
-        
-        // TODO: Implement actual layer loading from database
-        // For now, we'll just set up some example layers
+        await dbLogger.debug('Loading 3D layers for project', { source: SOURCE, projectId });
         
         // Example: Add a Cesium World Terrain layer
         const terrainProvider = await Cesium.createWorldTerrainAsync();
@@ -87,19 +83,25 @@ export function useCesiumLayers(projectId: string) {
         ]);
         
         setLoading(false);
-      } catch (err: any) {
-        logger.error('Error loading 3D layers', err);
-        setError(err.message || 'Failed to load 3D layers');
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load 3D layers';
+        await dbLogger.error('Error loading 3D layers', { source: SOURCE, error, projectId });
+        setError(errorMessage);
         setLoading(false);
       }
     }
 
-    loadLayers();
-  }, [isInitialized, viewer, projectId]);
+    // Start loading layers and handle any errors
+    loadLayers().catch(async (error) => {
+      await dbLogger.error('Unhandled error in loadLayers', { source: SOURCE, error });
+    });
+  }, [cesiumInstance, cesiumStatus, projectId]);
 
   // Toggle layer visibility
-  const toggleLayerVisibility = (layerId: string) => {
-    if (!viewer) return;
+  const toggleLayerVisibility = async (layerId: string) => {
+    if (!cesiumInstance || !isCesiumViewer(cesiumInstance)) return;
+
+    const viewer = cesiumInstance as Cesium.Viewer;
     
     setLayers(prevLayers => 
       prevLayers.map(layer => {
@@ -113,10 +115,10 @@ export function useCesiumLayers(projectId: string) {
             // For terrain, we can't really toggle visibility, but we can switch to EllipsoidTerrainProvider
             if (!newVisibility) {
               viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
-            } else if (layer.source) {
+            } else if (layer.source instanceof Cesium.TerrainProvider) {
               viewer.terrainProvider = layer.source;
             }
-          } else if (layer.type === 'imagery' && layer.source) {
+          } else if (layer.type === 'imagery' && layer.source instanceof Cesium.ImageryLayer) {
             // For imagery layers, we can set the alpha to 0
             layer.source.alpha = newVisibility ? 1.0 : 0.0;
             layer.source.show = newVisibility;
@@ -130,8 +132,15 @@ export function useCesiumLayers(projectId: string) {
             // For data sources, we can set the show property
             layer.dataSource.show = newVisibility;
           }
-        } catch (err) {
-          logger.error(`Error toggling visibility for layer ${layer.id}`, err);
+        } catch (error) {
+          (async () => {
+            await dbLogger.error(`Error toggling visibility for layer ${layer.id}`, { 
+              source: SOURCE, 
+              error, 
+              layerId: layer.id,
+              layerType: layer.type 
+            });
+          })().catch(console.error);
         }
         
         return { ...layer, visible: newVisibility };
@@ -140,28 +149,36 @@ export function useCesiumLayers(projectId: string) {
   };
 
   // Add a new layer
-  const addLayer = (layer: Omit<CesiumLayer, 'id'>) => {
-    if (!viewer) return;
+  const addLayer = async (layer: Omit<CesiumLayer, 'id'>) => {
+    if (!cesiumInstance || !isCesiumViewer(cesiumInstance)) return;
     
     const newLayer: CesiumLayer = {
       ...layer,
-      id: `layer-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      id: `layer-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
     };
     
-    setLayers(prevLayers => [...prevLayers, newLayer]);
-    return newLayer.id;
+    try {
+      await dbLogger.debug('Adding new layer', { source: SOURCE, layerId: newLayer.id, layerType: newLayer.type });
+      setLayers(prevLayers => [...prevLayers, newLayer]);
+      return newLayer.id;
+    } catch (error) {
+      await dbLogger.error('Error adding new layer', { source: SOURCE, error, layer: newLayer });
+      throw error;
+    }
   };
 
   // Remove a layer
-  const removeLayer = (layerId: string) => {
-    if (!viewer) return;
+  const removeLayer = async (layerId: string) => {
+    if (!cesiumInstance || !isCesiumViewer(cesiumInstance)) return;
+
+    const viewer = cesiumInstance as Cesium.Viewer;
     
     const layerToRemove = layers.find(layer => layer.id === layerId);
     if (!layerToRemove) return;
     
     try {
       // Clean up the layer resources
-      if (layerToRemove.type === 'imagery' && layerToRemove.source) {
+      if (layerToRemove.type === 'imagery' && layerToRemove.source instanceof Cesium.ImageryLayer) {
         viewer.imageryLayers.remove(layerToRemove.source);
       } else if (layerToRemove.type === '3d-tiles' && layerToRemove.tileset) {
         viewer.scene.primitives.remove(layerToRemove.tileset);
@@ -170,11 +187,13 @@ export function useCesiumLayers(projectId: string) {
       } else if (layerToRemove.dataSource) {
         viewer.dataSources.remove(layerToRemove.dataSource);
       }
-    } catch (err) {
-      logger.error(`Error removing layer ${layerId}`, err);
+      
+      await dbLogger.debug('Removed layer', { source: SOURCE, layerId });
+      setLayers(prevLayers => prevLayers.filter(layer => layer.id !== layerId));
+    } catch (error) {
+      await dbLogger.error(`Error removing layer ${layerId}`, { source: SOURCE, error, layerId });
+      throw error;
     }
-    
-    setLayers(prevLayers => prevLayers.filter(layer => layer.id !== layerId));
   };
 
   return {

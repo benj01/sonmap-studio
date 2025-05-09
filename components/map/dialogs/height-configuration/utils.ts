@@ -1,24 +1,8 @@
 import { Feature, Point, LineString, Polygon, MultiPoint, MultiLineString, MultiPolygon, GeometryCollection } from 'geojson';
 import { ZCoordinatesInfo, NumericAttributesInfo, SwissCoordinatesInfo, HeightPreviewItem } from './types';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'HeightConfigUtils';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 /**
  * Gets the first Z coordinate from a feature or null if none exists
@@ -95,7 +79,9 @@ export function getFeatureZCoordinate(feature: Feature): number | null {
         return null;
     }
   } catch (error) {
-    logger.error('Error extracting Z coordinate from feature', error);
+    (async () => {
+      await dbLogger.error('Error extracting Z coordinate from feature', { source: SOURCE, error });
+    })().catch(console.error);
     return null;
   }
 }
@@ -116,7 +102,6 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
   }
   
   let zCount = 0;
-  let zSum = 0;
   let zMin = Infinity;
   let zMax = -Infinity;
   let totalCoords = 0;
@@ -124,7 +109,7 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
   let propertyZCount = 0;
   
   // Function to process coordinates recursively
-  const processCoords = (coords: any[]) => {
+  const processCoords = (coords: number[][]): void => {
     if (!Array.isArray(coords)) return;
     
     if (coords.length >= 3 && typeof coords[2] === 'number') {
@@ -132,21 +117,22 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
       const z = coords[2];
       if (!isNaN(z)) {
         zCount++;
-        zSum += z;
         zMin = Math.min(zMin, z);
         zMax = Math.max(zMax, z);
       }
       totalCoords++;
     } else if (Array.isArray(coords[0])) {
       // This is a nested array of coordinates
-      coords.forEach(c => processCoords(c));
+      coords.forEach(c => processCoords([c]));
     }
   };
   
   // Process all features
   features.forEach(feature => {
     if (!feature) {
-      logger.warn('Null or undefined feature encountered in detectZCoordinates');
+      (async () => {
+        await dbLogger.warn('Null or undefined feature encountered in detectZCoordinates', { source: SOURCE });
+      })().catch(console.error);
       return;
     }
     let hasProcessedZForFeature = false;
@@ -173,7 +159,6 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
         if (zValue !== null) {
           propertyZCount++;
           zCount++;
-          zSum += zValue;
           zMin = Math.min(zMin, zValue);
           zMax = Math.max(zMax, zValue);
           totalCoords++;
@@ -188,7 +173,7 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
         switch (feature.geometry.type) {
           case 'Point': {
             const geometry = feature.geometry as Point;
-            processCoords(geometry.coordinates);
+            processCoords([geometry.coordinates]);
             break;
           }
           case 'LineString': {
@@ -198,7 +183,7 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
           }
           case 'Polygon': {
             const geometry = feature.geometry as Polygon;
-            processCoords(geometry.coordinates);
+            processCoords(geometry.coordinates[0]);
             break;
           }
           case 'MultiPoint': {
@@ -208,12 +193,12 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
           }
           case 'MultiLineString': {
             const geometry = feature.geometry as MultiLineString;
-            processCoords(geometry.coordinates);
+            processCoords(geometry.coordinates[0]);
             break;
           }
           case 'MultiPolygon': {
             const geometry = feature.geometry as MultiPolygon;
-            processCoords(geometry.coordinates);
+            processCoords(geometry.coordinates[0][0]);
             break;
           }
           case 'GeometryCollection': {
@@ -221,17 +206,17 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
             if (geometryCollection.geometries) {
               geometryCollection.geometries.forEach(geom => {
                 if (geom.type === 'Point') {
-                  processCoords((geom as Point).coordinates);
+                  processCoords([(geom as Point).coordinates]);
                 } else if (geom.type === 'LineString') {
                   processCoords((geom as LineString).coordinates);
                 } else if (geom.type === 'Polygon') {
-                  processCoords((geom as Polygon).coordinates);
+                  processCoords((geom as Polygon).coordinates[0]);
                 } else if (geom.type === 'MultiPoint') {
                   processCoords((geom as MultiPoint).coordinates);
                 } else if (geom.type === 'MultiLineString') {
-                  processCoords((geom as MultiLineString).coordinates);
+                  processCoords((geom as MultiLineString).coordinates[0]);
                 } else if (geom.type === 'MultiPolygon') {
-                  processCoords((geom as MultiPolygon).coordinates);
+                  processCoords((geom as MultiPolygon).coordinates[0][0]);
                 }
               });
             }
@@ -239,7 +224,9 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
           }
         }
       } catch (error) {
-        logger.error('Error processing geometry coordinates', error);
+        (async () => {
+          await dbLogger.error('Error processing geometry coordinates', { source: SOURCE, error });
+        })().catch(console.error);
       }
     }
   });
@@ -247,289 +234,182 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
   // If we have property-based Z values but no coordinates, use feature count
   if ((lv95StoredCount > 0 || propertyZCount > 0) && totalCoords === 0) {
     totalCoords = features.length;
-    logger.debug('Using feature count for total coordinates due to property-based Z values', { 
-      lv95StoredCount,
-      propertyZCount,
-      featureCount: features.length
-    });
+    (async () => {
+      await dbLogger.debug('Using feature count for total coordinates due to property-based Z values', { 
+        source: SOURCE,
+        lv95StoredCount,
+        propertyZCount,
+        totalCoords
+      });
+    })().catch(console.error);
   }
   
-  // No Z coordinates found
-  if (zCount === 0) {
-    return { 
-      hasZ: false, 
-      zCount: 0,
-      totalCoords,
-      zMin,
-      zMax,
-      message: 'No Z coordinates found' 
-    };
+  // Determine if we have meaningful Z data
+  const hasZ = zCount > 0;
+  
+  // Generate appropriate message
+  let message = '';
+  if (hasZ) {
+    if (lv95StoredCount > 0) {
+      message = `Found ${lv95StoredCount} features with stored LV95 heights`;
+    } else if (propertyZCount > 0) {
+      message = `Found ${propertyZCount} features with height properties`;
+    } else {
+      message = `Found ${zCount} coordinates with Z values out of ${totalCoords} total coordinates`;
+    }
+  } else {
+    message = 'No Z coordinates or height values found';
   }
   
-  // Analyze results
-  const hasNonZeroZ = zMin !== 0 || zMax !== 0;
-  const hasReasonableRange = zMin >= -100 && zMax <= 5000; // Increased upper range for mountain areas
-  const hasSufficientData = zCount > 0 && (zCount >= 0.1 * totalCoords || lv95StoredCount > 0);
-  
-  if (!hasNonZeroZ) {
-    return { 
-      hasZ: false,
-      zCount,
-      totalCoords,
-      zMin,
-      zMax,
-      message: 'All Z coordinates are zero'
-    };
-  } else if (!hasReasonableRange) {
-    return { 
-      hasZ: false,
-      zCount,
-      totalCoords,
-      zMin,
-      zMax,
-      message: `Z values outside reasonable range (${zMin.toFixed(1)} to ${zMax.toFixed(1)})`
-    };
-  } else if (!hasSufficientData) {
-    return { 
-      hasZ: false,
-      zCount,
-      totalCoords,
-      zMin,
-      zMax,
-      message: `Limited Z data (${zCount} of ${totalCoords} coordinates)`
-    };
-  }
-  
-  // Special case for LV95 stored heights - always mark as having Z
-  if (lv95StoredCount > 0) {
-    // If ALL features have LV95 stored heights, that's a strong indication
-    const isAllLv95 = lv95StoredCount === features.length;
-    
-    return { 
-      hasZ: true, // Always true for LV95 stored heights
-      zCount,
-      totalCoords,
-      zMin,
-      zMax,
-      message: isAllLv95 
-        ? `All features have Swiss LV95 height values (range: ${zMin.toFixed(1)} to ${zMax.toFixed(1)} meters)`
-        : `${lv95StoredCount} of ${features.length} features have Swiss LV95 height values (range: ${zMin.toFixed(1)} to ${zMax.toFixed(1)} meters)`
-    };
-  }
-  
-  // General case for geometry Z coordinates
-  return { 
-    hasZ: true,
+  return {
+    hasZ,
     zCount,
     totalCoords,
-    zMin,
-    zMax,
-    message: `${zCount} coordinates with Z values (range: ${zMin.toFixed(1)} to ${zMax.toFixed(1)} meters)`
+    zMin: hasZ ? zMin : 0,
+    zMax: hasZ ? zMax : 0,
+    message
   };
 }
 
 /**
- * Detects numeric attributes that could be used for height values
+ * Detects numeric attributes in features
  */
 export function detectNumericAttributes(features: Feature[]): NumericAttributesInfo {
   if (!features || features.length === 0) {
-    return { attributes: [], message: 'No features found' };
+    return {
+      attributes: [],
+      message: 'No features found'
+    };
   }
   
-  const attributeStats: Record<string, { min: number; max: number; count: number; valid: boolean }> = {};
+  const numericAttributes = new Map<string, { min: number; max: number; count: number }>();
   
-  // Collect all numeric attributes and their ranges
   features.forEach(feature => {
-    if (!feature) {
-      logger.warn('Null or undefined feature encountered in detectNumericAttributes');
-      return;
-    }
-    if (!feature.properties) return;
+    if (!feature?.properties) return;
     
-    // Check if this feature has LV95 stored height data
-    const isLv95Stored = feature.properties.height_mode === 'lv95_stored';
-    
-    // Analyze each property
     Object.entries(feature.properties).forEach(([key, value]) => {
-      // Skip known non-attribute values
-      if (key === 'id' || key === 'layer_id' || key === 'geometry_type') return;
+      // Skip known non-numeric fields
+      if (key === 'id' || key === 'height_mode' || key === 'feature_id') return;
       
-      // Skip LV95 coordinates (these are treated as Z coordinates)
-      if (key === 'lv95_easting' || key === 'lv95_northing' || key === 'lv95_height') return;
-      
-      // Skip height_mode and related properties
-      if (key === 'height_mode' || 
-          key === 'height_source' || 
-          key === 'height_transformation_status' ||
-          key === 'vertical_datum_source') return;
-      
-      // If this is an LV95 stored feature, skip height values that should be considered Z coordinates
-      if (isLv95Stored && (key === 'height' || key === 'base_elevation_ellipsoidal')) return;
-
-      // Try to convert value to number
-      const numValue = typeof value === 'number' ? value : 
-                      typeof value === 'string' ? parseFloat(value) : NaN;
-      
-      if (!isNaN(numValue)) {
-        if (!attributeStats[key]) {
-          attributeStats[key] = { min: numValue, max: numValue, count: 1, valid: true };
-        } else {
-          attributeStats[key].min = Math.min(attributeStats[key].min, numValue);
-          attributeStats[key].max = Math.max(attributeStats[key].max, numValue);
-          attributeStats[key].count++;
-        }
+      // Check if value is numeric
+      if (typeof value === 'number' && !isNaN(value)) {
+        const current = numericAttributes.get(key) || { min: Infinity, max: -Infinity, count: 0 };
+        current.min = Math.min(current.min, value);
+        current.max = Math.max(current.max, value);
+        current.count++;
+        numericAttributes.set(key, current);
       }
     });
   });
   
-  // Filter attributes with reasonable height ranges and sufficient data
-  const validAttributes = Object.entries(attributeStats)
-    .filter(([_, stats]) => 
-      stats.min >= -100 && stats.max <= 4000 && // Reasonable height range
-      stats.count >= 0.5 * features.length      // Present in at least half the features
-    )
-    .map(([name, stats]) => ({
-      name,
-      min: stats.min,
-      max: stats.max,
-      count: stats.count
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+  // Convert to array and sort by count (most frequent first)
+  const attributes = Array.from(numericAttributes.entries())
+    .map(([name, { min, max, count }]) => ({ name, min, max, count }))
+    .sort((a, b) => b.count - a.count);
   
-  return {
-    attributes: validAttributes,
-    message: validAttributes.length > 0 
-      ? `Found ${validAttributes.length} potential height attributes` 
-      : 'No suitable height attributes found'
-  };
+  // Generate message
+  const message = attributes.length > 0
+    ? `Found ${attributes.length} numeric attributes`
+    : 'No numeric attributes found';
+  
+  return { attributes, message };
 }
 
 /**
- * Gets a preview of height values for a sample of features
+ * Gets a preview of height values for features
  */
-export function getHeightPreview(features: Feature[], source: string, maxSamples: number = 5): HeightPreviewItem[] {
-  if (!features.length) return [];
-
-  // Take a sample of features for preview
-  const sampleSize = Math.min(features.length, maxSamples);
-  const sampleFeatures = features.slice(0, sampleSize);
+export function getHeightPreview(features: Feature[], source: string, maxSamples = 5): HeightPreviewItem[] {
+  const preview: HeightPreviewItem[] = [];
   
-  // Extract height data based on source
-  return sampleFeatures.map(feature => {
+  // Get a subset of features
+  const sampleFeatures = features.slice(0, maxSamples);
+  
+  sampleFeatures.forEach(feature => {
+    const featureId = feature.id || feature.properties?.id || feature.properties?.feature_id;
     let value: number | null = null;
     
-    if (source === 'z_coord') {
-      // Use our comprehensive Z coordinate extraction function
-      value = getFeatureZCoordinate(feature);
-    } else if (source && feature.properties) {
-      // For attribute source, get the property value
-      if (typeof feature.properties[source] === 'number') {
-        value = feature.properties[source] as number;
-      } else if (typeof feature.properties[source] === 'string') {
-        const parsedValue = parseFloat(feature.properties[source] as string);
-        if (!isNaN(parsedValue)) {
-          value = parsedValue;
-        }
+    try {
+      if (source === 'z_coord') {
+        value = getFeatureZCoordinate(feature);
+      } else if (source === 'attribute' && feature.properties) {
+        const attrValue = feature.properties[source];
+        value = typeof attrValue === 'number' && !isNaN(attrValue) ? attrValue : null;
       }
+    } catch (error) {
+      (async () => {
+        await dbLogger.warn('Error getting height preview value', { source: SOURCE, error });
+      })().catch(console.error);
     }
     
-    return {
-      featureId: feature.id || feature.properties?.id || `feature-${sampleFeatures.indexOf(feature)}`,
-      value
-    };
+    preview.push({ featureId, value });
   });
+  
+  return preview;
 }
 
 /**
- * Detects Swiss coordinates in features
+ * Detects if features use Swiss coordinates
  */
-export function detectSwissCoordinates(features: any[]): SwissCoordinatesInfo {
+export function detectSwissCoordinates(features: Feature[]): SwissCoordinatesInfo {
   if (!features || features.length === 0) {
     return {
       isSwiss: false,
       hasLv95Stored: false,
       hasSwissVerticalDatum: false,
-      message: 'No features to analyze',
+      message: 'No features found',
       featureCount: 0
     };
   }
   
   let lv95StoredCount = 0;
   let swissVerticalDatumCount = 0;
-  let hasValidLv95Coordinates = false;
-  let validLv95CoordinatesCount = 0;
+  let swissCoordCount = 0;
   
-  // Check each feature for Swiss coordinates
-  for (const feature of features) {
-    if (!feature) {
-      logger.warn('Null or undefined feature encountered in detectSwissCoordinates');
-      continue;
-    }
-    const props = feature.properties || {};
-    let featureHasValidLv95Coords = false;
-    
-    // Check for LV95 coordinates regardless of height_mode
-    if (props.lv95_easting && props.lv95_northing) {
-      const easting = parseFloat(props.lv95_easting);
-      const northing = parseFloat(props.lv95_northing);
-      
-      if (!isNaN(easting) && !isNaN(northing) &&
-          easting >= 2450000 && easting <= 2850000 &&
-          northing >= 1050000 && northing <= 1350000) {
-        featureHasValidLv95Coords = true;
-        validLv95CoordinatesCount++;
-        hasValidLv95Coordinates = true;
-      }
-    }
-    
-    // Check for LV95 stored coordinates mode
-    if (props.height_mode === 'lv95_stored') {
+  features.forEach(feature => {
+    // Check for LV95 stored heights
+    if (feature.properties?.height_mode === 'lv95_stored') {
       lv95StoredCount++;
-      
-      // If we already validated the coordinates above, no need to check again
-      if (!featureHasValidLv95Coords && props.lv95_easting && props.lv95_northing) {
-        const easting = parseFloat(props.lv95_easting);
-        const northing = parseFloat(props.lv95_northing);
-        
-        if (!isNaN(easting) && !isNaN(northing) &&
-            easting >= 2450000 && easting <= 2850000 &&
-            northing >= 1050000 && northing <= 1350000) {
-          hasValidLv95Coordinates = true;
-        }
-      }
     }
     
     // Check for Swiss vertical datum
-    if (props.vertical_datum_source === 'LHN95' || 
-        props.vertical_datum_source === 'lhn95') {
+    if (feature.properties?.vertical_datum === 'ln02' || 
+        feature.properties?.vertical_datum === 'lhn95') {
       swissVerticalDatumCount++;
     }
-  }
+    
+    // Check coordinates for Swiss range
+    if (feature.geometry) {
+      try {
+        const coords = getFirstCoordinate(feature);
+        if (coords && isSwissCoordinate(coords)) {
+          swissCoordCount++;
+        }
+      } catch (error) {
+        (async () => {
+          await dbLogger.warn('Error checking coordinates', { source: SOURCE, error });
+        })().catch(console.error);
+      }
+    }
+  });
   
-  // Check if we have valid LV95 coordinates regardless of height_mode
-  const hasLv95Stored = (lv95StoredCount > 0 && hasValidLv95Coordinates) || validLv95CoordinatesCount > 0;
+  const hasLv95Stored = lv95StoredCount > 0;
   const hasSwissVerticalDatum = swissVerticalDatumCount > 0;
-  const isSwiss = hasLv95Stored || hasSwissVerticalDatum;
+  const isSwiss = hasLv95Stored || hasSwissVerticalDatum || swissCoordCount > 0;
   
-  // Generate appropriate message
   let message = '';
   if (isSwiss) {
-    if (validLv95CoordinatesCount > 0 && lv95StoredCount === 0) {
-      message = `Valid Swiss LV95 coordinates detected but not marked as LV95. Height transformation will be available.`;
-    } else if (hasLv95Stored && hasValidLv95Coordinates) {
-      message = `Swiss LV95 coordinates detected. Height transformation will be applied automatically using the Swiss Reframe API for proper 3D visualization.`;
-    } else if (lv95StoredCount > 0 && !hasValidLv95Coordinates) {
-      message = `Features have LV95 format but coordinates appear to be outside valid Swiss range. Transformation may not be accurate.`;
-    } else if (hasSwissVerticalDatum) {
-      message = `Swiss vertical datum detected. Height values will be interpreted appropriately.`;
-    }
+    const details = [];
+    if (hasLv95Stored) details.push(`${lv95StoredCount} with LV95 stored heights`);
+    if (hasSwissVerticalDatum) details.push(`${swissVerticalDatumCount} with Swiss vertical datum`);
+    if (swissCoordCount > 0) details.push(`${swissCoordCount} with Swiss coordinates`);
+    message = `Swiss coordinate system detected: ${details.join(', ')}`;
   } else {
-    message = 'No Swiss coordinates detected. Using standard WGS84 interpretation.';
+    message = 'No Swiss coordinate system detected';
   }
-
+  
   return {
     isSwiss,
-    hasLv95Stored: hasLv95Stored && hasValidLv95Coordinates,
+    hasLv95Stored,
     hasSwissVerticalDatum,
     message,
     featureCount: features.length
@@ -537,25 +417,72 @@ export function detectSwissCoordinates(features: any[]): SwissCoordinatesInfo {
 }
 
 /**
- * Determines the best Swiss transformation method based on feature characteristics
- * @param swissCoordinatesInfo Information about Swiss coordinates
- * @returns The recommended transformation method: 'api' | 'delta' | 'auto'
+ * Helper to get first coordinate from a feature
+ */
+function getFirstCoordinate(feature: Feature): number[] | null {
+  if (!feature.geometry) return null;
+  
+  switch (feature.geometry.type) {
+    case 'Point':
+      return (feature.geometry as Point).coordinates;
+    case 'LineString':
+      return (feature.geometry as LineString).coordinates[0];
+    case 'Polygon':
+      return (feature.geometry as Polygon).coordinates[0][0];
+    case 'MultiPoint':
+      return (feature.geometry as MultiPoint).coordinates[0];
+    case 'MultiLineString':
+      return (feature.geometry as MultiLineString).coordinates[0][0];
+    case 'MultiPolygon':
+      return (feature.geometry as MultiPolygon).coordinates[0][0][0];
+    case 'GeometryCollection': {
+      const geometryCollection = feature.geometry as GeometryCollection;
+      if (geometryCollection.geometries && geometryCollection.geometries.length > 0) {
+        const firstGeom = geometryCollection.geometries[0];
+        if (firstGeom.type === 'Point') {
+          return (firstGeom as Point).coordinates;
+        }
+      }
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+
+/**
+ * Helper to check if coordinates are in Swiss range
+ */
+function isSwissCoordinate(coords: number[]): boolean {
+  if (!coords || coords.length < 2) return false;
+  
+  const [x, y] = coords;
+  
+  // Check if coordinates are in Swiss range (approximate)
+  // LV95: [2485000-2834000, 1075000-1299000]
+  // LV03: [485000-834000, 75000-299000]
+  return (
+    // LV95
+    (x >= 2485000 && x <= 2834000 && y >= 1075000 && y <= 1299000) ||
+    // LV03
+    (x >= 485000 && x <= 834000 && y >= 75000 && y <= 299000)
+  );
+}
+
+/**
+ * Determines the appropriate Swiss height transformation method
  */
 export function determineSwissTransformationMethod(swissCoordinatesInfo: SwissCoordinatesInfo): 'api' | 'delta' | 'auto' {
-  if (!swissCoordinatesInfo.isSwiss) {
-    return 'api'; // Default if not Swiss
-  }
-  
-  // For small datasets, use direct API calls
-  if (swissCoordinatesInfo.featureCount < 200) {
-    return 'api';
-  }
-  
-  // For larger datasets, use delta-based approach
-  if (swissCoordinatesInfo.featureCount >= 200) {
+  // If we have stored LV95 heights, use them directly (delta)
+  if (swissCoordinatesInfo.hasLv95Stored) {
     return 'delta';
   }
   
-  // Fall back to auto mode which will determine per-feature
+  // If we have Swiss vertical datum but no stored heights, use API
+  if (swissCoordinatesInfo.hasSwissVerticalDatum) {
+    return 'api';
+  }
+  
+  // For other cases, let the system decide based on feature count
   return 'auto';
 } 

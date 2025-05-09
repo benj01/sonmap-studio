@@ -1,25 +1,10 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { LogManager } from '@/core/logging/log-manager';
+import { createContext, useContext, useState, ReactNode } from 'react';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import type { Matrix4 } from 'cesium';
 
 const SOURCE = 'SharedLayerContext';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 // Define style types for each layer type
 export interface VectorLayerStyle {
@@ -28,12 +13,12 @@ export interface VectorLayerStyle {
     'line-width'?: number;
     'fill-color'?: string;
     'fill-opacity'?: number;
-    [key: string]: any;
+    [key: string]: string | number | undefined;
   };
   layout?: {
     'line-cap'?: string;
     'line-join'?: string;
-    [key: string]: any;
+    [key: string]: string | undefined;
   };
 }
 
@@ -41,13 +26,12 @@ export interface TilesetStyle {
   // Core Cesium3DTileset options
   maximumScreenSpaceError?: number;
   show?: boolean;
-  modelMatrix?: any;
+  modelMatrix?: Matrix4;
   // Additional options for our application
   opacity?: number;
   color?: string;
   colorBlendMode?: 'highlight' | 'mix' | 'replace';
   colorBlendAmount?: number;
-  [key: string]: any;
 }
 
 export interface ImageryStyle {
@@ -56,14 +40,20 @@ export interface ImageryStyle {
   tileWidth?: number;
   tileHeight?: number;
   credit?: string;
-  [key: string]: any;
 }
 
 export interface TerrainStyle {
   requestVertexNormals?: boolean;
   requestWaterMask?: boolean;
   requestMetadata?: boolean;
-  [key: string]: any;
+}
+
+// Define source types
+export interface LayerSource {
+  url?: string;
+  format?: string;
+  type?: string;
+  [key: string]: string | undefined;
 }
 
 // Define the shared layer type
@@ -74,9 +64,9 @@ export interface SharedLayer {
   visible: boolean;
   metadata: {
     sourceType: '2d' | '3d';
-    geojson?: any;
-    source2D?: any;
-    source3D?: any;
+    geojson?: Record<string, unknown>;
+    source2D?: LayerSource;
+    source3D?: LayerSource;
     style?: VectorLayerStyle | TilesetStyle | ImageryStyle | TerrainStyle;
   };
   selected: boolean;
@@ -85,20 +75,20 @@ export interface SharedLayer {
 // Define the context shape
 interface SharedLayerContextType {
   layers: SharedLayer[];
-  addLayer: (layer: SharedLayer) => void;
-  removeLayer: (layerId: string) => void;
-  toggleLayerVisibility: (layerId: string) => void;
-  updateLayer: (layerId: string, updates: Partial<SharedLayer>) => void;
+  addLayer: (layer: SharedLayer) => Promise<void>;
+  removeLayer: (layerId: string) => Promise<void>;
+  toggleLayerVisibility: (layerId: string) => Promise<void>;
+  updateLayer: (layerId: string, updates: Partial<SharedLayer>) => Promise<void>;
   getLayer: (layerId: string) => SharedLayer | undefined;
 }
 
 // Create the context with default values
 const SharedLayerContext = createContext<SharedLayerContextType>({
   layers: [],
-  addLayer: () => {},
-  removeLayer: () => {},
-  toggleLayerVisibility: () => {},
-  updateLayer: () => {},
+  addLayer: async () => {},
+  removeLayer: async () => {},
+  toggleLayerVisibility: async () => {},
+  updateLayer: async () => {},
   getLayer: () => undefined,
 });
 
@@ -109,39 +99,63 @@ interface SharedLayerProviderProps {
 export function SharedLayerProvider({ children }: SharedLayerProviderProps) {
   const [layers, setLayers] = useState<SharedLayer[]>([]);
 
-  const addLayer = (layer: SharedLayer) => {
-    logger.debug('Adding layer', { layer });
-    setLayers(prevLayers => [...prevLayers, layer]);
+  const addLayer = async (layer: SharedLayer): Promise<void> => {
+    try {
+      await dbLogger.debug('addLayer.start', { source: SOURCE, layerId: layer.id });
+      setLayers(prevLayers => [...prevLayers, layer]);
+      await dbLogger.debug('addLayer.success', { source: SOURCE, layerId: layer.id });
+    } catch (error) {
+      await dbLogger.error('addLayer.error', { source: SOURCE, layerId: layer.id, error });
+      throw error;
+    }
   };
 
-  const removeLayer = (layerId: string) => {
-    logger.debug('Removing layer', { layerId });
-    setLayers(prevLayers => prevLayers.filter(layer => layer.id !== layerId));
+  const removeLayer = async (layerId: string): Promise<void> => {
+    try {
+      await dbLogger.debug('removeLayer.start', { source: SOURCE, layerId });
+      setLayers(prevLayers => prevLayers.filter(layer => layer.id !== layerId));
+      await dbLogger.debug('removeLayer.success', { source: SOURCE, layerId });
+    } catch (error) {
+      await dbLogger.error('removeLayer.error', { source: SOURCE, layerId, error });
+      throw error;
+    }
   };
 
-  const toggleLayerVisibility = (layerId: string) => {
-    logger.debug('Toggling layer visibility', { layerId });
-    setLayers(prevLayers =>
-      prevLayers.map(layer =>
-        layer.id === layerId
-          ? { ...layer, visible: !layer.visible }
-          : layer
-      )
-    );
+  const toggleLayerVisibility = async (layerId: string): Promise<void> => {
+    try {
+      await dbLogger.debug('toggleLayerVisibility.start', { source: SOURCE, layerId });
+      setLayers(prevLayers =>
+        prevLayers.map(layer =>
+          layer.id === layerId
+            ? { ...layer, visible: !layer.visible }
+            : layer
+        )
+      );
+      await dbLogger.debug('toggleLayerVisibility.success', { source: SOURCE, layerId });
+    } catch (error) {
+      await dbLogger.error('toggleLayerVisibility.error', { source: SOURCE, layerId, error });
+      throw error;
+    }
   };
 
-  const updateLayer = (layerId: string, updates: Partial<SharedLayer>) => {
-    logger.debug('Updating layer', { layerId, updates });
-    setLayers(prevLayers =>
-      prevLayers.map(layer =>
-        layer.id === layerId
-          ? { ...layer, ...updates }
-          : layer
-      )
-    );
+  const updateLayer = async (layerId: string, updates: Partial<SharedLayer>): Promise<void> => {
+    try {
+      await dbLogger.debug('updateLayer.start', { source: SOURCE, layerId, updates });
+      setLayers(prevLayers =>
+        prevLayers.map(layer =>
+          layer.id === layerId
+            ? { ...layer, ...updates }
+            : layer
+        )
+      );
+      await dbLogger.debug('updateLayer.success', { source: SOURCE, layerId });
+    } catch (error) {
+      await dbLogger.error('updateLayer.error', { source: SOURCE, layerId, error });
+      throw error;
+    }
   };
 
-  const getLayer = (layerId: string) => {
+  const getLayer = (layerId: string): SharedLayer | undefined => {
     return layers.find(layer => layer.id === layerId);
   };
 
@@ -162,7 +176,7 @@ export function SharedLayerProvider({ children }: SharedLayerProviderProps) {
 }
 
 // Custom hook for using the shared layer context
-export function useSharedLayers() {
+export function useSharedLayers(): SharedLayerContextType {
   const context = useContext(SharedLayerContext);
   if (context === undefined) {
     throw new Error('useSharedLayers must be used within a SharedLayerProvider');

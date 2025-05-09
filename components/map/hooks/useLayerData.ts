@@ -2,28 +2,12 @@
 
 import { useEffect, useState, useRef } from 'react';
 import createClient from '@/utils/supabase/client';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { useLayerStore } from '@/store/layers/layerStore';
 import type { Feature } from 'geojson';
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
 
 const SOURCE = 'useLayerData';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 // Cache for layer data
 const layerCache = new Map<string, {
@@ -41,16 +25,23 @@ interface LayerData {
   id: string;
   name: string;
   type: string;
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
   features: GeoJSON.Feature[];
 }
 
-function validateCoordinates(coordinates: any): boolean {
+interface Coordinate extends Array<number> {
+  [index: number]: number;
+  length: 2 | 3;
+}
+
+type NestedCoordinate = Coordinate | Coordinate[] | Coordinate[][] | Coordinate[][][];
+
+function validateCoordinates(coordinates: unknown): coordinates is NestedCoordinate {
   if (!Array.isArray(coordinates)) return false;
   
   // Handle nested arrays (for polygons, etc.)
   if (Array.isArray(coordinates[0])) {
-    return coordinates.every((coord: any[]) => validateCoordinates(coord));
+    return coordinates.every((coord) => validateCoordinates(coord));
   }
   
   // Handle single coordinate
@@ -59,15 +50,17 @@ function validateCoordinates(coordinates: any): boolean {
          coordinates.every(c => typeof c === 'number' && !isNaN(c));
 }
 
-function validateGeometry(geometry: any): boolean {
-  if (!geometry || !geometry.type || !geometry.coordinates) return false;
+function validateGeometry(geometry: unknown): geometry is GeoJSON.Geometry {
+  if (!geometry || typeof geometry !== 'object' || !('type' in geometry) || !('coordinates' in geometry)) return false;
   
   try {
+    const geom = geometry as { type: string; coordinates: unknown };
+    
     // For LineString, validate each coordinate pair
-    if (geometry.type === 'LineString') {
-      return Array.isArray(geometry.coordinates) && 
-        geometry.coordinates.length >= 2 &&
-        geometry.coordinates.every((coord: any[]) => 
+    if (geom.type === 'LineString') {
+      return Array.isArray(geom.coordinates) && 
+        geom.coordinates.length >= 2 &&
+        geom.coordinates.every((coord) => 
           Array.isArray(coord) && 
           coord.length >= 2 && 
           coord.length <= 3 && // Allow z-value
@@ -76,12 +69,12 @@ function validateGeometry(geometry: any): boolean {
     }
     
     // For Polygon, validate each ring
-    if (geometry.type === 'Polygon') {
-      return Array.isArray(geometry.coordinates) &&
-        geometry.coordinates.every((ring: any[]) =>
+    if (geom.type === 'Polygon') {
+      return Array.isArray(geom.coordinates) &&
+        geom.coordinates.every((ring) =>
           Array.isArray(ring) &&
           ring.length >= 4 && // At least 4 points for a closed ring
-          ring.every((coord: any[]) =>
+          ring.every((coord) =>
             Array.isArray(coord) &&
             coord.length >= 2 &&
             coord.length <= 3 && // Allow z-value
@@ -91,11 +84,20 @@ function validateGeometry(geometry: any): boolean {
     }
     
     // For other types, use general validation
-    return validateCoordinates(geometry.coordinates);
+    return validateCoordinates(geom.coordinates);
   } catch (error) {
-    logger.warn('Invalid geometry', { error });
+    // Since this is a synchronous validation function, we can't await the logger call
+    // Instead, we use a separate error handler function
+    handleValidationError(error);
     return false;
   }
+}
+
+// Separate error handler function to handle the async logging
+function handleValidationError(error: unknown) {
+  void dbLogger.warn('Invalid geometry', { source: SOURCE, error }).catch(err => {
+    console.error('Failed to log validation error:', err);
+  });
 }
 
 export function useLayerData(layerId: string) {
@@ -108,60 +110,96 @@ export function useLayerData(layerId: string) {
   const cleanupRef = useRef(false);
   const lastUpdateRef = useRef(0);
 
-  logger.info('useLayerData hook called', {
-    layerId,
-    loading,
-    error: error?.message,
-    hasCachedData: !!layerCache.get(layerId)
-  });
-
+  // Log hook initialization
   useEffect(() => {
-    mounted.current = true;
-    cleanupRef.current = false;
-    
-    logger.info('useLayerData mount effect', {
-      layerId,
-      isMounted: mounted.current,
-      isCleanup: cleanupRef.current
-    });
-    
-    // Subscribe to cache
-    const cached = layerCache.get(layerId);
-    if (cached) {
-      cached.subscribers++;
-      if (cached.isValid) {
-        logger.info('Using cached layer data', {
+    async function logInitialization() {
+      try {
+        await dbLogger.info('useLayerData hook called', {
+          source: SOURCE,
           layerId,
-          dataTimestamp: new Date(cached.timestamp).toISOString(),
-          subscribers: cached.subscribers,
-          lastUpdate: new Date(cached.lastUpdate).toISOString()
+          loading,
+          error: error?.message,
+          hasCachedData: !!layerCache.get(layerId)
         });
-        setData(cached.data);
-        setLoading(false);
+      } catch (err) {
+        console.error('Failed to log initialization:', err);
       }
     }
-    
-    return () => {
-      mounted.current = false;
-      cleanupRef.current = true;
-      
-      logger.info('useLayerData cleanup', {
-        layerId,
-        isMounted: mounted.current,
-        isCleanup: cleanupRef.current
-      });
-      
-      // Unsubscribe from cache
-      const cached = layerCache.get(layerId);
-      if (cached) {
-        cached.subscribers--;
-        if (cached.subscribers === 0) {
-          cached.isValid = false; // Mark as invalid but keep data for potential reuse
-          if (Date.now() - cached.timestamp > CACHE_TTL) {
-            layerCache.delete(layerId); // Only delete if also expired
+    void logInitialization().catch(err => {
+      console.error('Failed to execute logInitialization:', err);
+    });
+  }, [layerId, loading, error]);
+
+  useEffect(() => {
+    async function setupAndSubscribe() {
+      try {
+        mounted.current = true;
+        cleanupRef.current = false;
+        
+        // Log mount effect
+        await dbLogger.info('useLayerData mount effect', {
+          source: SOURCE,
+          layerId,
+          isMounted: mounted.current,
+          isCleanup: cleanupRef.current
+        });
+        
+        // Subscribe to cache
+        const cached = layerCache.get(layerId);
+        if (cached) {
+          cached.subscribers++;
+          if (cached.isValid) {
+            await dbLogger.info('Using cached layer data', {
+              source: SOURCE,
+              layerId,
+              dataTimestamp: new Date(cached.timestamp).toISOString(),
+              subscribers: cached.subscribers,
+              lastUpdate: new Date(cached.lastUpdate).toISOString()
+            });
+            setData(cached.data);
+            setLoading(false);
           }
         }
+      } catch (err) {
+        console.error('Failed to setup and subscribe:', err);
       }
+    }
+
+    void setupAndSubscribe().catch(err => {
+      console.error('Failed to execute setupAndSubscribe:', err);
+    });
+    
+    return () => {
+      async function cleanup() {
+        try {
+          mounted.current = false;
+          cleanupRef.current = true;
+          
+          await dbLogger.info('useLayerData cleanup', {
+            source: SOURCE,
+            layerId,
+            isMounted: mounted.current,
+            isCleanup: cleanupRef.current
+          });
+          
+          // Unsubscribe from cache
+          const cached = layerCache.get(layerId);
+          if (cached) {
+            cached.subscribers--;
+            if (cached.subscribers === 0) {
+              cached.isValid = false; // Mark as invalid but keep data for potential reuse
+              if (Date.now() - cached.timestamp > CACHE_TTL) {
+                layerCache.delete(layerId); // Only delete if also expired
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Failed to cleanup:', err);
+        }
+      }
+      void cleanup().catch(err => {
+        console.error('Failed to execute cleanup:', err);
+      });
     };
   }, [layerId]);
 
@@ -169,7 +207,8 @@ export function useLayerData(layerId: string) {
     async function fetchLayerData() {
       // Prevent concurrent fetches or fetching during cleanup
       if (fetchingRef.current || cleanupRef.current) {
-        logger.info('Skipping fetch - already fetching or cleanup in progress', {
+        await dbLogger.info('Skipping fetch - already fetching or cleanup in progress', {
+          source: SOURCE,
           layerId,
           isFetching: fetchingRef.current,
           isCleanup: cleanupRef.current
@@ -180,7 +219,8 @@ export function useLayerData(layerId: string) {
       // Throttle updates
       const now = Date.now();
       if (now - lastUpdateRef.current < UPDATE_THROTTLE) {
-        logger.debug('Skipping fetch - update throttled', {
+        await dbLogger.debug('Skipping fetch - update throttled', {
+          source: SOURCE,
           layerId,
           timeSinceLastUpdate: now - lastUpdateRef.current
         });
@@ -193,7 +233,8 @@ export function useLayerData(layerId: string) {
         // Check cache first
         const cached = layerCache.get(layerId);
         if (cached && cached.isValid && Date.now() - cached.timestamp < CACHE_TTL) {
-          logger.info('Using cached layer data', {
+          await dbLogger.info('Using cached layer data', {
+            source: SOURCE,
             layerId,
             dataTimestamp: new Date(cached.timestamp).toISOString(),
             subscribers: cached.subscribers,
@@ -209,7 +250,7 @@ export function useLayerData(layerId: string) {
         // Skip if cleanup started
         if (cleanupRef.current) return;
 
-        logger.info('Fetching layer data from Supabase', { layerId });
+        await dbLogger.info('Fetching layer data from Supabase', { source: SOURCE, layerId });
         
         // First get the layer metadata
         const { data: layerData, error: layerError } = await supabase
@@ -220,20 +261,21 @@ export function useLayerData(layerId: string) {
 
         // Skip if cleanup started
         if (cleanupRef.current) {
-          logger.info('Skipping metadata processing - cleanup in progress', { layerId });
+          await dbLogger.info('Skipping metadata processing - cleanup in progress', { source: SOURCE, layerId });
           return;
         }
 
         if (layerError) {
-          logger.error('Layer metadata fetch error', { error: layerError });
+          await dbLogger.error('Layer metadata fetch error', { source: SOURCE, error: layerError });
           throw layerError;
         }
         if (!layerData) {
-          logger.error('Layer not found', { layerId });
+          await dbLogger.error('Layer not found', { source: SOURCE, layerId });
           throw new Error('Layer not found');
         }
 
-        logger.info('Layer metadata fetched', { 
+        await dbLogger.info('Layer metadata fetched', { 
+          source: SOURCE,
           layerId,
           name: layerData.name,
           type: layerData.type
@@ -242,7 +284,7 @@ export function useLayerData(layerId: string) {
         // Skip if cleanup started
         if (cleanupRef.current) return;
 
-        logger.info('Fetching layer features', { layerId });
+        await dbLogger.info('Fetching layer features', { source: SOURCE, layerId });
 
         // Then get the features for this layer with PostGIS geometry
         const { data: features, error: featuresError } = await supabase
@@ -252,25 +294,26 @@ export function useLayerData(layerId: string) {
 
         // Skip if cleanup started
         if (cleanupRef.current) {
-          logger.info('Skipping features processing - cleanup in progress', { layerId });
+          await dbLogger.info('Skipping features processing - cleanup in progress', { source: SOURCE, layerId });
           return;
         }
 
         if (featuresError) {
-          logger.error('Features fetch error', { error: featuresError });
+          await dbLogger.error('Features fetch error', { source: SOURCE, error: featuresError });
           throw featuresError;
         }
 
-        logger.info('Layer features fetched', {
+        await dbLogger.info('Layer features fetched', {
+          source: SOURCE,
           layerId,
           featureCount: features?.length || 0
         });
 
         // Process features into GeoJSON
-        const processedFeatures = await Promise.all(features?.map(async (feature: {
+        const processedFeatures = (await Promise.all(features?.map(async (feature: {
           id: string;
           geojson: string | GeoJSON.Geometry;
-          properties: Record<string, any>;
+          properties: Record<string, unknown>;
         }) => {
           try {
             const geometry = typeof feature.geojson === 'string' 
@@ -278,7 +321,7 @@ export function useLayerData(layerId: string) {
               : feature.geojson;
 
             if (!validateGeometry(geometry)) {
-              logger.warn('Invalid geometry in feature', { featureId: feature.id });
+              await dbLogger.warn('Invalid geometry in feature', { source: SOURCE, featureId: feature.id });
               return null;
             }
 
@@ -296,15 +339,17 @@ export function useLayerData(layerId: string) {
                 feature.properties?.lv95_northing && 
                 feature.properties?.lv95_height) {
               try {
-                logger.debug('Processing feature with LV95 stored coordinates', { featureId: feature.id });
+                await dbLogger.debug('Processing feature with LV95 stored coordinates', { source: SOURCE, featureId: feature.id });
                 geoJsonFeature = await processStoredLv95Coordinates(geoJsonFeature);
-                logger.debug('Transformed LV95 coordinates to WGS84 with accurate height', { 
+                await dbLogger.debug('Transformed LV95 coordinates to WGS84 with accurate height', { 
+                  source: SOURCE,
                   featureId: feature.id,
                   height_mode: geoJsonFeature.properties?.height_mode,
                   elevation: geoJsonFeature.properties?.base_elevation_ellipsoidal
                 });
               } catch (transformError) {
-                logger.warn('Failed to transform LV95 coordinates, using original feature', {
+                await dbLogger.warn('Failed to transform LV95 coordinates, using original feature', {
+                  source: SOURCE,
                   featureId: feature.id,
                   error: transformError
                 });
@@ -314,10 +359,10 @@ export function useLayerData(layerId: string) {
 
             return geoJsonFeature;
           } catch (error) {
-            logger.warn('Failed to process feature', { featureId: feature.id, error });
+            await dbLogger.warn('Failed to process feature', { source: SOURCE, featureId: feature.id, error });
             return null;
           }
-        }).filter(Boolean) || []);
+        }) || [])).filter((feature): feature is Feature => feature !== null);
 
         const featureCollection: GeoJSON.FeatureCollection = {
           type: 'FeatureCollection',
@@ -341,7 +386,8 @@ export function useLayerData(layerId: string) {
           lastUpdate: Date.now()
         });
 
-        logger.info('Layer data cached', {
+        await dbLogger.info('Layer data cached', {
+          source: SOURCE,
           layerId,
           name: layerData.name,
           featureCount: processedFeatures.length
@@ -361,7 +407,7 @@ export function useLayerData(layerId: string) {
 
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to fetch layer data';
-        logger.error('Layer data fetch error', { error: err });
+        await dbLogger.error('Layer data fetch error', { source: SOURCE, error: err });
         if (mounted.current) {
           setError(new Error(errorMessage));
           setLoading(false);
@@ -372,9 +418,11 @@ export function useLayerData(layerId: string) {
     }
 
     if (layerId) {
-      fetchLayerData();
+      void fetchLayerData().catch(async (error) => {
+        await dbLogger.error('Unhandled error in fetchLayerData', { source: SOURCE, error });
+      });
     }
-  }, [layerId]);
+  }, [layerId, supabase]);
 
   return {
     data,

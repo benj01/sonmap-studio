@@ -2,27 +2,10 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
-import { useCesium } from '../context/CesiumContext';
 import { useLayers } from '@/store/layers/hooks';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'StatusMonitor';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 interface LayerStatus {
   ready2D: boolean;
@@ -37,8 +20,8 @@ interface Status {
 
 export function StatusMonitor() {
   const { layers } = useLayers();
-  const cesiumStatus = useMapInstanceStore(state => state.mapInstances.cesium.status);
-  const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
+  const cesiumInstance = useMapInstanceStore((state) => state.mapInstances.cesium.instance);
+  const cesiumStatus = useMapInstanceStore((state) => state.mapInstances.cesium.status);
   const [isExpanded, setIsExpanded] = useState(false);
   const [status, setStatus] = useState<Status>({
     layerStatuses: {},
@@ -46,22 +29,22 @@ export function StatusMonitor() {
     ready3DCount: 0
   });
 
-  const checkMapStatus = useCallback(() => {
-    const cesiumReady = cesiumStatus === 'ready';
+  const cesiumReady = cesiumStatus === 'ready';
 
-    logger.debug('Map status check', {
-      cesiumStatus,
-      hasCesium: !!cesiumInstance
-    });
-
-    return { cesiumReady };
+  useEffect(() => {
+    (async () => {
+      await dbLogger.debug(SOURCE, 'Map status check', {
+        cesiumStatus,
+        hasCesium: !!cesiumInstance
+      });
+    })();
   }, [cesiumStatus, cesiumInstance]);
 
-  const checkLayerStatus = useCallback(() => {
+  const checkLayerStatus = useCallback(async () => {
     let hasChanges = false;
-    const newStatuses: Record<string, LayerStatus> = {};
     let ready2D = 0;
     let ready3D = 0;
+    const newStatuses: Record<string, LayerStatus> = {};
 
     for (const layer of layers) {
       const ready2DStatus = layer.setupStatus === 'complete';
@@ -78,7 +61,7 @@ export function StatusMonitor() {
         ready3DStatus = layer.setupStatus === 'complete';
       }
 
-      logger.debug('Layer status check', {
+      await dbLogger.debug(SOURCE, 'Layer status check', {
         layerId: layer.id,
         name: layer.metadata?.name,
         type: layer.metadata?.type,
@@ -105,7 +88,7 @@ export function StatusMonitor() {
     }
 
     if (hasChanges || ready2D !== status.ready2DCount || ready3D !== status.ready3DCount) {
-      logger.info('Status update', {
+      await dbLogger.info(SOURCE, 'Status update', {
         ready2DCount: ready2D,
         ready3DCount: ready3D,
         layerStatuses: Object.entries(newStatuses).map(([id, status]) => ({
@@ -121,17 +104,11 @@ export function StatusMonitor() {
         ready3DCount: ready3D
       });
     }
-  }, [layers, status]);
+  }, [layers, status.layerStatuses, status.ready2DCount, status.ready3DCount]);
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      checkLayerStatus();
-    }, 1000);
-
-    return () => clearInterval(interval);
-  }, [checkLayerStatus]);
-
-  const { cesiumReady } = checkMapStatus();
+    (async () => { await checkLayerStatus(); })();
+  }, [layers, checkLayerStatus]);
 
   const getStatusColor = (isReady: boolean) => 
     isReady ? 'text-green-500' : 'text-yellow-500';
