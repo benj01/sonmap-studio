@@ -12,10 +12,11 @@ import {
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import type { Layer } from '@/store/layers/types';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { HeightConfigurationDialog, HeightSource } from '../dialogs/HeightConfigurationDialog';
+import { HeightConfigurationDialog } from '../dialogs/HeightConfigurationDialog';
+import type { HeightSource } from '@/components/map/dialogs/height-configuration';
 import { useLayerData } from '../hooks/useLayerData';
 import { Box, RefreshCw, Info, Check, X } from 'lucide-react';
 import { FeatureCollection } from 'geojson';
@@ -24,11 +25,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/components/ui/use-toast";
 import type { GeoJSON } from 'geojson';
 import { usePreferenceStore } from '@/store/preference/userPreferenceStore';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -40,24 +36,6 @@ interface LayerSettingsDialogProps {
   onOpenChange: (open: boolean) => void;
   initialTab?: string;
 }
-
-const SOURCE = 'LayerSettingsDialog';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 interface GeometryTypes {
   hasPolygons: boolean;
@@ -87,12 +65,11 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
   const { data } = useLayerData(baseLayerId);
   const [color, setColor] = useState("#088");
   const [heightConfigOpen, setHeightConfigOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState(initialTab || "appearance");
+  const [activeTab, setActiveTab] = useState(typeof initialTab === 'string' ? initialTab : 'appearance');
   const [showHeightUpdateAlert, setShowHeightUpdateAlert] = useState(false);
   const { toast } = useToast();
   
   // States for multi-layer selection
-  const [applyToAllLayers, setApplyToAllLayers] = useState(false);
   const [layerSelectionOpen, setLayerSelectionOpen] = useState(false);
   const [compatibleLayers, setCompatibleLayers] = useState<LayerCompatibility[]>([]);
   const [selectedLayers, setSelectedLayers] = useState<Record<string, boolean>>({});
@@ -136,15 +113,6 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
     return { hasPolygons: false, hasLines: false, hasPoints: false };
   }, [layer?.metadata, layerId]);
 
-  logger.debug('LayerSettingsDialog render', {
-    originalLayerId: layerId,
-    baseLayerId,
-    hasLayer: !!layer,
-    layerMetadata: layer?.metadata,
-    geometryTypes,
-    open
-  });
-
   useEffect(() => {
     // Initialize color from layer style if available
     if (layer?.metadata?.style?.paint) {
@@ -154,12 +122,6 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
                           (geometryTypes.hasPoints && layer.metadata.style.paint['circle-color']) ||
                           "#088";
       
-      logger.debug('Initializing color from layer style', {
-        baseLayerId,
-        currentColor,
-        paint: layer.metadata.style.paint,
-        geometryTypes
-      });
       setColor(currentColor);
     }
   }, [layer, baseLayerId, geometryTypes]);
@@ -167,17 +129,17 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
   // If initialTab changes while dialog is opened, update activeTab
   useEffect(() => {
     if (open && initialTab && initialTab !== activeTab) {
-      setActiveTab(initialTab);
+      setActiveTab(typeof initialTab === 'string' ? initialTab : 'appearance');
     }
-  }, [open, initialTab]);
+  }, [open, initialTab, activeTab]);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!layer) {
-      logger.error('Cannot save style - layer not found', { baseLayerId });
+      await dbLogger.error('Cannot save style - layer not found', { baseLayerId });
       return;
     }
 
-    logger.debug('Starting style save', {
+    await dbLogger.debug('Starting style save', {
       baseLayerId,
       layerType: layer.metadata?.type,
       geometryTypes,
@@ -186,7 +148,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
     });
 
     // Create paint object based on detected geometry types
-    const paint: Record<string, any> = {};
+    const paint: Record<string, unknown> = {};
     
     if (geometryTypes.hasLines) {
       paint['line-color'] = color;
@@ -216,7 +178,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
         paint['circle-stroke-width'] = existingPaint['circle-stroke-width'] || 2;
         paint['circle-stroke-color'] = existingPaint['circle-stroke-color'] || '#000';
       } else {
-        logger.warn('Could not determine geometry type - defaulting to line style', {
+        await dbLogger.warn('Could not determine geometry type - defaulting to line style', {
           baseLayerId,
           layerType: layer.metadata?.type,
           geometryTypes,
@@ -227,7 +189,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       }
     }
 
-    logger.debug('Calling updateStyle', {
+    await dbLogger.debug('Calling updateStyle', {
       baseLayerId,
       geometryTypes,
       paint,
@@ -238,13 +200,13 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
 
     try {
       updateStyle({ paint });
-      logger.info('Style update called successfully', {
+      await dbLogger.info('Style update called successfully', {
         baseLayerId,
         paint,
         geometryTypes
       });
     } catch (error) {
-      logger.error('Error updating style', {
+      await dbLogger.error('Error updating style', {
         baseLayerId,
         error: error instanceof Error ? error.message : error,
         stack: error instanceof Error ? error.stack : undefined
@@ -365,8 +327,8 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
         const data = await layerData.json();
         if (data.features) layerFeatures = data.features;
       }
-    } catch (error) {
-      logger.error('Error loading layer data for compatibility check', { targetLayerId, error });
+    } catch (err) {
+      void dbLogger.error('Error loading layer data for compatibility check', { targetLayerId, error: err }).catch(() => {});
       return {
         id: targetLayerId,
         name: layer.metadata?.name || targetLayerId,
@@ -431,7 +393,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
     const allLayers = layerSelectors.getAllLayers(useLayerStore.getState())
       .filter(l => l.id !== baseLayerId);
     
-    logger.debug('Finding compatible layers', { 
+    await dbLogger.debug('Finding compatible layers', { 
       baseLayerId,
       heightSource,
       layerCount: allLayers.length
@@ -459,7 +421,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       selectedLayersMap[result.id] = result.compatible && !result.hasHeightConfig;
     }
     
-    logger.debug('Compatibility check complete', { 
+    await dbLogger.debug('Compatibility check complete', { 
       results: compatibilityResults,
       selectedLayers: selectedLayersMap
     });
@@ -487,14 +449,14 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       .filter(([id, selected]) => selected && id !== baseLayerId)
       .map(([id]) => id);
     
-    logger.debug('Applying height config to selected layers', { 
+    await dbLogger.debug('Applying height config to selected layers', { 
       baseLayerId,
       heightSource,
       selectedLayerIds
     });
     
     if (selectedLayerIds.length === 0) {
-      logger.debug('No layers selected for height configuration');
+      await dbLogger.debug('No layers selected for height configuration');
       return;
     }
     
@@ -507,13 +469,14 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
         // Apply the same height source configuration to this layer
         // Make sure type is always defined to satisfy TypeScript
         updateLayerHeightSource(targetLayerId, {
-          type: heightSource.type,
+          type: heightSource.type ?? 'none',
           attributeName: heightSource.attributeName,
-          interpretationMode: heightSource.interpretationMode
+          interpretationMode: heightSource.interpretationMode,
+          mode: 'advanced'
         });
         successCount++;
       } catch (error) {
-        logger.error('Error applying height configuration to layer', { 
+        await dbLogger.error('Error applying height configuration to layer', { 
           targetLayerId, 
           error 
         });
@@ -541,14 +504,15 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
    * Handle height source selection from the Height Configuration Dialog
    */
   const handleHeightSourceSelect = async (heightSource: HeightSource) => {
-    logger.debug('Height source selected', { heightSource, baseLayerId });
+    await dbLogger.debug('Height source selected', { heightSource, baseLayerId });
     
     try {
       // First, apply to the current layer
       updateLayerHeightSource(baseLayerId, {
-        type: heightSource.type,
+        type: heightSource.type ?? 'none',
         attributeName: heightSource.attributeName,
-        interpretationMode: heightSource.interpretationMode
+        interpretationMode: heightSource.interpretationMode,
+        mode: 'advanced'
       });
       
       // Show success toast for current layer
@@ -560,7 +524,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       // Save preference if requested
       if (heightSource.savePreference) {
         setHeightSourcePreference({
-          type: heightSource.type,
+          type: heightSource.type ?? 'none',
           attributeName: heightSource.attributeName,
           interpretationMode: heightSource.interpretationMode
         });
@@ -589,7 +553,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       }
     } catch (error) {
       // Handle errors
-      logger.error('Error updating height source', { baseLayerId, error });
+      await dbLogger.error('Error updating height source', { baseLayerId, error });
       toast({
         title: "Height configuration failed",
         description: error instanceof Error ? error.message : "Unknown error",
@@ -627,7 +591,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
   const handleApplyToSelectedLayers = () => {
     // Get the height configuration from the current layer
     if (!layer?.metadata?.height || !layer.metadata.height.sourceType) {
-      logger.error('Cannot apply to other layers - current layer has no height configuration');
+      void dbLogger.error('Cannot apply to other layers - current layer has no height configuration').catch(() => {});
       return;
     }
     
@@ -636,7 +600,8 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       attributeName: layer.metadata.height.attributeName,
       interpretationMode: layer.metadata.height.interpretationMode,
       applyToAllLayers: true,
-      savePreference: false
+      savePreference: false,
+      mode: 'advanced'
     };
     
     // Apply to selected layers
@@ -784,7 +749,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
                         
                         {layer.hasHeightConfig && (
                           <p className="text-xs text-gray-500 mt-1">
-                            Current: {layer.currentConfig?.type} 
+                            Current: {layer.currentConfig?.type ?? 'none'} 
                             {layer.currentConfig?.type === 'attribute' && layer.currentConfig?.attributeName && 
                              ` (${layer.currentConfig.attributeName})`}
                           </p>
@@ -836,13 +801,14 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
                 const heightConfig = currentLayer?.metadata?.height;
                 
                 if (heightConfig) {
-                  applyHeightConfigToSelectedLayers({
-                    type: heightConfig.sourceType,
+                  void applyHeightConfigToSelectedLayers({
+                    type: heightConfig.sourceType ?? 'none',
                     attributeName: heightConfig.attributeName,
                     interpretationMode: heightConfig.interpretationMode,
                     applyToAllLayers: true,
-                    savePreference: false // Already saved if requested
-                  });
+                    savePreference: false, // Already saved if requested
+                    mode: 'advanced'
+                  }).catch(() => {});
                 } else {
                   setLayerSelectionOpen(false);
                   toast({

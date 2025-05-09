@@ -7,25 +7,9 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { AlertCircle, Check, Loader2, XCircle } from 'lucide-react';
 import { HeightTransformBatchService, BatchProgress } from '../services/heightTransformBatchService';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'HeightTransformProgress';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 interface HeightTransformProgressProps {
   batchId: string;
@@ -49,8 +33,24 @@ export function HeightTransformProgress({
   
   useEffect(() => {
     // Set up progress tracking
-    const unsubscribe = batchService.registerProgressCallback(batchId, (batchProgress) => {
+    const unsubscribe = batchService.registerProgressCallback(batchId, async (batchProgress: BatchProgress) => {
       setProgress(batchProgress);
+      try {
+        await dbLogger.info('Progress callback', {
+          source: SOURCE,
+          batchId,
+          layerName,
+          status: batchProgress.status,
+          percentComplete: batchProgress.percentComplete
+        });
+      } catch (error: unknown) {
+        await dbLogger.error('Error logging progress callback', {
+          source: SOURCE,
+          batchId,
+          layerName,
+          error
+        });
+      }
       
       // Call onComplete when batch is done
       if (batchProgress.status === 'complete' && onComplete) {
@@ -74,7 +74,7 @@ export function HeightTransformProgress({
       unsubscribe();
       clearInterval(timer);
     };
-  }, [batchId, batchService, onComplete, startTime]);
+  }, [batchId, batchService, onComplete, startTime, layerName]);
   
   // Format elapsed time as mm:ss
   const formatElapsedTime = (seconds: number) => {
@@ -83,10 +83,24 @@ export function HeightTransformProgress({
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
   
-  const handleCancel = () => {
+  const handleCancel = async () => {
     batchService.cancelBatch(batchId);
     if (onCancel) {
       onCancel();
+    }
+    try {
+      await dbLogger.info('Batch cancelled', {
+        source: SOURCE,
+        batchId,
+        layerName
+      });
+    } catch (error: unknown) {
+      await dbLogger.error('Error logging batch cancel', {
+        source: SOURCE,
+        batchId,
+        layerName,
+        error
+      });
     }
   };
   

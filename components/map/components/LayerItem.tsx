@@ -1,7 +1,6 @@
 'use client';
 
-import { LogManager } from '@/core/logging/log-manager';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Eye, EyeOff, Settings, AlertCircle, Maximize2, ArrowUpNarrowWide } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -12,31 +11,13 @@ import { LayerSettingsDialog } from './LayerSettingsDialog';
 import bbox from '@turf/bbox';
 import * as Cesium from 'cesium';
 import { useCesiumInstance } from '@/store/map/hooks';
-import { LogLevel } from '@/core/logging/log-manager';
-
-const SOURCE = 'LayerItem';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 export interface LayerItemLayer {
   id: string;
   name: string;
   type: string;
-  properties: Record<string, any>;
+  properties: Record<string, unknown>;
 }
 
 export interface LayerItemProps {
@@ -45,7 +26,6 @@ export interface LayerItemProps {
 }
 
 export function LayerItem({ layer, className }: LayerItemProps) {
-  console.log('LAYER_ITEM_RENDERED_DEBUG');
   const { layer: storeLayer, setVisibility, error: storeError } = useLayer(layer.id);
   const { data, loading, error: dataError } = useLayerData(layer.id);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -53,21 +33,17 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   const cesiumInstance = useCesiumInstance();
 
   useEffect(() => {
-    logger.info('LayerItem state', {
-      layerId: layer.id,
-      storeLayer,
-      data,
-      loading,
-      error: storeError || dataError
-    });
+    async function logState() {
+      await dbLogger.info('LayerItem state', {
+        layerId: layer.id,
+        storeLayer,
+        data,
+        loading,
+        error: storeError || dataError
+      });
+    }
+    logState().catch(() => {});
   }, [layer.id, storeLayer, data, loading, storeError, dataError]);
-
-  useEffect(() => {
-    logManager.setComponentLogLevel(SOURCE, LogLevel.DEBUG);
-    return () => {
-      logManager.setComponentLogLevel(SOURCE, LogLevel.WARN); // Reset after unmount
-    };
-  }, []);
 
   const handleVisibilityToggle = () => {
     const newVisibility = !storeLayer?.visible;
@@ -75,13 +51,13 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   };
 
   const handleZoomToFeature = async () => {
-    logger.info('Zoom to feature clicked', { layerId: layer.id });
+    await dbLogger.info('Zoom to feature clicked', { layerId: layer.id });
     if (!cesiumInstance?.instance) {
-      logger.error('Cesium instance not available');
+      await dbLogger.error('Cesium instance not available');
       return;
     }
     if (!data?.features?.length) {
-      logger.warn('No features available to zoom to', { layerId: layer.id });
+      await dbLogger.warn('No features available to zoom to', { layerId: layer.id });
       return;
     }
     try {
@@ -91,34 +67,34 @@ export function LayerItem({ layer, className }: LayerItemProps) {
         features: data.features
       };
       const bounds = bbox(featureCollection) as [number, number, number, number];
-      logger.debug('Computed bbox for layer', { layerId: layer.id, bounds });
+      await dbLogger.debug('Computed bbox for layer', { layerId: layer.id, bounds });
       // Convert bbox to Cesium rectangle
       const rectangle = Cesium.Rectangle.fromDegrees(bounds[0], bounds[1], bounds[2], bounds[3]);
-      logger.debug('Converted bbox to Cesium rectangle', { rectangle });
-      // Fly to the rectangle
-      await cesiumInstance.instance.camera.flyTo({
-        destination: rectangle,
-        duration: 2,
-        complete: () => logger.info('Camera flyTo complete', { layerId: layer.id }),
-        cancel: () => logger.warn('Camera flyTo cancelled', { layerId: layer.id })
-      });
+      await dbLogger.debug('Converted bbox to Cesium rectangle', { rectangle });
+      // Type guard for Cesium.Viewer
+      if ('camera' in cesiumInstance.instance) {
+        await cesiumInstance.instance.camera.flyTo({
+          destination: rectangle,
+          duration: 2,
+          complete: () => { void dbLogger.info('Camera flyTo complete', { layerId: layer.id }).catch(() => {}); },
+          cancel: () => { void dbLogger.warn('Camera flyTo cancelled', { layerId: layer.id }).catch(() => {}); }
+        });
+      } else {
+        await dbLogger.error('Cesium instance does not have camera property', { layerId: layer.id });
+      }
     } catch (error) {
-      logger.error('Failed to zoom to feature', { layerId: layer.id, error });
+      await dbLogger.error('Failed to zoom to feature', { layerId: layer.id, error });
     }
   };
-
-  // Debug: Log the data and features array before processing
-  console.log('LayerItem Data:', data);
-  console.log('LayerItem Features Array:', data?.features);
 
   // Determine if the layer has untransformed heights, with defensive checks and logging
   const hasUntransformedHeights = !!data?.features?.some((f, idx) => {
     if (!f) {
-      console.warn(`Null or undefined feature at index ${idx}:`, f);
+      void dbLogger.warn(`Null or undefined feature at index ${idx}:`, f).catch(() => {});
       return false;
     }
     if (!f.properties) {
-      console.warn(`Feature missing properties at index ${idx}:`, f);
+      void dbLogger.warn(`Feature missing properties at index ${idx}:`, f).catch(() => {});
       return false;
     }
     return f.properties.height_mode === 'lv95_stored';
