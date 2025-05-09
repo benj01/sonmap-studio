@@ -1,3 +1,42 @@
 {
-  "imports": {}
+  "tasks": {
+    "dev": "deno run --watch --allow-net --allow-read index.ts",
+    "deploy": "supabase functions deploy transform-coordinates"
+  },
+  "compilerOptions": {
+    "allowJs": true,
+    "lib": ["deno.window"],
+    "strict": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "alwaysStrict": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictPropertyInitialization": true,
+    "isolatedModules": true,
+    "types": ["https://deno.land/x/edge_runtime@v0.0.4/worker.d.ts"]
+  },
+  "lint": {
+    "files": {
+      "include": ["*.ts"]
+    },
+    "rules": {
+      "tags": ["recommended"]
+    }
+  },
+  "fmt": {
+    "files": {
+      "include": ["*.ts"]
+    },
+    "options": {
+      "useTabs": false,
+      "lineWidth": 100,
+      "indentWidth": 2,
+      "singleQuote": true
+    }
+  },
+  "imports": {
+    "std/": "https://deno.land/std@0.177.0/",
+    "proj4": "https://esm.sh/v135/proj4@2.9.0"
+  }
 }

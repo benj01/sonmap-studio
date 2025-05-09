@@ -3,7 +3,6 @@
 import { useAuth } from '@/components/providers/auth-provider'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Building2, FileUp, BarChart3 } from 'lucide-react'
-import Image from 'next/image'
 
 export default function LandingPage() {
   const { user } = useAuth()

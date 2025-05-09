@@ -69,9 +69,13 @@ export const signInAction = async (formData: FormData): Promise<NextResponse<Act
     return errorResponse(error.message, error?.code);
   }
 
+  if (!data.user.email) {
+    return errorResponse("User email not found");
+  }
+
   return successResponse(
     "Signed in successfully",
-    { email: data.user.email! }
+    { email: data.user.email }
   );
 };
 

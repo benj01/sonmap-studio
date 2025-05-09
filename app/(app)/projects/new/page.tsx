@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label'
 import { useAuth } from '@/components/providers/auth-provider'
 import { Database } from '@/types/supabase'
 import { LoadingState } from '@/components/shared/loading-state'
-import { useLogger } from '../../../../core/logging/LoggerContext'
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 type ProjectInsert = Database['public']['Tables']['projects']['Insert']
 
@@ -27,24 +27,38 @@ export default function NewProjectPage() {
     description: ''
   })
   const [hasRedirected, setHasRedirected] = useState(false)
-  const logger = useLogger()
 
   useEffect(() => {
-    console.log('Project page auth state:', { initialized, isLoading, hasUser: !!user })
+    const logAuthState = async () => {
+      await dbLogger.info('NewProjectPage.authState', { initialized, isLoading, hasUser: !!user })
+    }
+    logAuthState().catch(async (error) => {
+      await dbLogger.error('NewProjectPage.authStateError', { error })
+    })
   }, [initialized, isLoading, user])
 
   // Handle auth redirect
   useEffect(() => {
-    if (initialized && !isLoading && !user && !hasRedirected) {
-      console.log('No user found, redirecting to sign-in')
-      setHasRedirected(true)
-      router.push('/auth-pages/sign-in?redirect=/projects/new')
+    const handleAuthRedirect = async () => {
+      if (initialized && !isLoading && !user && !hasRedirected) {
+        await dbLogger.info('NewProjectPage.redirecting', { reason: 'No user found' })
+        setHasRedirected(true)
+        router.push('/auth-pages/sign-in?redirect=/projects/new')
+      }
     }
+    handleAuthRedirect().catch(async (error) => {
+      await dbLogger.error('NewProjectPage.redirectError', { error })
+    })
   }, [initialized, isLoading, user, router, hasRedirected])
 
   // Show loading state while auth is initializing
   if (!initialized || isLoading) {
-    console.log('Showing loading state')
+    const logLoadingState = async () => {
+      await dbLogger.info('NewProjectPage.loading', { initialized, isLoading })
+    }
+    logLoadingState().catch(async (error) => {
+      await dbLogger.error('NewProjectPage.loadingError', { error })
+    })
     return (
       <div className="flex h-full items-center justify-center">
         <LoadingState text="Loading..." />
@@ -54,11 +68,14 @@ export default function NewProjectPage() {
 
   // Don't render if no user
   if (!user) {
-    console.log('No user, returning null')
+    const logNoUser = async () => {
+      await dbLogger.info('NewProjectPage.noUser', { initialized, isLoading })
+    }
+    logNoUser().catch(async (error) => {
+      await dbLogger.error('NewProjectPage.noUserError', { error })
+    })
     return null
   }
-
-  console.log('Rendering project form')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -66,7 +83,7 @@ export default function NewProjectPage() {
     
     setSubmitting(true)
     try {
-      console.log('Creating project...')
+      await dbLogger.info('NewProjectPage.creatingProject', { userId: user.id })
       const supabase = createClient()
       
       // Start a transaction by using a single Supabase call
@@ -84,11 +101,11 @@ export default function NewProjectPage() {
         .single()
 
       if (projectError) {
-        logger.error('NewProjectPage', 'Project creation error', projectError)
+        await dbLogger.error('NewProjectPage.projectCreationError', { error: projectError, userId: user.id })
         throw projectError
       }
 
-      console.log('Project created:', project)
+      await dbLogger.info('NewProjectPage.projectCreated', { projectId: project.id, userId: user.id })
 
       // Add creator as admin member
       const { error: memberError } = await supabase
@@ -100,11 +117,11 @@ export default function NewProjectPage() {
         })
 
       if (memberError) {
-        logger.error('NewProjectPage', 'Member creation error', memberError)
+        await dbLogger.error('NewProjectPage.memberCreationError', { error: memberError, projectId: project.id, userId: user.id })
         throw memberError
       }
 
-      console.log('Project member added')
+      await dbLogger.info('NewProjectPage.memberAdded', { projectId: project.id, userId: user.id })
       toast({
         title: "Success",
         description: "Project created successfully",
@@ -113,7 +130,7 @@ export default function NewProjectPage() {
       // Navigate to the dashboard
       router.push('/dashboard')
     } catch (error) {
-      logger.error('NewProjectPage', 'Error creating project', error)
+      await dbLogger.error('NewProjectPage.unhandledError', { error, userId: user.id })
       toast({
         title: "Error",
         description: "Failed to create project. Please try again.",

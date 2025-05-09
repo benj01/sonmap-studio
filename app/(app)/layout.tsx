@@ -1,7 +1,7 @@
 // app/(app)/layout.tsx
 import { redirect } from 'next/navigation'
 import createClient from '@/utils/supabase/server'
-import { cookies } from 'next/headers'
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 export default async function AppLayout({
   children,
@@ -20,7 +20,7 @@ export default async function AppLayout({
 
     return <>{children}</>
   } catch (error) {
-    console.error('Error fetching session:', error)
+    await dbLogger.error('AppLayout.sessionError', { error })
     return (
       <div className="flex min-h-screen items-center justify-center">
         <div className="text-center">

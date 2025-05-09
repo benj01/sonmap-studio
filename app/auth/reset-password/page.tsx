@@ -6,11 +6,9 @@ import { Label } from '@/components/ui/label';
 import { SubmitButton } from '@/components/submit-button';
 import { FormMessage } from '@/components/form-message';
 import { useState } from 'react';
-import { useSearchParams } from 'next/navigation';
 import { formatMessage } from '@/utils/message';
 
 export default function ResetPasswordPage() {
-  const searchParams = useSearchParams();
   const [message, setMessage] = useState<{ success?: string; error?: string } | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);

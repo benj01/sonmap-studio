@@ -3,14 +3,12 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/providers/auth-provider'
-import { LoadingState } from '@/components/shared/loading-state'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Loader2 } from 'lucide-react'
 import { createClient } from '@/utils/supabase/client'
-import { Database } from '@/types/supabase'
 
 type Profile = {
   id: string
@@ -34,6 +32,7 @@ export default function ProfilePage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [signingOut, setSigningOut] = useState(false)
 
   useEffect(() => {
     if (initialized && !user) {
@@ -63,7 +62,10 @@ export default function ProfilePage() {
     }
 
     if (user) {
-      loadProfile()
+      loadProfile().catch(err => {
+        setError(err instanceof Error ? err.message : 'Failed to load profile')
+        setLoading(false)
+      })
     }
   }, [user])
 
@@ -105,8 +107,15 @@ export default function ProfilePage() {
   }
 
   const handleSignOut = async () => {
-    await signOut()
-    router.push('/login')
+    try {
+      setSigningOut(true)
+      await signOut()
+      router.push('/login')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to sign out')
+    } finally {
+      setSigningOut(false)
+    }
   }
 
   if (!user) {
@@ -184,9 +193,17 @@ export default function ProfilePage() {
             type="button"
             variant="outline" 
             onClick={handleSignOut}
+            disabled={signingOut}
             className="ml-4"
           >
-            Sign Out
+            {signingOut ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Signing out...
+              </>
+            ) : (
+              'Sign Out'
+            )}
           </Button>
         </div>
       </form>

@@ -3,16 +3,13 @@
 import { Database } from '@/types/supabase'
 import { createClient } from '@/utils/supabase/client'
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import { useAuth } from '@/components/providers/auth-provider'
 import { LoadingState } from '@/components/shared/loading-state'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Plus } from "lucide-react"
 import { ProjectCard } from '@/components/dashboard/project-card'
-import { DashboardStats as DashboardStatsComponent } from '@/components/dashboard/dashboard-stats'
 import { EmptyState } from '@/components/dashboard/empty-state'
-import { useLogger } from '../../../core/logging/LoggerContext'
+import { dbLogger } from '@/utils/logging/dbLogger'
 import { useVerifyUserExistence } from '@/components/shared/hooks/useVerifyUserExistence'
 
 type ProjectRow = Database['public']['Tables']['projects']['Row']
@@ -27,24 +24,11 @@ interface Project extends ProjectRow {
   status: ProjectStatus
 }
 
-interface ProjectMemberCount {
-  project_id: string
-  count: number
-}
-
 export default function DashboardPage() {
-  const router = useRouter()
   const { user, initialized } = useAuth()
   const { isVerifying } = useVerifyUserExistence()
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(true)
-  const [stats, setStats] = useState({
-    totalProjects: 0,
-    activeProjects: 0,
-    totalStorage: 0,
-    collaborators: 0
-  })
-  const logger = useLogger()
 
   useEffect(() => {
     const fetchData = async () => {
@@ -57,7 +41,7 @@ export default function DashboardPage() {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession()
         
         if (sessionError || !session) {
-          console.error('Session error:', sessionError)
+          await dbLogger.error('DashboardPage.sessionError', { error: sessionError })
           return
         }
 
@@ -68,7 +52,7 @@ export default function DashboardPage() {
           .order('created_at', { ascending: false })
 
         if (projectsError) {
-          logger.error('DashboardPage', 'Error fetching projects', projectsError)
+          await dbLogger.error('DashboardPage.projectsError', { error: projectsError })
           return
         }
 
@@ -89,27 +73,18 @@ export default function DashboardPage() {
         )
 
         setProjects(projectsWithMembers as Project[])
-
-        // Calculate stats
-        const activeProjects = projectsWithMembers.filter((p) => p.status === 'active').length
-        const totalStorage = projectsWithMembers.reduce((acc, p) => acc + (p.storage_used || 0), 0)
-        const collaborators = projectsWithMembers.reduce((acc, p) => 
-          acc + (p.project_members[0].count), 0)
-
-        setStats({
-          totalProjects: projectsWithMembers.length,
-          activeProjects,
-          totalStorage,
-          collaborators
-        })
       } catch (error) {
-        logger.error('DashboardPage', 'Error fetching projects', error)
+        await dbLogger.error('DashboardPage.fetchError', { error })
       } finally {
         setLoading(false)
       }
     }
 
-    fetchData()
+    // Handle the promise rejection
+    fetchData().catch(async (error) => {
+      await dbLogger.error('DashboardPage.unhandledError', { error })
+      setLoading(false)
+    })
   }, [user])
 
   if (isVerifying) {
@@ -126,19 +101,27 @@ export default function DashboardPage() {
 
   const handleDelete = async (projectId: string) => {
     const supabase = createClient()
-    const { error } = await supabase
-      .from('projects')
-      .delete()
-      .eq('id', projectId)
+    try {
+      const { error } = await supabase
+        .from('projects')
+        .delete()
+        .eq('id', projectId)
 
-    if (error) {
-      logger.error('DashboardPage', 'Error deleting project', error)
-    } else {
+      if (error) {
+        await dbLogger.error('DashboardPage.deleteError', { error, projectId })
+        return
+      }
+
       // Refresh the projects list
-      const { data: projects } = await supabase
+      const { data: projects, error: refreshError } = await supabase
         .from('projects')
         .select('*')
         .order('created_at', { ascending: false })
+
+      if (refreshError) {
+        await dbLogger.error('DashboardPage.refreshError', { error: refreshError })
+        return
+      }
 
       if (projects) {
         setProjects(projects.map(project => ({
@@ -147,6 +130,8 @@ export default function DashboardPage() {
           project_members: [{ count: 0 }]
         })))
       }
+    } catch (error) {
+      await dbLogger.error('DashboardPage.handleDeleteError', { error, projectId })
     }
   }
 

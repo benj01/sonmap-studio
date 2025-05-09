@@ -1,19 +1,19 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import  createClient  from '@/utils/supabase/client'
+import createClient from '@/utils/supabase/client'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/use-toast'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ArrowLeft, Settings, Users, Files, Map, Beaker } from 'lucide-react'
+import { ArrowLeft, Settings, Users, Files, Map } from 'lucide-react'
 import { LoadingState } from '@/components/shared/loading-state'
 import { FileManager } from '@/components/files/components/manager'
 import { useEffect, useState, useRef } from 'react'
 import { MapContainer } from '@/components/map/components/MapContainer'
 import Link from 'next/link'
 import { cn } from '@/lib/utils'
-import { env } from '@/env.mjs'
+import { dbLogger } from '@/utils/logging/dbLogger'
 
 type ProjectStatus = 'active' | 'archived' | 'deleted'
 
@@ -28,10 +28,9 @@ interface Project {
 
 interface ProjectClientProps {
   projectId: string;
-  searchParams: { [key: string]: string | string[] | undefined };
 }
 
-export default function ProjectClient({ projectId, searchParams }: ProjectClientProps) {
+export default function ProjectClient({ projectId }: ProjectClientProps) {
   const [project, setProject] = useState<Project | null>(null)
   const [activeTab, setActiveTab] = useState('map')
   const mapContainerRef = useRef<HTMLDivElement>(null)
@@ -66,14 +65,19 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
 
         setProject(data)
       } catch (err) {
-        console.error("Error loading project:", err);
+        await dbLogger.error('ProjectClient.loadError', { error: err })
         setError('An unexpected error occurred while loading the project.')
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadProject()
+    // Handle the promise rejection
+    loadProject().catch(async (err) => {
+      await dbLogger.error('ProjectClient.unhandledError', { error: err })
+      setError('An unexpected error occurred')
+      setIsLoading(false)
+    })
   }, [projectId, supabase, toast, router])
 
   // Handle tab changes
@@ -85,11 +89,11 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
       const cesiumViewer = document.querySelector('.cesium-viewer');
       if (value === 'map') {
         if (mapboxgl) {
-          // @ts-ignore - we know this exists
+          // @ts-expect-error - mapboxgl internal API
           mapboxgl._map?.resize();
         }
         if (cesiumViewer) {
-          // @ts-ignore - we know this exists
+          // @ts-expect-error - cesium internal API
           cesiumViewer._cesiumWidget?.resize();
         }
       }
@@ -179,13 +183,6 @@ export default function ProjectClient({ projectId, searchParams }: ProjectClient
                 )}
               >
                 <MapContainer 
-                  accessToken={env.NEXT_PUBLIC_MAPBOX_TOKEN}
-                  style="mapbox://styles/mapbox/satellite-streets-v12"
-                  initialViewState2D={{
-                    latitude: 0,
-                    longitude: 0,
-                    zoom: 2
-                  }}
                   initialViewState3D={{
                     latitude: 0,
                     longitude: 0,

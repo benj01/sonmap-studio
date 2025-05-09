@@ -1,7 +1,6 @@
 'use client';
 
 import { MapContainer } from '@/components/map/components/MapContainer';
-import { env } from '@/env.mjs';
 
 export default function Map3DPage() {
   return (
