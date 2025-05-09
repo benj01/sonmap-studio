@@ -2,15 +2,30 @@
 
 import { useEffect } from 'react';
 import { preloadCommonCoordinateSystems } from '@/lib/coordinate-systems';
-import { createLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
-const logger = createLogger('CoordinateSystemsProvider');
+const LOG_SOURCE = 'CoordinateSystemsProvider';
 
 export function CoordinateSystemsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
-    // Preload common coordinate systems on app initialization
-    preloadCommonCoordinateSystems().catch(error => {
-      logger.warn('Failed to preload coordinate systems', { error });
+    // Create an async function to handle preloading and logging
+    const initCoordinateSystems = async () => {
+      try {
+        await preloadCommonCoordinateSystems();
+      } catch (error) {
+        await dbLogger.warn('Failed to preload coordinate systems', { 
+          source: LOG_SOURCE,
+          error 
+        });
+      }
+    };
+
+    // Handle the promise
+    initCoordinateSystems().catch(async (error) => {
+      await dbLogger.error('Error in coordinate systems initialization', {
+        source: LOG_SOURCE,
+        error
+      });
     });
   }, []);
 

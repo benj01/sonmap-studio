@@ -1,31 +1,13 @@
 'use client';
 
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
-import { getHeightTransformationStatus, HeightTransformationStatus } from './heightTransformService';
-import type { Feature, FeatureCollection } from 'geojson';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import type { Feature, FeatureCollection, Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon } from 'geojson';
 
-const SOURCE = 'HeightTransformBatchService';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+const LOG_SOURCE = 'HeightTransformBatchService';
 
 export interface BatchProgressCallback {
-  (progress: BatchProgress): void;
+  (progress: BatchProgress): Promise<void>;
 }
 
 export interface BatchProgress {
@@ -48,7 +30,26 @@ export interface BatchProcessOptions {
   cancelToken?: AbortSignal;
   swissTransformation?: {
     method: 'api' | 'delta';
-    cache: boolean;
+    deltaThreshold?: number;
+  };
+}
+
+export interface TransformationResult {
+  success: boolean;
+  error?: string;
+  feature?: Feature;
+}
+
+export type HeightTransformationGeometry = Point | MultiPoint | LineString | MultiLineString | Polygon | MultiPolygon;
+
+export interface HeightTransformationFeature extends Feature<HeightTransformationGeometry> {
+  properties: {
+    height_mode?: string;
+    base_elevation_ellipsoidal?: number;
+    lv95_easting?: number;
+    lv95_northing?: number;
+    lv95_height?: number;
+    [key: string]: unknown;
   };
 }
 
@@ -75,43 +76,34 @@ export class HeightTransformBatchService {
   
   /**
    * Initializes a height transformation batch
-   * 
-   * @param layerId The layer ID to process
-   * @param heightSourceType The type of height source ('z_coord', 'attribute', 'none')
-   * @param heightSourceAttribute Optional attribute name for attribute type
-   * @param featureCollection Optional GeoJSON feature collection with in-memory features (not yet persisted to database)
-   * @returns Batch ID if successful, 'NO_FEATURES' if layer has no features, or null on error
    */
   public async initializeBatch(
     layerId: string,
     heightSourceType: 'z_coord' | 'attribute' | 'none',
     heightSourceAttribute?: string,
-    featureCollection?: any
+    featureCollection?: FeatureCollection<HeightTransformationGeometry>
   ): Promise<string | 'NO_FEATURES' | null> {
+    const context = {
+      source: LOG_SOURCE,
+      batchTraceId: `batch_init_${Date.now()}`,
+      layerId,
+      heightSourceType,
+      heightSourceAttribute,
+      hasFeatureCollection: !!featureCollection
+    };
+
     try {
-      // Set unique batch ID for logging purposes
-      const batchTraceId = `batch_init_${Date.now()}`;
-      
-      logger.info('Initializing height transformation batch', { 
-        batchTraceId,
-        layerId, 
-        heightSourceType, 
-        heightSourceAttribute,
-        hasFeatureCollection: !!featureCollection
-      });
+      await dbLogger.info('Initializing height transformation batch', context);
       
       // Skip initialization for 'none' height source type as it doesn't require processing
       if (heightSourceType === 'none') {
-        logger.info('Skipping batch initialization for "none" height source type', { 
-          batchTraceId,
-          layerId 
-        });
+        await dbLogger.info('Skipping batch initialization for "none" height source type', context);
         return null;
       }
       
       // Log API call attempt
-      logger.info('Calling height transformation initialization API', {
-        batchTraceId,
+      await dbLogger.info('Calling height transformation initialization API', {
+        ...context,
         endpoint: '/api/height-transformation/initialize',
         requestBody: {
           layerId,
@@ -121,17 +113,13 @@ export class HeightTransformBatchService {
         }
       });
       
-      // Prepare the request body - include featureCollection if provided
-      const requestBody: any = {
+      // Prepare the request body
+      const requestBody = {
         layerId,
         heightSourceType,
-        heightSourceAttribute
+        heightSourceAttribute,
+        ...(featureCollection && { featureCollection })
       };
-      
-      // Only include featureCollection if provided
-      if (featureCollection) {
-        requestBody.featureCollection = featureCollection;
-      }
       
       const response = await fetch('/api/height-transformation/initialize', {
         method: 'POST',
@@ -142,8 +130,8 @@ export class HeightTransformBatchService {
       });
       
       // Log API response status
-      logger.info('Received initialization API response', {
-        batchTraceId,
+      await dbLogger.info('Received initialization API response', {
+        ...context,
         status: response.status,
         ok: response.ok,
         statusText: response.statusText
@@ -151,9 +139,8 @@ export class HeightTransformBatchService {
       
       if (!response.ok) {
         const errorText = await response.text();
-        logger.error('Failed to initialize batch', { 
-          batchTraceId,
-          layerId, 
+        await dbLogger.error('Failed to initialize batch', { 
+          ...context,
           status: response.status,
           error: errorText
         });
@@ -162,8 +149,8 @@ export class HeightTransformBatchService {
         if (response.status === 404) {
           // Call the diagnostic endpoint for more information
           try {
-            logger.info('Calling diagnostic endpoint for feature counts', {
-              batchTraceId,
+            await dbLogger.info('Calling diagnostic endpoint for feature counts', {
+              ...context,
               endpoint: `/api/height-transformation/feature-counts?layerId=${layerId}`
             });
             
@@ -171,36 +158,40 @@ export class HeightTransformBatchService {
             
             if (diagResponse.ok) {
               const diagData = await diagResponse.json();
-              logger.info('Feature counts diagnostic information', {
-                batchTraceId,
+              await dbLogger.info('Feature counts diagnostic information', {
+                ...context,
                 diagData
               });
               
               // Log specific counts for Swiss coordinates features
               if (diagData.height_mode_counts) {
-                logger.info('Swiss coordinates feature counts', {
-                  batchTraceId,
+                await dbLogger.info('Swiss coordinates feature counts', {
+                  ...context,
                   total_features: diagData.total_features,
                   lv95_stored_features: diagData.lv95_stored_features,
                   height_mode_counts: diagData.height_mode_counts
                 });
               }
             } else {
-              logger.warn('Failed to get diagnostic information', {
-                batchTraceId,
+              await dbLogger.warn('Failed to get diagnostic information', {
+                ...context,
                 status: diagResponse.status,
                 statusText: diagResponse.statusText
               });
             }
           } catch (diagError) {
-            logger.error('Error calling diagnostic endpoint', { 
-              batchTraceId,
-              error: diagError 
+            await dbLogger.error('Error calling diagnostic endpoint', { 
+              ...context,
+              error: diagError instanceof Error ? {
+                message: diagError.message,
+                stack: diagError.stack,
+                name: diagError.name
+              } : diagError
             });
           }
           
-          logger.warn('No features found in layer, skipping transformation', { 
-            batchTraceId,
+          await dbLogger.warn('No features found in layer, skipping transformation', { 
+            ...context,
             layerId 
           });
           // Return a special flag to indicate no features instead of null (error)
@@ -211,9 +202,8 @@ export class HeightTransformBatchService {
         try {
           const errorData = JSON.parse(errorText);
           if (errorData.error && errorData.error.includes('No features found')) {
-            logger.warn('No features found in layer, skipping transformation', { 
-              batchTraceId,
-              layerId,
+            await dbLogger.warn('No features found in layer, skipping transformation', { 
+              ...context,
               errorMessage: errorData.error
             });
             // Return a special flag to indicate no features instead of null (error)
@@ -221,8 +211,8 @@ export class HeightTransformBatchService {
           }
         } catch (parseError) {
           // Not JSON or other parsing error, continue with normal error handling
-          logger.warn('Could not parse error response', {
-            batchTraceId,
+          await dbLogger.warn('Could not parse error response', {
+            ...context,
             errorText,
             parseError
           });
@@ -234,8 +224,8 @@ export class HeightTransformBatchService {
       const data = await response.json();
       
       if (!data.success || !data.batchId) {
-        logger.error('Invalid response from batch initialization', { 
-          batchTraceId,
+        await dbLogger.error('Invalid response from batch initialization', { 
+          ...context,
           data 
         });
         return null;
@@ -256,15 +246,15 @@ export class HeightTransformBatchService {
         totalChunks: 0
       });
       
-      logger.info('Batch initialized successfully', { 
-        batchTraceId,
+      await dbLogger.info('Batch initialized successfully', { 
+        ...context,
         batchId, 
         layerId 
       });
       return batchId;
     } catch (error) {
-      logger.error('Error initializing batch', { 
-        layerId, 
+      await dbLogger.error('Error initializing batch', { 
+        ...context,
         error: error instanceof Error ? {
           message: error.message,
           name: error.name,
@@ -288,84 +278,82 @@ export class HeightTransformBatchService {
     featureCollection: FeatureCollection,
     options: BatchProcessOptions = {}
   ): Promise<boolean> {
-    // Default options
-    const {
-      chunkSize = 50,
-      maxRetries = 3,
-      pollingInterval = 1000,
-      cancelToken
-    } = options;
-    
+    const context = {
+      source: LOG_SOURCE,
+      batchId,
+      layerId: featureCollection.features[0]?.properties?.layer_id || 'unknown'
+    };
+
     // Validate batch ID is a valid UUID (not 'NO_FEATURES' or other special string)
     if (typeof batchId !== 'string' || batchId.length !== 36) {
-      logger.error('Invalid batch ID format', { batchId });
+      await dbLogger.error('Invalid batch ID format', context);
       return false;
     }
     
     const batch = this.activeBatches.get(batchId);
     if (!batch) {
-      logger.error('Batch not found', { batchId });
+      await dbLogger.error('Batch not found', context);
       return false;
     }
-    
-    const { layerId } = batch;
-    
+
     try {
-      // Create a local abort controller if none provided
+      const features = featureCollection.features;
+      const totalFeatures = features.length;
+
+      if (totalFeatures === 0) {
+        await dbLogger.warn('No features to process', context);
+        await this.updateBatchProgress(batchId, {
+          status: 'complete',
+          totalFeatures: 0,
+          processedFeatures: 0,
+          failedFeatures: 0,
+          percentComplete: 100
+        });
+        return true;
+      }
+
+      const chunkSize = options.chunkSize || 100;
+      const maxRetries = options.maxRetries || 3;
+      const pollingInterval = options.pollingInterval || 1000;
       const abortController = new AbortController();
       this.abortControllers.set(batchId, abortController);
-      
-      // Use the provided cancel token if available
-      if (cancelToken) {
-        cancelToken.addEventListener('abort', () => {
-          abortController.abort();
-        });
-      }
-      
-      // Get initial status to determine total features
-      const initialStatus = await getHeightTransformationStatus(layerId);
-      if (!initialStatus) {
-        logger.error('Failed to get initial batch status', { batchId, layerId });
-        this.updateBatchProgress(batchId, {
-          status: 'failed',
-          errorMessage: 'Failed to get initial batch status'
-        });
-        return false;
-      }
-      
-      const totalFeatures = initialStatus.feature_status.total;
-      const featuresNeedingTransformation = featureCollection.features.filter(
-        feature => feature.properties?.height_mode === 'lv95_stored'
-      );
-      
-      // Calculate total chunks
-      const totalChunks = Math.ceil(featuresNeedingTransformation.length / chunkSize);
-      
-      // Update batch progress
-      this.updateBatchProgress(batchId, {
+
+      await this.updateBatchProgress(batchId, {
         status: 'in_progress',
         totalFeatures,
-        totalChunks
+        processedFeatures: 0,
+        failedFeatures: 0,
+        percentComplete: 0,
+        currentChunk: 0,
+        totalChunks: Math.ceil(totalFeatures / chunkSize)
       });
-      
-      // Start processing in the background
-      this.processFeatureChunks(
+
+      await this.processFeatureChunks(
         batchId,
-        featuresNeedingTransformation,
+        features,
         chunkSize,
         maxRetries,
         pollingInterval,
         abortController.signal,
         options
       );
-      
+
       return true;
     } catch (error) {
-      logger.error('Error starting batch processing', { batchId, layerId, error });
-      this.updateBatchProgress(batchId, {
-        status: 'failed',
-        errorMessage: error instanceof Error ? error.message : 'Unknown error starting batch'
+      await dbLogger.error('Error starting batch processing', {
+        ...context,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : error
       });
+
+      await this.updateBatchProgress(batchId, {
+        status: 'failed',
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+      });
+
       return false;
     }
   }
@@ -383,371 +371,239 @@ export class HeightTransformBatchService {
     options: BatchProcessOptions
   ): Promise<void> {
     const batch = this.activeBatches.get(batchId);
-    if (!batch) return;
-    
-    const { layerId } = batch;
-    let currentChunk = 0;
-    const totalChunks = Math.ceil(features.length / chunkSize);
-    
+    if (!batch) {
+      throw new Error(`Batch ${batchId} not found`);
+    }
+
+    const baseContext = {
+      source: LOG_SOURCE,
+      batchId,
+      layerId: batch.layerId
+    };
+
     try {
-      // Check if using Swiss delta-based transformation
-      const useDeltaTransformation = options.swissTransformation?.method === 'delta';
-      
-      if (useDeltaTransformation) {
-        // Use spatial grouping and delta-based processing for more efficiency
-        await this.processFeaturesWithDelta(features, batchId, options);
-        return; // Skip standard processing
+      // Check if processing was cancelled
+      if (abortSignal.aborted) {
+        await dbLogger.info('Batch processing cancelled', baseContext);
+        await this.updateBatchProgress(batchId, {
+          status: 'cancelled'
+        });
+        return;
       }
-      
-      // Process chunks sequentially to avoid overwhelming the API
-      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-        // Check if processing was cancelled
-        if (abortSignal.aborted) {
-          logger.info('Batch processing cancelled', { batchId, layerId });
-          this.updateBatchProgress(batchId, {
-            status: 'cancelled'
-          });
-          return;
-        }
-        
-        currentChunk = chunkIndex + 1;
-        const start = chunkIndex * chunkSize;
-        const end = Math.min(start + chunkSize, features.length);
-        const chunkFeatures = features.slice(start, end);
-        
-        this.updateBatchProgress(batchId, {
-          currentChunk
-        });
-        
-        logger.debug('Processing feature chunk', { 
-          batchId, 
-          layerId, 
-          chunk: currentChunk, 
-          featuresInChunk: chunkFeatures.length 
-        });
-        
-        // Process each feature in the chunk with retries
-        await Promise.all(
-          chunkFeatures.map(async (feature) => {
-            let retries = 0;
-            let success = false;
-            
-            while (!success && retries < maxRetries && !abortSignal.aborted) {
+
+      const chunks = this.chunkArray(features, chunkSize);
+      let processedFeatures = 0;
+      let failedFeatures = 0;
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const chunkContext = {
+          ...baseContext,
+          chunkIndex: i,
+          chunkSize: chunk.length
+        };
+
+        try {
+          await dbLogger.debug('Processing chunk', chunkContext);
+
+          const results = await Promise.all(
+            chunk.map(async (feature) => {
               try {
-                // Transform feature heights using coordinate utility
-                await this.processFeature(feature, batchId, options);
-                success = true;
+                const transformedFeature = await processStoredLv95Coordinates(feature, {
+                  transformationMethod: options.swissTransformation?.method || 'api',
+                  cacheResults: true
+                });
+
+                return {
+                  success: true,
+                  feature: transformedFeature
+                } as TransformationResult;
               } catch (error) {
-                retries++;
-                if (retries >= maxRetries) {
-                  logger.error('Failed to process feature after max retries', { 
-                    featureId: feature.id,
-                    batchId,
-                    error
-                  });
-                } else {
-                  // Wait before retry
-                  await new Promise(resolve => setTimeout(resolve, 500));
-                }
+                await dbLogger.error('Error transforming feature', {
+                  ...chunkContext,
+                  featureId: feature.id,
+                  error: error instanceof Error ? {
+                    message: error.message,
+                    stack: error.stack,
+                    name: error.name
+                  } : error
+                });
+
+                return {
+                  success: false,
+                  error: error instanceof Error ? error.message : 'Unknown error'
+                } as TransformationResult;
               }
-            }
-          })
-        );
-        
-        // Check progress after each chunk
-        const status = await getHeightTransformationStatus(layerId);
-        if (status) {
-          this.updateBatchProgress(batchId, {
-            processedFeatures: status.feature_status.complete,
-            failedFeatures: status.feature_status.failed,
-            percentComplete: status.feature_status.total > 0
-              ? Math.round((status.feature_status.complete / status.feature_status.total) * 100)
-              : 0
+            })
+          );
+
+          const chunkStats = results.reduce(
+            (stats, result) => {
+              if (result.success) {
+                stats.succeeded++;
+              } else {
+                stats.failed++;
+              }
+              return stats;
+            },
+            { succeeded: 0, failed: 0 }
+          );
+
+          processedFeatures += chunkStats.succeeded;
+          failedFeatures += chunkStats.failed;
+
+          await this.updateBatchProgress(batchId, {
+            processedFeatures,
+            failedFeatures,
+            percentComplete: Math.round((processedFeatures + failedFeatures) / features.length * 100),
+            currentChunk: i + 1
+          });
+
+          // Check for cancellation after each chunk
+          if (abortSignal.aborted) {
+            await dbLogger.info('Batch processing cancelled during chunk processing', chunkContext);
+            await this.updateBatchProgress(batchId, {
+              status: 'cancelled'
+            });
+            return;
+          }
+
+          // Add delay between chunks to prevent overwhelming the API
+          if (i < chunks.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, pollingInterval));
+          }
+        } catch (error) {
+          await dbLogger.error('Error processing chunk', {
+            ...chunkContext,
+            error: error instanceof Error ? {
+              message: error.message,
+              stack: error.stack,
+              name: error.name
+            } : error
+          });
+
+          failedFeatures += chunk.length;
+          await this.updateBatchProgress(batchId, {
+            failedFeatures,
+            percentComplete: Math.round((processedFeatures + failedFeatures) / features.length * 100),
+            currentChunk: i + 1
           });
         }
-        
-        // Small delay between chunks to avoid overwhelming the system
-        await new Promise(resolve => setTimeout(resolve, pollingInterval));
       }
-      
-      // Final status check
-      const finalStatus = await getHeightTransformationStatus(layerId);
-      if (finalStatus) {
-        const isComplete = finalStatus.feature_status.pending === 0 && 
-                          finalStatus.feature_status.in_progress === 0;
-        
-        this.updateBatchProgress(batchId, {
-          status: isComplete ? 'complete' : 'in_progress',
-          processedFeatures: finalStatus.feature_status.complete,
-          failedFeatures: finalStatus.feature_status.failed,
-          percentComplete: finalStatus.feature_status.total > 0
-            ? Math.round((finalStatus.feature_status.complete / finalStatus.feature_status.total) * 100)
-            : 0
-        });
-      }
-      
-      logger.info('Batch processing completed', { batchId, layerId });
+
+      await this.updateBatchProgress(batchId, {
+        status: failedFeatures === 0 ? 'complete' : 'failed',
+        errorMessage: failedFeatures > 0 ? `Failed to process ${failedFeatures} features` : undefined
+      });
     } catch (error) {
-      logger.error('Error in batch processing', { batchId, layerId, error });
-      this.updateBatchProgress(batchId, {
+      await dbLogger.error('Error in batch processing', {
+        ...baseContext,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : error
+      });
+
+      await this.updateBatchProgress(batchId, {
         status: 'failed',
-        errorMessage: error instanceof Error ? error.message : 'Unknown error in batch processing'
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
       });
-    } finally {
-      // Clean up
-      this.abortControllers.delete(batchId);
     }
   }
   
-  /**
-   * Process a single feature's height transformation
-   */
-  private async processFeature(feature: Feature, batchId?: string, options?: BatchProcessOptions): Promise<Feature> {
-    const featureId = feature.id || 'unknown';
-    
-    // Check if this feature needs transformation
-    if (feature.properties?.height_mode === 'lv95_stored') {
-      logger.info('Processing feature with LV95 stored coordinates', {
-        featureId,
-        batchId,
-        lv95_coordinates: {
-          easting: feature.properties?.lv95_easting,
-          northing: feature.properties?.lv95_northing,
-          height: feature.properties?.lv95_height
-        }
-      });
-      
-      // Apply transformation with appropriate method
-      if (options?.swissTransformation) {
-        logger.debug('Using specified Swiss transformation method', {
-          featureId,
-          method: options.swissTransformation.method,
-          cache: options.swissTransformation.cache
-        });
-        
-        const startTime = Date.now();
-        const transformedFeature = await processStoredLv95Coordinates(feature, {
-          transformationMethod: options.swissTransformation.method,
-          cacheResults: options.swissTransformation.cache
-        });
-        const duration = Date.now() - startTime;
-        
-        logger.info('Feature transformation completed', {
-          featureId,
-          batchId,
-          duration: `${duration}ms`,
-          transformationMethod: options.swissTransformation.method,
-          original_height: feature.properties?.lv95_height,
-          transformed_height: transformedFeature.properties?.base_elevation_ellipsoidal,
-          height_mode_changed: feature.properties?.height_mode !== transformedFeature.properties?.height_mode
-        });
-        
-        // Save the transformed feature data to the database
-        await this.saveTransformedFeatureToDatabase(transformedFeature, feature.id, batchId);
-        
-        return transformedFeature;
-      } else {
-        // Use default transformation
-        logger.debug('Using default transformation method', { featureId, batchId });
-        
-        const startTime = Date.now();
-        const transformedFeature = await processStoredLv95Coordinates(feature);
-        const duration = Date.now() - startTime;
-        
-        logger.info('Feature transformation completed with default method', {
-          featureId,
-          batchId,
-          duration: `${duration}ms`,
-          original_height: feature.properties?.lv95_height,
-          transformed_height: transformedFeature.properties?.base_elevation_ellipsoidal,
-          height_mode_changed: feature.properties?.height_mode !== transformedFeature.properties?.height_mode
-        });
-        
-        // Save the transformed feature data to the database
-        await this.saveTransformedFeatureToDatabase(transformedFeature, feature.id, batchId);
-        
-        return transformedFeature;
-      }
+  private chunkArray<T>(array: T[], size: number): T[][] {
+    const chunks: T[][] = [];
+    for (let i = 0; i < array.length; i += size) {
+      chunks.push(array.slice(i, i + size));
     }
-    
-    logger.debug('Feature skipped - not eligible for transformation', {
-      featureId,
-      height_mode: feature.properties?.height_mode
-    });
-    
-    return feature;
-  }
-  
-  /**
-   * Saves transformed feature data back to the database
-   */
-  private async saveTransformedFeatureToDatabase(
-    transformedFeature: Feature, 
-    featureId?: string | number,
-    batchId?: string
-  ): Promise<boolean> {
-    if (!featureId) {
-      logger.warn('Cannot save transformed feature without ID', { feature: transformedFeature });
-      return false;
-    }
-
-    try {
-      // Extract the transformed properties we need to save
-      const { 
-        base_elevation_ellipsoidal, 
-        height_mode
-      } = transformedFeature.properties || {};
-      
-      // Skip if we don't have the necessary height data
-      if (base_elevation_ellipsoidal === undefined || !height_mode) {
-        logger.warn('Transformed feature missing required height data', { 
-          featureId,
-          base_elevation_ellipsoidal,
-          height_mode
-        });
-        return false;
-      }
-      
-      logger.debug('Saving transformed feature to database', {
-        featureId,
-        batchId,
-        height_mode,
-        base_elevation_ellipsoidal,
-        feature_properties: transformedFeature.properties
-      });
-
-      // Create Supabase client
-      const supabase = createClientComponentClient();
-      
-      // Use the RLS bypass function
-      const { data, error } = await supabase.rpc(
-        'update_feature_height_bypass_rls',
-        { 
-          p_feature_id: featureId,
-          p_base_elevation_ellipsoidal: base_elevation_ellipsoidal,
-          p_height_mode: height_mode,
-          p_batch_id: batchId
-        }
-      );
-
-      if (error) {
-        logger.error('Failed to update feature with bypass function', { 
-          error,
-          featureId,
-          batchId
-        });
-        return false;
-      }
-
-      logger.info('Feature transformed data saved to database', {
-        featureId,
-        height_mode,
-        base_elevation_ellipsoidal
-      });
-
-      return true;
-    } catch (error) {
-      logger.error('Error saving transformed feature', { 
-        error,
-        featureId,
-        batchId
-      });
-      return false;
-    }
+    return chunks;
   }
   
   /**
    * Update the progress of a batch and notify callbacks
    */
-  private updateBatchProgress(batchId: string, updates: Partial<BatchProgress>): void {
+  private async updateBatchProgress(batchId: string, updates: Partial<BatchProgress>): Promise<void> {
     const currentProgress = this.activeBatches.get(batchId);
-    if (!currentProgress) return;
-    
-    // Update progress with new values
+    if (!currentProgress) {
+      return;
+    }
+
     const updatedProgress: BatchProgress = {
       ...currentProgress,
       ...updates
     };
-    
-    // Store updated progress
+
     this.activeBatches.set(batchId, updatedProgress);
-    
-    // Notify callbacks
+
+    // Notify all registered callbacks
     const callbacks = this.progressCallbacks.get(batchId) || [];
-    callbacks.forEach(callback => {
+    await Promise.all(callbacks.map(async (callback) => {
       try {
-        callback(updatedProgress);
+        await callback(updatedProgress);
       } catch (error) {
-        logger.error('Error in progress callback', { batchId, error });
+        await dbLogger.error('Error in progress callback', {
+          source: LOG_SOURCE,
+          batchId,
+          layerId: currentProgress.layerId,
+          error: error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          } : error
+        });
       }
-    });
+    }));
   }
   
   /**
-   * Register a callback for batch progress updates
-   * 
-   * @param batchId The batch ID to monitor
-   * @param callback The callback function to receive progress updates
-   * @returns A function to unregister the callback
+   * Registers a callback to receive progress updates for a batch
    */
-  public registerProgressCallback(
-    batchId: string, 
-    callback: BatchProgressCallback
-  ): () => void {
-    // Initialize callback array if needed
-    if (!this.progressCallbacks.has(batchId)) {
-      this.progressCallbacks.set(batchId, []);
-    }
-    
-    // Add callback
-    const callbacks = this.progressCallbacks.get(batchId)!;
+  public async registerProgressCallback(batchId: string, callback: BatchProgressCallback): Promise<void> {
+    const callbacks = this.progressCallbacks.get(batchId) || [];
     callbacks.push(callback);
-    
-    // Send initial progress if available
-    const currentProgress = this.activeBatches.get(batchId);
-    if (currentProgress) {
-      try {
-        callback(currentProgress);
-      } catch (error) {
-        logger.error('Error in initial progress callback', { batchId, error });
-      }
-    }
-    
-    // Return unsubscribe function
-    return () => {
-      const callbacks = this.progressCallbacks.get(batchId);
-      if (callbacks) {
-        const index = callbacks.indexOf(callback);
-        if (index !== -1) {
-          callbacks.splice(index, 1);
-        }
-      }
-    };
+    this.progressCallbacks.set(batchId, callbacks);
   }
   
   /**
-   * Cancel an active batch process
-   * 
-   * @param batchId The batch ID to cancel
-   * @returns True if the batch was cancelled
+   * Unregisters a callback from receiving progress updates for a batch
    */
-  public cancelBatch(batchId: string): boolean {
-    const abortController = this.abortControllers.get(batchId);
-    if (!abortController) {
-      logger.warn('No active abort controller for batch', { batchId });
-      return false;
+  public async unregisterProgressCallback(batchId: string, callback: BatchProgressCallback): Promise<void> {
+    const callbacks = this.progressCallbacks.get(batchId) || [];
+    const index = callbacks.indexOf(callback);
+    if (index !== -1) {
+      callbacks.splice(index, 1);
+      this.progressCallbacks.set(batchId, callbacks);
     }
-    
+  }
+  
+  /**
+   * Attempts to cancel an active batch process
+   */
+  public async cancelBatchProcessing(batchId: string): Promise<void> {
+    const context = {
+      source: LOG_SOURCE,
+      batchId
+    };
+
     try {
-      abortController.abort();
-      this.updateBatchProgress(batchId, {
-        status: 'cancelled'
-      });
-      this.abortControllers.delete(batchId);
-      return true;
+      const abortController = this.abortControllers.get(batchId);
+      if (abortController) {
+        abortController.abort();
+        this.abortControllers.delete(batchId);
+        await dbLogger.info('Batch processing cancellation requested', context);
+      } else {
+        await dbLogger.warn('No active abort controller found for batch', context);
+      }
     } catch (error) {
-      logger.error('Error cancelling batch', { batchId, error });
-      return false;
+      await dbLogger.error('Error cancelling batch processing', {
+        ...context,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : error
+      });
     }
   }
   
@@ -779,19 +635,31 @@ export class HeightTransformBatchService {
     batchId: string,
     options: BatchProcessOptions = {}
   ): Promise<void> {
+    const context: {
+      source: string;
+      batchId: string;
+      layerId?: string;
+    } = {
+      source: LOG_SOURCE,
+      batchId
+    };
+
     try {
       const batch = this.activeBatches.get(batchId);
-      if (!batch) return;
+      if (!batch) {
+        await dbLogger.warn('Batch not found for delta processing', context);
+        return;
+      }
       
       const { layerId } = batch;
+      context.layerId = layerId;
       
       // Group features by spatial proximity
       const { groupFeaturesByProximity } = await import('@/core/utils/coordinates');
       const spatialGroups = groupFeaturesByProximity(features);
       
-      logger.info('Processing features with delta-based transformation', {
-        batchId,
-        layerId,
+      await dbLogger.info('Processing features with delta-based transformation', {
+        ...context,
         totalFeatures: features.length,
         groupCount: spatialGroups.length
       });
@@ -802,6 +670,12 @@ export class HeightTransformBatchService {
       
       // Process each spatial group
       for (const group of spatialGroups) {
+        const groupContext = {
+          ...context,
+          referenceFeatureId: group.referenceFeature.id,
+          relatedFeatureCount: group.relatedFeatures.length
+        };
+
         // Process reference feature first using direct API call
         try {
           await this.processFeature(group.referenceFeature, batchId, {
@@ -809,7 +683,7 @@ export class HeightTransformBatchService {
             // Force API call for reference feature to establish accurate baseline
             swissTransformation: {
               method: 'api',
-              cache: options.swissTransformation?.cache ?? true
+              deltaThreshold: options.swissTransformation?.deltaThreshold
             }
           });
           
@@ -828,23 +702,32 @@ export class HeightTransformBatchService {
                   ...options,
                   swissTransformation: {
                     method: 'delta',
-                    cache: options.swissTransformation?.cache ?? true
+                    deltaThreshold: options.swissTransformation?.deltaThreshold
                   }
                 });
                 processedCount++;
               } catch (error) {
-                logger.error('Failed to process related feature', {
+                await dbLogger.error('Failed to process related feature', {
+                  ...groupContext,
                   featureId: feature.id,
-                  error
+                  error: error instanceof Error ? {
+                    message: error.message,
+                    stack: error.stack,
+                    name: error.name
+                  } : error
                 });
                 failedCount++;
               }
             }
           }
         } catch (error) {
-          logger.error('Failed to process reference feature', {
-            featureId: group.referenceFeature.id,
-            error
+          await dbLogger.error('Failed to process reference feature', {
+            ...groupContext,
+            error: error instanceof Error ? {
+              message: error.message,
+              stack: error.stack,
+              name: error.name
+            } : error
           });
           failedCount++;
           
@@ -855,14 +738,19 @@ export class HeightTransformBatchService {
                 ...options,
                 swissTransformation: {
                   method: 'api',
-                  cache: options.swissTransformation?.cache ?? true
+                  deltaThreshold: options.swissTransformation?.deltaThreshold
                 }
               });
               processedCount++;
             } catch (error) {
-              logger.error('Failed to process feature after reference failure', {
+              await dbLogger.error('Failed to process feature after reference failure', {
+                ...groupContext,
                 featureId: feature.id,
-                error
+                error: error instanceof Error ? {
+                  message: error.message,
+                  stack: error.stack,
+                  name: error.name
+                } : error
               });
               failedCount++;
             }
@@ -870,7 +758,7 @@ export class HeightTransformBatchService {
         }
         
         // Update batch progress after each group
-        this.updateBatchProgress(batchId, {
+        await this.updateBatchProgress(batchId, {
           processedFeatures: processedCount,
           failedFeatures: failedCount,
           percentComplete: Math.round((processedCount / features.length) * 100)
@@ -880,14 +768,54 @@ export class HeightTransformBatchService {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       
-      logger.info('Delta-based transformation completed', {
-        batchId,
-        layerId,
+      await dbLogger.info('Delta-based transformation completed', {
+        ...context,
         processed: processedCount,
         failed: failedCount
       });
     } catch (error) {
-      logger.error('Error in delta-based transformation', { error });
+      await dbLogger.error('Error in delta-based transformation', { 
+        ...context,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : error
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Process a single feature with height transformation
+   */
+  private async processFeature(
+    feature: Feature,
+    batchId: string,
+    options: BatchProcessOptions = {}
+  ): Promise<Feature> {
+    const context = {
+      source: LOG_SOURCE,
+      batchId,
+      featureId: feature.id
+    };
+
+    try {
+      const transformedFeature = await processStoredLv95Coordinates(feature, {
+        transformationMethod: options.swissTransformation?.method || 'api',
+        cacheResults: true
+      });
+
+      return transformedFeature;
+    } catch (error) {
+      await dbLogger.error('Error processing feature', {
+        ...context,
+        error: error instanceof Error ? {
+          message: error.message,
+          stack: error.stack,
+          name: error.name
+        } : error
+      });
       throw error;
     }
   }

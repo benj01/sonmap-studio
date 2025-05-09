@@ -1,26 +1,10 @@
 'use client';
 
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
-import { LogManager } from '@/core/logging/log-manager';
-import type { Feature, FeatureCollection } from 'geojson';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import type { FeatureCollection } from 'geojson';
 
-const SOURCE = 'HeightTransformService';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+const LOG_SOURCE = 'HeightTransformService';
 
 /**
  * Processes a GeoJSON FeatureCollection to transform heights for features 
@@ -32,10 +16,13 @@ const logger = {
 export async function processFeatureCollectionHeights(
   featureCollection: FeatureCollection
 ): Promise<FeatureCollection> {
+  const context = {
+    source: LOG_SOURCE,
+    featureCount: featureCollection.features.length
+  };
+
   try {
-    logger.info('Processing feature collection heights', {
-      featureCount: featureCollection.features.length
-    });
+    await dbLogger.info('Processing feature collection heights', context);
     
     let transformedCount = 0;
     let unchangedCount = 0;
@@ -43,6 +30,11 @@ export async function processFeatureCollectionHeights(
     // Process each feature in parallel
     const transformedFeatures = await Promise.all(
       featureCollection.features.map(async (feature) => {
+        const featureContext = {
+          ...context,
+          featureId: feature.id
+        };
+
         // Check if this feature has lv95_stored height mode
         if (feature.properties?.height_mode === 'lv95_stored') {
           try {
@@ -51,9 +43,13 @@ export async function processFeatureCollectionHeights(
             transformedCount++;
             return transformedFeature;
           } catch (error) {
-            logger.error('Error transforming feature height', {
-              featureId: feature.id,
-              error
+            await dbLogger.error('Error transforming feature height', {
+              ...featureContext,
+              error: error instanceof Error ? {
+                message: error.message,
+                stack: error.stack,
+                name: error.name
+              } : error
             });
             // Return original feature if transformation fails
             unchangedCount++;
@@ -67,7 +63,8 @@ export async function processFeatureCollectionHeights(
       })
     );
     
-    logger.info('Feature heights processed', {
+    await dbLogger.info('Feature heights processed', {
+      ...context,
       transformedCount,
       unchangedCount,
       totalCount: featureCollection.features.length
@@ -78,7 +75,14 @@ export async function processFeatureCollectionHeights(
       features: transformedFeatures
     };
   } catch (error) {
-    logger.error('Error processing feature collection heights', error);
+    await dbLogger.error('Error processing feature collection heights', {
+      ...context,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error
+    });
     // Return original collection if processing fails
     return featureCollection;
   }
@@ -128,8 +132,13 @@ export interface HeightTransformationStatus {
  * @returns The transformation status data or null if an error occurs
  */
 export async function getHeightTransformationStatus(layerId: string): Promise<HeightTransformationStatus | null> {
+  const context = {
+    source: LOG_SOURCE,
+    layerId
+  };
+
   try {
-    logger.debug('Fetching height transformation status', { layerId });
+    await dbLogger.debug('Fetching height transformation status', context);
     
     const response = await fetch(`/api/height-transformation/status?layerId=${encodeURIComponent(layerId)}`, {
       method: 'GET',
@@ -140,8 +149,8 @@ export async function getHeightTransformationStatus(layerId: string): Promise<He
     
     if (!response.ok) {
       const errorText = await response.text();
-      logger.error('Failed to retrieve height transformation status', { 
-        layerId, 
+      await dbLogger.error('Failed to retrieve height transformation status', { 
+        ...context,
         status: response.status,
         error: errorText
       });
@@ -149,11 +158,21 @@ export async function getHeightTransformationStatus(layerId: string): Promise<He
     }
     
     const data = await response.json();
-    logger.debug('Height transformation status retrieved', { layerId, data });
+    await dbLogger.debug('Height transformation status retrieved', {
+      ...context,
+      data
+    });
     
     return data as HeightTransformationStatus;
   } catch (error) {
-    logger.error('Error getting height transformation status', { layerId, error });
+    await dbLogger.error('Error getting height transformation status', {
+      ...context,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error
+    });
     return null;
   }
 } 

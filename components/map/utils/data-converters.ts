@@ -1,42 +1,71 @@
 'use client';
 
 import * as Cesium from 'cesium';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import type { Feature, FeatureCollection } from 'geojson';
 
-const SOURCE = 'DataConverters';
-const logManager = LogManager.getInstance();
+const LOG_SOURCE = 'DataConverters';
 
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-    console.log(`[${SOURCE}] ${message}`, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-    console.warn(`[${SOURCE}] ${message}`, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-    console.error(`[${SOURCE}] ${message}`, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-    console.debug(`[${SOURCE}] ${message}`, data);
-  }
-};
+interface CsvToCesiumOptions {
+  pointColor?: { rgba: [number, number, number, number] };
+  pointSize?: number;
+  outlineColor?: { rgba: [number, number, number, number] };
+  outlineWidth?: number;
+  [key: string]: unknown;
+}
+
+interface XyzToCesiumOptions {
+  [key: string]: unknown;
+}
+
+interface CzmlDocument {
+  id: string;
+  name: string;
+  version: string;
+}
+
+interface CzmlPoint {
+  id: string;
+  position: {
+    cartographicDegrees: [number, number, number];
+  };
+  point: {
+    color: { rgba: [number, number, number, number] };
+    pixelSize: number;
+    outlineColor: { rgba: [number, number, number, number] };
+    outlineWidth: number;
+  };
+}
+
+type CzmlEntity = CzmlDocument | CzmlPoint;
 
 /**
  * Convert GeoJSON to Cesium entities
  */
-export function geoJsonToCesium(geoJson: any, options: any = {}) {
+export async function geoJsonToCesium(
+  geoJson: FeatureCollection | Feature,
+  options: {
+    strokeColor?: string;
+    strokeWidth?: number;
+    fillColor?: string;
+    fillOpacity?: number;
+    clampToGround?: boolean;
+    [key: string]: unknown;
+  } = {}
+) {
+  const context = {
+    source: LOG_SOURCE,
+    options
+  };
+
   try {
-    logger.debug('Converting GeoJSON to Cesium entities', { options });
+    await dbLogger.debug('Converting GeoJSON to Cesium entities', context);
     
     // Create a GeoJSON data source
     const dataSource = new Cesium.GeoJsonDataSource();
     
     // Load the GeoJSON data
-    return dataSource.load(geoJson, {
+    return await dataSource.load(geoJson, {
       stroke: Cesium.Color.fromCssColorString(options.strokeColor || '#1E88E5'),
       strokeWidth: options.strokeWidth || 3,
       fill: Cesium.Color.fromCssColorString(options.fillColor || '#1E88E5').withAlpha(options.fillOpacity || 0.5),
@@ -44,7 +73,14 @@ export function geoJsonToCesium(geoJson: any, options: any = {}) {
       ...options
     });
   } catch (error) {
-    logger.error('Error converting GeoJSON to Cesium entities', error);
+    await dbLogger.error('Error converting GeoJSON to Cesium entities', {
+      ...context,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error
+    });
     throw error;
   }
 }
@@ -52,9 +88,14 @@ export function geoJsonToCesium(geoJson: any, options: any = {}) {
 /**
  * Convert CSV data to Cesium entities
  */
-export function csvToCesium(csvData: string, options: any = {}) {
+export async function csvToCesium(csvData: string, options: CsvToCesiumOptions = {}) {
+  const context = {
+    source: LOG_SOURCE,
+    options
+  };
+
   try {
-    logger.debug('Converting CSV to Cesium entities', { options });
+    await dbLogger.debug('Converting CSV to Cesium entities', context);
     
     // Create a CZML data source
     const dataSource = new Cesium.CzmlDataSource();
@@ -78,7 +119,7 @@ export function csvToCesium(csvData: string, options: any = {}) {
     }
     
     // Create a CZML document
-    const czml: any[] = [
+    const czml: CzmlEntity[] = [
       {
         id: 'document',
         name: 'CSV Data',
@@ -113,9 +154,16 @@ export function csvToCesium(csvData: string, options: any = {}) {
     }
     
     // Load the CZML data
-    return dataSource.load(czml);
+    return await dataSource.load(czml);
   } catch (error) {
-    logger.error('Error converting CSV to Cesium entities', error);
+    await dbLogger.error('Error converting CSV to Cesium entities', {
+      ...context,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error
+    });
     throw error;
   }
 }
@@ -123,9 +171,14 @@ export function csvToCesium(csvData: string, options: any = {}) {
 /**
  * Convert XYZ data to Cesium terrain
  */
-export function xyzToCesiumTerrain(xyzData: string, options: any = {}) {
+export async function xyzToCesiumTerrain(xyzData: string, options: XyzToCesiumOptions = {}) {
+  const context = {
+    source: LOG_SOURCE,
+    options
+  };
+
   try {
-    logger.debug('Converting XYZ to Cesium terrain', { options });
+    await dbLogger.debug('Converting XYZ to Cesium terrain', context);
     
     // This is a placeholder for actual terrain generation
     // In a real implementation, you would:
@@ -136,9 +189,16 @@ export function xyzToCesiumTerrain(xyzData: string, options: any = {}) {
     // For now, we'll just return a simple heightmap
     const terrainProvider = new Cesium.EllipsoidTerrainProvider();
     
-    return Promise.resolve(terrainProvider);
+    return terrainProvider;
   } catch (error) {
-    logger.error('Error converting XYZ to Cesium terrain', error);
+    await dbLogger.error('Error converting XYZ to Cesium terrain', {
+      ...context,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error
+    });
     throw error;
   }
 }
@@ -146,12 +206,16 @@ export function xyzToCesiumTerrain(xyzData: string, options: any = {}) {
 /**
  * Convert Cesium entities to GeoJSON
  */
-export function cesiumToGeoJson(dataSource: Cesium.DataSource) {
+export async function cesiumToGeoJson(dataSource: Cesium.DataSource): Promise<FeatureCollection> {
+  const context = {
+    source: LOG_SOURCE
+  };
+
   try {
-    logger.debug('Converting Cesium entities to GeoJSON');
+    await dbLogger.debug('Converting Cesium entities to GeoJSON', context);
     
     const entities = dataSource.entities.values;
-    const features = [];
+    const features: Feature[] = [];
     
     for (let i = 0; i < entities.length; i++) {
       const entity = entities[i];
@@ -170,7 +234,7 @@ export function cesiumToGeoJson(dataSource: Cesium.DataSource) {
       const height = cartographic.height;
       
       // Create a GeoJSON feature
-      const feature: any = {
+      const feature: Feature = {
         type: 'Feature',
         geometry: {
           type: 'Point',
@@ -185,7 +249,9 @@ export function cesiumToGeoJson(dataSource: Cesium.DataSource) {
         for (let j = 0; j < propertyNames.length; j++) {
           const name = propertyNames[j];
           const value = entity.properties[name].getValue(Cesium.JulianDate.now());
-          feature.properties[name] = value;
+          if (feature.properties) {
+            feature.properties[name] = value;
+          }
         }
       }
       
@@ -193,14 +259,19 @@ export function cesiumToGeoJson(dataSource: Cesium.DataSource) {
     }
     
     // Create a GeoJSON FeatureCollection
-    const geoJson = {
+    return {
       type: 'FeatureCollection',
       features
     };
-    
-    return geoJson;
   } catch (error) {
-    logger.error('Error converting Cesium entities to GeoJSON', error);
+    await dbLogger.error('Error converting Cesium entities to GeoJSON', {
+      ...context,
+      error: error instanceof Error ? {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      } : error
+    });
     throw error;
   }
 } 

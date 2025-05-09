@@ -1,20 +1,18 @@
 import { processFeatureCollectionHeights, needsHeightTransformation } from '../heightTransformService';
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
+import type { Feature, FeatureCollection, Point } from 'geojson';
 
 // Mock dependencies
 jest.mock('@/core/utils/coordinates', () => ({
   processStoredLv95Coordinates: jest.fn()
 }));
 
-jest.mock('@/core/logging/log-manager', () => ({
-  LogManager: {
-    getInstance: () => ({
-      info: jest.fn(),
-      warn: jest.fn(),
-      error: jest.fn(),
-      debug: jest.fn(),
-      setComponentLogLevel: jest.fn()
-    })
+jest.mock('@/utils/logging/dbLogger', () => ({
+  dbLogger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn()
   }
 }));
 
@@ -25,7 +23,7 @@ describe('HeightTransformService', () => {
 
   describe('needsHeightTransformation', () => {
     it('should return true if any feature has height_mode=lv95_stored', () => {
-      const featureCollection = {
+      const featureCollection: FeatureCollection = {
         type: 'FeatureCollection',
         features: [
           {
@@ -41,12 +39,12 @@ describe('HeightTransformService', () => {
         ]
       };
 
-      const result = needsHeightTransformation(featureCollection as any);
+      const result = needsHeightTransformation(featureCollection);
       expect(result).toBe(true);
     });
 
     it('should return false if no feature has height_mode=lv95_stored', () => {
-      const featureCollection = {
+      const featureCollection: FeatureCollection = {
         type: 'FeatureCollection',
         features: [
           {
@@ -62,7 +60,7 @@ describe('HeightTransformService', () => {
         ]
       };
 
-      const result = needsHeightTransformation(featureCollection as any);
+      const result = needsHeightTransformation(featureCollection);
       expect(result).toBe(false);
     });
   });
@@ -70,7 +68,7 @@ describe('HeightTransformService', () => {
   describe('processFeatureCollectionHeights', () => {
     it('should process features with lv95_stored height mode', async () => {
       // Mock implementation of processStoredLv95Coordinates
-      const mockTransformedFeature = {
+      const mockTransformedFeature: Feature<Point> = {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [8.5, 47.5, 500] },
         properties: { 
@@ -81,7 +79,7 @@ describe('HeightTransformService', () => {
       
       (processStoredLv95Coordinates as jest.Mock).mockResolvedValue(mockTransformedFeature);
 
-      const featureCollection = {
+      const featureCollection: FeatureCollection = {
         type: 'FeatureCollection',
         features: [
           {
@@ -102,7 +100,7 @@ describe('HeightTransformService', () => {
         ]
       };
 
-      const result = await processFeatureCollectionHeights(featureCollection as any);
+      const result = await processFeatureCollectionHeights(featureCollection);
       
       expect(processStoredLv95Coordinates).toHaveBeenCalledTimes(1);
       expect(result.features.length).toBe(2);
@@ -114,7 +112,7 @@ describe('HeightTransformService', () => {
       // Mock implementation to throw an error
       (processStoredLv95Coordinates as jest.Mock).mockRejectedValue(new Error('Transformation failed'));
 
-      const originalFeature = {
+      const originalFeature: Feature<Point> = {
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [8.5, 47.5] },
         properties: { 
@@ -125,12 +123,12 @@ describe('HeightTransformService', () => {
         }
       };
 
-      const featureCollection = {
+      const featureCollection: FeatureCollection = {
         type: 'FeatureCollection',
         features: [originalFeature]
       };
 
-      const result = await processFeatureCollectionHeights(featureCollection as any);
+      const result = await processFeatureCollectionHeights(featureCollection);
       
       expect(processStoredLv95Coordinates).toHaveBeenCalledTimes(1);
       expect(result.features.length).toBe(1);

@@ -1,14 +1,18 @@
 import { Feature, LineString } from 'geojson';
-import { LogManager } from '../../core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import { VectorLayerStyle } from '../context/SharedLayerContext';
 
-const logger = LogManager.getInstance();
 const LOG_SOURCE = 'LineLayer';
 
 export class LineLayer {
-  // ... existing code ...
+  private features: Array<{
+    feature: Feature<LineString>;
+    style: VectorLayerStyle;
+  }> = [];
 
-  public addFeature(feature: Feature<LineString>) {
-    logger.debug(LOG_SOURCE, 'Adding line feature', {
+  public async addFeature(feature: Feature<LineString>) {
+    const context = {
+      source: LOG_SOURCE,
       featureId: feature.id || 'unknown',
       coordinates: {
         count: feature.geometry.coordinates.length,
@@ -16,13 +20,15 @@ export class LineLayer {
         last: feature.geometry.coordinates[feature.geometry.coordinates.length - 1]
       },
       properties: feature.properties
-    });
+    };
+
+    await dbLogger.debug('addFeature.start', context);
 
     try {
       // Validate feature geometry
       if (!this.isValidLineFeature(feature)) {
-        logger.warn(LOG_SOURCE, 'Invalid line feature', {
-          featureId: feature.id || 'unknown',
+        await dbLogger.warn('addFeature.invalidFeature', {
+          ...context,
           geometryType: feature.geometry?.type,
           coordinateCount: feature.geometry?.coordinates?.length
         });
@@ -32,8 +38,8 @@ export class LineLayer {
       // Process feature styling
       const style = this.getFeatureStyle(feature);
       
-      logger.debug(LOG_SOURCE, 'Line feature processed', {
-        featureId: feature.id || 'unknown',
+      await dbLogger.debug('addFeature.processed', {
+        ...context,
         style,
         isVisible: this.isFeatureVisible(feature)
       });
@@ -44,16 +50,18 @@ export class LineLayer {
         style
       });
 
-      this.updateLayerStats();
+      await this.updateLayerStats();
+      await dbLogger.debug('addFeature.success', context);
     } catch (error) {
-      logger.error(LOG_SOURCE, 'Error adding line feature', {
-        error,
-        featureId: feature.id || 'unknown'
+      await dbLogger.error('addFeature.error', {
+        ...context,
+        error
       });
+      throw error; // Re-throw to allow caller to handle
     }
   }
 
-  private isValidLineFeature(feature: Feature): boolean {
+  private isValidLineFeature(feature: Feature<LineString>): boolean {
     return (
       feature?.geometry?.type === 'LineString' &&
       Array.isArray(feature.geometry.coordinates) &&
@@ -64,13 +72,40 @@ export class LineLayer {
     );
   }
 
-  private updateLayerStats() {
+  private async updateLayerStats() {
     const stats = {
+      source: LOG_SOURCE,
       totalFeatures: this.features.length,
       visibleFeatures: this.features.filter(f => this.isFeatureVisible(f.feature)).length
     };
     
-    logger.debug(LOG_SOURCE, 'Layer stats updated', stats);
+    await dbLogger.debug('updateLayerStats', stats);
   }
-  // ... existing code ...
+
+  private getFeatureStyle(feature: Feature<LineString>): VectorLayerStyle {
+    // TODO: Implement custom styling based on feature properties
+    // Parameter is kept for future implementation of property-based styling
+    void feature; // Explicitly mark as intentionally unused
+    
+    // Default style for line features
+    return {
+      paint: {
+        'line-color': '#1E88E5',
+        'line-width': 3
+      },
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round'
+      }
+    };
+  }
+
+  private isFeatureVisible(feature: Feature<LineString>): boolean {
+    // TODO: Implement visibility rules based on feature properties
+    // Parameter is kept for future implementation of property-based visibility
+    void feature; // Explicitly mark as intentionally unused
+    
+    // For now, all features are visible by default
+    return true;
+  }
 } 

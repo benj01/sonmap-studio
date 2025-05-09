@@ -2,13 +2,12 @@
 
 import { useState } from 'react'
 import { useAuth } from '@/lib/stores/auth'
-import { useUIStore } from '@/lib/stores/ui'
+import { useUIStore, Theme } from '@/lib/stores/ui'
 import { Button } from '@/components/ui/button'
 import {
   Card,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from '@/components/ui/card'
@@ -19,7 +18,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Switch } from '@/components/ui/switch'
 import { Label } from '@/components/ui/label'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { UserAvatar } from '@/components/ui/user-avatar'
@@ -38,13 +36,15 @@ export function UserSettings() {
   const { user } = useAuth()
   const { theme, setTheme } = useUIStore()
   const [isSaving, setIsSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [notifications, setNotifications] = useState({
-    email: true,
-    push: false,
-  })
 
-  // ... existing handleThemeChange and handleNotificationChange ...
+  const handleThemeChange = async (newTheme: Theme) => {
+    try {
+      setIsSaving(true)
+      setTheme(newTheme)
+    } finally {
+      setIsSaving(false)
+    }
+  }
 
   if (!user) {
     return (
@@ -58,7 +58,7 @@ export function UserSettings() {
 
   return (
     <div className="space-y-6">
-      {/* New Profile Card */}
+      {/* Profile Card */}
       <Card>
         <CardHeader>
           <CardTitle>Profile</CardTitle>
@@ -95,7 +95,7 @@ export function UserSettings() {
         </CardContent>
       </Card>
 
-      {/* Existing Appearance Card */}
+      {/* Appearance Card */}
       <Card>
         <CardHeader>
           <CardTitle>Appearance</CardTitle>
@@ -121,11 +121,6 @@ export function UserSettings() {
             </Select>
           </div>
         </CardContent>
-      </Card>
-
-      {/* Existing Notifications Card */}
-      <Card>
-        {/* ... existing notifications card content ... */}
       </Card>
     </div>
   )

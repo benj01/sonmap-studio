@@ -1,24 +1,11 @@
+'use client';
+
 import { useCallback } from 'react';
 import * as Cesium from 'cesium';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import type { Map as MapboxMap } from 'mapbox-gl';
 
 const SOURCE = 'useViewSync';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
 
 export interface ViewState {
   center: [number, number];
@@ -37,7 +24,7 @@ export interface CesiumViewState {
 
 export function useViewSync() {
   // Convert Mapbox coordinates to Cesium camera position
-  const convert2DTo3D = useCallback((state: ViewState): CesiumViewState => {
+  const convert2DTo3D = useCallback(async (state: ViewState): Promise<CesiumViewState> => {
     try {
       // Validate coordinates
       if (!state.center || state.center.length !== 2) {
@@ -60,7 +47,8 @@ export function useViewSync() {
       const zoomFactor = Math.pow(0.5, state.zoom);
       const height = Math.max(minHeight, baseHeight * zoomFactor);
 
-      logger.debug('Converting 2D to 3D view state', {
+      await dbLogger.debug('Converting 2D to 3D view state', {
+        source: SOURCE,
         from: state,
         calculatedHeight: height,
         zoom: state.zoom,
@@ -75,7 +63,10 @@ export function useViewSync() {
         pitch: state.pitch ? state.pitch : -45 // Use a 45-degree tilt by default
       };
     } catch (error) {
-      logger.error('Error converting 2D to 3D view state', error);
+      await dbLogger.error('Error converting 2D to 3D view state', {
+        source: SOURCE,
+        error: error instanceof Error ? error.message : String(error)
+      });
       return {
         longitude: 0,
         latitude: 0,
@@ -86,7 +77,7 @@ export function useViewSync() {
   }, []);
 
   // Convert Cesium camera position to Mapbox coordinates
-  const convert3DTo2D = useCallback((camera: Cesium.Camera): ViewState => {
+  const convert3DTo2D = useCallback(async (camera: Cesium.Camera): Promise<ViewState> => {
     try {
       if (!camera) {
         throw new Error('Camera is null or undefined');
@@ -153,7 +144,8 @@ export function useViewSync() {
         pitch: Math.min(85, Math.max(-85, pitch)) // Clamp pitch to Mapbox limits
       };
 
-      logger.debug('Converting 3D to 2D view state', {
+      await dbLogger.debug('Converting 3D to 2D view state', {
+        source: SOURCE,
         from: {
           cartesian: cartesian.toString(),
           cartographic: cartographic.toString(),
@@ -171,12 +163,13 @@ export function useViewSync() {
 
     } catch (error) {
       // Log the full error details
-      logger.error('Error converting 3D to 2D view state', {
+      await dbLogger.error('Error converting 3D to 2D view state', {
+        source: SOURCE,
         error: error instanceof Error ? {
           message: error.message,
           stack: error.stack,
           name: error.name
-        } : error,
+        } : String(error),
         cameraState: {
           ready: !!(camera?.position && camera?.direction && camera?.up),
           position: camera?.position?.toString(),
@@ -201,13 +194,14 @@ export function useViewSync() {
   const syncViews = useCallback(async (
     from: '2d' | '3d',
     state: ViewState | CesiumViewState | Cesium.Camera,
-    mapboxMap?: mapboxgl.Map,
+    mapboxMap?: MapboxMap,
     cesiumViewer?: Cesium.Viewer
-  ) => {
+  ): Promise<void> => {
     try {
       // Validate viewer state before proceeding
       if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
-        logger.warn('Cesium viewer or required components not ready', {
+        await dbLogger.warn('Cesium viewer or required components not ready', {
+          source: SOURCE,
           hasViewer: !!cesiumViewer,
           hasScene: !!cesiumViewer?.scene,
           hasGlobe: !!cesiumViewer?.scene?.globe,
@@ -222,20 +216,22 @@ export function useViewSync() {
 
       if (from === '2d' && cesiumViewer?.scene?.globe && cesiumViewer?.camera) {
         // Convert 2D state to 3D
-        const cesiumState = convert2DTo3D(state as ViewState);
+        const cesiumState = await convert2DTo3D(state as ViewState);
         
-        // Apply to Cesium with smooth transition
-        await new Promise<void>((resolve, reject) => {
-          // Validate viewer state again before starting transition
-          if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
-            reject(new Error('Cesium viewer components not available during transition'));
-            return;
-          }
+        // First log the transition start
+        await dbLogger.debug('Starting camera transition', {
+          source: SOURCE,
+          destination: cesiumState
+        });
 
+        // Then apply to Cesium with smooth transition
+        await new Promise<void>((resolve, reject) => {
           try {
-            logger.debug('Starting camera transition', {
-              destination: cesiumState
-            });
+            // Validate viewer state again before starting transition
+            if (!cesiumViewer?.scene?.globe || !cesiumViewer?.camera?.position) {
+              reject(new Error('Cesium viewer components not available during transition'));
+              return;
+            }
 
             cesiumViewer.camera.flyTo({
               destination: Cesium.Cartesian3.fromDegrees(
@@ -248,20 +244,25 @@ export function useViewSync() {
                 pitch: Cesium.Math.toRadians(-90), // Always look straight down
                 roll: 0
               },
-              complete: () => resolve(),
-              duration: 2,
-              easingFunction: Cesium.EasingFunction.CUBIC_IN_OUT
+              complete: resolve,
+              cancel: () => reject(new Error('Camera transition cancelled'))
             });
           } catch (error) {
-            reject(new Error(`Failed to execute camera flyTo: ${error instanceof Error ? error.message : 'Unknown error'}`));
+            reject(error);
           }
         });
       }
 
-      logger.info('View synchronization complete', { from });
+      await dbLogger.info('View sync complete', {
+        source: SOURCE,
+        from,
+        success: true
+      });
     } catch (error) {
-      logger.error('Error during view synchronization', error);
-      throw error;
+      await dbLogger.error('Error during view sync', {
+        source: SOURCE,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }, [convert2DTo3D]);
 

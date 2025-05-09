@@ -1,6 +1,5 @@
 import mapboxgl from 'mapbox-gl';
-import { logger } from '@/utils/logger';
-import { MapConfig } from '@/types/map';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 interface MapInitializationProps {
   container: HTMLElement;
@@ -10,14 +9,14 @@ interface MapInitializationProps {
   defaultStyle: string;
 }
 
-const initializeMap = ({
+const initializeMap = async ({
   container,
   accessToken,
   initialCenter,
   initialZoom,
   defaultStyle
-}: MapInitializationProps) => {
-  logger.debug('Initializing map', {
+}: MapInitializationProps): Promise<mapboxgl.Map | undefined> => {
+  await dbLogger.debug('Initializing map', {
     container: !!container,
     accessToken: !!accessToken,
     initialCenter,
@@ -25,11 +24,11 @@ const initializeMap = ({
   });
 
   if (!container || !accessToken) {
-    logger.error('Cannot initialize map - missing required parameters', {
+    await dbLogger.error('Cannot initialize map - missing required parameters', {
       hasContainer: !!container,
       hasToken: !!accessToken
     });
-    return;
+    return undefined;
   }
 
   const map = new mapboxgl.Map({
@@ -39,16 +38,16 @@ const initializeMap = ({
     zoom: initialZoom
   });
 
-  map.on('style.load', () => {
-    logger.debug('Map style loaded', {
+  map.on('style.load', async () => {
+    await dbLogger.debug('Map style loaded', {
       style: map.getStyle().name,
       center: map.getCenter(),
       zoom: map.getZoom()
     });
   });
 
-  map.on('load', () => {
-    logger.debug('Map fully loaded', {
+  map.on('load', async () => {
+    await dbLogger.debug('Map fully loaded', {
       loaded: map.loaded(),
       styleLoaded: map.isStyleLoaded(),
       center: map.getCenter(),
@@ -59,9 +58,9 @@ const initializeMap = ({
   return map;
 };
 
-const cleanup = (mapInstance?: mapboxgl.Map) => {
+const cleanup = async (mapInstance?: mapboxgl.Map): Promise<void> => {
   if (mapInstance) {
-    logger.debug('Cleaning up map');
+    await dbLogger.debug('Cleaning up map', { mapId: mapInstance.getCanvasContainer().id });
     mapInstance.remove();
   }
 };

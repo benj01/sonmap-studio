@@ -2,32 +2,51 @@
 
 import { useState, ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { Download, Bug, Trash } from 'lucide-react';
 
 interface DebugPanelProps {
   children?: ReactNode;
 }
 
+interface LogEntry {
+  timestamp: string;
+  level: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+const LOG_SOURCE = 'DebugPanel';
+
 export function DebugPanel({ children }: DebugPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const logManager = LogManager.getInstance();
+  const [logs, setLogs] = useState<LogEntry[]>([]);
 
-  const exportLogs = () => {
-    const logs = logManager.getLogs();
-    const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `debug-logs-${new Date().toISOString()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  const exportLogs = async () => {
+    try {
+      const blob = new Blob([JSON.stringify(logs, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `debug-logs-${new Date().toISOString()}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      await dbLogger.info('Logs exported successfully', { source: LOG_SOURCE });
+    } catch (error) {
+      await dbLogger.error('Failed to export logs', { source: LOG_SOURCE, error });
+    }
   };
 
-  const clearLogs = () => {
-    logManager.clearLogs();
+  const clearLogs = async () => {
+    try {
+      setLogs([]);
+      await dbLogger.info('Logs cleared', { source: LOG_SOURCE });
+    } catch (error) {
+      await dbLogger.error('Failed to clear logs', { source: LOG_SOURCE, error });
+    }
   };
 
   if (!isOpen) {
@@ -51,14 +70,22 @@ export function DebugPanel({ children }: DebugPanelProps) {
           <Button
             variant="ghost"
             size="icon"
-            onClick={exportLogs}
+            onClick={() => {
+              exportLogs().catch(async (error) => {
+                await dbLogger.error('Failed to handle export logs click', { source: LOG_SOURCE, error });
+              });
+            }}
           >
             <Download className="h-4 w-4" />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            onClick={clearLogs}
+            onClick={() => {
+              clearLogs().catch(async (error) => {
+                await dbLogger.error('Failed to handle clear logs click', { source: LOG_SOURCE, error });
+              });
+            }}
           >
             <Trash className="h-4 w-4" />
           </Button>
@@ -79,7 +106,7 @@ export function DebugPanel({ children }: DebugPanelProps) {
         )}
         <div className="space-y-2">
           <h4 className="font-medium">Logs</h4>
-          {logManager.getLogs().map((log, i) => (
+          {logs.map((log, i) => (
             <div 
               key={i}
               className="text-sm font-mono whitespace-pre-wrap"
@@ -87,7 +114,7 @@ export function DebugPanel({ children }: DebugPanelProps) {
               [{log.timestamp}] {log.level}: {log.message}
               {log.data && (
                 <pre className="mt-1 p-2 bg-muted rounded text-xs">
-                  {logManager.safeStringify(log.data, 2)}
+                  {JSON.stringify(log.data, null, 2)}
                 </pre>
               )}
             </div>

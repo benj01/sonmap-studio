@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useState, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { createClient } from '@/utils/supabase/client'
 import type { User } from '@supabase/supabase-js'
-import { LogManager } from '@/core/logging/log-manager'
+import { dbLogger } from '@/utils/logging/dbLogger'
 import { useUIStore } from '@/lib/stores/ui'
 
 interface AuthContextType {
@@ -16,8 +16,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
-const SOURCE = 'AuthProvider'
-const logger = LogManager.getInstance()
+const LOG_SOURCE = 'AuthProvider'
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter()
@@ -32,72 +31,97 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     // Initial session check
     const checkSession = async () => {
-      logger.info('AuthProvider', 'Checking initial session...')
+      await dbLogger.info('Checking initial session...', { source: LOG_SOURCE })
       try {
         const { data: { session } } = await supabase.auth.getSession()
-        logger.info('AuthProvider', 'Initial session check', !!session?.user)
+        await dbLogger.info('Initial session check', { 
+          source: LOG_SOURCE,
+          hasUser: !!session?.user 
+        })
         setUser(session?.user ?? null)
       } catch (error) {
-        logger.error('AuthProvider', 'Error checking session', error)
+        await dbLogger.error('Error checking session', { 
+          source: LOG_SOURCE,
+          error 
+        })
       } finally {
         setInitialized(true)
         setIsLoading(false)
       }
     }
 
-    checkSession()
+    // Create an async function to handle both initial check and subscription
+    const initAuth = async () => {
+      await checkSession()
 
-    // Subscribe to auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      logger.info('AuthProvider', 'Auth state change', {
-        event,
-        hasUser: !!session?.user,
-        currentPath: window.location.pathname,
-        userEmail: session?.user?.email
-      })
-      
-      // Update user state regardless of event type
-      setUser(session?.user ?? null)
-      
-      // Handle specific auth events
-      if (event === 'SIGNED_IN') {
-        // Close all modals immediately
-        closeAllModals()
+      // Subscribe to auth changes
+      const {
+        data: { subscription },
+      } = supabase.auth.onAuthStateChange(async (event, session) => {
+        await dbLogger.info('Auth state change', {
+          source: LOG_SOURCE,
+          event,
+          hasUser: !!session?.user,
+          currentPath: window.location.pathname,
+          userEmail: session?.user?.email
+        })
         
-        // Only handle redirect if we're on the sign-in page or if there's a redirect parameter
-        const isAuthPage = window.location.pathname.includes('/auth-pages/')
-        const hasRedirect = searchParams.get('redirect')
+        // Update user state regardless of event type
+        setUser(session?.user ?? null)
         
-        if (isAuthPage || hasRedirect) {
-          // Prevent multiple redirects in dev mode
-          if (isRedirecting.current) {
-            return
-          }
+        // Handle specific auth events
+        if (event === 'SIGNED_IN') {
+          // Close all modals immediately
+          closeAllModals()
           
-          isRedirecting.current = true
+          // Only handle redirect if we're on the sign-in page or if there's a redirect parameter
+          const isAuthPage = window.location.pathname.includes('/auth-pages/')
+          const redirectParam = searchParams?.get('redirect')
+          const hasRedirect = !!redirectParam
           
-          try {
-            const redirectTo = searchParams.get('redirect') || '/dashboard'
-            logger.info('AuthProvider', 'Redirecting after sign in', redirectTo)
-            router.push(redirectTo)
-          } finally {
-            // Reset the redirecting flag after a delay to handle React 18's double-mounting
-            setTimeout(() => {
-              isRedirecting.current = false
-            }, 1000)
+          if (isAuthPage || hasRedirect) {
+            // Prevent multiple redirects in dev mode
+            if (isRedirecting.current) {
+              return
+            }
+            
+            isRedirecting.current = true
+            
+            try {
+              const redirectTo = redirectParam || '/dashboard'
+              await dbLogger.info('Redirecting after sign in', { 
+                source: LOG_SOURCE,
+                redirectTo 
+              })
+              router.push(redirectTo)
+            } finally {
+              // Reset the redirecting flag after a delay to handle React 18's double-mounting
+              setTimeout(() => {
+                isRedirecting.current = false
+              }, 1000)
+            }
           }
+        } else if (event === 'SIGNED_OUT') {
+          await dbLogger.info('User signed out, redirecting to sign-in', { 
+            source: LOG_SOURCE 
+          })
+          router.push('/auth-pages/sign-in')
         }
-      } else if (event === 'SIGNED_OUT') {
-        logger.info('AuthProvider', 'User signed out, redirecting to sign-in')
-        router.push('/auth-pages/sign-in')
+      })
+
+      return () => {
+        subscription.unsubscribe()
       }
+    }
+
+    // Handle the promise returned by initAuth
+    initAuth().catch(async (error) => {
+      await dbLogger.error('Error in auth initialization', {
+        source: LOG_SOURCE,
+        error
+      })
     })
 
-    return () => {
-      subscription.unsubscribe()
-    }
   }, [router, searchParams, supabase, closeAllModals])
 
   const signOut = async () => {
@@ -107,7 +131,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null)
       router.push('/auth-pages/sign-in')
     } catch (error) {
-      logger.error('AuthProvider', 'Error signing out', error)
+      await dbLogger.error('Error signing out', { 
+        source: LOG_SOURCE,
+        error 
+      })
     } finally {
       setIsLoading(false)
     }

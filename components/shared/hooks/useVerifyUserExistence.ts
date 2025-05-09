@@ -1,12 +1,15 @@
+'use client';
+
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import createClient from '@/utils/supabase/client';
-// import { LogManager } from '@/core/logging/log-manager'; // Uncomment if LogManager is available client-side
+import { dbLogger } from '@/utils/logging/dbLogger';
+
+const LOG_SOURCE = 'useVerifyUserExistence';
 
 export function useVerifyUserExistence() {
   const router = useRouter();
   const [isVerifying, setIsVerifying] = useState(true);
-  // const logger = LogManager.getInstance(); // Uncomment if LogManager is available client-side
 
   const verifyUser = useCallback(async () => {
     setIsVerifying(true);
@@ -14,45 +17,70 @@ export function useVerifyUserExistence() {
     try {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       if (sessionError) {
-        // logger.error('Failed to get session', sessionError);
-        console.error('Failed to get session', sessionError);
+        await dbLogger.error('Failed to get session', { 
+          source: LOG_SOURCE, 
+          error: sessionError 
+        });
         setIsVerifying(false);
         return;
       }
+      
       if (!session?.user) {
-        // logger.info('No active session found.');
+        await dbLogger.info('No active session found', { source: LOG_SOURCE });
         setIsVerifying(false);
         return;
       }
+      
       const userId = session.user.id;
-      // logger.debug(`Verifying existence for user ID: ${userId}`);
+      await dbLogger.debug('Verifying user existence', { 
+        source: LOG_SOURCE, 
+        userId 
+      });
+
       const { data, error, status } = await supabase
         .from('profiles')
         .select('id')
         .eq('id', userId)
         .maybeSingle();
+
       if (error && status !== 406) {
-        // logger.error('Error fetching profile during verification', error);
-        console.error('Error fetching profile during verification:', error);
+        await dbLogger.error('Error fetching profile during verification', { 
+          source: LOG_SOURCE, 
+          error,
+          userId 
+        });
       } else if (!data) {
-        // logger.warn(`User profile not found for ID: ${userId}. Logging out.`);
-        console.warn(`User profile not found for ID: ${userId}. Logging out.`);
+        await dbLogger.warn('User profile not found, logging out', { 
+          source: LOG_SOURCE, 
+          userId 
+        });
         await supabase.auth.signOut();
         router.replace('/sign-in?reason=account_not_found');
         return;
       } else {
-        // logger.debug(`User profile found for ID: ${userId}. Verification successful.`);
+        await dbLogger.debug('User profile verification successful', { 
+          source: LOG_SOURCE, 
+          userId 
+        });
       }
-    } catch (catchError) {
-      // logger.error('Caught exception during user verification', catchError);
-      console.error('Caught exception during user verification:', catchError);
+    } catch (error) {
+      await dbLogger.error('Caught exception during user verification', { 
+        source: LOG_SOURCE, 
+        error 
+      });
     } finally {
       setIsVerifying(false);
     }
   }, [router]);
 
   useEffect(() => {
-    verifyUser();
+    // Handle the promise rejection in useEffect
+    verifyUser().catch(async (error) => {
+      await dbLogger.error('Failed to verify user in useEffect', {
+        source: LOG_SOURCE,
+        error
+      });
+    });
   }, [verifyUser]);
 
   return { isVerifying };

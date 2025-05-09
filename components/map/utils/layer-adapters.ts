@@ -3,69 +3,71 @@
 import * as Cesium from 'cesium';
 import { SharedLayer, VectorLayerStyle, TilesetStyle, ImageryStyle, TerrainStyle } from '../context/SharedLayerContext';
 import { geoJsonToCesium } from './data-converters';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
+import type { Feature, FeatureCollection, Geometry, GeoJsonProperties } from 'geojson';
 
-const SOURCE = 'LayerAdapters';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  info: (message: string, data?: any) => {
-    logManager.info(SOURCE, message, data);
-  },
-  warn: (message: string, error?: any) => {
-    logManager.warn(SOURCE, message, error);
-  },
-  error: (message: string, error?: any) => {
-    logManager.error(SOURCE, message, error);
-  },
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+const LOG_SOURCE = 'LayerAdapters';
 
 export interface CesiumLayer {
   id: string;
   name: string;
   type: 'vector' | '3d-tiles' | 'imagery' | 'terrain';
   visible: boolean;
-  source: any;
+  source: Cesium.DataSource | Cesium.ImageryProvider | Cesium.Cesium3DTileset | Cesium.TerrainProvider;
   dataSource?: Cesium.DataSource;
   imageryProvider?: Cesium.ImageryProvider;
   tileset?: Cesium.Cesium3DTileset;
-  options?: any;
+  options?: Record<string, unknown>;
 }
 
 interface LayerAdapter {
-  to2D: (layer: SharedLayer) => any;
+  to2D: (layer: SharedLayer) => Promise<Record<string, unknown>>;
   to3D: (layer: SharedLayer) => Promise<CesiumLayer>;
 }
 
 const adapters: Record<string, LayerAdapter> = {
   vector: {
-    to2D: (layer: SharedLayer) => {
-      logger.debug('Converting vector layer to 2D', { layerId: layer.id });
+    to2D: async (layer: SharedLayer): Promise<Record<string, unknown>> => {
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.debug('Converting vector layer to 2D', context);
       const style = layer.metadata.style as VectorLayerStyle;
+      const geojsonData = layer.metadata.geojson;
+      
+      if (!isValidGeoJSON(geojsonData)) {
+        throw new Error('Invalid GeoJSON data');
+      }
+
       return {
         id: layer.id,
         type: 'geojson',
         source: {
           type: 'geojson',
-          data: layer.metadata.geojson
+          data: geojsonData
         },
         paint: style?.paint || {},
         layout: style?.layout || {}
       };
     },
     to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
-      logger.debug('Converting vector layer to 3D', { layerId: layer.id });
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.debug('Converting vector layer to 3D', context);
       
-      if (!layer.metadata.geojson) {
-        throw new Error('No GeoJSON data available for conversion');
+      const geojsonData = layer.metadata.geojson;
+      if (!isValidGeoJSON(geojsonData)) {
+        throw new Error('Invalid GeoJSON data');
       }
 
       try {
         const style = layer.metadata.style as VectorLayerStyle;
-        const dataSource = await geoJsonToCesium(layer.metadata.geojson, {
+        const dataSource = await geoJsonToCesium(geojsonData, {
           strokeColor: style?.paint?.['line-color'] || '#1E88E5',
           strokeWidth: style?.paint?.['line-width'] || 3,
           fillColor: style?.paint?.['fill-color'] || '#1E88E5',
@@ -82,26 +84,44 @@ const adapters: Record<string, LayerAdapter> = {
           dataSource
         };
       } catch (error) {
-        logger.error('Error converting vector layer to 3D', { layerId: layer.id, error });
+        await dbLogger.error('Error converting vector layer to 3D', {
+          ...context,
+          error: error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          } : error
+        });
         throw error;
       }
     }
   },
   '3d-tiles': {
-    to2D: (layer: SharedLayer) => {
-      logger.warn('3D Tiles cannot be converted to 2D', { layerId: layer.id });
+    to2D: async (layer: SharedLayer): Promise<Record<string, unknown>> => {
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.warn('3D Tiles cannot be converted to 2D', context);
       throw new Error('3D Tiles cannot be converted to 2D');
     },
     to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
-      logger.debug('Converting 3D tiles layer', { layerId: layer.id });
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.debug('Converting 3D tiles layer', context);
       
-      if (!layer.metadata.source3D) {
-        throw new Error('No 3D source data available for conversion');
+      const source3D = layer.metadata.source3D;
+      if (!source3D || typeof source3D !== 'string') {
+        throw new Error('No valid 3D source URL available for conversion');
       }
 
       try {
         const style = layer.metadata.style as TilesetStyle;
-        const tileset = await Cesium.Cesium3DTileset.fromUrl(layer.metadata.source3D as string, {
+        const tileset = await Cesium.Cesium3DTileset.fromUrl(source3D, {
           maximumScreenSpaceError: style?.maximumScreenSpaceError || 16,
           modelMatrix: style?.modelMatrix,
           show: style?.show !== undefined ? style.show : true
@@ -134,7 +154,10 @@ const adapters: Record<string, LayerAdapter> = {
               tileset.colorBlendMode = Cesium.Cesium3DTileColorBlendMode.REPLACE;
               break;
             default:
-              logger.warn('Invalid color blend mode', { mode: style.colorBlendMode });
+              await dbLogger.warn('Invalid color blend mode', {
+                ...context,
+                mode: style.colorBlendMode
+              });
           }
 
           if (style.colorBlendAmount !== undefined) {
@@ -151,37 +174,61 @@ const adapters: Record<string, LayerAdapter> = {
           tileset
         };
       } catch (error) {
-        logger.error('Error converting 3D tiles layer', { layerId: layer.id, error });
+        await dbLogger.error('Error converting 3D tiles layer', {
+          ...context,
+          error: error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          } : error
+        });
         throw error;
       }
     }
   },
   imagery: {
-    to2D: (layer: SharedLayer) => {
-      logger.debug('Converting imagery layer to 2D', { layerId: layer.id });
+    to2D: async (layer: SharedLayer): Promise<Record<string, unknown>> => {
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.debug('Converting imagery layer to 2D', context);
       const style = layer.metadata.style as ImageryStyle;
+      
+      const source2D = layer.metadata.source2D;
+      if (!source2D || typeof source2D !== 'string') {
+        throw new Error('No valid 2D source URL available for conversion');
+      }
+
       return {
         id: layer.id,
         type: 'raster',
         source: {
           type: 'raster',
-          tiles: [layer.metadata.source2D],
+          tiles: [source2D],
           tileSize: style?.tileWidth || 256
         },
         paint: {}
       };
     },
     to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
-      logger.debug('Converting imagery layer to 3D', { layerId: layer.id });
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.debug('Converting imagery layer to 3D', context);
       
-      if (!layer.metadata.source3D) {
-        throw new Error('No imagery source data available for conversion');
+      const source3D = layer.metadata.source3D;
+      if (!source3D || typeof source3D !== 'string') {
+        throw new Error('No valid imagery source URL available for conversion');
       }
 
       try {
         const style = layer.metadata.style as ImageryStyle;
         const imageryProvider = new Cesium.UrlTemplateImageryProvider({
-          url: layer.metadata.source3D as string,
+          url: source3D,
           minimumLevel: style?.minimumLevel,
           maximumLevel: style?.maximumLevel,
           tileWidth: style?.tileWidth || 256,
@@ -198,27 +245,45 @@ const adapters: Record<string, LayerAdapter> = {
           imageryProvider
         };
       } catch (error) {
-        logger.error('Error converting imagery layer to 3D', { layerId: layer.id, error });
+        await dbLogger.error('Error converting imagery layer to 3D', {
+          ...context,
+          error: error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          } : error
+        });
         throw error;
       }
     }
   },
   terrain: {
-    to2D: (layer: SharedLayer) => {
-      logger.warn('Terrain cannot be converted to 2D', { layerId: layer.id });
+    to2D: async (layer: SharedLayer): Promise<Record<string, unknown>> => {
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.warn('Terrain cannot be converted to 2D', context);
       throw new Error('Terrain cannot be converted to 2D');
     },
     to3D: async (layer: SharedLayer): Promise<CesiumLayer> => {
-      logger.debug('Converting terrain layer', { layerId: layer.id });
+      const context = {
+        source: LOG_SOURCE,
+        layerId: layer.id
+      };
+
+      await dbLogger.debug('Converting terrain layer', context);
       
-      if (!layer.metadata.source3D) {
+      const source3D = layer.metadata.source3D;
+      if (!source3D || typeof source3D !== 'string') {
         throw new Error('No terrain source data available for conversion');
       }
 
       try {
         const style = layer.metadata.style as TerrainStyle;
         const terrainProvider = await Cesium.CesiumTerrainProvider.fromUrl(
-          layer.metadata.source3D as string,
+          source3D,
           {
             requestVertexNormals: style?.requestVertexNormals || true,
             requestWaterMask: style?.requestWaterMask || false,
@@ -234,7 +299,14 @@ const adapters: Record<string, LayerAdapter> = {
           source: terrainProvider
         };
       } catch (error) {
-        logger.error('Error converting terrain layer', { layerId: layer.id, error });
+        await dbLogger.error('Error converting terrain layer', {
+          ...context,
+          error: error instanceof Error ? {
+            message: error.message,
+            stack: error.stack,
+            name: error.name
+          } : error
+        });
         throw error;
       }
     }
@@ -242,9 +314,17 @@ const adapters: Record<string, LayerAdapter> = {
 };
 
 export function getLayerAdapter(type: string): LayerAdapter | undefined {
-  const adapter = adapters[type];
-  if (!adapter) {
-    logger.warn('No adapter found for layer type', { type });
-  }
-  return adapter;
+  return adapters[type];
+}
+
+function isFeatureCollection(obj: unknown): obj is FeatureCollection<Geometry, GeoJsonProperties> {
+  return typeof obj === 'object' && obj !== null && 'type' in obj && obj.type === 'FeatureCollection';
+}
+
+function isFeature(obj: unknown): obj is Feature<Geometry, GeoJsonProperties> {
+  return typeof obj === 'object' && obj !== null && 'type' in obj && obj.type === 'Feature';
+}
+
+function isValidGeoJSON(obj: unknown): obj is FeatureCollection<Geometry, GeoJsonProperties> | Feature<Geometry, GeoJsonProperties> {
+  return isFeatureCollection(obj) || isFeature(obj);
 } 

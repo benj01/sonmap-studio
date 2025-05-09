@@ -1,6 +1,7 @@
 'use client'
 
-import { useUIStore, ModalId } from '@/lib/stores/ui'
+import React, { useCallback } from 'react'
+import { useUIStore, ModalId, UIState } from '@/lib/stores/ui'
 import {
   Dialog,
   DialogContent,
@@ -9,7 +10,9 @@ import {
 } from '@/components/ui/dialog'
 import { LoginForm } from '@/components/auth/auth-forms/login-form'
 import { RegisterForm } from '@/components/auth/auth-forms/register-form'
-import { LogManager } from '@/core/logging/log-manager'
+import { dbLogger } from '@/utils/logging/dbLogger'
+
+const LOG_SOURCE = 'ModalProvider'
 
 type ModalConfig = {
   title: string
@@ -27,30 +30,39 @@ const MODAL_COMPONENTS: Record<ModalId, ModalConfig> = {
   },
 }
 
-const logger = LogManager.getInstance()
-
 export function ModalProvider() {
-  const modals = useUIStore(state => state.modals)
-  const toggleModal = useUIStore(state => state.toggleModal)
+  const modals = useUIStore((state: UIState) => state.modals)
+  const toggleModal = useUIStore((state: UIState) => state.toggleModal)
+
+  const handleOpenChange = useCallback(async (open: boolean, id: ModalId) => {
+    if (!open) {
+      await dbLogger.debug('Modal state change', { 
+        source: LOG_SOURCE,
+        modalId: id,
+        action: 'close',
+        currentState: modals[id]
+      });
+      toggleModal(id);
+    }
+  }, [modals, toggleModal]);
 
   return (
     <>
       {Object.entries(MODAL_COMPONENTS).map(([id, { title, component: ModalComponent }]) => {
-        const isOpen = modals[id as ModalId] || false
+        const modalId = id as ModalId;
+        const isOpen = modals[modalId] || false;
 
         return (
           <Dialog
-            key={id}
+            key={modalId}
             open={isOpen}
-            onOpenChange={(open) => {
-              !open && toggleModal(id as ModalId)
-            }}
+            onOpenChange={(open) => handleOpenChange(open, modalId)}
           >
-            <DialogContent aria-describedby="modal-description">
+            <DialogContent aria-describedby={`modal-description-${modalId}`}>
               <DialogHeader>
                 <DialogTitle>{title}</DialogTitle>
               </DialogHeader>
-              <div id="modal-description" className="sr-only">
+              <div id={`modal-description-${modalId}`} className="sr-only">
                 {title} dialog window
               </div>
               <ModalComponent />
