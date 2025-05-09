@@ -32,7 +32,6 @@ export const MapContainer = memo(function MapContainer({
   const renderCount = useRef(0);
   const mountCount = useRef(0);
   const shouldRenderChildren = useRef(process.env.NODE_ENV === 'production');
-  const projectLayersInitialized = useRef(false);
 
   // Call useProjectLayers at the top level
   const { isInitialized } = useProjectLayers(projectId || '');
@@ -44,7 +43,6 @@ export const MapContainer = memo(function MapContainer({
       renderCount: renderCount.current,
       mountCount: mountCount.current,
       shouldRenderChildren: shouldRenderChildren.current,
-      projectLayersInitialized: projectLayersInitialized.current,
       isInitialized,
       props: {
         hasProjectId: !!projectId,
@@ -115,7 +113,6 @@ export const MapContainer = memo(function MapContainer({
       if (isFinalUnmount) {
         cleanup();
         shouldRenderChildren.current = false;
-        projectLayersInitialized.current = false;
         (async () => {
           await dbLogger.info('Map container final cleanup complete', {
             mountCount: localMountCount,
@@ -132,16 +129,21 @@ export const MapContainer = memo(function MapContainer({
     };
   }, [cleanup, setViewState3D, initialViewState3D]);
 
-  // Only render children after the first mount cycle in development
-  const shouldRender = process.env.NODE_ENV === 'production' || shouldRenderChildren.current;
+  // Only render children after the first mount cycle in development AND when layers are initialized
+  const shouldRender = (process.env.NODE_ENV === 'production' || shouldRenderChildren.current) && isInitialized;
   (async () => {
-    await dbLogger.debug('MapContainer: shouldRender value', { shouldRender });
+    await dbLogger.debug('MapContainer: shouldRender value', { 
+      shouldRender,
+      isInitialized,
+      shouldRenderChildren: shouldRenderChildren.current,
+      environment: process.env.NODE_ENV
+    });
   })();
 
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col">
       <div className="flex-1 flex flex-col gap-20 p-4">
-        {shouldRender && (
+        {shouldRender ? (
           <>
             {/* --- Only 3D Map View (Cesium) and Layer Panel --- */}
             <section className="h-full flex flex-col gap-2">
@@ -161,6 +163,13 @@ export const MapContainer = memo(function MapContainer({
               </div>
             </section>
           </>
+        ) : (
+          <div className="flex items-center justify-center h-full">
+            <div className="text-center">
+              <h3 className="text-lg font-semibold mb-2">Loading Map View</h3>
+              <p className="text-gray-500">Please wait while we initialize the map...</p>
+            </div>
+          </div>
         )}
       </div>
 

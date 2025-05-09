@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import createClient from '@/utils/supabase/client';
 import { useLayerStore } from '@/store/layers/layerStore';
 import { dbLogger } from '@/utils/logging/dbLogger';
@@ -40,7 +40,7 @@ export function useProjectLayers(projectId: string) {
   const supabase = createClient();
   const { addLayer, setInitialLoadComplete } = useLayerStore();
   const mountCount = useRef(0);
-  const isInitialized = useRef(false);
+  const [isInitialized, setIsInitialized] = useState(false);
   const currentProjectId = useRef(projectId);
 
   useEffect(() => {
@@ -59,15 +59,17 @@ export function useProjectLayers(projectId: string) {
           oldProjectId: currentProjectId.current,
           newProjectId: projectId
         });
-        isInitialized.current = false;
+        setIsInitialized(false);
         currentProjectId.current = projectId;
       }
 
       // Skip if already initialized for this project
-      if (isInitialized.current) {
+      if (isInitialized) {
         await dbLogger.debug('Project layers already initialized for this project', { projectId });
         return;
       }
+
+      await loadProjectLayers();
     }
 
     let isMounted = true;
@@ -93,7 +95,7 @@ export function useProjectLayers(projectId: string) {
         if (!importedFiles?.length) {
           await dbLogger.info('No imported files found for project', { projectId });
           setInitialLoadComplete(true);
-          isInitialized.current = true;
+          setIsInitialized(true);
           return;
         }
 
@@ -229,29 +231,26 @@ export function useProjectLayers(projectId: string) {
           layerCount: loadedLayers.size,
           layerIds: Array.from(loadedLayers)
         });
-        setInitialLoadComplete(true);
-        isInitialized.current = true;
+        if (isMounted) {
+          setIsInitialized(true);
+          setInitialLoadComplete(true);
+        }
         await dbLogger.info('Project layers initialization complete', { projectId });
       } catch (error) {
-        await dbLogger.error('Error loading project layers', { projectId, error });
-        setInitialLoadComplete(true); // Set to true even on error to prevent infinite loading state
+        await dbLogger.error('Error loading project layers', { error, projectId });
+        if (isMounted) {
+          setIsInitialized(false);
+          setInitialLoadComplete(true);
+        }
       }
     }
 
-    // Create an async IIFE to handle all async operations
-    (async () => {
-      try {
-        await initializeProjectLayers();
-        await loadProjectLayers();
-      } catch (error) {
-        await dbLogger.error('Failed to initialize or load project layers', { projectId, error });
-      }
-    })().catch(async (error) => {
-      await dbLogger.error('Unhandled error in project layers initialization', { projectId, error });
-    });
+    initializeProjectLayers();
 
     return () => {
       isMounted = false;
     };
-  }, [projectId, supabase, addLayer, setInitialLoadComplete]);
+  }, [projectId, supabase, addLayer, setInitialLoadComplete, isInitialized]);
+
+  return { isInitialized };
 } 
