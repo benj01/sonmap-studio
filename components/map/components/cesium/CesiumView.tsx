@@ -15,6 +15,7 @@ import { useLayers } from '@/store/layers/hooks';
 import { useLayerStore } from '@/store/layers/layerStore';
 import { processFeatureCollectionHeights, needsHeightTransformation } from '../../services/heightTransformService';
 import * as GeoJSON from 'geojson';
+import debounce from 'lodash/debounce';
 
 const SOURCE = 'CesiumView';
 
@@ -227,13 +228,16 @@ export function CesiumView() {
   const tilesetMap = useRef(new Map<string, Cesium.Cesium3DTileset>());
   const imageryLayerMap = useRef(new Map<string, Cesium.ImageryLayer>());
   const [mousePosition, setMousePosition] = useState<{longitude: number; latitude: number; height: number} | null>(null);
+  const lastViewState = useRef<{longitude: number; latitude: number; height: number} | null>(null);
+  const [mapType, setMapType] = useState<'satellite' | 'osm'>('satellite');
+  const [expanded, setExpanded] = useState(false);
   
-  // Replace useMapView with direct store access
   const { setCesiumInstance, setCesiumStatus } = useMapInstanceStore();
-  const cesiumInstance = useMapInstanceStore(state => state.mapInstances.cesium.instance);
   const { viewState3D, setViewState3D } = useViewStateStore();
+  const { layers } = useLayers();
+  const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
+  const updateLayerStatus = useLayerStore(state => state.updateLayerStatus);
   
-  // Define utility functions inline since they were previously from useMapView
   const getCesiumDefaults = useCallback(() => {
     return {
       animation: false,
@@ -259,555 +263,290 @@ export function CesiumView() {
       });
     } catch (error) {
       await dbLogger.error('Error creating terrain provider', { error });
-      // Return default terrain provider as fallback
       return new Cesium.EllipsoidTerrainProvider({});
     }
   }, []);
-  
-  const { layers } = useLayers();
-  const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
+
+  // Track initialization status
   const initializationAttempted = useRef(false);
-  const mountCount = useRef(0);
-  const updateLayerStatus = useLayerStore(state => state.updateLayerStatus);
-  // First-run guard for dev mode (must be at top level)
-  const isFirstRun = useRef(true);
-  const loadingLayersRef = useRef(new Set<string>());
-  const [mapType, setMapType] = useState<'satellite' | 'osm'>('satellite');
-  const [expanded, setExpanded] = useState(false);
 
-  // Effect for Viewer Initialization
+  // Viewer initialization effect
   useEffect(() => {
-    mountCount.current++;
-    const container = cesiumContainer.current;
-    
-    // Log the Cesium container size for debugging
-    if (container) {
-      (async () => {
-        try {
-          await dbLogger.debug('Cesium container size', {
-            width: container.offsetWidth,
-            height: container.offsetHeight
-          });
-        } catch {
-          // intentionally ignore logging errors
-        }
-      })();
-    }
-
-    // In development, skip first mount due to StrictMode
-    if (process.env.NODE_ENV === 'development' && mountCount.current === 1) {
-      (async () => {
-        try {
-          await dbLogger.debug('Skipping first mount in development mode');
-        } catch {
-          // intentionally ignore logging errors
-        }
-      })();
-      return;
-    }
-
-    if (!container || initializationAttempted.current) {
+    // Prevent multiple initialization attempts
+    if (initializationAttempted.current || !cesiumContainer.current || viewerRef.current) {
       return;
     }
 
     initializationAttempted.current = true;
-    let viewer: Cesium.Viewer | null = null;
 
-    const initializeViewer = async () => {
+    const initViewer = async () => {
       try {
-        // Check if we already have a valid instance
-        if (cesiumInstance && !cesiumInstance.isDestroyed()) {
-          await dbLogger.debug('Valid Cesium instance already exists, skipping initialization');
-          return;
-        }
-        
         await dbLogger.info('CesiumView: Starting initialization process');
         setCesiumStatus('initializing');
 
-        // Generate new instance ID
         viewerInstanceId.current = `cesium-viewer-${Date.now()}`;
-        await dbLogger.debug('CesiumView: Generated new viewer instance ID', { 
-          instanceId: viewerInstanceId.current 
-        });
-
-        // Create terrain provider
-        await dbLogger.debug('CesiumView: Creating terrain provider');
-        const terrainProvider = await getTerrainProvider();
-        await dbLogger.debug('CesiumView: Terrain provider created successfully');
         
-        // Create viewer
-        await dbLogger.info('CesiumView: Creating Cesium viewer', { 
-          instanceId: viewerInstanceId.current 
-        });
-        viewer = new Cesium.Viewer(container, {
+        const terrainProvider = await getTerrainProvider();
+        
+        // Check if component is still mounted
+        if (!cesiumContainer.current) {
+          throw new Error('Container element no longer exists');
+        }
+        
+        const viewer = new Cesium.Viewer(cesiumContainer.current, {
           terrainProvider,
           ...getCesiumDefaults()
         });
-        await dbLogger.info('CesiumView: Viewer created successfully');
+
         viewerRef.current = viewer;
-        // Expose Cesium viewer for debugging
-        // (window as any).cesiumViewer = viewer;
-        // logger.info('CesiumView: Viewer exposed to window.cesiumViewer for debugging');
 
-        // Set initial camera position
-        await dbLogger.debug('CesiumView: Setting initial camera position', { viewState3D });
-        viewer.camera.setView({
-          destination: Cesium.Cartesian3.fromDegrees(
-            viewState3D.longitude,
-            viewState3D.latitude,
-            viewState3D.height
-          )
-        });
-
-        // Update camera position when view state changes
-        viewer.camera.changed.addEventListener(() => {
-          if (!viewer) return;
-          const cartographic = Cesium.Cartographic.fromCartesian(viewer.camera.position);
-          const longitude = Cesium.Math.toDegrees(cartographic.longitude);
-          const latitude = Cesium.Math.toDegrees(cartographic.latitude);
-          const height = cartographic.height;
-
-          setViewState3D({
-            longitude,
-            latitude,
-            height
+        // Set initial camera position if viewState3D is available
+        if (viewState3D) {
+          viewer.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(
+              viewState3D.longitude,
+              viewState3D.latitude,
+              viewState3D.height
+            )
           });
-        });
+        }
 
-        // Wait for scene stability
-        await dbLogger.info('CesiumView: Waiting for scene stability');
         await viewer.scene.requestRender();
-
-        await dbLogger.info('CesiumView: Setting instance and status', {
-          instanceId: viewerInstanceId.current
-        });
-        setCesiumInstance(viewer, viewerInstanceId.current);
-        setCesiumStatus('ready');
-        await dbLogger.info('CesiumView: Cesium viewer initialized and state updated');
-
+        
+        // Check if we're still the current instance
+        if (viewerInstanceId.current) {
+          setCesiumInstance(viewer, viewerInstanceId.current);
+          setCesiumStatus('ready');
+          await dbLogger.info('CesiumView: Viewer initialized successfully');
+        }
       } catch (error) {
-        await dbLogger.error('CesiumView: Error initializing Cesium viewer', {
-          instanceId: viewerInstanceId.current,
-          error: error instanceof Error ? error.message : 'Unknown error',
-          stack: error instanceof Error ? error.stack : undefined
+        await dbLogger.error('CesiumView: Error initializing viewer', {
+          error: error instanceof Error ? error.message : 'Unknown error'
         });
         setCesiumStatus('error', error instanceof Error ? error.message : 'Unknown error');
-        initializationAttempted.current = false;
-        viewerInstanceId.current = null;
       }
     };
 
-    void (async () => {
-      try {
-        await initializeViewer();
-      } catch {
-        // intentionally ignore errors
-      }
-    })().catch(() => {});
+    initViewer().catch(console.error);
 
     return () => {
-      void (async () => {
-        try {
-          await dbLogger.info('CesiumView: Running cleanup for Cesium viewer', {
-            instanceId: viewerInstanceId.current
-          });
-        } catch {
-          // intentionally ignore logging errors
-        }
-      })().catch(() => {});
-      // First set status to destroyed to prevent any operations during cleanup
+      const viewer = viewerRef.current;
+      if (!viewer || viewer.isDestroyed()) return;
+
       setCesiumStatus('destroyed');
-      if (viewer && !viewer.isDestroyed()) {
-        try {
-          if ('destroy' in viewer) {
-            viewer.destroy();
-          }
-          void (async () => {
-            try {
-              await dbLogger.info('CesiumView: Viewer destroyed successfully', {
-                instanceId: viewerInstanceId.current
-              });
-            } catch {
-              // intentionally ignore logging errors
-            }
-          })().catch(() => {});
-        } catch (error) {
-          void (async () => {
-            try {
-              await dbLogger.error('CesiumView: Error destroying viewer', {
-                instanceId: viewerInstanceId.current,
-                error: error instanceof Error ? error.message : 'Unknown error'
-              });
-            } catch {
-              // intentionally ignore logging errors
-            }
-          })().catch(() => {});
-        }
+
+      // Clean up DOM first
+      if (viewer.container?.parentNode) {
+        viewer.container.parentNode.removeChild(viewer.container);
       }
+
+      // Then destroy the viewer
+      viewer.destroy();
+      
+      // Reset refs and state
       viewerRef.current = null;
       setCesiumInstance(null);
-      initializationAttempted.current = false;
       viewerInstanceId.current = null;
-      void (async () => {
-        try {
-          await dbLogger.info('CesiumView: Cleanup complete');
-        } catch {
-          // intentionally ignore logging errors
+      initializationAttempted.current = false;
+
+      // Clean up any orphaned elements
+      document.querySelectorAll('.cesium-viewer, .cesium-widget').forEach(el => {
+        if (el.parentNode) {
+          el.parentNode.removeChild(el);
         }
-      })().catch(() => {});
+      });
+
+      dbLogger.info('CesiumView: Cleanup complete').catch(console.error);
     };
-  }, [cesiumInstance, getCesiumDefaults, getTerrainProvider, setCesiumInstance, setCesiumStatus, setViewState3D, viewState3D]);
+  }, [
+    setCesiumInstance,
+    setCesiumStatus,
+    getTerrainProvider,
+    getCesiumDefaults,
+    viewState3D
+  ]); // Include all dependencies
 
-  // Effect: Directly manage Cesium layers based on Zustand layer state
+  // Camera change handler - separate effect
   useEffect(() => {
-    async function manageLayers() {
-      await dbLogger.debug('Cesium layer management effect dependencies', {
-        cesiumInstanceExists: !!cesiumInstance,
-        cesiumInstanceDestroyed: cesiumInstance ? cesiumInstance.isDestroyed() : undefined,
-        layersLength: layers.length,
-        layerIds: layers.map(l => l.id),
-        isInitialLoadComplete
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    const debouncedSetViewState = debounce((newState: typeof viewState3D) => {
+      const last = lastViewState.current;
+      if (
+        last &&
+        Math.abs(newState.longitude - last.longitude) < 0.000001 &&
+        Math.abs(newState.latitude - last.latitude) < 0.000001 &&
+        Math.abs(newState.height - last.height) < 0.1
+      ) return;
+
+      lastViewState.current = newState;
+      setViewState3D(newState);
+    }, 100);
+
+    const handleCameraChange = () => {
+      const cartographic = Cesium.Cartographic.fromCartesian(viewer.camera.position);
+      debouncedSetViewState({
+        longitude: Cesium.Math.toDegrees(cartographic.longitude),
+        latitude: Cesium.Math.toDegrees(cartographic.latitude),
+        height: cartographic.height,
+        heading: viewer.camera.heading,
+        pitch: viewer.camera.pitch
       });
+    };
 
-      // First-run guard for dev mode
-      if (isFirstRun.current) {
-        isFirstRun.current = false;
-        if (process.env.NODE_ENV === 'development') {
-          await dbLogger.debug('Skipping first cleanup in dev mode (first-run guard)');
-          return;
-        }
-      }
-
-      await dbLogger.debug('Cesium layer management effect RUNNING', { layerCount: layers.length });
-      if (!cesiumInstance || cesiumInstance.isDestroyed()) return;
-
-      // Helper: Remove Cesium object by type
-      const removeCesiumLayer = async (layerId: string) => {
-        await dbLogger.debug('removeCesiumLayer called', { layerId });
-        // Ensure cesiumInstance is valid before proceeding
-        if (!cesiumInstance || cesiumInstance.isDestroyed()) {
-          await dbLogger.warn('Attempted to remove Cesium layer but instance is not available', { layerId });
-          return;
-        }
-        let found = false;
-        // Remove DataSource
-        const ds = dataSourceMap.current.get(layerId);
-        if (ds) {
-          await dbLogger.info('Removing Cesium DataSource from view', { layerId });
-          if ('dataSources' in cesiumInstance) {
-            cesiumInstance.dataSources.remove(ds, true);
-          }
-          dataSourceMap.current.delete(layerId);
-          found = true;
-        }
-        // Remove Tileset
-        const ts = tilesetMap.current.get(layerId);
-        if (ts) {
-          await dbLogger.info('Removing Cesium 3D Tileset from view', { layerId });
-          if ('scene' in cesiumInstance) {
-            cesiumInstance.scene.primitives.remove(ts);
-          }
-          tilesetMap.current.delete(layerId);
-          found = true;
-        }
-        // Remove ImageryLayer
-        const il = imageryLayerMap.current.get(layerId);
-        if (il) {
-          await dbLogger.info('Removing Cesium ImageryLayer from view', { layerId });
-          if ('imageryLayers' in cesiumInstance) {
-            cesiumInstance.imageryLayers.remove(il, true);
-          }
-          imageryLayerMap.current.delete(layerId);
-          found = true;
-        }
-        if (!found) {
-          await dbLogger.warn('No Cesium object found to remove for layer', { layerId });
-        }
-        await dbLogger.debug('Cesium layer representation removed, store status NOT changed', { layerId });
-      };
-
-      const addOrUpdateCesiumLayer = async (layer: CesiumLayer) => {
-        await dbLogger.debug('addOrUpdateCesiumLayer called', {
-          id: layer.id,
-          visible: layer.visible,
-          type: layer.metadata?.type,
-          hasGeojson: !!layer.metadata?.properties?.geojson
-        });
-        if (!cesiumInstance || cesiumInstance.isDestroyed()) {
-          await dbLogger.error('Cesium instance is not ready when trying to add/update layer', { layerId: layer.id });
-          if (layer.setupStatus !== 'error' || layer.error !== 'Cesium instance not ready') {
-            updateLayerStatus(layer.id, 'error', 'Cesium instance not ready');
-          }
-          return;
-        }
-        try {
-          if (!layer.visible) {
-            await dbLogger.debug('Layer not visible, will remove if present', { layerId: layer.id });
-            await removeCesiumLayer(layer.id);
-            return;
-          }
-          // Vector (GeoJSON)
-          if (layer.metadata?.type === 'vector' && layer.metadata?.properties?.geojson) {
-            // Check internal map AND loading state
-            if (!dataSourceMap.current.has(layer.id) && !loadingLayersRef.current.has(layer.id)) {
-              try {
-                await dbLogger.info('>>> Preparing to ADD Cesium GeoJSON DataSource', { layerId: layer.id });
-                loadingLayersRef.current.add(layer.id); // Mark as loading SYNCHRONOUSLY
-
-                // Process the GeoJSON data to transform heights if needed
-                let geojsonData = layer.metadata.properties.geojson;
-                
-                // Check if any features need height transformation
-                if (needsHeightTransformation(geojsonData)) {
-                  await dbLogger.info('Layer contains features with LV95 stored coordinates, transforming heights', { layerId: layer.id });
-                  
-                  // Transform feature heights using our service
-                  geojsonData = await processFeatureCollectionHeights(geojsonData);
-                  
-                  await dbLogger.info('Height transformation complete', { layerId: layer.id });
-                }
-                
-                // Apply height data according to layer configuration
-                const heightConfig = layer.metadata.height;
-                if (heightConfig && heightConfig.sourceType !== 'none') {
-                  await dbLogger.info('Applying height configuration to layer', { 
-                    layerId: layer.id,
-                    heightSource: heightConfig.sourceType,
-                    attributeName: heightConfig.attributeName 
-                  });
-                  
-                  geojsonData = applyHeightToFeatures(geojsonData, {
-                    ...heightConfig,
-                    sourceType: heightConfig.sourceType as 'z_coord' | 'attribute' | 'none',
-                    interpretationMode: heightConfig.interpretationMode as 'absolute' | 'relative' | 'extrusion' | undefined
-                  });
-                }
-
-                // If clamping to terrain, fetch or sample terrain heights
-                if (heightConfig && heightConfig.sourceType === 'none' && geojsonData.features) {
-                  for (const feature of geojsonData.features) {
-                    if (feature.geometry.type === 'Polygon' && feature.id) {
-                      try {
-                        const heights = await getTerrainHeights(String(feature.id), feature.geometry, 'CesiumWorldTerrain');
-                        // Apply per-vertex heights
-                        feature.geometry.coordinates[0] = feature.geometry.coordinates[0].map((coord: number[], i: number) => [coord[0], coord[1], heights[i]]);
-                      } catch (e) {
-                        await dbLogger.warn('Failed to fetch/sample terrain heights', { featureId: feature.id, error: e });
-                      }
-                    }
-                  }
-                }
-
-                const ds = await Cesium.GeoJsonDataSource.load(geojsonData, {
-                  clampToGround: !heightConfig || heightConfig.sourceType === 'none',
-                  stroke: Cesium.Color.fromCssColorString('#1E88E5'),
-                  strokeWidth: 3,
-                  fill: Cesium.Color.fromCssColorString('#1E88E5').withAlpha(0.5),
-                });
-                ds.name = layer.id;
-
-                // Apply special handling for height interpretation modes
-                if (heightConfig && heightConfig.sourceType === 'attribute' && 
-                    heightConfig.interpretationMode && heightConfig.interpretationMode !== 'absolute') {
-                  
-                  // Process each entity for relative heights or extrusions
-                  const entities = ds.entities.values;
-                  for (let i = 0; i < entities.length; i++) {
-                    const entity = entities[i];
-                    
-                    if (heightConfig.interpretationMode === 'relative' && 
-                        entity.properties && entity.properties['_relativeHeight']) {
-                      
-                      // Get the relative height value
-                      const relativeHeight = entity.properties['_relativeHeight'].getValue();
-                      
-                      // Set the height reference to be relative to ground
-                      if (entity.billboard) {
-                        entity.billboard.heightReference = new Cesium.ConstantProperty(Cesium.HeightReference.RELATIVE_TO_GROUND);
-                        entity.billboard.height = new Cesium.ConstantProperty(relativeHeight);
-                      }
-                      
-                      if (entity.point) {
-                        entity.point.heightReference = new Cesium.ConstantProperty(Cesium.HeightReference.RELATIVE_TO_GROUND);
-                      }
-                      
-                      if (entity.polyline) {
-                        entity.polyline.clampToGround = new Cesium.ConstantProperty(true);
-                      }
-                    }
-                    else if (heightConfig.interpretationMode === 'extrusion' && 
-                             entity.properties && entity.properties['_extrusionHeight']) {
-                      
-                      // Get the extrusion height value
-                      const extrusionHeight = entity.properties['_extrusionHeight'].getValue();
-                      
-                      // Apply extrusion to polygon entities
-                      if (entity.polygon) {
-                        entity.polygon.extrudedHeight = new Cesium.ConstantProperty(extrusionHeight);
-                        entity.polygon.perPositionHeight = new Cesium.ConstantProperty(false);
-                        entity.polygon.heightReference = new Cesium.ConstantProperty(Cesium.HeightReference.CLAMP_TO_GROUND);
-                      }
-                    }
-                  }
-                }
-
-                // Double-check viewer hasn't been destroyed during await
-                if (!cesiumInstance || cesiumInstance.isDestroyed()) {
-                  await dbLogger.warn('Cesium instance destroyed during async load, aborting add.', { layerId: layer.id });
-                  return; // Abort if viewer is gone
-                }
-
-                // Important: Check AGAIN if it was added by another concurrent run *after* await
-                if (dataSourceMap.current.has(layer.id)) {
-                  await dbLogger.warn('DataSource was added concurrently, skipping duplicate add.', { layerId: layer.id });
-                  // Optional: Destroy the newly loaded ds if not needed? ds.entities.removeAll();
-                  return;
-                }
-
-                try {
-                  await dbLogger.info('>>> Adding loaded DataSource to Cesium collection', { layerId: layer.id });
-                } catch {
-                  // intentionally ignore logging errors
-                }
-                if ('dataSources' in cesiumInstance) {
-                  cesiumInstance.dataSources.add(ds);
-                }
-                await dbLogger.info('>>> SUCCESSFULLY Added DataSource to Cesium collection', { layerId: layer.id });
-                dataSourceMap.current.set(layer.id, ds);
-                await dbLogger.info('>>> Set DataSource in internal map', { layerId: layer.id });
-                if (layer.setupStatus !== 'complete' || layer.error !== undefined) {
-                  updateLayerStatus(layer.id, 'complete');
-                }
-              } catch (loadError) {
-                await dbLogger.error('Error loading/adding GeoJSON', { layerId: layer.id, loadError });
-                if (layer.setupStatus !== 'error' || layer.error !== 'Failed to load GeoJSON') {
-                  updateLayerStatus(layer.id, 'error', 'Failed to load GeoJSON');
-                }
-              } finally {
-                loadingLayersRef.current.delete(layer.id); // Unmark as loading
-              }
-            } else if (loadingLayersRef.current.has(layer.id)) {
-              await dbLogger.debug('GeoJSON DataSource is already loading, skipping duplicate add attempt', { layerId: layer.id });
-            } else {
-              await dbLogger.debug('GeoJSON DataSource already present in internal map, skipping add', { layerId: layer.id });
-              if (layer.setupStatus !== 'complete' || layer.error !== undefined) {
-                updateLayerStatus(layer.id, 'complete');
-              }
-            }
-          }
-          // 3D Tiles
-          else if (layer.metadata?.type === '3d-tiles' && layer.metadata?.properties?.url) {
-            if (!tilesetMap.current.has(layer.id)) {
-              await dbLogger.info('Adding Cesium 3D Tileset', { layerId: layer.id });
-              const ts = await Cesium.Cesium3DTileset.fromUrl(String(layer.metadata.properties.url));
-              (ts as unknown as { _layerId: string })._layerId = layer.id;
-              if ('scene' in cesiumInstance) {
-                cesiumInstance.scene.primitives.add(ts);
-              }
-              tilesetMap.current.set(layer.id, ts);
-            } else {
-              // TODO: Update tileset if needed
-              await dbLogger.debug('3D Tileset already present', { layerId: layer.id });
-            }
-          }
-          // Imagery
-          else if (layer.metadata?.type === 'imagery' && layer.metadata?.properties?.url) {
-            if (!imageryLayerMap.current.has(layer.id)) {
-              await dbLogger.info('Adding Cesium ImageryLayer', { layerId: layer.id });
-              const provider = new Cesium.UrlTemplateImageryProvider({ url: layer.metadata.properties.url });
-              let il: Cesium.ImageryLayer | undefined = undefined;
-              if ('imageryLayers' in cesiumInstance) {
-                il = cesiumInstance.imageryLayers.addImageryProvider(provider);
-                (il as unknown as { _layerId: string })._layerId = layer.id;
-                imageryLayerMap.current.set(layer.id, il);
-              }
-            } else {
-              // TODO: Update imagery if needed
-              await dbLogger.debug('ImageryLayer already present', { layerId: layer.id });
-            }
-          } else {
-            await dbLogger.warn('Layer type not supported or missing data for Cesium', { layerId: layer.id, type: layer.metadata?.type });
-            if (layer.setupStatus !== 'error' || layer.error !== 'Unsupported type or missing data') {
-              updateLayerStatus(layer.id, 'error', 'Unsupported type or missing data');
-            }
-          }
-        } catch (error) {
-          await dbLogger.error('Error processing Cesium layer', { layerId: layer.id, error });
-          if (layer.setupStatus !== 'error' || layer.error !== 'Processing error') {
-            updateLayerStatus(layer.id, 'error', 'Processing error');
-          }
-        }
-      };
-
-      // --- Phase 1: Remove ---
-      const visibleLayerIds = new Set(layers.filter(l => l.visible).map(l => l.id));
-      await dbLogger.debug('Visible layer IDs after visibility filter', { visibleLayerIds: Array.from(visibleLayerIds) });
-      // Remove DataSources no longer needed or invisible
-      for (const id of dataSourceMap.current.keys()) {
-        if (!visibleLayerIds.has(id)) {
-          await dbLogger.debug('Layer is not visible, removing Cesium DataSource', { layerId: id });
-          await removeCesiumLayer(id);
-        }
-      }
-      // Remove Tilesets no longer needed or invisible
-      for (const id of tilesetMap.current.keys()) {
-        if (!visibleLayerIds.has(id)) {
-          await dbLogger.debug('Layer is not visible, removing Cesium Tileset', { layerId: id });
-          await removeCesiumLayer(id);
-        }
-      }
-      // Remove ImageryLayers no longer needed or invisible
-      for (const id of imageryLayerMap.current.keys()) {
-        if (!visibleLayerIds.has(id)) {
-          await dbLogger.debug('Layer is not visible, removing Cesium ImageryLayer', { layerId: id });
-          await removeCesiumLayer(id);
-        }
-      }
-
-      // --- Phase 2: Add/Update ---
-      for (const layer of layers) {
-        await dbLogger.debug('Layer visibility state', { id: layer.id, visible: layer.visible, type: layer.metadata?.type });
-        if (layer.visible) {
-          await dbLogger.debug('Processing visible Cesium layer', {
-            id: layer.id,
-            type: layer.metadata?.type,
-            dataSourceExists: dataSourceMap.current.has(layer.id),
-            tilesetExists: tilesetMap.current.has(layer.id),
-            imageryLayerExists: imageryLayerMap.current.has(layer.id)
-          });
-          await addOrUpdateCesiumLayer(layer);
-        }
-      }
-      await dbLogger.debug('Cesium layer management effect FINISHED processing adds/updates', {
-        dataSourceMapKeys: Array.from(dataSourceMap.current.keys()),
-        tilesetMapKeys: Array.from(tilesetMap.current.keys()),
-        imageryLayerMapKeys: Array.from(imageryLayerMap.current.keys()),
-        layers: layers.map(l => ({ id: l.id, visible: l.visible, type: l.metadata?.type }))
-      });
-    }
-    void (async () => {
-      await manageLayers();
-    })().catch(() => {});
-    // Cleanup: minimal for Strict Mode compatibility
+    viewer.camera.changed.addEventListener(handleCameraChange);
     return () => {
-      void (async () => {
-        try {
-          await dbLogger.debug('Cesium layer management effect CLEANUP running (minimal)');
-        } catch {
-          // intentionally ignore logging errors
-        }
-      })().catch(() => {});
-      // No removal of layers or clearing of maps here. Main viewer cleanup handles full destruction.
+      viewer.camera.changed.removeEventListener(handleCameraChange);
+      debouncedSetViewState.cancel();
     };
-  }, [cesiumInstance, layers, getCesiumDefaults, getTerrainProvider, setCesiumInstance, setCesiumStatus, setViewState3D, viewState3D, isInitialLoadComplete, updateLayerStatus]);
+  }, []); // Empty dependency array - uses ref for viewer access
 
-  // Effect: Switch imagery provider when mapType changes
+  // Layer management effect
   useEffect(() => {
-    const switchImagery = async () => {
-      if (!viewerRef.current) return;
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed() || !isInitialLoadComplete) return;
+
+    const removeCesiumLayer = async (layerId: string) => {
+      await dbLogger.debug('Removing Cesium layer', { layerId });
+      
+      // Remove DataSource
+      const ds = dataSourceMap.current.get(layerId);
+      if (ds) {
+        viewer.dataSources.remove(ds, true);
+        dataSourceMap.current.delete(layerId);
+      }
+
+      // Remove Tileset
+      const ts = tilesetMap.current.get(layerId);
+      if (ts) {
+        viewer.scene.primitives.remove(ts);
+        tilesetMap.current.delete(layerId);
+      }
+
+      // Remove ImageryLayer
+      const il = imageryLayerMap.current.get(layerId);
+      if (il) {
+        viewer.imageryLayers.remove(il, true);
+        imageryLayerMap.current.delete(layerId);
+      }
+    };
+
+    const addOrUpdateCesiumLayer = async (layer: CesiumLayer) => {
       try {
-        const viewer = viewerRef.current;
+        if (!layer.visible) {
+          await removeCesiumLayer(layer.id);
+          return;
+        }
+
+        // Handle GeoJSON layers
+        if (layer.metadata?.type === 'vector' && layer.metadata?.properties?.geojson) {
+          if (!dataSourceMap.current.has(layer.id)) {
+            const ds = await Cesium.GeoJsonDataSource.load(layer.metadata.properties.geojson, {
+              clampToGround: true,
+              stroke: Cesium.Color.fromCssColorString('#1E88E5'),
+              strokeWidth: 3,
+              fill: Cesium.Color.fromCssColorString('#1E88E5').withAlpha(0.5),
+            });
+            
+            viewer.dataSources.add(ds);
+            dataSourceMap.current.set(layer.id, ds);
+            updateLayerStatus(layer.id, 'complete');
+          }
+        }
+        
+        // Handle 3D Tiles
+        else if (layer.metadata?.type === '3d-tiles' && layer.metadata?.properties?.url) {
+          if (!tilesetMap.current.has(layer.id)) {
+            const ts = await Cesium.Cesium3DTileset.fromUrl(layer.metadata.properties.url);
+            viewer.scene.primitives.add(ts);
+            tilesetMap.current.set(layer.id, ts);
+            updateLayerStatus(layer.id, 'complete');
+          }
+        }
+        
+        // Handle Imagery layers
+        else if (layer.metadata?.type === 'imagery' && layer.metadata?.properties?.url) {
+          if (!imageryLayerMap.current.has(layer.id)) {
+            const provider = new Cesium.UrlTemplateImageryProvider({ 
+              url: layer.metadata.properties.url 
+            });
+            const il = viewer.imageryLayers.addImageryProvider(provider);
+            imageryLayerMap.current.set(layer.id, il);
+            updateLayerStatus(layer.id, 'complete');
+          }
+        }
+      } catch (error) {
+        await dbLogger.error('Error processing layer', {
+          layerId: layer.id,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        });
+        updateLayerStatus(layer.id, 'error', 'Failed to process layer');
+      }
+    };
+
+    // Process all layers
+    const updateLayers = async () => {
+      // First remove any layers that are no longer present
+      const currentLayerIds = new Set(layers.map(l => l.id));
+      for (const id of dataSourceMap.current.keys()) {
+        if (!currentLayerIds.has(id)) {
+          await removeCesiumLayer(id);
+        }
+      }
+
+      // Then add or update current layers
+      for (const layer of layers) {
+        await addOrUpdateCesiumLayer(layer);
+      }
+    };
+
+    updateLayers().catch(console.error);
+
+    // Cleanup function
+    return () => {
+      // Clean up all layers when the effect is cleaned up
+      for (const id of dataSourceMap.current.keys()) {
+        removeCesiumLayer(id).catch(console.error);
+      }
+    };
+  }, [layers, isInitialLoadComplete]); // Only depend on layers and isInitialLoadComplete
+
+  // Mouse position tracking effect
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    
+    const handleMouseMove = (event: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
+      const cartesian = viewer.scene.pickPosition(event.endPosition);
+      if (cartesian) {
+        const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
+        setMousePosition({
+          longitude: Cesium.Math.toDegrees(cartographic.longitude),
+          latitude: Cesium.Math.toDegrees(cartographic.latitude),
+          height: cartographic.height
+        });
+      }
+    };
+
+    handler.setInputAction(handleMouseMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
+
+    return () => {
+      handler.destroy();
+    };
+  }, []); // Empty dependency array since we use refs
+
+  // Map type switcher effect
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || viewer.isDestroyed()) return;
+
+    const switchImagery = async () => {
+      try {
         viewer.imageryLayers.removeAll();
+        
         if (mapType === 'osm') {
           await dbLogger.info('Switching to OpenStreetMap imagery');
           const osmProvider = new Cesium.OpenStreetMapImageryProvider({
@@ -817,60 +556,30 @@ export function CesiumView() {
           });
           viewer.imageryLayers.addImageryProvider(osmProvider);
         } else {
-          await dbLogger.info('Switching to Satellite (Cesium World Imagery/Ion)');
+          await dbLogger.info('Switching to Satellite imagery');
           const worldImagery = await Cesium.createWorldImageryAsync();
           viewer.imageryLayers.addImageryProvider(worldImagery);
         }
       } catch (error) {
-        await dbLogger.error('Error switching imagery provider', error);
-      }
-    };
-    void (async () => {
-      await switchImagery();
-    })().catch(() => {});
-  }, [mapType]);
-
-  useEffect(() => {
-    if (!cesiumInstance || cesiumInstance.isDestroyed()) return;
-
-    const handleMouseMove = (event: Cesium.ScreenSpaceEventHandler.MotionEvent) => {
-      let scene: Cesium.Scene | undefined = undefined;
-      if ('scene' in cesiumInstance) {
-        scene = cesiumInstance.scene;
-      }
-      
-      if (scene) {
-        const cartesian = scene.pickPosition(event.endPosition);
-        
-        if (cartesian) {
-          const cartographic = Cesium.Cartographic.fromCartesian(cartesian);
-          const longitude = Cesium.Math.toDegrees(cartographic.longitude);
-          const latitude = Cesium.Math.toDegrees(cartographic.latitude);
-          const height = cartographic.height;
-          
-          setMousePosition({ longitude, latitude, height });
-        }
+        await dbLogger.error('Error switching imagery provider', { error });
       }
     };
 
-    let handler: Cesium.ScreenSpaceEventHandler | undefined = undefined;
-    if ('scene' in cesiumInstance && cesiumInstance.scene && 'canvas' in cesiumInstance.scene) {
-      handler = new Cesium.ScreenSpaceEventHandler(cesiumInstance.scene.canvas);
-      handler.setInputAction(handleMouseMove, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
-    }
-
-    return () => {
-      if (handler) handler.destroy();
-    };
-  }, [cesiumInstance]);
-
-  // TODO: Directly manage Cesium layers based on Zustand layer state.
-  //       When layers or their visibility change, update Cesium data sources/primitives/imagery.
-  //       Remove any "sync to 3D" or Mapbox state logic.
+    switchImagery().catch(console.error);
+  }, [mapType]); // Only depend on mapType
 
   return (
     <div className="relative w-full h-full">
-      {/* Collapsible Map Type Switcher */}
+      <div ref={cesiumContainer} className="w-full h-full" />
+      {mousePosition && (
+        <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-xs shadow z-30 select-none pointer-events-none" style={{ minWidth: 180, textAlign: 'center', fontSize: '11px', lineHeight: '1.2' }}>
+          <span>Lon: <b>{mousePosition.longitude.toFixed(6)}°</b></span> &nbsp;
+          <span>Lat: <b>{mousePosition.latitude.toFixed(6)}°</b></span> &nbsp;
+          <span>H: <b>{mousePosition.height.toFixed(2)} m</b></span>
+        </div>
+      )}
+
+      {/* Map Type Switcher */}
       <div
         className="absolute bottom-4 right-4 z-20 flex flex-col items-end"
         onMouseEnter={() => setExpanded(true)}
@@ -936,17 +645,6 @@ export function CesiumView() {
           </button>
         )}
       </div>
-      <div
-        ref={cesiumContainer}
-        className="w-full h-full"
-      />
-      {mousePosition && (
-        <div className="absolute top-2 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-75 text-white px-2 py-1 rounded text-xs shadow z-30 select-none pointer-events-none" style={{ minWidth: 180, textAlign: 'center', fontSize: '11px', lineHeight: '1.2' }}>
-          <span>Lon: <b>{mousePosition.longitude.toFixed(6)}°</b></span> &nbsp;
-          <span>Lat: <b>{mousePosition.latitude.toFixed(6)}°</b></span> &nbsp;
-          <span>H: <b>{mousePosition.height.toFixed(2)} m</b></span>
-        </div>
-      )}
     </div>
   );
 } 

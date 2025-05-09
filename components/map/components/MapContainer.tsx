@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, memo } from 'react';
+import { useEffect, useRef, memo, useCallback } from 'react';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { dbLogger } from '@/utils/logging/dbLogger';
@@ -36,9 +36,9 @@ export const MapContainer = memo(function MapContainer({
   // Call useProjectLayers at the top level
   const { isInitialized } = useProjectLayers(projectId || '');
 
-  // Log render and mount cycles
-  renderCount.current++;
-  (async () => {
+  // Memoize logging function to prevent it from causing re-renders
+  const logRender = useCallback(async () => {
+    renderCount.current++;
     await dbLogger.info('MapContainer: Render', {
       renderCount: renderCount.current,
       mountCount: mountCount.current,
@@ -50,45 +50,46 @@ export const MapContainer = memo(function MapContainer({
       },
       timestamp: new Date().toISOString()
     });
-  })();
+  }, [isInitialized, projectId, initialViewState3D]);
+
+  // Log render in effect to avoid render cycle
+  useEffect(() => {
+    logRender();
+  }, [logRender]);
 
   useEffect(() => {
     mountCount.current++;
     // Copy ref values to local variables for use in cleanup
     const localMountCount = mountCount.current;
     const localRenderCount = renderCount.current;
-    (async () => {
+    
+    const logMount = async () => {
       await dbLogger.info('MapContainer: Mounted', {
         mountCount: localMountCount,
         renderCount: localRenderCount,
         timestamp: new Date().toISOString()
       });
-    })();
+    };
+    logMount();
 
     // In development, wait for the second mount (after Strict Mode)
     // In production, render immediately
     if (process.env.NODE_ENV === 'development') {
       if (localMountCount === 2) {
         shouldRenderChildren.current = true;
-        (async () => {
-          await dbLogger.debug('Development: Second mount - enabling child rendering', {
-            mountCount: localMountCount
-          });
-        })();
+        dbLogger.debug('Development: Second mount - enabling child rendering', {
+          mountCount: localMountCount
+        });
       }
     } else {
       shouldRenderChildren.current = true;
-      (async () => {
-        await dbLogger.debug('Production: First mount - enabling child rendering', {
-          mountCount: localMountCount
-        });
-      })();
+      dbLogger.debug('Production: First mount - enabling child rendering', {
+        mountCount: localMountCount
+      });
     }
 
     if (initialViewState3D) {
-      (async () => {
-        await dbLogger.debug('Setting initial 3D view state', { initialViewState3D });
-      })();
+      dbLogger.debug('Setting initial 3D view state', { initialViewState3D });
       setViewState3D({
         longitude: initialViewState3D.longitude ?? 0,
         latitude: initialViewState3D.latitude ?? 0,
@@ -99,13 +100,14 @@ export const MapContainer = memo(function MapContainer({
     }
 
     return () => {
-      (async () => {
+      const logUnmount = async () => {
         await dbLogger.info('MapContainer: Unmounting', {
           mountCount: localMountCount,
           renderCount: localRenderCount,
           timestamp: new Date().toISOString()
         });
-      })();
+      };
+      logUnmount();
 
       // Only cleanup and disable children on final unmount
       const isFinalUnmount = process.env.NODE_ENV === 'production' || localMountCount > 2;
@@ -113,32 +115,30 @@ export const MapContainer = memo(function MapContainer({
       if (isFinalUnmount) {
         cleanup();
         shouldRenderChildren.current = false;
-        (async () => {
-          await dbLogger.info('Map container final cleanup complete', {
-            mountCount: localMountCount,
-            renderCount: localRenderCount
-          });
-        })();
+        dbLogger.info('Map container final cleanup complete', {
+          mountCount: localMountCount,
+          renderCount: localRenderCount
+        });
       } else {
-        (async () => {
-          await dbLogger.debug('Cleanup skipped - not final unmount', {
-            mountCount: localMountCount
-          });
-        })();
+        dbLogger.debug('Cleanup skipped - not final unmount', {
+          mountCount: localMountCount
+        });
       }
     };
   }, [cleanup, setViewState3D, initialViewState3D]);
 
   // Only render children after the first mount cycle in development AND when layers are initialized
   const shouldRender = (process.env.NODE_ENV === 'production' || shouldRenderChildren.current) && isInitialized;
-  (async () => {
-    await dbLogger.debug('MapContainer: shouldRender value', { 
+  
+  // Move logging to effect
+  useEffect(() => {
+    dbLogger.debug('MapContainer: shouldRender value', { 
       shouldRender,
       isInitialized,
       shouldRenderChildren: shouldRenderChildren.current,
       environment: process.env.NODE_ENV
     });
-  })();
+  }, [shouldRender, isInitialized]);
 
   return (
     <div ref={containerRef} className="w-full h-full flex flex-col">
@@ -189,17 +189,6 @@ export const MapContainer = memo(function MapContainer({
      prevProps.initialViewState3D?.heading === nextProps.initialViewState3D?.heading &&
      prevProps.initialViewState3D?.pitch === nextProps.initialViewState3D?.pitch);
 
-  (async () => {
-    await dbLogger.debug('MapContainer: Props comparison', {
-      propsEqual,
-      prevProps: {
-        hasProjectId: !!prevProps.projectId
-      },
-      nextProps: {
-        hasProjectId: !!nextProps.projectId
-      }
-    });
-  })();
-
+  // Move logging to effect in parent component
   return propsEqual;
 });

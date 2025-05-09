@@ -42,10 +42,17 @@ export function useProjectLayers(projectId: string) {
   const mountCount = useRef(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const currentProjectId = useRef(projectId);
+  const isLoadingRef = useRef(false);
 
   useEffect(() => {
     // Create an async function to handle all async operations
     async function initializeProjectLayers() {
+      // Skip if already loading
+      if (isLoadingRef.current) {
+        await dbLogger.debug('Project layers loading already in progress', { projectId });
+        return;
+      }
+
       // Skip first mount in development due to strict mode
       if (process.env.NODE_ENV === 'development' && mountCount.current === 0) {
         mountCount.current += 1;
@@ -64,12 +71,17 @@ export function useProjectLayers(projectId: string) {
       }
 
       // Skip if already initialized for this project
-      if (isInitialized) {
+      if (isInitialized && currentProjectId.current === projectId) {
         await dbLogger.debug('Project layers already initialized for this project', { projectId });
         return;
       }
 
-      await loadProjectLayers();
+      isLoadingRef.current = true;
+      try {
+        await loadProjectLayers();
+      } finally {
+        isLoadingRef.current = false;
+      }
     }
 
     let isMounted = true;
@@ -94,8 +106,10 @@ export function useProjectLayers(projectId: string) {
 
         if (!importedFiles?.length) {
           await dbLogger.info('No imported files found for project', { projectId });
-          setInitialLoadComplete(true);
-          setIsInitialized(true);
+          if (isMounted) {
+            setInitialLoadComplete(true);
+            setIsInitialized(true);
+          }
           return;
         }
 
@@ -112,6 +126,11 @@ export function useProjectLayers(projectId: string) {
 
         // Process each imported file
         for (const importedFile of importedFiles) {
+          if (!isMounted) {
+            await dbLogger.info('Component unmounted, stopping layer loading', { projectId });
+            return;
+          }
+
           if (!importedFile.import_metadata?.collection_id) {
             await dbLogger.warn('File missing collection_id in import_metadata', {
               projectId,
@@ -209,18 +228,20 @@ export function useProjectLayers(projectId: string) {
             // Add geojson to properties if present
             const propertiesWithGeojson = geojson ? { ...layer.properties, geojson } : layer.properties || {};
 
-            addLayer(
-              layer.id,
-              true, // initially visible
-              layer.id, // use layer id as source id
-              {
-                name: layer.name,
-                type: layer.type,
-                fileId: importedFile.id,
-                properties: propertiesWithGeojson,
-                geometryTypes
-              }
-            );
+            if (isMounted) {
+              addLayer(
+                layer.id,
+                true, // initially visible
+                layer.id, // use layer id as source id
+                {
+                  name: layer.name,
+                  type: layer.type,
+                  fileId: importedFile.id,
+                  properties: propertiesWithGeojson,
+                  geometryTypes
+                }
+              );
+            }
 
             loadedLayers.add(layer.id);
           }
@@ -250,7 +271,7 @@ export function useProjectLayers(projectId: string) {
     return () => {
       isMounted = false;
     };
-  }, [projectId, supabase, addLayer, setInitialLoadComplete, isInitialized]);
+  }, [projectId, supabase, addLayer, setInitialLoadComplete]);
 
   return { isInitialized };
 } 
