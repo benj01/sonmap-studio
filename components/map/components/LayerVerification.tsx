@@ -1,23 +1,17 @@
 import { useEffect, useRef, memo, useCallback } from 'react';
-import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import { useLayers } from '@/store/layers/hooks';
 import { useVerificationQueue } from '@/store/verification/hooks';
 import { useMapInstance } from '@/store/map/hooks';
-import { useComponentMigration } from '@/store/migration/hooks';
-import { useLayerStatus } from '@/store/layers/hooks';
-import type { Layer } from '@/store/layers/types';
-
-const SOURCE = 'LayerVerification';
-const logManager = LogManager.getInstance();
-
-const logger = {
-  debug: (message: string, data?: any) => {
-    logManager.debug(SOURCE, message, data);
-  }
-};
+import { useLayerStore } from '@/store/layers/layerStore';
 
 interface LayerVerificationProps {
   mapInitialized: boolean;
+}
+
+// Type guard for _layerId
+function hasLayerId(obj: unknown, layerId: string): boolean {
+  return typeof obj === 'object' && obj !== null && '_layerId' in obj && (obj as { _layerId: string })._layerId === layerId;
 }
 
 export const LayerVerification = memo(function LayerVerification({ mapInitialized }: LayerVerificationProps) {
@@ -28,26 +22,45 @@ export const LayerVerification = memo(function LayerVerification({ mapInitialize
 
   // New store hooks
   const { layers } = useLayers();
-  const { addToPending, removeFromPending, addToInProgress, removeFromInProgress } = useVerificationQueue();
-  const { mapboxInstance } = useMapInstance();
-  const { updateComponentProgress } = useComponentMigration('LayerVerification');
+  const { addToPending, removeFromPending } = useVerificationQueue();
+  const { cesiumInstance } = useMapInstance();
 
   const verifyLayer = useCallback((layerId: string) => {
-    if (!mapboxInstance) return false;
+    if (!cesiumInstance) return false;
 
     try {
       const layer = layers.find(l => l.id === layerId);
       if (!layer) return false;
 
-      const hasLayer = !!mapboxInstance.getLayer(layerId);
-      const hasSource = !layer.sourceId || !!mapboxInstance.getSource(layer.sourceId);
+      // Cesium-specific: check DataSource, Primitive, or ImageryLayer with matching layerId
+      // Only Viewer has these properties
+      if (
+        'dataSources' in cesiumInstance &&
+        'scene' in cesiumInstance &&
+        'imageryLayers' in cesiumInstance
+      ) {
+        const hasLayer =
+          // DataSource
+          Array.from({ length: cesiumInstance.dataSources.length })
+            .some((_, i) => cesiumInstance.dataSources.get(i)?.name === layerId) ||
+          // Primitive
+          Array.from({ length: cesiumInstance.scene.primitives.length })
+            .some((_, i) => hasLayerId(cesiumInstance.scene.primitives.get(i), layerId)) ||
+          // ImageryLayer
+          Array.from({ length: cesiumInstance.imageryLayers.length })
+            .some((_, i) => hasLayerId(cesiumInstance.imageryLayers.get(i), layerId));
 
-      return hasLayer && hasSource;
+        const hasSource = hasLayer; // For Cesium, if the layer is present, the source is present.
+
+        return hasLayer && hasSource;
+      } else {
+        return false;
+      }
     } catch (error) {
-      logger.debug('Error verifying layer', { error, layerId });
+      void dbLogger.debug('Error verifying layer', { error, layerId }).catch(() => {});
       return false;
     }
-  }, [mapboxInstance, layers]);
+  }, [cesiumInstance, layers]);
 
   const verifyLayers = useCallback(() => {
     // Prevent too frequent verifications
@@ -72,12 +85,11 @@ export const LayerVerification = memo(function LayerVerification({ mapInitialize
         // Verify the layer
         const isValid = verifyLayer(layerId);
         
-        // Update layer status
-        const { updateStatus } = useLayerStatus(layerId);
+        // Update layer status using store action (no hook violation)
         if (isValid) {
-          updateStatus('complete');
+          useLayerStore.getState().updateLayerStatus(layerId, 'complete');
         } else {
-          updateStatus('error', 'Layer verification failed');
+          useLayerStore.getState().updateLayerStatus(layerId, 'error', 'Layer verification failed');
         }
         
         // Remove from pending queue
@@ -112,13 +124,6 @@ export const LayerVerification = memo(function LayerVerification({ mapInitialize
       verificationInProgress.current = false;
     };
   }, [mapInitialized, verifyLayers]);
-
-  // Update migration progress
-  useEffect(() => {
-    if (mapInitialized) {
-      updateComponentProgress(100);
-    }
-  }, [mapInitialized, updateComponentProgress]);
   
   return null;
 }); 

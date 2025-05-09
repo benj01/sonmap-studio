@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useMap } from 'react-map-gl';
-import { logger } from '../utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 import type { MapRef } from 'react-map-gl';
 import type { Map } from 'mapbox-gl';
 
@@ -21,8 +21,9 @@ const MapLayer: React.FC<MapLayerProps> = ({ layerId, layer }) => {
   useEffect(() => {
     if (!map || !layerId || !layer) return;
 
-    const logStyleUpdate = (property: string, value: any) => {
-      logger.debug(`Setting paint property for layer ${layerId}`, JSON.stringify({
+    const logStyleUpdate = async (property: string, value: any) => {
+      await dbLogger.debug('MapLayer.setPaintProperty', {
+        layerId,
         property,
         value,
         currentStyle: layer.style,
@@ -30,11 +31,12 @@ const MapLayer: React.FC<MapLayerProps> = ({ layerId, layer }) => {
         mapIdle: map.idle,
         layerExists: map.getLayer(layerId) !== undefined,
         sourceExists: map.getSource(layerId) !== undefined
-      }));
+      });
     };
 
-    const logLayoutUpdate = (property: string, value: any) => {
-      logger.debug(`Setting layout property for layer ${layerId}`, JSON.stringify({
+    const logLayoutUpdate = async (property: string, value: any) => {
+      await dbLogger.debug('MapLayer.setLayoutProperty', {
+        layerId,
         property,
         value,
         currentStyle: layer.style,
@@ -42,14 +44,14 @@ const MapLayer: React.FC<MapLayerProps> = ({ layerId, layer }) => {
         mapIdle: map.idle,
         layerExists: map.getLayer(layerId) !== undefined,
         sourceExists: map.getSource(layerId) !== undefined
-      }));
+      });
     };
 
     // Apply paint properties
     if (layer.style?.paint) {
       Object.entries(layer.style.paint).forEach(([key, value]) => {
         if (value !== undefined) {
-          logStyleUpdate(key, value);
+          (async () => { await logStyleUpdate(key, value); })();
           (map as any).setPaintProperty(layerId, key, value);
         }
       });
@@ -59,7 +61,7 @@ const MapLayer: React.FC<MapLayerProps> = ({ layerId, layer }) => {
     if (layer.style?.layout) {
       Object.entries(layer.style.layout).forEach(([key, value]) => {
         if (value !== undefined) {
-          logLayoutUpdate(key, value);
+          (async () => { await logLayoutUpdate(key, value); })();
           (map as any).setLayoutProperty(layerId, key, value);
         }
       });

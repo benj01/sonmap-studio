@@ -13,7 +13,6 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { dbLogger } from '@/utils/logging/dbLogger';
-import type { Layer } from '@/store/layers/types';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { HeightConfigurationDialog } from '../dialogs/HeightConfigurationDialog';
 import type { HeightSource } from '@/components/map/dialogs/height-configuration';
@@ -117,11 +116,12 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
     // Initialize color from layer style if available
     if (layer?.metadata?.style?.paint) {
       // Try to get color based on detected geometry types
-      const currentColor = (geometryTypes.hasPolygons && layer.metadata.style.paint['fill-color']) ||
-                          (geometryTypes.hasLines && layer.metadata.style.paint['line-color']) ||
-                          (geometryTypes.hasPoints && layer.metadata.style.paint['circle-color']) ||
-                          "#088";
-      
+      const paint = layer.metadata.style.paint;
+      const currentColor =
+        (geometryTypes.hasPolygons && typeof paint['fill-color'] === 'string' && paint['fill-color']) ||
+        (geometryTypes.hasLines && typeof paint['line-color'] === 'string' && paint['line-color']) ||
+        (geometryTypes.hasPoints && typeof paint['circle-color'] === 'string' && paint['circle-color']) ||
+        "#088";
       setColor(currentColor);
     }
   }, [layer, baseLayerId, geometryTypes]);
@@ -255,7 +255,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
         if (coords && coords.length >= 3 && typeof coords[2] === 'number' && !isNaN(coords[2])) {
           zCount++;
         }
-      } catch (error) {
+      } catch {
         // Skip features with invalid geometry
       }
     }
@@ -588,7 +588,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
   /**
    * Apply the height configuration to all selected layers
    */
-  const handleApplyToSelectedLayers = () => {
+  const handleApplyToSelectedLayers = async () => {
     // Get the height configuration from the current layer
     if (!layer?.metadata?.height || !layer.metadata.height.sourceType) {
       void dbLogger.error('Cannot apply to other layers - current layer has no height configuration').catch(() => {});
@@ -605,7 +605,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
     };
     
     // Apply to selected layers
-    applyHeightConfigToSelectedLayers(heightSource);
+    await applyHeightConfigToSelectedLayers(heightSource);
     
     // Close the alert
     setShowHeightUpdateAlert(false);
@@ -619,7 +619,15 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
             <DialogTitle>Layer Settings - {layer?.metadata?.name || baseLayerId}</DialogTitle>
           </DialogHeader>
           
-          <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+          <Tabs
+            value={activeTab}
+            onValueChange={(val) => {
+              if (typeof val === 'string') {
+                setActiveTab(val);
+              }
+            }}
+            className="w-full"
+          >
             <TabsList className="grid grid-cols-2 mb-4">
               <TabsTrigger value="appearance">Appearance</TabsTrigger>
               <TabsTrigger value="3d">3D Settings</TabsTrigger>
