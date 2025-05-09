@@ -18,10 +18,20 @@ declare module 'shapefile' {
 
   export interface DBFReader {
     header: Promise<DBFHeader>;
-    read(): Promise<{ done: boolean; value: Record<string, any> }>;
+    read(): Promise<{ done: boolean; value: GeoJsonProperties }>;
     close(): void;
   }
 
+  export interface ShapefileSource {
+    buffer?: ArrayBuffer | SharedArrayBuffer;
+    stream?: ReadableStream;
+    url?: string;
+  }
+
   export function open(options?: { encoding?: string }): Promise<ShapefileReader>;
-  export function read(source: any, dbf?: any, options?: { encoding?: string }): Promise<ShapefileReader>;
+  export function read(
+    source: ShapefileSource,
+    dbf?: ShapefileSource,
+    options?: { encoding?: string }
+  ): Promise<ShapefileReader>;
 } 

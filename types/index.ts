@@ -33,14 +33,31 @@ export type ActionErrorResponse = {
 
 export type ActionResponse<T = unknown> = ActionSuccessResponse<T> | ActionErrorResponse
 
+// User metadata types
+export interface UserMetadata {
+  avatar_url?: string;
+  full_name?: string;
+  preferred_theme?: Theme;
+  default_project_id?: string;
+  last_login?: string;
+  [key: string]: string | undefined;
+}
+
+export interface AppMetadata {
+  provider?: string;
+  providers?: string[];
+  roles?: string[];
+  [key: string]: string | string[] | undefined;
+}
+
 // User types
 export type User = {
    id: string
    email?: string
    created_at: string
    updated_at: string
-   user_metadata?: Record<string, any>
-   app_metadata?: Record<string, any>
+   user_metadata?: UserMetadata
+   app_metadata?: AppMetadata
 }
 
 export interface SerializableUser extends Omit<User, 'user_metadata' | 'app_metadata'> {
@@ -67,5 +84,5 @@ export interface SignInCredentials {
 }
 
 export interface SignUpCredentials extends SignInCredentials {
-  metadata?: Record<string, any>
+  metadata?: Partial<UserMetadata>
 }

@@ -1,5 +1,5 @@
 import { Feature, FeatureCollection } from 'geojson';
-import { COORDINATE_SYSTEMS, CoordinateSystem } from '../components/geo-loader/types/coordinates';
+import { COORDINATE_SYSTEMS, CoordinateSystem } from '@/core/coordinates/coordinates';
 
 export interface Point {
   x: number;
@@ -18,7 +18,7 @@ export interface GeoFeature extends Feature {
   properties: {
     layer?: string;
     type?: string;
-    [key: string]: any;
+    [key: string]: string | number | boolean | null | undefined;
   };
 }
 
@@ -54,14 +54,14 @@ export interface AnalyzeResult {
   coordinateSystem?: CoordinateSystem;
   bounds: Bounds;
   preview: GeoFeatureCollection;
-  dxfData?: any;
+  dxfData?: unknown;
   analysis?: {
     warnings: Array<{ type: string; message: string }>;
     errors: Array<{ type: string; message: string; isCritical: boolean }>;
     stats: {
       entityCount: number;
       layerCount: number;
-      [key: string]: any;
+      [key: string]: number | string | boolean;
     };
   };
 }

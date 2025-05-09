@@ -1,11 +1,21 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@/utils/supabase/client';
+import { dbLogger } from '@/utils/logging/dbLogger';
+
+const LOG_SOURCE = 'useUserSettings';
 
 export interface UserSettings {
   maxFileSize?: number; // Maximum file size in bytes
   defaultProjectId?: string;
   theme?: 'light' | 'dark' | 'system';
   // Add other user settings as needed
+}
+
+interface DbUserSettings {
+  user_id: string;
+  max_file_size?: number;
+  default_project_id?: string | null;
+  theme?: 'light' | 'dark' | 'system' | null;
 }
 
 export function useUserSettings() {
@@ -39,17 +49,21 @@ export function useUserSettings() {
         }
 
         if (data) {
+          const dbData = data as DbUserSettings;
           setSettings({
-            maxFileSize: data.max_file_size || getDefaultSettings().maxFileSize,
-            defaultProjectId: data.default_project_id,
-            theme: data.theme || getDefaultSettings().theme,
+            maxFileSize: dbData.max_file_size || getDefaultSettings().maxFileSize,
+            defaultProjectId: dbData.default_project_id || undefined,
+            theme: dbData.theme || getDefaultSettings().theme,
           });
         } else {
           // No settings found, use defaults
           setSettings(getDefaultSettings());
         }
       } catch (err) {
-        console.error('Error loading user settings:', err);
+        await dbLogger.error('useUserSettings.loadUserSettings.error', {
+          source: LOG_SOURCE,
+          error: err instanceof Error ? err : new Error('Failed to load user settings')
+        });
         setError(err instanceof Error ? err : new Error('Failed to load user settings'));
         // Still set default settings on error
         setSettings(getDefaultSettings());
@@ -58,7 +72,13 @@ export function useUserSettings() {
       }
     }
 
-    loadUserSettings();
+    // Properly handle the promise
+    loadUserSettings().catch(async (err) => {
+      await dbLogger.error('useUserSettings.loadUserSettings.uncaughtError', {
+        source: LOG_SOURCE,
+        error: err instanceof Error ? err : new Error('Failed to load user settings')
+      });
+    });
   }, []);
 
   // Function to update user settings
@@ -72,7 +92,7 @@ export function useUserSettings() {
       if (!user) throw new Error('No authenticated user');
 
       // Prepare data for database
-      const dbSettings = {
+      const dbSettings: DbUserSettings = {
         user_id: user.id,
         max_file_size: newSettings.maxFileSize !== undefined 
           ? newSettings.maxFileSize 
@@ -97,7 +117,10 @@ export function useUserSettings() {
       
       return true;
     } catch (err) {
-      console.error('Error updating user settings:', err);
+      await dbLogger.error('useUserSettings.updateSettings.error', {
+        source: LOG_SOURCE,
+        error: err instanceof Error ? err : new Error('Failed to update user settings')
+      });
       setError(err instanceof Error ? err : new Error('Failed to update user settings'));
       return false;
     }

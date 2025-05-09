@@ -1,4 +1,10 @@
 declare module 'array-source' {
-  function array(data: ArrayBuffer | Uint8Array): any;
+  interface ArraySource {
+    pipe: <T>(destination: T) => T;
+    destroy: () => void;
+    readable: boolean;
+  }
+  
+  function array(data: ArrayBuffer | Uint8Array): ArraySource;
   export default array;
 } 

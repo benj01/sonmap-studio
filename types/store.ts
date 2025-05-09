@@ -1,6 +1,6 @@
 // /types/store.ts
 
-import type { User } from '@supabase/supabase-js'
+import type { UserMetadata, AppMetadata } from './index';
 
 export type CacheItem<T> = {
  data: T
@@ -27,6 +27,6 @@ export interface SerializableUser {
  phone?: string | null
  created_at: string
  updated_at: string
- user_metadata: Record<string, any>
- app_metadata: Record<string, any>
+ user_metadata: UserMetadata
+ app_metadata: AppMetadata
 }

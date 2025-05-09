@@ -25,10 +25,17 @@ export interface AuthFormData {
   confirmPassword?: string
 }
 
+// User metadata types
+export interface UserMetadata {
+  avatar_url?: string
+  full_name?: string
+  preferred_theme?: 'light' | 'dark' | 'system'
+  default_project_id?: string
+  last_login?: string
+  [key: string]: string | undefined
+}
+
 // Custom user types
 export interface CustomUser extends User {
-  user_metadata: {
-    avatar_url?: string
-    full_name?: string
-  } & Record<string, any>
+  user_metadata: UserMetadata
 }

@@ -1,11 +1,8 @@
 import { create } from 'zustand';
-import { dbLogger } from '@/utils/logging/dbLogger';
 import { useCallback, useMemo } from 'react';
 import type { Layer, LayerMetadata } from './types';
 import { isEqual } from 'lodash';
 import type { FeatureCollection } from 'geojson';
-
-const SOURCE = 'layerStore';
 
 interface NormalizedLayerState {
   byId: Record<string, Layer>;

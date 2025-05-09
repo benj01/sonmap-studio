@@ -2,8 +2,7 @@
  * Type definitions for the geodata import pipeline
  */
 
-import { GeoJSON } from 'geojson';
-import type { Geometry } from 'geojson';
+import type { Geometry, GeoJsonProperties } from 'geojson';
 
 /**
  * Represents a feature in the full dataset with complete geometry and properties
@@ -11,7 +10,7 @@ import type { Geometry } from 'geojson';
 export interface GeoFeature {
   id: number;
   geometry: Geometry;
-  properties?: Record<string, any>;
+  properties?: GeoJsonProperties;
   validation?: ValidationResult;
   originalIndex?: number;
 }
