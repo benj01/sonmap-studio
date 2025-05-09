@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/utils/supabase/client';
 import { AuthChangeEvent, Session } from '@supabase/supabase-js';
@@ -9,7 +9,7 @@ export function useAuth() {
   const router = useRouter();
   const supabase = createClient();
 
-  const checkInitialSession = async () => {
+  const checkInitialSession = useCallback(async () => {
     try {
       await dbLogger.debug('Checking initial session...', { source: 'useAuth.checkInitialSession' });
       const { data: { session }, error } = await supabase.auth.getSession();
@@ -22,9 +22,9 @@ export function useAuth() {
     } catch (err) {
       await dbLogger.error('Exception in checkInitialSession', { source: 'useAuth.checkInitialSession', error: err });
     }
-  };
+  }, [supabase]);
 
-  const handleAuthStateChange = async (event: AuthChangeEvent, session: Session | null) => {
+  const handleAuthStateChange = useCallback(async (event: AuthChangeEvent, session: Session | null) => {
     const hasUser = !!session?.user;
     const currentPath = typeof window !== 'undefined' ? window.location.pathname : '';
     await dbLogger.debug('Auth state change', {
@@ -37,7 +37,7 @@ export function useAuth() {
     if (event === 'SIGNED_OUT') {
       router.push('/sign-in');
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     // Wrap async calls in IIFE for useEffect

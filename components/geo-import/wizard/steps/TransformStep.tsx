@@ -1,22 +1,19 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 
 interface TransformStepProps {
   onNext: () => void;
   onBack: () => void;
-  onClose?: () => void;
-  onRefreshFiles?: () => void;
 }
 
-export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: TransformStepProps) {
-  const { importDataset, setTargetSrid, useSwissTopo, setUseSwissTopo } = useWizard();
+export function TransformStep({ onNext, onBack }: TransformStepProps) {
+  const { importDataset, setTargetSrid } = useWizard();
   const sourceSrid = importDataset?.metadata?.srid || 2056;
 
   useEffect(() => {
     setTargetSrid(4326);
-    setUseSwissTopo(!!useSwissTopo);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [useSwissTopo]);
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -28,23 +25,6 @@ export function TransformStep({ onNext, onBack, onClose, onRefreshFiles }: Trans
           <span className="ml-2 border rounded px-2 py-1 w-24 bg-gray-100 text-gray-500 cursor-not-allowed">4326</span>
         </div>
       </div>
-      {sourceSrid === 2056 && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="swisstopo"
-              checked={useSwissTopo}
-              onChange={e => setUseSwissTopo(e.target.checked)}
-            />
-            <label htmlFor="swisstopo" className="text-sm">Store LV95 coordinates for later client-side transformation</label>
-          </div>
-          <div className="text-xs text-gray-600 pl-6">
-            When checked, LV95 coordinates will be stored in the database and transformed to WGS84 when loaded in the application.
-            This allows for precise Swiss height conversions using the SwissTopo API.
-          </div>
-        </div>
-      )}
       <div className="flex gap-2 mt-4">
         <button
           className="px-4 py-2 bg-gray-300 text-gray-800 rounded"

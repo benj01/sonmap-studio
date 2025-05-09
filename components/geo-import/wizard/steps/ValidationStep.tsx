@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useWizard } from '../WizardContext';
+import { GeoFeature } from '@/types/geo';
 // import booleanValid from '@turf/boolean-valid'; // Uncomment if turf is available
 
 function arraysEqual(a: number[], b: number[]) {
@@ -11,15 +12,13 @@ function arraysEqual(a: number[], b: number[]) {
 interface ValidationStepProps {
   onNext: () => void;
   onBack: () => void;
-  onClose?: () => void;
-  onRefreshFiles?: () => void;
 }
 
-export function ValidationStep({ onNext, onBack, onClose, onRefreshFiles }: ValidationStepProps) {
+export function ValidationStep({ onNext, onBack }: ValidationStepProps) {
   const { dataset, selectedFeatureIds } = useWizard();
   // Memoize features to avoid unnecessary re-renders
   const features = useMemo(
-    () => (dataset?.features || []).filter((f: any) => selectedFeatureIds.includes(f.id)),
+    () => (dataset?.features || []).filter((f: GeoFeature) => typeof f.id === 'number' && selectedFeatureIds.includes(f.id)),
     [dataset?.features, selectedFeatureIds]
   );
 
@@ -29,12 +28,18 @@ export function ValidationStep({ onNext, onBack, onClose, onRefreshFiles }: Vali
 
   useEffect(() => {
     // Real validation logic (replace with turf or PostGIS if available)
-    const invalid = features.filter((f: any) => {
-      if (!f.geometry || !f.geometry.type || !f.geometry.coordinates) return true;
-      if (Array.isArray(f.geometry.coordinates) && f.geometry.coordinates.length === 0) return true;
+    const invalid = features.filter((f: GeoFeature) => {
+      if (!f.geometry || !f.geometry.type) return true;
+      if (f.geometry.type === 'GeometryCollection') return true;
+      // Only geometries with coordinates property
+      if (!('coordinates' in f.geometry)) return true;
+      const coords = (f.geometry as { coordinates?: unknown }).coordinates;
+      if (Array.isArray(coords) && coords.length === 0) return true;
       // Optionally: use turf.booleanValid(f.geometry)
       return false;
-    }).map((f: any) => f.id);
+    })
+    .map((f: GeoFeature) => typeof f.id === 'number' ? f.id : undefined)
+    .filter((id): id is number => typeof id === 'number');
     setInvalidIds(prev => (arraysEqual(prev, invalid) ? prev : invalid));
     setRepaired(false);
   }, [features]);
