@@ -1,7 +1,7 @@
 import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
-import { FileTypeUtil } from './file-types';
+import { isMainGeoFile, getExtension, getConfigForFile, getMimeType } from './file-types';
 import { dbLogger } from '../../../utils/logging/dbLogger';
-import { FileValidator } from './validation';
+import { isMatchingCompanion, validateCompanions } from './validation';
 
 const LOG_SOURCE = 'FileProcessor';
 
@@ -29,10 +29,10 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
   const remainingFiles = new Set(files);
   // First pass: identify main files
   for (const file of files) {
-    if (FileTypeUtil.isMainGeoFile(file.name)) {
+    if (isMainGeoFile(file.name)) {
       await dbLogger.debug('Found main geo file', { 
         fileName: file.name,
-        type: FileTypeUtil.getExtension(file.name)
+        type: getExtension(file.name)
       }, { LOG_SOURCE });
       const group: FileGroup = {
         mainFile: file,
@@ -46,11 +46,11 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
   }
   // Second pass: match companions with their main files
   for (const group of groups) {
-    const config = FileTypeUtil.getConfigForFile(group.mainFile.name);
+    const config = getConfigForFile(group.mainFile.name);
     const baseFileName = group.mainFile.name.replace(/\.[^.]+$/, '');
     await dbLogger.debug('Looking for companions', {
       mainFile: group.mainFile.name,
-      fileType: FileTypeUtil.getExtension(group.mainFile.name),
+      fileType: getExtension(group.mainFile.name),
       config: config?.companionFiles?.map(c => c.extension),
       baseFileName,
       remainingFiles: Array.from(remainingFiles).map(f => f.name)
@@ -60,7 +60,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
       for (const companionConfig of config.companionFiles) {
         // Find a matching companion file using case-insensitive comparison
         const matchingCompanion = Array.from(remainingFiles).find(file => 
-          FileValidator.isMatchingCompanion(group.mainFile.name, file, companionConfig.extension)
+          isMatchingCompanion(group.mainFile.name, file, companionConfig.extension)
         );
         if (matchingCompanion) {
           await dbLogger.debug('Found matching companion', {
@@ -85,7 +85,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
         const requiredExtensions = config.companionFiles
           .filter(c => c.required)
           .map(c => c.extension);
-        FileValidator.validateCompanions(group.mainFile.name, group.companions, requiredExtensions);
+        validateCompanions(group.mainFile.name, group.companions, requiredExtensions);
       } catch (error) {
         if (error instanceof Error) {
           await dbLogger.warn('Missing required companion files', {
@@ -102,7 +102,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
     groupCount: groups.length,
     groups: groups.map(g => ({
       mainFile: g.mainFile.name,
-      fileType: FileTypeUtil.getExtension(g.mainFile.name),
+      fileType: getExtension(g.mainFile.name),
       companionCount: g.companions.length,
       companions: g.companions.map(c => c.name)
     })),
@@ -144,7 +144,7 @@ export async function processFiles(mainFile: File, companions: File[]): Promise<
 export async function processFile(file: File): Promise<ProcessedFile> {
   try {
     await dbLogger.info('Processing individual file', { fileName: file.name }, { LOG_SOURCE });
-    const config = FileTypeUtil.getConfigForFile(file.name);
+    const config = getConfigForFile(file.name);
     let isValid = true;
     let error: string | undefined;
     if (config?.validateContent) {
@@ -171,7 +171,7 @@ export async function processFile(file: File): Promise<ProcessedFile> {
     }
     return {
       file,
-      type: FileTypeUtil.getMimeType(file.name),
+      type: getMimeType(file.name),
       size: file.size,
       isValid,
       error
@@ -180,7 +180,7 @@ export async function processFile(file: File): Promise<ProcessedFile> {
     await dbLogger.error('Error processing file', { fileName: file.name, error: err instanceof Error ? err.message : err }, { LOG_SOURCE });
     return {
       file,
-      type: FileTypeUtil.getMimeType(file.name),
+      type: getMimeType(file.name),
       size: file.size,
       isValid: false,
       error: err instanceof Error ? err.message : String(err)

@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileTypeUtil } from '../../utils/file-types';
+import { isShapefile } from '../../utils/file-types';
 
 interface FileIconProps {
   fileName: string;
@@ -8,7 +8,7 @@ interface FileIconProps {
 
 export function FileIcon({ fileName, isMain }: FileIconProps) {
   const getIconPath = () => {
-    if (FileTypeUtil.isShapefile(fileName)) {
+    if (isShapefile(fileName)) {
       return (
         <path
           strokeLinecap="round"

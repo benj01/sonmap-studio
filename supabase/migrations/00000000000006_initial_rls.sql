@@ -259,6 +259,27 @@ CREATE POLICY "Users can manage their own import logs"
 
 -- Grant basic permissions to authenticated users
 GRANT USAGE ON SCHEMA public TO authenticated;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO authenticated;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO authenticated;
-GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO authenticated; 
+
+-- Grant permissions on application tables only
+GRANT ALL ON TABLE public.projects TO authenticated;
+GRANT ALL ON TABLE public.profiles TO authenticated;
+GRANT ALL ON TABLE public.project_files TO authenticated;
+GRANT ALL ON TABLE public.feature_collections TO authenticated;
+GRANT ALL ON TABLE public.layers TO authenticated;
+GRANT ALL ON TABLE public.geo_features TO authenticated;
+GRANT ALL ON TABLE public.project_members TO authenticated;
+GRANT ALL ON TABLE public.realtime_import_logs TO authenticated;
+GRANT ALL ON TABLE public.user_settings TO authenticated;
+GRANT ALL ON TABLE public.vertical_datums TO authenticated;
+GRANT ALL ON TABLE public.feature_terrain_cache TO authenticated;
+GRANT ALL ON TABLE public.import_logs TO authenticated;
+
+-- Grant sequence permissions
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+
+-- Grant function permissions (excluding PostGIS functions)
+GRANT EXECUTE ON FUNCTION public.trigger_set_timestamp TO authenticated;
+GRANT EXECUTE ON FUNCTION public.handle_new_user TO authenticated;
+GRANT EXECUTE ON FUNCTION public.set_uploaded_by TO authenticated;
+GRANT EXECUTE ON FUNCTION public.delete_shapefile_companions TO authenticated;
+GRANT EXECUTE ON FUNCTION public.update_project_storage TO authenticated; 

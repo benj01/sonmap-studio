@@ -1,13 +1,13 @@
-import { dbLogger } from '@/utils/logging/dbLogger';
 import { ILogger } from './ILogger';
 import { LogContext } from './types';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 // DefaultLogger is a thin wrapper for dbLogger for backward compatibility.
 // Direct LogManager usage is prohibited in application code. Use dbLogger or DefaultLogger only.
 
 /**
- * Default implementation of ILogger that uses the LogManager singleton internally
- * This maintains backward compatibility while providing a clean interface
+ * Default implementation of ILogger that wraps dbLogger
+ * This maintains backward compatibility while enforcing the use of dbLogger
  */
 export class DefaultLogger implements ILogger {
   /**
@@ -17,7 +17,7 @@ export class DefaultLogger implements ILogger {
    * @param data - Optional additional data to log
    */
   async debug(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    await dbLogger.debug(`[${source}] ${message}`, data, context);
+    await dbLogger.debug(message, data, { ...context, source });
   }
 
   /**
@@ -27,7 +27,7 @@ export class DefaultLogger implements ILogger {
    * @param data - Optional additional data to log
    */
   async info(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    await dbLogger.info(`[${source}] ${message}`, data, context);
+    await dbLogger.info(message, data, { ...context, source });
   }
 
   /**
@@ -37,7 +37,7 @@ export class DefaultLogger implements ILogger {
    * @param data - Optional additional data to log
    */
   async warn(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    await dbLogger.warn(`[${source}] ${message}`, data, context);
+    await dbLogger.warn(message, data, { ...context, source });
   }
 
   /**
@@ -47,6 +47,6 @@ export class DefaultLogger implements ILogger {
    * @param data - Optional additional data to log
    */
   async error(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    await dbLogger.error(`[${source}] ${message}`, data, context);
+    await dbLogger.error(message, data, { ...context, source });
   }
 } 

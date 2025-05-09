@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileTypeUtil } from '../../utils/file-types';
+import { getMimeType } from '../../utils/file-types';
 import { ProcessedFile } from '../../types';
 
 interface FileMetadataProps {
@@ -21,7 +21,7 @@ export function FileMetadata({ file, isCompanion }: FileMetadataProps) {
       {!isCompanion && (
         <>
           <span className="truncate">
-            {FileTypeUtil.getMimeType(file.file.name)}
+            {getMimeType(file.file.name)}
           </span>
           <span className="mx-2">•</span>
         </>

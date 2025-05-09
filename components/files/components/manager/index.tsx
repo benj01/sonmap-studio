@@ -4,7 +4,7 @@ import { useFileActions } from '../../hooks/useFileActions';
 import { ProjectFile } from '../../types';
 import { Button } from '../../../ui/button';
 import { ImportWizard } from '../../../geo-import/wizard/ImportWizard';
-import { FileTypeUtil } from '../../utils/file-types';
+import { getConfigForFile } from '../../utils/file-types';
 import { Upload } from 'lucide-react';
 import { cn } from '../../../../lib/utils';
 import { ImportedFilesList, ImportedFilesListRef } from '../imported-files-list';
@@ -95,7 +95,7 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
   const handleFileImport = async (fileId: string): Promise<void> => {
     const file = files.find(f => f.id === fileId);
     if (file) {
-      const fileType = FileTypeUtil.getConfigForFile(file.name);
+      const fileType = getConfigForFile(file.name);
       setImportWizardFile({
         id: file.id,
         name: file.name,

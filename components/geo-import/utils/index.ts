@@ -1,4 +1,4 @@
-import { FileTypeUtil } from '@/components/files/utils/file-types';
+import { getConfigForFile } from '@/components/files/utils/file-types';
 import { ImportGeoFeature, LoaderGeoFeature } from '../types';
 
 /**
@@ -23,7 +23,7 @@ export function getFileTypeDescription(fileName: string): string {
   const extension = fileName.split('.').pop()?.toLowerCase();
   if (!extension) return 'Unknown';
   
-  const fileType = FileTypeUtil.getConfigForFile(fileName);
+  const fileType = getConfigForFile(fileName);
   return fileType?.description || 'Unknown';
 }
 

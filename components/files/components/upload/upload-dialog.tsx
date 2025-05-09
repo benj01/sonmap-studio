@@ -1,6 +1,6 @@
 import React from 'react';
 import { FileGroup } from '../../types';
-import { FileTypeUtil } from '../../utils/file-types';
+import { getMimeType } from '../../utils/file-types';
 
 interface UploadDialogProps {
   open: boolean;
@@ -63,7 +63,7 @@ export function UploadDialog({
                     {fileGroup.mainFile.name}
                   </div>
                   <div className="text-sm text-gray-500">
-                    {FileTypeUtil.getMimeType(fileGroup.mainFile.name)} • {formatFileSize(fileGroup.mainFile.size)}
+                    {getMimeType(fileGroup.mainFile.name)} • {formatFileSize(fileGroup.mainFile.size)}
                   </div>
                 </div>
               </div>
@@ -96,7 +96,7 @@ export function UploadDialog({
                           {file.name}
                         </div>
                         <div className="text-sm text-gray-500">
-                          {FileTypeUtil.getMimeType(file.name)} • {formatFileSize(file.size)}
+                          {getMimeType(file.name)} • {formatFileSize(file.size)}
                         </div>
                       </div>
                     </div>
