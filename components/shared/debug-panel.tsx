@@ -146,32 +146,35 @@ export function DebugPanel({ children }: DebugPanelProps) {
           {children}
         </div>
       )}
-      <div className="p-4 space-y-2">
+      
+      <div className="p-2">
         <h4 className="font-medium">Logs ({logs.length})</h4>
-        {logs.length === 0 ? (
-          <div className="text-sm text-muted-foreground italic">No logs yet</div>
-        ) : (
-          <div className="space-y-2">
-            {logs.map((log, i) => (
-              <div 
-                key={`${log.timestamp}-${i}`}
-                className={`text-sm font-mono whitespace-pre-wrap ${
-                  log.level === 'error' ? 'text-red-500' :
-                  log.level === 'warn' ? 'text-yellow-500' :
-                  log.level === 'info' ? 'text-blue-500' :
-                  'text-muted-foreground'
-                }`}
-              >
-                [{log.timestamp}] {log.level.toUpperCase()}: {log.message}
-                {log.data && (
-                  <pre className="mt-1 p-2 bg-muted rounded text-xs overflow-auto">
-                    {JSON.stringify(log.data, null, 2)}
-                  </pre>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
+        <div className="mt-2 max-h-[500px] overflow-y-auto">
+          {logs.length === 0 ? (
+            <div className="text-sm text-muted-foreground italic">No logs yet</div>
+          ) : (
+            <div className="space-y-2">
+              {logs.map((log, i) => (
+                <div 
+                  key={`${log.timestamp}-${i}`}
+                  className={`text-sm font-mono whitespace-pre-wrap ${
+                    log.level === 'error' ? 'text-red-500' :
+                    log.level === 'warn' ? 'text-yellow-500' :
+                    log.level === 'info' ? 'text-blue-500' :
+                    'text-muted-foreground'
+                  }`}
+                >
+                  [{log.timestamp}] {log.level.toUpperCase()}: {log.message}
+                  {log.data && (
+                    <pre className="mt-1 p-2 bg-muted rounded text-xs overflow-auto">
+                      {JSON.stringify(log.data, null, 2)}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

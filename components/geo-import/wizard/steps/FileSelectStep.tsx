@@ -8,6 +8,7 @@ import {
 } from '../../../files/utils/file-types';
 import { groupFiles } from '../../../files/utils/file-processor';
 import { Alert, AlertTitle, AlertDescription } from '../../../ui/alert';
+import { useDevLogger } from '@/utils/logging/devLogger';
 import { dbLogger } from '@/utils/logging/dbLogger';
 
 interface FileSelectStepProps {
@@ -24,15 +25,27 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [fileSummary, setFileSummary] = useState<string>('');
   const supabase = createClient();
+  const logger = useDevLogger('FileSelectStep');
+  const mountedRef = useRef(false);
+
+  // Log component initialization
+  useEffect(() => {
+    if (logger.shouldLog()) {
+      logger.logInfo('File select step initialized', { projectId });
+    }
+  }, [logger, projectId]);
 
   // Auto-advance if fileInfo is already set (preselected file)
   useEffect(() => {
-    if (fileInfo && fileInfo.id && fileInfo.name) {
+    if (mountedRef.current && fileInfo && fileInfo.id && fileInfo.name && logger.shouldLog()) {
+      logger.log('Auto-advancing with pre-selected file', {
+        fileId: fileInfo.id,
+        fileName: fileInfo.name
+      });
       onNext();
     }
-    // Only run on mount or when fileInfo changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileInfo]);
+    mountedRef.current = true;
+  }, [fileInfo, onNext, logger]);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files ? Array.from(e.target.files) : [];
@@ -42,6 +55,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
     setSelectedFiles(files);
     if (!files.length) return;
     setUploading(true);
+
     try {
       // Group files and validate companions
       const groups = await groupFiles(files);
@@ -50,6 +64,14 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         setUploading(false);
         return;
       }
+
+      if (logger.shouldLog()) {
+        logger.log('File groups created', {
+          groupCount: groups.length,
+          firstGroupFiles: groups[0].companions.length + 1
+        });
+      }
+
       // Only support one group at a time for now
       const group = groups[0];
       // Validate companions
@@ -62,17 +84,18 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         setUploading(false);
         return;
       }
+
       // Show summary
       setFileSummary(
         `Main file: ${group.mainFile.name}\nCompanions: ${group.companions.map((f: File) => f.name).join(', ') || 'None'}`
       );
-      // Upload all files (main + companions)
+
       // Helper to wait for DB record
       async function waitForFileRecord(filePath: string, maxAttempts = 10, delayMs = 300) {
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
           const { data: fileRecord } = await supabase
             .from('project_files')
-            .select('id, name, size, file_type')
+            .select('id, name, size, file_type, storage_path')
             .eq('storage_path', filePath)
             .order('uploaded_at', { ascending: false })
             .maybeSingle();
@@ -93,6 +116,14 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         setUploading(false);
         return;
       }
+
+      if (logger.shouldLog()) {
+        logger.log('Main file uploaded', {
+          fileName: mainFile.name,
+          path: mainFilePath
+        });
+      }
+
       const { error: mainInsertError } = await supabase
         .from('project_files')
         .insert({
@@ -109,9 +140,16 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         setUploading(false);
         return;
       }
+
       let mainFileRecord;
       try {
         mainFileRecord = await waitForFileRecord(mainFilePath);
+        if (logger.shouldLog()) {
+          logger.log('Main file record created', {
+            fileId: mainFileRecord.id,
+            fileName: mainFileRecord.name
+          });
+        }
       } catch (err: unknown) {
         let errorMsg = 'Upload failed';
         if (err instanceof Error) {
@@ -136,6 +174,14 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
           setUploading(false);
           return;
         }
+
+        if (logger.shouldLog()) {
+          logger.log('Companion file uploaded', {
+            fileName: companion.name,
+            path: companionPath
+          });
+        }
+
         const ext = companion.name.match(/\.[^.]+$/)?.[0].toLowerCase().replace('.', '') || null;
         const { error: compInsertError } = await supabase
           .from('project_files')
@@ -155,9 +201,16 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
           setUploading(false);
           return;
         }
+
         let compFileRecord;
         try {
           compFileRecord = await waitForFileRecord(companionPath);
+          if (logger.shouldLog()) {
+            logger.log('Companion file record created', {
+              fileId: compFileRecord.id,
+              fileName: compFileRecord.name
+            });
+          }
         } catch (err: unknown) {
           let errorMsg = 'Upload failed';
           if (err instanceof Error) {
@@ -174,8 +227,10 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
           name: companion.name,
           size: companion.size,
           type: companion.type,
+          storage_path: compFileRecord.storage_path,
         });
       }
+
       // Set main file info in wizard context
       setFileInfo({
         id: mainFileRecord.id,
@@ -184,6 +239,24 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         type: mainFile.type,
         companions: companionFileInfos
       });
+      await dbLogger.debug('FileSelectStep: setFileInfo called', {
+        fileInfo: {
+          id: mainFileRecord.id,
+          name: mainFile.name,
+          size: mainFile.size,
+          type: mainFile.type,
+          companions: companionFileInfos
+        },
+        projectId
+      });
+
+      if (logger.shouldLog()) {
+        logger.log('File upload completed', {
+          mainFileId: mainFileRecord.id,
+          companionCount: companionFileInfos.length
+        });
+      }
+
       setUploaded(true);
     } catch (err: unknown) {
       let errorMsg = 'Upload failed';
@@ -193,6 +266,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         errorMsg = err;
       }
       setUploadError(errorMsg);
+      logger.logError(err, 'File upload failed');
     } finally {
       setUploading(false);
     }
@@ -201,8 +275,6 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     handleFileChange(e).catch(() => { setUploadError('File selection failed'); });
   };
-
-  void (async () => { await dbLogger.info('FileSelectStep loaded', { projectId }); })().catch(() => {});
 
   return (
     <div className="space-y-4">

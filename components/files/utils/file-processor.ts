@@ -1,7 +1,7 @@
 import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
-import { isMainGeoFile, getExtension, getConfigForFile, getMimeType } from './file-types';
+import { isMainGeoFile, getExtension, getConfigForFile, getMimeType, FileTypeConfig } from './file-types';
 import { dbLogger } from '../../../utils/logging/dbLogger';
-import { isMatchingCompanion, validateCompanions } from './validation';
+import { isMatchingCompanion } from './validation';
 
 const LOG_SOURCE = 'FileProcessor';
 
@@ -13,6 +13,51 @@ export class FileProcessingError extends Error {
     super(message);
     this.name = 'FileProcessingError';
   }
+}
+
+/**
+ * Validate companion files against a file type configuration
+ */
+export async function validateCompanions(config: FileTypeConfig, files: File[]): Promise<{
+  valid: File[];
+  missing: string[];
+}> {
+  const valid: File[] = [];
+  const missing: string[] = [];
+
+  // Check each required companion file type
+  for (const companionConfig of config.companionFiles) {
+    const companion = files.find(f => 
+      f.name.toLowerCase().endsWith(companionConfig.extension.toLowerCase())
+    );
+
+    if (companion) {
+      // Validate size
+      if (companion.size > companionConfig.maxSize) {
+        throw new FileProcessingError(
+          `Companion file ${companion.name} exceeds maximum size of ${companionConfig.maxSize} bytes`,
+          'FILE_TOO_LARGE'
+        );
+      }
+
+      // Custom validation if configured
+      if (companionConfig.validateContent) {
+        const isValid = await companionConfig.validateContent(companion);
+        if (!isValid) {
+          throw new FileProcessingError(
+            `Companion file ${companion.name} failed content validation`,
+            'INVALID_CONTENT'
+          );
+        }
+      }
+
+      valid.push(companion);
+    } else if (companionConfig.required) {
+      missing.push(companionConfig.extension);
+    }
+  }
+
+  return { valid, missing };
 }
 
 /**
@@ -56,45 +101,58 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
       remainingFiles: Array.from(remainingFiles).map(f => f.name)
     }, { LOG_SOURCE });
     if (config?.companionFiles) {
-      // Process each required companion type
-      for (const companionConfig of config.companionFiles) {
-        // Find a matching companion file using case-insensitive comparison
+      // First, find all required companions
+      const requiredConfigs = config.companionFiles.filter(c => c.required);
+      const requiredExtensions = new Set(requiredConfigs.map(c => c.extension.toLowerCase()));
+      const foundRequiredCompanions = new Map<string, File>();
+
+      // Check each remaining file against all required extensions
+      for (const file of remainingFiles) {
+        const companionExt = getExtension(file.name).toLowerCase();
+        if (requiredExtensions.has(companionExt)) {
+          const isMatching = await isMatchingCompanion(group.mainFile.name, file, companionExt);
+          if (isMatching) {
+            foundRequiredCompanions.set(companionExt, file);
+            await dbLogger.debug('Found required companion', {
+              mainFile: group.mainFile.name,
+              companion: file.name,
+              extension: companionExt
+            }, { LOG_SOURCE });
+          }
+        }
+      }
+
+      // Check if we found all required companions
+      const missingRequired = Array.from(requiredExtensions).filter(ext => !foundRequiredCompanions.has(ext));
+      if (missingRequired.length > 0) {
+        await dbLogger.warn('Missing required companions', {
+          mainFile: group.mainFile.name,
+          missing: missingRequired
+        }, { LOG_SOURCE });
+        throw new FileProcessingError(`Missing required companion files: ${missingRequired.join(', ')}`, 'MISSING_REQUIRED_COMPANIONS');
+      }
+
+      // Add found required companions to the group and remove from remaining files
+      for (const [, file] of foundRequiredCompanions) {
+        group.companions.push(file);
+        remainingFiles.delete(file);
+      }
+
+      // Now process optional companions
+      const optionalConfigs = config.companionFiles.filter(c => !c.required);
+      for (const companionConfig of optionalConfigs) {
         const matchingCompanion = Array.from(remainingFiles).find(file => 
           isMatchingCompanion(group.mainFile.name, file, companionConfig.extension)
         );
         if (matchingCompanion) {
-          await dbLogger.debug('Found matching companion', {
+          await dbLogger.debug('Found optional companion', {
             mainFile: group.mainFile.name,
             companion: matchingCompanion.name,
-            extension: companionConfig.extension,
-            required: companionConfig.required
+            extension: companionConfig.extension
           }, { LOG_SOURCE });
           group.companions.push(matchingCompanion);
           remainingFiles.delete(matchingCompanion);
-        } else if (companionConfig.required) {
-          await dbLogger.warn('Missing required companion', {
-            mainFile: group.mainFile.name,
-            extension: companionConfig.extension,
-            required: true,
-            remainingFiles: Array.from(remainingFiles).map(f => f.name)
-          }, { LOG_SOURCE });
         }
-      }
-      // Check for missing required companions
-      try {
-        const requiredExtensions = config.companionFiles
-          .filter(c => c.required)
-          .map(c => c.extension);
-        validateCompanions(group.mainFile.name, group.companions, requiredExtensions);
-      } catch (error) {
-        if (error instanceof Error) {
-          await dbLogger.warn('Missing required companion files', {
-            mainFile: group.mainFile.name,
-            error: error.message
-          }, { LOG_SOURCE });
-          throw new FileProcessingError(error.message, 'MISSING_REQUIRED_COMPANIONS');
-        }
-        throw error;
       }
     }
   }

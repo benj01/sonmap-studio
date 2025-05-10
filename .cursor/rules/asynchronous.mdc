@@ -7,3 +7,5 @@ alwaysApply: true
 # async/await
 
 Use or if neccessary convert everything to async/await while wrapping functions that don't natively support Promises. Ensure proper error handling with try...catch.
+
+Strict Mode causes double-mount/unmount, so all async code must be idempotent and safe.

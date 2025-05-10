@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WizardProvider, WizardFileInfo } from './WizardContext';
 import { WizardStepper } from './WizardStepper';
 import { FileSelectStep } from './steps/FileSelectStep';
@@ -7,7 +7,7 @@ import { PreviewStep } from './steps/PreviewStep';
 import { ValidationStep } from './steps/ValidationStep';
 import { ConfirmStep } from './steps/ConfirmStep';
 import { ReviewStep } from './steps/ReviewStep';
-import { dbLogger } from '@/utils/logging/dbLogger';
+import { useDevLogger } from '@/utils/logging/devLogger';
 
 const steps = [
   { label: 'Select File', component: FileSelectStep },
@@ -27,10 +27,15 @@ interface ImportWizardProps {
 }
 
 export function ImportWizard({ projectId, onClose, initialFileInfo, initialStep = 0, onRefreshFiles }: ImportWizardProps) {
-  (async () => { await dbLogger.info('ImportWizard loaded', { projectId }); })();
-  (async () => { await dbLogger.info('Import wizard component initialization started', { projectId }); })();
   const [currentStep, setCurrentStep] = useState(initialStep);
   const StepComponent = steps[currentStep].component;
+  const logger = useDevLogger('ImportWizard');
+
+  useEffect(() => {
+    if (logger.shouldLog()) {
+      logger.logInfo('Import wizard initialized', { projectId });
+    }
+  }, [logger, projectId]);
 
   return (
     <WizardProvider projectId={projectId} initialFileInfo={initialFileInfo}>

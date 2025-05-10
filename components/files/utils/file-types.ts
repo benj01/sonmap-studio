@@ -7,7 +7,7 @@ const LOG_SOURCE = 'FileTypeUtil';
  * Utility functions for handling file types and MIME types
  */
 
-const FILE_TYPE_CONFIGS: Record<string, FileTypeConfig> = {
+export const FILE_TYPE_CONFIGS: Record<string, FileTypeConfig> = {
   // Shapefile
   shp: {
     mainExtension: '.shp',
@@ -175,6 +175,8 @@ const FILE_TYPE_CONFIGS: Record<string, FileTypeConfig> = {
     companionFiles: []
   }
 };
+
+export { FileTypeConfig };
 
 export function getMimeType(fileName: string): string {
   const extension = getExtension(fileName);

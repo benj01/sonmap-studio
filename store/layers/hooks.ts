@@ -3,38 +3,37 @@ import { useLayerStore } from './layerStore';
 import type { LayerStore } from './layerStore';
 import { layerSelectors } from './layerStore';
 import type { Layer, LayerMetadata } from './types';
-import { dbLogger } from '@/utils/logging/dbLogger';
+import { useDevLogger } from '@/utils/logging/devLogger';
 import { useShallow } from 'zustand/react/shallow';
 
 const SOURCE = 'layerHooks';
 
 // Single layer operations
 export const useLayer = (layerId: string) => {
-  // Log hook mount (critical lifecycle event)
-  dbLogger.debug('useLayer.hookRun', { layerId, source: SOURCE }).catch(() => {});
+  const logger = useDevLogger('useLayer');
   const store = useLayerStore();
   const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
   const metadata = useLayerStore((state) => layerSelectors.getLayerMetadata(state)(layerId));
 
   const setVisibility = useCallback((visible: boolean) => {
-    dbLogger.debug('useLayer.setVisibility', { layerId, visible, source: SOURCE }).catch(() => {});
+    logger.log('setVisibility', { layerId, visible });
     store.setLayerVisibility(layerId, visible);
-  }, [layerId, store]);
+  }, [layerId, store, logger]);
 
   const updateStatus = useCallback((status: Layer['setupStatus'], error?: string) => {
-    dbLogger.debug('useLayer.updateStatus', { layerId, status, error, source: SOURCE }).catch(() => {});
+    logger.log('updateStatus', { layerId, status, error });
     store.updateLayerStatus(layerId, status, error);
-  }, [layerId, store]);
+  }, [layerId, store, logger]);
 
   const updateStyle = useCallback((style: { paint?: Record<string, unknown>; layout?: Record<string, unknown> }) => {
-    dbLogger.debug('useLayer.updateStyle', { layerId, style, source: SOURCE }).catch(() => {});
+    logger.log('updateStyle', { layerId, style });
     store.updateLayerStyle(layerId, style);
-  }, [layerId, store]);
+  }, [layerId, store, logger]);
 
   const remove = useCallback(() => {
-    dbLogger.debug('useLayer.remove', { layerId, source: SOURCE }).catch(() => {});
+    logger.log('remove', { layerId });
     store.removeLayer(layerId);
-  }, [layerId, store]);
+  }, [layerId, store, logger]);
 
   return {
     layer,
@@ -51,8 +50,8 @@ export const useLayer = (layerId: string) => {
 
 // Bulk layer operations - using standard Zustand selectors
 export const useLayers = () => {
-  // Log hook mount (critical lifecycle event)
-  dbLogger.debug('useLayers.hookRun', { source: SOURCE }).catch(() => {});
+  const logger = useDevLogger('useLayers');
+  
   // Select the entire layers object once USING useShallow for shallow comparison
   const layersState = useLayerStore(useShallow((state: LayerStore) => state.layers));
 
@@ -76,19 +75,19 @@ export const useLayers = () => {
     sourceId?: string,
     metadata?: LayerMetadata
   ) => {
-    dbLogger.debug('useLayers.addLayer', { layerId, initialVisibility, source: SOURCE }).catch(() => {});
+    logger.log('addLayer', { layerId, initialVisibility });
     addLayerAction(layerId, initialVisibility, sourceId, metadata);
-  }, [addLayerAction]);
+  }, [addLayerAction, logger]);
 
   const removeLayer = useCallback((layerId: string) => {
-    dbLogger.debug('useLayers.removeLayer', { layerId, source: SOURCE }).catch(() => {});
+    logger.log('removeLayer', { layerId });
     removeLayerAction(layerId);
-  }, [removeLayerAction]);
+  }, [removeLayerAction, logger]);
 
   const handleFileDeleted = useCallback((fileId: string) => {
-    dbLogger.debug('useLayers.handleFileDeleted', { fileId, source: SOURCE }).catch(() => {});
+    logger.log('handleFileDeleted', { fileId });
     handleFileDeletedAction(fileId);
-  }, [handleFileDeletedAction]);
+  }, [handleFileDeletedAction, logger]);
 
   return {
     layers,
@@ -100,14 +99,14 @@ export const useLayers = () => {
 
 // Layer status operations
 export const useLayerStatus = (layerId: string) => {
-  dbLogger.debug('useLayerStatus.hookRun', { layerId, source: SOURCE }).catch(() => {});
+  const logger = useDevLogger('useLayerStatus');
   const store = useLayerStore();
   const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
 
   const updateStatus = useCallback((status: Layer['setupStatus'], error?: string) => {
-    dbLogger.debug('useLayerStatus.updateStatus', { layerId, status, error, source: SOURCE }).catch(() => {});
+    logger.log('updateStatus', { layerId, status, error });
     store.updateLayerStatus(layerId, status, error);
-  }, [layerId, store]);
+  }, [layerId, store, logger]);
 
   return {
     status: layer?.setupStatus ?? 'pending',
@@ -118,14 +117,14 @@ export const useLayerStatus = (layerId: string) => {
 
 // Layer visibility operations
 export const useLayerVisibility = (layerId: string) => {
-  dbLogger.debug('useLayerVisibility.hookRun', { layerId, source: SOURCE }).catch(() => {});
+  const logger = useDevLogger('useLayerVisibility');
   const store = useLayerStore();
   const layer = useLayerStore((state) => layerSelectors.getLayerById(state)(layerId));
 
   const setVisibility = useCallback((visible: boolean) => {
-    dbLogger.debug('useLayerVisibility.setVisibility', { layerId, visible, source: SOURCE }).catch(() => {});
+    logger.log('setVisibility', { layerId, visible });
     store.setLayerVisibility(layerId, visible);
-  }, [layerId, store]);
+  }, [layerId, store, logger]);
 
   return {
     isVisible: layer?.visible ?? false,

@@ -12,6 +12,7 @@ export interface WizardFileInfo {
     name: string;
     size: number;
     type: string;
+    storage_path: string;
   }>;
 }
 

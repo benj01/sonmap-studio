@@ -206,8 +206,7 @@ export class ShapefileParser extends BaseGeoDataParser {
     mainFile: ArrayBuffer,
     companionFiles?: Record<string, ArrayBuffer>,
     options?: ParserOptions,
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    _onProgress?: (event: ParserProgressEvent) => void
+    onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
     // CRITICAL DEBUG LOGS FOR TRANSFORMATION ISSUE - Using logger instead of console.log
     await dbLogger.debug(SOURCE, "🔍 TRANSFORMATION DEBUG: Received options", { 
@@ -228,6 +227,12 @@ export class ShapefileParser extends BaseGeoDataParser {
     // --- END OF CRITICAL DEBUG LOGS ---
 
     try {
+      this.reportProgress(onProgress, {
+        phase: 'reading',
+        progress: 0,
+        message: 'Starting shapefile parsing'
+      });
+      await Promise.resolve(); // yield
       await dbLogger.info('Starting parse operation', {
         mainFileSize: mainFile.byteLength,
         companionFiles: companionFiles ? Object.keys(companionFiles) : [],
@@ -266,11 +271,53 @@ export class ShapefileParser extends BaseGeoDataParser {
 
       // Parse shapefile
       await dbLogger.info('Reading shapefile data');
-      const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
+      await dbLogger.debug('ShapefileParser: buffer info', {
+        mainFileType: typeof mainFile,
+        mainFileConstructor: mainFile?.constructor?.name,
+        mainFileIsArrayBuffer: mainFile instanceof ArrayBuffer,
+        mainFileIsUint8Array: mainFile instanceof Uint8Array,
+        mainFileByteLength: mainFile?.byteLength,
+        mainFileFirstBytes: Array.from(new Uint8Array(mainFile, 0, Math.min(10, mainFile.byteLength))),
+        dbfType: typeof companionFiles['.dbf'],
+        dbfConstructor: companionFiles['.dbf']?.constructor?.name,
+        dbfIsArrayBuffer: companionFiles['.dbf'] instanceof ArrayBuffer,
+        dbfIsUint8Array: companionFiles['.dbf'] instanceof Uint8Array,
+        dbfByteLength: companionFiles['.dbf']?.byteLength,
+        dbfFirstBytes: Array.from(new Uint8Array(companionFiles['.dbf'], 0, Math.min(10, companionFiles['.dbf']?.byteLength || 0)))
+      });
+      // mainFile and dbfBuffer are always ArrayBuffer
+      let mainBuffer = mainFile;
+      let dbfBuffer = companionFiles['.dbf'];
+      let result: ShapefileReader;
+      try {
+        result = await read(
+          { buffer: mainBuffer },
+          dbfBuffer ? { buffer: dbfBuffer } : undefined
+        ) as unknown as ShapefileReader;
+      } catch (readError) {
+        await dbLogger.error('ShapefileParser: read() failed', {
+          errorMessage: readError instanceof Error ? readError.message : String(readError),
+          errorStack: readError instanceof Error ? readError.stack : undefined,
+          mainFileType: typeof mainFile,
+          mainFileIsArrayBuffer: mainFile instanceof ArrayBuffer,
+          mainFileByteLength: mainFile?.byteLength,
+          dbfType: typeof companionFiles['.dbf'],
+          dbfIsArrayBuffer: companionFiles['.dbf'] instanceof ArrayBuffer,
+          dbfByteLength: companionFiles['.dbf']?.byteLength
+        });
+        throw readError;
+      }
       const geojson = {
         type: 'FeatureCollection',
         features: result.features || []
       } as FeatureCollection<Geometry, GeoJsonProperties>;
+      this.reportProgress(onProgress, {
+        phase: 'parsing',
+        progress: 10,
+        message: 'Shapefile read, parsing features',
+        totalFeatures: geojson.features.length
+      });
+      await Promise.resolve(); // yield
 
       await dbLogger.info('Shapefile parsed successfully', {
         featureCount: geojson.features.length
@@ -407,10 +454,26 @@ export class ShapefileParser extends BaseGeoDataParser {
             toSrid: 4326,
             featureCount: features.length
           });
-          features = await Promise.all(features.map(async (feature: GeoFeature) => ({
-            ...feature,
-            geometry: await transformGeometry(feature.geometry, this.srid as number)
-          })));
+          // Chunked async transformation for progress
+          const total = features.length;
+          const chunkSize = Math.max(1, Math.floor(total / 10));
+          for (let i = 0; i < total; i += chunkSize) {
+            const chunk = features.slice(i, i + chunkSize);
+            const transformed = await Promise.all(chunk.map(async (feature: GeoFeature) => ({
+              ...feature,
+              geometry: await transformGeometry(feature.geometry, this.srid as number)
+            })));
+            features.splice(i, transformed.length, ...transformed);
+            const progress = 10 + Math.round((i + chunk.length) / total * 80); // 10% to 90%
+            this.reportProgress(onProgress, {
+              phase: 'processing',
+              progress,
+              message: `Transforming coordinates (${i + chunk.length}/${total})`,
+              featuresProcessed: i + chunk.length,
+              totalFeatures: total
+            });
+            await Promise.resolve(); // yield
+          }
           await dbLogger.info('Coordinate transformation complete');
         } catch (error) {
           await dbLogger.warn('Transformation failed, creating simplified fallback', { 
@@ -466,6 +529,15 @@ export class ShapefileParser extends BaseGeoDataParser {
       const geometryTypes = new Set(features.map(f => f.geometry.type));
       const properties = Object.keys(result.features[0].properties || {});
 
+      this.reportProgress(onProgress, {
+        phase: 'complete',
+        progress: 100,
+        message: 'Parsing complete',
+        featuresProcessed: features.length,
+        totalFeatures: features.length
+      });
+      await Promise.resolve(); // yield
+
       return {
         sourceFile: options?.filename || 'unknown.shp',
         fileType: 'shapefile',
@@ -480,7 +552,11 @@ export class ShapefileParser extends BaseGeoDataParser {
       };
 
     } catch (error) {
-      await dbLogger.error('Failed to parse shapefile', { error });
+      await dbLogger.error('Failed to parse shapefile', {
+        error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined
+      });
       throw error;
     }
   }
@@ -497,8 +573,10 @@ export class ShapefileParser extends BaseGeoDataParser {
         throw new Error('Missing required .dbf file');
       }
 
-      // Revert to original method call that worked with proper type casting
-      const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
+      const result = await read(
+        { buffer: mainFile },
+        { buffer: companionFiles['.dbf'] }
+      ) as unknown as ShapefileReader;
       return result.features.length > 0 && !!result.features[0].geometry;
     } catch (error) {
       await dbLogger.warn('Validation failed', error);
@@ -518,8 +596,10 @@ export class ShapefileParser extends BaseGeoDataParser {
         throw new Error('Missing required .dbf file');
       }
 
-      // Revert to original method call that worked with proper type casting
-      const result = await read(mainFile, companionFiles['.dbf']) as unknown as ShapefileReader;
+      const result = await read(
+        { buffer: mainFile },
+        { buffer: companionFiles['.dbf'] }
+      ) as unknown as ShapefileReader;
       if (!result.features.length) {
         throw new Error('Empty shapefile');
       }

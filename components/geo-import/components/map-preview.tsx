@@ -259,128 +259,144 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
   };
 
   useEffect(() => {
-    if (!mapContainer.current) return;
-
-    setMapError(null);
-
-    (async () => {
+    let isActive = true;
+    
+    const initMap = async () => {
+      if (!mapContainer.current || !isActive) return;
+      
+      setMapError(null);
       await dbLogger.debug('Initializing map', {
         source: SOURCE,
         featureCount: features.length,
         hasBounds: !!bounds
       });
-    })();
 
-    try {
-      const handleMapInitializationError = async (error: unknown) => {
-        let errorMessage = 'Unknown map initialization error';
-        let stack: string | undefined = undefined;
-        if (typeof error === 'object' && error !== null && 'message' in error) {
-          errorMessage = (error as { message: string }).message;
-          stack = (error as { stack?: string }).stack;
-        }
-        await dbLogger.error(SOURCE, 'Map initialization error', { 
-          error, 
-          message: errorMessage,
-          stack
-        });
-        setMapError(`Map initialization failed: ${errorMessage}`);
-      };
-
-      window.addEventListener('error', (e: unknown) => {
-        (async () => {
-          await handleMapInitializationError(e);
-        })();
-      });
-
-      if (!process.env.NEXT_PUBLIC_MAPBOX_TOKEN) {
-        const tokenError = "Missing Mapbox token. Please check your environment variables.";
-        (async () => {
-          await dbLogger.error(SOURCE, tokenError);
-        })();
-        setMapError(tokenError);
-        return;
-      }
-
-      map.current = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: 'mapbox://styles/mapbox/light-v11',
-        center: [0, 0],
-        zoom: 1,
-        accessToken: process.env.NEXT_PUBLIC_MAPBOX_TOKEN,
-        preserveDrawingBuffer: true
-      });
-
-      map.current.on('error', (e: unknown) => {
-        (async () => {
-          let errorMessage = 'Unknown mapbox error';
-          let errorObj: unknown = undefined;
-          if (typeof e === 'object' && e !== null && 'error' in e) {
-            errorObj = (e as { error: unknown }).error;
-            if (typeof errorObj === 'object' && errorObj !== null && 'message' in errorObj) {
-              errorMessage = (errorObj as { message: string }).message;
-            }
+      try {
+        const handleMapInitializationError = async (error: unknown) => {
+          if (!isActive) return;
+          let errorMessage = 'Unknown map initialization error';
+          let stack: string | undefined = undefined;
+          if (typeof error === 'object' && error !== null && 'message' in error) {
+            errorMessage = (error as { message: string }).message;
+            stack = (error as { stack?: string }).stack;
           }
-          await dbLogger.error(SOURCE, 'Mapbox runtime error', {
-            error: errorObj,
-            message: errorMessage
+          await dbLogger.error(SOURCE, 'Map initialization error', { 
+            error, 
+            message: errorMessage,
+            stack
           });
-          setMapError(`Map error: ${errorMessage}`);
-        })();
-      });
+          setMapError(`Map initialization failed: ${errorMessage}`);
+        };
 
-      map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-      mapInitialized.current = true;
+        window.addEventListener('error', handleMapInitializationError);
 
-      ['preview-fill', 'preview-fill-issues', 'preview-line', 'preview-line-issues', 'preview-point', 'preview-point-issues'].forEach(layerId => {
-        map.current?.on('click', layerId, (e: unknown) => {
+        if (!process.env.NEXT_PUBLIC_MAPBOX_TOKEN) {
+          const tokenError = "Missing Mapbox token. Please check your environment variables.";
+          if (isActive) {
+            await dbLogger.error(SOURCE, tokenError);
+            setMapError(tokenError);
+          }
+          return;
+        }
+
+        map.current = new mapboxgl.Map({
+          container: mapContainer.current,
+          style: 'mapbox://styles/mapbox/light-v11',
+          center: [0, 0],
+          zoom: 1,
+          accessToken: process.env.NEXT_PUBLIC_MAPBOX_TOKEN,
+          preserveDrawingBuffer: true
+        });
+
+        if (!isActive) {
+          map.current.remove();
+          return;
+        }
+
+        map.current.on('error', (e: unknown) => {
+          if (!isActive) return;
           (async () => {
-            if (
-              typeof e === 'object' &&
-              e !== null &&
-              'features' in e &&
-              Array.isArray((e as { features: { properties?: { [key: string]: unknown } }[] }).features) &&
-              (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0]?.properties
-            ) {
-              await dbLogger.debug('Mapbox click event', { source: SOURCE, layerId, properties: (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0].properties });
+            let errorMessage = 'Unknown mapbox error';
+            let errorObj: unknown = undefined;
+            if (typeof e === 'object' && e !== null && 'error' in e) {
+              errorObj = (e as { error: unknown }).error;
+              if (typeof errorObj === 'object' && errorObj !== null && 'message' in errorObj) {
+                errorMessage = (errorObj as { message: string }).message;
+              }
             }
-            if (
-              typeof e === 'object' &&
-              e !== null &&
-              'features' in e &&
-              Array.isArray((e as { features: { properties?: { id?: number } }[] }).features) &&
-              (e as { features: { properties?: { id?: number } }[] }).features[0]?.properties?.id !== undefined
-            ) {
-              handleFeatureClick((e as { features: { properties: { id: number } }[] }).features[0].properties.id);
+            await dbLogger.error(SOURCE, 'Mapbox runtime error', {
+              error: errorObj,
+              message: errorMessage
+            });
+            if (isActive) {
+              setMapError(`Map error: ${errorMessage}`);
             }
           })();
-          if (e instanceof MouseEvent) {
-            if (e.type === 'mouseenter') {
-              if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-            } else if (e.type === 'mouseleave') {
-              if (map.current) map.current.getCanvas().style.cursor = '';
-            }
-          }
         });
-      });
 
-      return () => {
-        window.removeEventListener('error', handleMapInitializationError);
-        
-        (async () => {
-          await dbLogger.debug('Cleaning up map');
+        map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+        mapInitialized.current = true;
+
+        ['preview-fill', 'preview-fill-issues', 'preview-line', 'preview-line-issues', 'preview-point', 'preview-point-issues'].forEach(layerId => {
+          map.current?.on('click', layerId, (e: unknown) => {
+            (async () => {
+              if (
+                typeof e === 'object' &&
+                e !== null &&
+                'features' in e &&
+                Array.isArray((e as { features: { properties?: { [key: string]: unknown } }[] }).features) &&
+                (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0]?.properties
+              ) {
+                await dbLogger.debug('Mapbox click event', { source: SOURCE, layerId, properties: (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0].properties });
+              }
+              if (
+                typeof e === 'object' &&
+                e !== null &&
+                'features' in e &&
+                Array.isArray((e as { features: { properties?: { id?: number } }[] }).features) &&
+                (e as { features: { properties?: { id?: number } }[] }).features[0]?.properties?.id !== undefined
+              ) {
+                handleFeatureClick((e as { features: { properties: { id: number } }[] }).features[0].properties.id);
+              }
+            })();
+            if (e instanceof MouseEvent) {
+              if (e.type === 'mouseenter') {
+                if (map.current) map.current.getCanvas().style.cursor = 'pointer';
+              } else if (e.type === 'mouseleave') {
+                if (map.current) map.current.getCanvas().style.cursor = '';
+              }
+            }
+          });
+        });
+
+      } catch (error) {
+        if (isActive) {
+          const errorMessage = error instanceof Error ? error.message : 'Failed to initialize map';
+          setMapError(errorMessage);
+          await dbLogger.error('Failed to initialize map', { error });
+        }
+      }
+    };
+
+    initMap();
+
+    return () => {
+      isActive = false;
+      const cleanup = async () => {
+        try {
           if (map.current) {
+            await dbLogger.debug('Cleaning up map');
             await dbLogger.debug('Map is being removed');
             map.current.remove();
             map.current = null;
           }
-        })();
+        } catch (error) {
+          await dbLogger.error('Error during map cleanup', { error });
+        }
       };
-    } catch (error) {
-      (async () => {
-        await dbLogger.error('Failed to initialize map', { error });
-      })();
-    }
+      // Fire and forget cleanup - we don't want to block unmounting
+      void cleanup();
+    };
   }, [mapContainer, bounds, features.length, handleFeatureClick]);
 
   useEffect(() => {

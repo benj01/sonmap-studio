@@ -442,8 +442,26 @@ export function CesiumView() {
         // Handle GeoJSON layers
         if (layer.metadata?.type === 'vector' && layer.metadata?.properties?.geojson) {
           if (!dataSourceMap.current.has(layer.id)) {
-            const ds = await Cesium.GeoJsonDataSource.load(layer.metadata.properties.geojson, {
-              clampToGround: true,
+            // Process heights before loading into Cesium
+            let processedGeoJson = layer.metadata.properties.geojson;
+            
+            // Apply height configuration if present
+            if (layer.metadata.height) {
+              processedGeoJson = applyHeightToFeatures(processedGeoJson, {
+                sourceType: layer.metadata.height.sourceType as 'z_coord' | 'attribute' | 'none',
+                attributeName: layer.metadata.height.attributeName,
+                interpretationMode: layer.metadata.height.interpretationMode as 'absolute' | 'relative' | 'extrusion'
+              });
+            }
+
+            // Check if Swiss height transformation is needed
+            if (needsHeightTransformation(processedGeoJson)) {
+              processedGeoJson = await processFeatureCollectionHeights(processedGeoJson);
+            }
+
+            // Load the processed GeoJSON into Cesium
+            const ds = await Cesium.GeoJsonDataSource.load(processedGeoJson, {
+              clampToGround: !layer.metadata.height, // Only clamp if no height config
               stroke: Cesium.Color.fromCssColorString('#1E88E5'),
               strokeWidth: 3,
               fill: Cesium.Color.fromCssColorString('#1E88E5').withAlpha(0.5),
