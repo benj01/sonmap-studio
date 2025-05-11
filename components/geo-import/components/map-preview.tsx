@@ -197,12 +197,15 @@ const ensureValidMapboxCoordinates = async (feature: unknown): Promise<GeoJSON.F
 export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSelected, onProgress }: MapPreviewProps) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
-  const mapInitialized = useRef(false);
+  const [isMapLoaded, setIsMapLoaded] = useState(false);
   const [loadedFeatures, setLoadedFeatures] = useState<GeoFeature[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [validationStats, setValidationStats] = useState<{ total: number; withIssues: number }>({ total: 0, withIssues: 0 });
   const [mapError, setMapError] = useState<string | null>(null);
   const didFitInitialBounds = useRef(false);
+
+  // Add CHUNK_SIZE constant here
+  const CHUNK_SIZE = 50;
 
   const handleFeatureClick = useCallback((featureId: number) => {
     if (!onFeaturesSelected) return;
@@ -258,62 +261,48 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
     );
   };
 
-  useEffect(() => {
+  useEffect(() => { // Map Initialization Effect
     let isActive = true;
-    
     const initMap = async () => {
       if (!mapContainer.current || !isActive) return;
-      
+      if (map.current) {
+        await dbLogger.debug('Map instance already exists, skipping re-initialization.', { source: SOURCE });
+        if (!isMapLoaded && map.current.isStyleLoaded() && map.current.loaded()) {
+          setIsMapLoaded(true);
+        }
+        return;
+      }
       setMapError(null);
-      await dbLogger.debug('Initializing map', {
+      setIsMapLoaded(false);
+      await dbLogger.debug('Initializing map instance', {
         source: SOURCE,
         featureCount: features.length,
         hasBounds: !!bounds
       });
-
       try {
-        const handleMapInitializationError = async (error: unknown) => {
-          if (!isActive) return;
-          let errorMessage = 'Unknown map initialization error';
-          let stack: string | undefined = undefined;
-          if (typeof error === 'object' && error !== null && 'message' in error) {
-            errorMessage = (error as { message: string }).message;
-            stack = (error as { stack?: string }).stack;
-          }
-          await dbLogger.error(SOURCE, 'Map initialization error', { 
-            error, 
-            message: errorMessage,
-            stack
-          });
-          setMapError(`Map initialization failed: ${errorMessage}`);
-        };
-
-        window.addEventListener('error', handleMapInitializationError);
-
         if (!process.env.NEXT_PUBLIC_MAPBOX_TOKEN) {
           const tokenError = "Missing Mapbox token. Please check your environment variables.";
           if (isActive) {
-            await dbLogger.error(SOURCE, tokenError);
-            setMapError(tokenError);
+            await dbLogger.error(SOURCE, tokenError); setMapError(tokenError);
           }
           return;
         }
-
-        map.current = new mapboxgl.Map({
+        const newMap = new mapboxgl.Map({
           container: mapContainer.current,
           style: 'mapbox://styles/mapbox/light-v11',
-          center: [0, 0],
-          zoom: 1,
+          center: [0, 0], zoom: 1,
           accessToken: process.env.NEXT_PUBLIC_MAPBOX_TOKEN,
           preserveDrawingBuffer: true
         });
-
-        if (!isActive) {
-          map.current.remove();
-          return;
-        }
-
-        map.current.on('error', (e: unknown) => {
+        map.current = newMap;
+        if (!isActive) { newMap.remove(); map.current = null; return; }
+        newMap.on('load', () => {
+          if (isActive) {
+            (async () => await dbLogger.info('Mapbox "load" event fired. Map is fully loaded.', { source: SOURCE }))();
+            setIsMapLoaded(true);
+          }
+        });
+        newMap.on('error', (e: any) => {
           if (!isActive) return;
           (async () => {
             let errorMessage = 'Unknown mapbox error';
@@ -333,42 +322,17 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             }
           })();
         });
-
-        map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
-        mapInitialized.current = true;
-
+        newMap.addControl(new mapboxgl.NavigationControl(), 'top-right');
         ['preview-fill', 'preview-fill-issues', 'preview-line', 'preview-line-issues', 'preview-point', 'preview-point-issues'].forEach(layerId => {
-          map.current?.on('click', layerId, (e: unknown) => {
-            (async () => {
-              if (
-                typeof e === 'object' &&
-                e !== null &&
-                'features' in e &&
-                Array.isArray((e as { features: { properties?: { [key: string]: unknown } }[] }).features) &&
-                (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0]?.properties
-              ) {
-                await dbLogger.debug('Mapbox click event', { source: SOURCE, layerId, properties: (e as { features: { properties?: { [key: string]: unknown } }[] }).features[0].properties });
-              }
-              if (
-                typeof e === 'object' &&
-                e !== null &&
-                'features' in e &&
-                Array.isArray((e as { features: { properties?: { id?: number } }[] }).features) &&
-                (e as { features: { properties?: { id?: number } }[] }).features[0]?.properties?.id !== undefined
-              ) {
-                handleFeatureClick((e as { features: { properties: { id: number } }[] }).features[0].properties.id);
-              }
-            })();
-            if (e instanceof MouseEvent) {
-              if (e.type === 'mouseenter') {
-                if (map.current) map.current.getCanvas().style.cursor = 'pointer';
-              } else if (e.type === 'mouseleave') {
-                if (map.current) map.current.getCanvas().style.cursor = '';
+          newMap.on('click', layerId, (e: mapboxgl.MapLayerMouseEvent) => {
+            if (e.features && e.features.length > 0) {
+              const feature = e.features[0];
+              if (feature.properties && typeof feature.properties.id !== 'undefined') {
+                handleFeatureClick(feature.properties.id);
               }
             }
           });
         });
-
       } catch (error) {
         if (isActive) {
           const errorMessage = error instanceof Error ? error.message : 'Failed to initialize map';
@@ -377,75 +341,67 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
         }
       }
     };
-
     initMap();
-
     return () => {
       isActive = false;
-      const cleanup = async () => {
-        try {
+      setIsMapLoaded(false);
+      if (map.current) {
+        (async () => {
+          await dbLogger.debug('Cleaning up map instance.', { source: SOURCE });
           if (map.current) {
-            await dbLogger.debug('Cleaning up map');
-            await dbLogger.debug('Map is being removed');
             map.current.remove();
             map.current = null;
           }
-        } catch (error) {
-          await dbLogger.error('Error during map cleanup', { error });
-        }
-      };
-      // Fire and forget cleanup - we don't want to block unmounting
-      void cleanup();
-    };
-  }, [mapContainer, bounds, features.length, handleFeatureClick]);
-
-  useEffect(() => {
-    if (!map.current || !features.length || !mapInitialized.current) return;
-
-    const CHUNK_SIZE = 50;
-    let currentChunk = 0;
-    let totalWithIssues = 0;
-
-    const loadNextChunk = () => {
-      const start = currentChunk * CHUNK_SIZE;
-      const end = Math.min(start + CHUNK_SIZE, features.length);
-      const chunk = features.slice(start, end);
-
-      const chunkWithIssues = chunk.filter(f => f.validation?.hasIssues).length;
-      totalWithIssues += chunkWithIssues;
-
-      const updated = [...loadedFeatures, ...chunk];
-      setLoadedFeatures(updated);
-      (async () => {
-        await dbLogger.debug('Chunk loaded', {
-          source: SOURCE,
-          chunkStart: start,
-          chunkEnd: end,
-          chunkLength: chunk.length,
-          loadedFeaturesCount: updated.length,
-          featuresCount: features.length
-        });
-      })();
-      setValidationStats({
-        total: end,
-        withIssues: totalWithIssues
-      });
-      
-      const progress = Math.min(100, (end / features.length) * 100);
-      onProgress?.(progress);
-
-      if (end < features.length) {
-        currentChunk++;
-        requestAnimationFrame(loadNextChunk);
-      } else {
-        setIsLoading(false);
+        })();
       }
     };
+  }, []);
 
+  useEffect(() => {
+    if (!isMapLoaded || !map.current) {
+      if (features.length > 0 && !isMapLoaded) {
+        onProgress?.(0);
+        setIsLoading(true);
+      } else if (features.length === 0) {
+        setLoadedFeatures([]);
+        setIsLoading(false);
+        onProgress?.(100);
+        setValidationStats({ total: 0, withIssues: 0 });
+      }
+      return;
+    }
     setLoadedFeatures([]);
     setIsLoading(true);
-    loadNextChunk();
-  }, [features, loadedFeatures, onProgress]);
+    setValidationStats({ total: 0, withIssues: 0 });
+    didFitInitialBounds.current = false;
+
+    let currentChunkIndex = 0;
+    let accumulatedIssuesThisRun = 0;
+    const isActiveRef = { current: true };
+    const loadNextChunkRecursive = () => {
+      if (!map.current || !isActiveRef.current) { setIsLoading(false); return; }
+      const startIndex = currentChunkIndex * CHUNK_SIZE;
+      if (startIndex >= features.length) { setIsLoading(false); onProgress?.(100); return; }
+      const endIndex = Math.min(startIndex + CHUNK_SIZE, features.length);
+      const chunkToLoad = features.slice(startIndex, endIndex);
+      const issuesInChunk = chunkToLoad.filter(f => f.validation?.hasIssues).length;
+      accumulatedIssuesThisRun += issuesInChunk;
+      setLoadedFeatures(prev => [...prev, ...chunkToLoad]);
+      setValidationStats({ total: endIndex, withIssues: accumulatedIssuesThisRun });
+      (async () => {
+        await dbLogger.debug('Chunk processed', {
+          source: SOURCE, chunkStart: startIndex, chunkEnd: endIndex,
+          chunkLength: chunkToLoad.length, totalProcessed: endIndex, totalInProp: features.length,
+        });
+      })();
+      const progressPercentage = features.length > 0 ? Math.min(100, (endIndex / features.length) * 100) : 100;
+      onProgress?.(progressPercentage);
+      currentChunkIndex++;
+      if (isActiveRef.current) { requestAnimationFrame(loadNextChunkRecursive); } else { setIsLoading(false); }
+    };
+    loadNextChunkRecursive();
+    return () => { isActiveRef.current = false; };
+  }, [features, isMapLoaded, onProgress]);
 
   useEffect(() => {
     (async () => {
@@ -460,8 +416,17 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
   }, [selectedFeatureIds, loadedFeatures, features]);
 
   useEffect(() => {
-    if (!map.current || !loadedFeatures.length || !mapInitialized.current) return;
-
+    if (!isMapLoaded || !map.current || isLoading) {
+      if (!isLoading && loadedFeatures.length === 0) {
+        const mapInstance = map.current;
+        if (mapInstance && mapInstance.getSource && mapInstance.getSource('preview')) {
+          (mapInstance.getSource('preview') as mapboxgl.GeoJSONSource).setData({ type: 'FeatureCollection', features: [] });
+          dbLogger.debug('Map data cleared due to empty loadedFeatures after loading.', { source: SOURCE });
+        }
+      }
+      return;
+    }
+    if (loadedFeatures.length === 0) return;
     const updateMapData = async () => {
       const mapInstance = map.current;
       if (!mapInstance) return;
