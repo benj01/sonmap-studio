@@ -13,140 +13,119 @@ interface ParseStepProps {
   onBack: () => void;
 }
 
+// Type guard to ensure object has a defined, non-empty storage_path
+function hasStoragePath(obj: any): obj is { storage_path: string } {
+  return typeof obj?.storage_path === 'string' && obj.storage_path.length > 0;
+}
+
 export function ParseStep({ onNext, onBack }: ParseStepProps) {
   const { fileInfo, setDataset, projectId } = useWizard();
   const [parseError, setParseError] = useState<string | null>(null);
-  const [isParsing, setIsParsing] = useState(false);
   const [parseProgress, setParseProgress] = useState(0);
-  const abortControllerRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(false);
-  const parseAttemptRef = useRef(0);
+  const [parsingStatus, setParsingStatus] = useState<'idle' | 'parsing' | 'done' | 'error'>('idle');
+  const [parseResult, setParseResult] = useState<WizardDataset | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
-    mountedRef.current = true;
-    
-    // Use IIFE to handle async operations
+    if (!fileInfo?.id || !fileInfo.name) {
+      setParsingStatus('idle');
+      return;
+    }
+
+    let cancelled = false;
+    setParseError(null);
+    setParseProgress(0);
+    setParsingStatus('parsing');
+    setParseResult(null);
+
     (async () => {
       try {
-        await dbLogger.debug('ParseStep mounted', { source: 'ParseStep', projectId });
-      } catch (error) {
-        // Log error but don't throw as this is not critical
-        console.error('Failed to log mount status:', error);
-      }
-    })();
-    
-    return () => {
-      mountedRef.current = false;
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      
-      // Use IIFE to handle async operations in cleanup
-      (async () => {
-        try {
-          await dbLogger.debug('ParseStep unmounted', { source: 'ParseStep', projectId });
-        } catch (error) {
-          // Log error but don't throw as this is not critical
-          console.error('Failed to log unmount status:', error);
-        }
-      })();
-    };
-  }, [projectId]);
-
-  useEffect(() => {
-    const currentAttempt = ++parseAttemptRef.current;
-
-    const startParsing = async () => {
-      if (!fileInfo?.id || !fileInfo.name || !mountedRef.current || isParsing) {
-        return;
-      }
-
-      try {
-        setIsParsing(true);
-        setParseError(null);
-        setParseProgress(0);
-
-        // Create new AbortController for this parse attempt
-        abortControllerRef.current = new AbortController();
-
         await dbLogger.debug('ParseStep: starting parse operation', {
-          fileInfo,
-          companions: fileInfo?.companions,
-          projectId,
-          fileName: fileInfo?.name
-        });
-
-        await dbLogger.debug('Starting file parsing', { 
-          source: 'ParseStep',
+          fileInfoId: fileInfo.id,
           fileName: fileInfo.name,
-          attempt: currentAttempt,
-          projectId
+          hasCompanions: !!fileInfo.companions?.length,
+          projectId,
         });
 
-        // Get file info from database
         const { data: file, error: dbError } = await supabase
           .from('project_files')
-          .select('*')
-          .eq('id', fileInfo.id)
+          .select('id, storage_path')
+          .eq('id', fileInfo.id || '')
           .single();
 
         if (dbError) throw new Error(`Failed to get file info: ${dbError.message}`);
-        if (!file) throw new Error('File not found');
+        if (!file) throw new Error('File not found in database');
 
-        // Get download URL for main file
+        if (!hasStoragePath(file)) {
+          const errorMessage = 'Main file storage_path is missing, null, empty, or not a string.';
+          await dbLogger.error(errorMessage, {
+            fileId: (file as { id?: string }).id,
+            actualPathValue: (file as any).storage_path,
+            projectId
+          });
+          throw new Error(errorMessage);
+        }
+        const typedFile = file as { id: string; storage_path: string };
         const { data: urlData, error: urlError } = await supabase.storage
           .from('project-files')
-          .createSignedUrl(file.storage_path, 60);
-
+          .createSignedUrl(typedFile.storage_path, 60);
         if (urlError) throw new Error(`Failed to get file URL: ${urlError.message}`);
-        if (!urlData?.signedUrl) throw new Error('No signed URL received');
+        if (!urlData?.signedUrl) throw new Error('No signed URL received for main file');
 
-        const onProgress = async (event: ParserProgressEvent) => {
-          if (mountedRef.current && currentAttempt === parseAttemptRef.current) {
-            setParseProgress(event.progress);
-            await dbLogger.debug('ParseStep: onProgress called', {
-              progress: event.progress,
-              fileName: fileInfo?.name,
-              projectId
-            });
-          }
-        };
-
-        // Create parser instance
-        const parser = ParserFactory.createParser(fileInfo.name);
-
-        // Get file data from storage
-        const mainFileResponse = await fetch(urlData.signedUrl);
-        const mainFileBuffer = await mainFileResponse.arrayBuffer();
         const companionBuffers: Record<string, ArrayBuffer> = {};
-        
         if (fileInfo.companions) {
           for (const companion of fileInfo.companions) {
             if (!companion.id || !companion.name) continue;
 
-            // Get companion file URL
+            if (!hasStoragePath(companion)) {
+              const warningMessage = 'Companion file storage_path is missing, null, empty, or not a string. Skipping this companion.';
+              await dbLogger.warn(warningMessage, {
+                source: 'ParseStep',
+                companionId: (companion as { id?: string }).id,
+                companionName: (companion as { name?: string }).name,
+                actualPathValue: (companion as any).storage_path,
+                projectId
+              });
+              continue;
+            }
+            const typedCompanion = companion as { id: string; name: string; storage_path: string };
             const { data: companionUrlData, error: companionError } = await supabase.storage
               .from('project-files')
-              .createSignedUrl(companion.storage_path, 60);
-
+              .createSignedUrl(typedCompanion.storage_path, 60);
             if (companionError) {
-              await dbLogger.warn('Failed to get companion file URL', {
+              await dbLogger.warn('Failed to get companion file URL, skipping companion.', {
                 source: 'ParseStep',
-                companionId: companion.id,
+                companionId: typedCompanion.id,
+                companionName: typedCompanion.name,
                 error: companionError.message,
                 projectId
               });
               continue;
             }
-
             if (companionUrlData?.signedUrl) {
               const response = await fetch(companionUrlData.signedUrl);
-              const extension = companion.name.slice(companion.name.lastIndexOf('.')).toLowerCase();
+              if (!response.ok) {
+                await dbLogger.warn(`Failed to fetch companion file ${typedCompanion.name}, status: ${response.status}. Skipping.`, {
+                  source: 'ParseStep', companionId: typedCompanion.id, projectId
+                });
+                continue;
+              }
+              const extension = typedCompanion.name.slice(typedCompanion.name.lastIndexOf('.')).toLowerCase();
               companionBuffers[extension] = await response.arrayBuffer();
             }
           }
         }
+
+        const mainFileResponse = await fetch(urlData.signedUrl);
+        if (!mainFileResponse.ok) {
+          throw new Error(`Failed to fetch main file ${fileInfo.name}, status: ${mainFileResponse.status}`);
+        }
+        const mainFileBuffer = await mainFileResponse.arrayBuffer();
+        const parser = ParserFactory.createParser(fileInfo.name!);
+
+        const onProgress = (event: ParserProgressEvent) => {
+          if (!cancelled) setParseProgress(event.progress);
+        };
 
         const result = await parser.parse(
           mainFileBuffer,
@@ -157,76 +136,63 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           },
           onProgress
         );
+
+        if (!result || !result.features) {
+          throw new Error('Parsing resulted in no features or an invalid result structure.');
+        }
+
         await dbLogger.debug('ParseStep: parser.parse completed', {
-          fileName: fileInfo?.name,
+          fileName: fileInfo.name,
           projectId,
           resultSummary: {
-            features: Array.isArray(result?.features) ? result.features.length : undefined,
-            metadata: !!result?.metadata
+            featuresCount: result.features.length,
+            hasMetadata: !!result.metadata
           }
         });
 
-        if (mountedRef.current && currentAttempt === parseAttemptRef.current) {
-          await dbLogger.info('File parsing completed', {
-            source: 'ParseStep',
-            fileName: fileInfo.name,
-            featureCount: result.features.length,
-            projectId
-          });
-          await dbLogger.debug('ParseStep: calling onNext', { fileName: fileInfo?.name, projectId });
-          // Convert FullDataset to WizardDataset
+        if (!cancelled) {
           const wizardDataset: WizardDataset = {
-            features: result.features.map((feature: ImportGeoFeature): GeoFeature => ({
+            features: (result.features || []).map((feature: ImportGeoFeature): GeoFeature => ({
               ...feature,
               type: 'Feature',
               properties: feature.properties || {}
             })),
-            metadata: result.metadata ? {
-              ...result.metadata,
-              // Add any additional metadata fields needed by WizardDataset
-            } as Record<string, unknown> : undefined
+            metadata: result.metadata ? { ...result.metadata } as Record<string, unknown> : undefined
           };
-
-          // Update dataset in wizard context
-          setDataset(wizardDataset);
-          onNext();
+          setParseResult(wizardDataset);
+          setParsingStatus('done');
         }
       } catch (error) {
-        if (mountedRef.current && currentAttempt === parseAttemptRef.current) {
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-          await dbLogger.error('File parsing failed', {
-            source: 'ParseStep',
-            error: errorMessage,
+        if (!cancelled) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred during parsing';
+          await dbLogger.error('ParseStep: error during parsing process', {
+            message: errorMessage,
+            fileInfoId: fileInfo?.id,
             fileName: fileInfo?.name,
-            projectId
+            projectId,
+            errorDetails: error instanceof Error ? error.stack : error
           });
-          await dbLogger.debug('ParseStep: error caught in catch', { error, fileName: fileInfo?.name, projectId });
           setParseError(errorMessage);
+          setParsingStatus('error');
         }
-      } finally {
-        if (mountedRef.current && currentAttempt === parseAttemptRef.current) {
-          setIsParsing(false);
-          abortControllerRef.current = null;
-          await dbLogger.debug('ParseStep: finally block', { isParsing: false, fileName: fileInfo?.name, projectId });
-        }
-      }
-    };
-
-    // Use IIFE to handle the async operation
-    (async () => {
-      try {
-        await startParsing();
-      } catch (error) {
-        console.error('Failed to start parsing:', error);
       }
     })();
-  }, [fileInfo?.id, fileInfo?.name, fileInfo?.companions, onNext, projectId, isParsing, supabase, setDataset]);
+
+    return () => { cancelled = true; };
+  }, [fileInfo, projectId, supabase]);
+
+  useEffect(() => {
+    if (parsingStatus === 'done' && parseResult) {
+      setDataset(parseResult);
+      onNext();
+    }
+  }, [parsingStatus, parseResult, setDataset, onNext]);
 
   return (
     <div className="space-y-4">
-      {isParsing ? (
+      {parsingStatus === 'parsing' && (
         <div>
-          <p>Parsing file... {Math.round(parseProgress)}%</p>
+          <p>Parsing file: {fileInfo?.name || 'selected file'}... {Math.round(parseProgress)}%</p>
           <div className="w-full h-2 bg-gray-200 rounded-full mt-2">
             <div
               className="h-full bg-blue-500 rounded-full transition-all duration-300"
@@ -234,10 +200,11 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
             />
           </div>
         </div>
-      ) : parseError ? (
+      )}
+      {parsingStatus === 'error' && (
         <div className="text-red-500">
           <p>Error parsing file:</p>
-          <p>{parseError}</p>
+          <pre className="whitespace-pre-wrap text-sm">{parseError}</pre>
           <button
             onClick={onBack}
             className="mt-4 px-4 py-2 bg-gray-200 rounded hover:bg-gray-300"
@@ -245,7 +212,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
             Go Back
           </button>
         </div>
-      ) : null}
+      )}
     </div>
   );
 } 

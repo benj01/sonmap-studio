@@ -291,8 +291,8 @@ export class ShapefileParser extends BaseGeoDataParser {
       let result: ShapefileReader;
       try {
         result = await read(
-          { buffer: mainBuffer },
-          dbfBuffer ? { buffer: dbfBuffer } : undefined
+          mainBuffer,
+          dbfBuffer ? dbfBuffer : undefined
         ) as unknown as ShapefileReader;
       } catch (readError) {
         await dbLogger.error('ShapefileParser: read() failed', {
@@ -529,6 +529,10 @@ export class ShapefileParser extends BaseGeoDataParser {
       const geometryTypes = new Set(features.map(f => f.geometry.type));
       const properties = Object.keys(result.features[0].properties || {});
 
+      await dbLogger.debug('ShapefileParser: about to emit 100% complete', {
+        featuresLength: features.length,
+        srid: this.srid
+      });
       this.reportProgress(onProgress, {
         phase: 'complete',
         progress: 100,
@@ -574,8 +578,8 @@ export class ShapefileParser extends BaseGeoDataParser {
       }
 
       const result = await read(
-        { buffer: mainFile },
-        { buffer: companionFiles['.dbf'] }
+        mainFile,
+        companionFiles['.dbf']
       ) as unknown as ShapefileReader;
       return result.features.length > 0 && !!result.features[0].geometry;
     } catch (error) {
@@ -597,8 +601,8 @@ export class ShapefileParser extends BaseGeoDataParser {
       }
 
       const result = await read(
-        { buffer: mainFile },
-        { buffer: companionFiles['.dbf'] }
+        mainFile,
+        companionFiles['.dbf']
       ) as unknown as ShapefileReader;
       if (!result.features.length) {
         throw new Error('Empty shapefile');

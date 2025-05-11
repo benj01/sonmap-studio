@@ -28,10 +28,15 @@ declare module 'shapefile' {
     url?: string;
   }
 
-  export function open(options?: { encoding?: string }): Promise<ShapefileReader>;
+  export function open(
+    shp: ShapefileSource | ArrayBuffer | Uint8Array | string,
+    dbf?: ShapefileSource | ArrayBuffer | Uint8Array | string,
+    options?: { encoding?: string }
+  ): Promise<ShapefileReader>;
+
   export function read(
-    source: ShapefileSource,
-    dbf?: ShapefileSource,
+    shp: ShapefileSource | ArrayBuffer | Uint8Array | string,
+    dbf?: ShapefileSource | ArrayBuffer | Uint8Array | string,
     options?: { encoding?: string }
   ): Promise<ShapefileReader>;
 } 
