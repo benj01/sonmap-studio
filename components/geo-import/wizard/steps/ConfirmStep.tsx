@@ -21,19 +21,22 @@ export function ConfirmStep({ onNext, onBack }: ConfirmStepProps) {
   const fileName = fileInfo?.name || '(none)';
   const featureCount = selectedFeatureIds.length;
   const sourceSrid = datasetForImport?.metadata?.srid || 2056;
-  
-  (async () => {
-    await dbLogger.debug('Confirm step data', {
-      source: 'ConfirmStep',
-      hasPreviewDataset: !!dataset,
-      previewSrid: dataset?.metadata?.srid,
-      hasImportDataset: !!importDataset,
-      importSrid: importDataset?.metadata?.srid,
-      displayingSrid: sourceSrid,
-      usingDataset: importDataset ? 'importDataset' : 'dataset',
-      heightSource
-    });
-  })();
+
+  // Move logging into useEffect to avoid side effects during render
+  React.useEffect(() => {
+    (async () => {
+      await dbLogger.debug('Confirm step data', {
+        source: 'ConfirmStep',
+        hasPreviewDataset: !!dataset,
+        previewSrid: dataset?.metadata?.srid,
+        hasImportDataset: !!importDataset,
+        importSrid: importDataset?.metadata?.srid,
+        displayingSrid: sourceSrid,
+        usingDataset: importDataset ? 'importDataset' : 'dataset',
+        heightSource
+      });
+    })();
+  }, [dataset, importDataset, sourceSrid, heightSource]);
 
   // Function to render height source information
   const renderHeightSourceInfo = () => {

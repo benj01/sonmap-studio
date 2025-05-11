@@ -15,7 +15,7 @@ interface ValidationStepProps {
 }
 
 export function ValidationStep({ onNext, onBack }: ValidationStepProps) {
-  const { dataset, selectedFeatureIds } = useWizard();
+  const { dataset, selectedFeatureIds, setImportDataset } = useWizard();
   // Memoize features to avoid unnecessary re-renders
   const features = useMemo(
     () => (dataset?.features || []).filter((f: GeoFeature) => typeof f.id === 'number' && selectedFeatureIds.includes(f.id)),
@@ -48,6 +48,18 @@ export function ValidationStep({ onNext, onBack }: ValidationStepProps) {
     // Simulate repair: mark all as repaired
     setRepaired(true);
     setInvalidIds([]);
+  };
+
+  // Handler for Next button: set importDataset before proceeding
+  const handleNext = () => {
+    // Only proceed if there are no invalid features or all have been repaired
+    if (invalidIds.length === 0 || repaired) {
+      setImportDataset({
+        features: features,
+        metadata: dataset?.metadata,
+      });
+      onNext();
+    }
   };
 
   return (
@@ -89,7 +101,7 @@ export function ValidationStep({ onNext, onBack }: ValidationStepProps) {
         </button>
         <button
           className="px-4 py-2 bg-blue-600 text-white rounded"
-          onClick={onNext}
+          onClick={handleNext}
           disabled={invalidIds.length > 0 && !repaired}
         >
           Next
