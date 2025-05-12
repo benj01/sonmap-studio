@@ -354,18 +354,24 @@ AS $$
 DECLARE
     v_features jsonb;
 BEGIN
-    SELECT jsonb_agg(
-        jsonb_build_object(
-            'type', 'Feature',
-            'geometry', ST_AsGeoJSON(geometry_wgs84)::jsonb,
-            'properties', attributes
+    SELECT jsonb_build_object(
+        'type', 'FeatureCollection',
+        'features', COALESCE(
+            jsonb_agg(
+                jsonb_build_object(
+                    'type', 'Feature',
+                    'geometry', ST_AsGeoJSON(geometry_wgs84)::jsonb,
+                    'properties', attributes
+                )
+            ),
+            '[]'::jsonb
         )
     )
     INTO v_features
     FROM public.geo_features
     WHERE layer_id = p_layer_id;
 
-    RETURN COALESCE(v_features, '[]'::jsonb);
+    RETURN v_features;
 END;
 $$;
 

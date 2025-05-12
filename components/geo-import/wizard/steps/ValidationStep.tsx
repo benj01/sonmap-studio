@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useWizard } from '../WizardContext';
 import { GeoFeature } from '@/types/geo';
+import { dbLogger } from '@/utils/logging/dbLogger';
 // import booleanValid from '@turf/boolean-valid'; // Uncomment if turf is available
 
 function arraysEqual(a: number[], b: number[]) {
@@ -15,7 +16,7 @@ interface ValidationStepProps {
 }
 
 export function ValidationStep({ onNext, onBack }: ValidationStepProps) {
-  const { dataset, selectedFeatureIds, setImportDataset } = useWizard();
+  const { dataset, importDataset, selectedFeatureIds, setImportDataset } = useWizard();
   // Memoize features to avoid unnecessary re-renders
   const features = useMemo(
     () => (dataset?.features || []).filter((f: GeoFeature) => typeof f.id === 'number' && selectedFeatureIds.includes(f.id)),
@@ -51,12 +52,47 @@ export function ValidationStep({ onNext, onBack }: ValidationStepProps) {
   };
 
   // Handler for Next button: set importDataset before proceeding
-  const handleNext = () => {
+  const handleNext = async () => {
     // Only proceed if there are no invalid features or all have been repaired
     if (invalidIds.length === 0 || repaired) {
+      if (!importDataset) {
+        // Log and block if original dataset is missing
+        await dbLogger.error('ValidationStep: importDataset missing when attempting to filter for import', {
+          source: 'ValidationStep',
+          selectedFeatureIds,
+        });
+        alert('Error: Original import dataset is missing. Cannot proceed.');
+        return;
+      }
+      // Filter the original importDataset (original CRS) by selectedFeatureIds
+      const filteredFeatures = (importDataset.features || []).filter(
+        (f: GeoFeature) => typeof f.id === 'number' && selectedFeatureIds.includes(f.id)
+      );
+      // Runtime check: warn if SRID is 4326 but coordinates are not in WGS84 range
+      const srid = importDataset.metadata?.srid;
+      if (srid === 4326 && filteredFeatures.length > 0) {
+        const sample = filteredFeatures[0];
+        if (sample.geometry && 'coordinates' in sample.geometry) {
+          const coords = (sample.geometry as any).coordinates;
+          if (Array.isArray(coords) && coords.length >= 2) {
+            const [lng, lat] = coords;
+            if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+              await dbLogger.warn('ValidationStep: SRID is 4326 but coordinates are outside WGS84 range', {
+                source: 'ValidationStep',
+                lng, lat, srid
+              });
+            }
+          }
+        }
+      }
+      await dbLogger.info('ValidationStep: Setting filtered importDataset for import', {
+        source: 'ValidationStep',
+        filteredCount: filteredFeatures.length,
+        srid,
+      });
       setImportDataset({
-        features: features,
-        metadata: dataset?.metadata,
+        features: filteredFeatures,
+        metadata: importDataset.metadata,
       });
       onNext();
     }

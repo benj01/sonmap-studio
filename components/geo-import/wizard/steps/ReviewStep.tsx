@@ -54,8 +54,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.access_token) throw new Error('No authentication token available');
       
-      // IMPORTANT: Use importDataset instead of dataset for the import payload
-      // This ensures original (untransformed) coordinates are sent to the backend
+      // Use importDataset (original, untransformed) for import
       const features = (datasetForImport?.features || []).filter(
         (f: GeoFeature): f is GeoFeature & { id: number } => typeof f.id === 'number' && selectedFeatureIds.includes(f.id as number)
       );

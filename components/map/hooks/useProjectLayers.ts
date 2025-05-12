@@ -38,7 +38,7 @@ function analyzeGeometryTypes(features: Feature<Geometry>[]): { hasPolygons: boo
 
 export function useProjectLayers(projectId: string) {
   const supabase = createClient();
-  const { addLayer, setInitialLoadComplete } = useLayerStore();
+  const { addLayer, setInitialLoadComplete, updateLayerStatus } = useLayerStore();
   const mountCount = useRef(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const currentProjectId = useRef(projectId);
@@ -208,6 +208,14 @@ export function useProjectLayers(projectId: string) {
               } else {
                 geojson = geojsonData;
                 await dbLogger.info('Fetched GeoJSON for layer', { projectId, layerId: layer.id, hasGeojson: !!geojson });
+                if (geojson && Array.isArray(geojson.features)) {
+                  layer.features = geojson.features;
+                  await dbLogger.debug('Set layer.features from GeoJSON', {
+                    layerId: layer.id,
+                    featureCount: layer.features ? layer.features.length : 0,
+                    sampleFeature: layer.features && layer.features.length > 0 ? layer.features[0] : null
+                  });
+                }
               }
             }
 
@@ -241,6 +249,8 @@ export function useProjectLayers(projectId: string) {
                   geometryTypes
                 }
               );
+              // Set setupStatus to 'complete' after adding the layer
+              updateLayerStatus(layer.id, 'complete');
             }
 
             loadedLayers.add(layer.id);
@@ -271,7 +281,7 @@ export function useProjectLayers(projectId: string) {
     return () => {
       isMounted = false;
     };
-  }, [projectId, supabase, addLayer, setInitialLoadComplete]);
+  }, [projectId, supabase, addLayer, setInitialLoadComplete, updateLayerStatus]);
 
   return { isInitialized };
 } 

@@ -19,7 +19,7 @@ function hasStoragePath(obj: any): obj is { storage_path: string } {
 }
 
 export function ParseStep({ onNext, onBack }: ParseStepProps) {
-  const { fileInfo, setDataset, projectId } = useWizard();
+  const { fileInfo, setDataset, projectId, setImportDataset } = useWizard();
   const [parseError, setParseError] = useState<string | null>(null);
   const [parseProgress, setParseProgress] = useState(0);
   const [parsingStatus, setParsingStatus] = useState<'idle' | 'parsing' | 'done' | 'error'>('idle');
@@ -127,7 +127,19 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           if (!cancelled) setParseProgress(event.progress);
         };
 
-        const result = await parser.parse(
+        // Parse original (untransformed) features for import
+        const resultOriginal = await parser.parse(
+          mainFileBuffer,
+          companionBuffers,
+          {
+            filename: fileInfo.name,
+            transformCoordinates: false
+          },
+          onProgress
+        );
+
+        // Parse transformed features for preview (WGS84)
+        const resultPreview = await parser.parse(
           mainFileBuffer,
           companionBuffers,
           {
@@ -137,7 +149,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           onProgress
         );
 
-        if (!result || !result.features) {
+        if (!resultOriginal || !resultOriginal.features || !resultPreview || !resultPreview.features) {
           throw new Error('Parsing resulted in no features or an invalid result structure.');
         }
 
@@ -145,21 +157,38 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           fileName: fileInfo.name,
           projectId,
           resultSummary: {
-            featuresCount: result.features.length,
-            hasMetadata: !!result.metadata
+            featuresCount: resultOriginal.features.length,
+            hasMetadata: !!resultOriginal.metadata
           }
         });
 
         if (!cancelled) {
-          const wizardDataset: WizardDataset = {
-            features: (result.features || []).map((feature: ImportGeoFeature): GeoFeature => ({
+          // Store both datasets in context
+          setDataset({
+            features: (resultPreview.features || []).map((feature: ImportGeoFeature): GeoFeature => ({
               ...feature,
               type: 'Feature',
               properties: feature.properties || {}
             })),
-            metadata: result.metadata ? { ...result.metadata } as Record<string, unknown> : undefined
-          };
-          setParseResult(wizardDataset);
+            metadata: resultPreview.metadata ? { ...resultPreview.metadata } as Record<string, unknown> : undefined
+          });
+          // Store original for import (with correct SRID in metadata)
+          setImportDataset({
+            features: (resultOriginal.features || []).map((feature: ImportGeoFeature): GeoFeature => ({
+              ...feature,
+              type: 'Feature',
+              properties: feature.properties || {}
+            })),
+            metadata: resultOriginal.metadata ? { ...resultOriginal.metadata } as Record<string, unknown> : undefined
+          });
+          setParseResult({
+            features: (resultPreview.features || []).map((feature: ImportGeoFeature): GeoFeature => ({
+              ...feature,
+              type: 'Feature',
+              properties: feature.properties || {}
+            })),
+            metadata: resultPreview.metadata ? { ...resultPreview.metadata } as Record<string, unknown> : undefined
+          });
           setParsingStatus('done');
         }
       } catch (error) {
@@ -179,14 +208,13 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
     })();
 
     return () => { cancelled = true; };
-  }, [fileInfo, projectId, supabase]);
+  }, [fileInfo, projectId, supabase, setDataset, setImportDataset]);
 
   useEffect(() => {
     if (parsingStatus === 'done' && parseResult) {
-      setDataset(parseResult);
       onNext();
     }
-  }, [parsingStatus, parseResult, setDataset, onNext]);
+  }, [parsingStatus, parseResult, onNext]);
 
   return (
     <div className="space-y-4">
