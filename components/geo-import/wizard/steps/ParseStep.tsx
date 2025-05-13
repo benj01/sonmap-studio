@@ -7,6 +7,7 @@ import type { ParserProgressEvent } from '@/core/processors/base-parser';
 import type { WizardDataset } from '../WizardContext';
 import { createClient } from '@/utils/supabase/client';
 import type { GeoFeature } from '@/types/geo';
+import { detectZCoordinates } from '@/components/map/dialogs/height-configuration/utils';
 
 interface ParseStepProps {
   onNext: () => void;
@@ -19,7 +20,7 @@ function hasStoragePath(obj: any): obj is { storage_path: string } {
 }
 
 export function ParseStep({ onNext, onBack }: ParseStepProps) {
-  const { fileInfo, setDataset, projectId, setImportDataset } = useWizard();
+  const { fileInfo, setDataset, projectId, setImportDataset, setHeightSource } = useWizard();
   const [parseError, setParseError] = useState<string | null>(null);
   const [parseProgress, setParseProgress] = useState(0);
   const [parsingStatus, setParsingStatus] = useState<'idle' | 'parsing' | 'done' | 'error'>('idle');
@@ -189,6 +190,29 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
             })),
             metadata: resultPreview.metadata ? { ...resultPreview.metadata } as Record<string, unknown> : undefined
           });
+
+          // --- Height detection logic ---
+          await dbLogger.debug('Sample feature geometries before height detection', {
+            sample: (resultOriginal.features || []).slice(0, 5).map(f => f.geometry)
+          });
+          const zInfo = detectZCoordinates((resultOriginal.features || []) as import('geojson').Feature[]);
+          if (zInfo.hasZ) {
+            setHeightSource({
+              type: 'z',
+              status: 'detected',
+              message: 'Z-coordinates detected'
+            });
+            await dbLogger.info('Height detection: Z-coordinates found', { source: 'ParseStep', zInfo });
+          } else {
+            setHeightSource({
+              type: 'none',
+              status: 'not_detected',
+              message: 'No height data detected'
+            });
+            await dbLogger.info('Height detection: No Z-coordinates found', { source: 'ParseStep', zInfo });
+          }
+          // --- End height detection logic ---
+
           setParsingStatus('done');
         }
       } catch (error) {
@@ -208,7 +232,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
     })();
 
     return () => { cancelled = true; };
-  }, [fileInfo, projectId, supabase, setDataset, setImportDataset]);
+  }, [fileInfo, projectId, supabase, setDataset, setImportDataset, setHeightSource]);
 
   useEffect(() => {
     if (parsingStatus === 'done' && parseResult) {

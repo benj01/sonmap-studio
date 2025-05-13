@@ -109,22 +109,23 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
   let propertyZCount = 0;
   
   // Function to process coordinates recursively
-  const processCoords = (coords: number[][]): void => {
+  const processCoords = (coords: number[] | number[][]): void => {
     if (!Array.isArray(coords)) return;
-    
-    if (coords.length >= 3 && typeof coords[2] === 'number') {
-      // This is a coordinate with Z value
-      const z = coords[2];
-      if (!isNaN(z)) {
-        zCount++;
-        zMin = Math.min(zMin, z);
-        zMax = Math.max(zMax, z);
+    // If this is a single coordinate (number[])
+    if (typeof coords[0] === 'number') {
+      if (coords.length >= 3 && typeof coords[2] === 'number') {
+        const z = coords[2];
+        if (!isNaN(z)) {
+          zCount++;
+          zMin = Math.min(zMin, z);
+          zMax = Math.max(zMax, z);
+        }
+        totalCoords++;
       }
-      totalCoords++;
-    } else if (Array.isArray(coords[0])) {
-      // This is a nested array of coordinates
-      coords.forEach(c => processCoords([c]));
+      return;
     }
+    // Otherwise, it's an array of coordinates (number[][])
+    (coords as number[][]).forEach(c => processCoords(c));
   };
   
   // Process all features
@@ -173,32 +174,68 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
         switch (feature.geometry.type) {
           case 'Point': {
             const geometry = feature.geometry as Point;
-            processCoords([geometry.coordinates]);
+            (async () => {
+              await dbLogger.debug('Processing Point geometry in detectZCoordinates', {
+                coordinates: geometry.coordinates,
+                feature
+              });
+            })().catch(console.error);
+            processCoords(geometry.coordinates);
             break;
           }
           case 'LineString': {
             const geometry = feature.geometry as LineString;
+            (async () => {
+              await dbLogger.debug('Processing LineString geometry in detectZCoordinates', {
+                coordinates: geometry.coordinates,
+                feature
+              });
+            })().catch(console.error);
             processCoords(geometry.coordinates);
             break;
           }
           case 'Polygon': {
             const geometry = feature.geometry as Polygon;
+            (async () => {
+              await dbLogger.debug('Processing Polygon geometry in detectZCoordinates', {
+                coordinates: geometry.coordinates,
+                feature
+              });
+            })().catch(console.error);
             processCoords(geometry.coordinates[0]);
             break;
           }
           case 'MultiPoint': {
             const geometry = feature.geometry as MultiPoint;
+            (async () => {
+              await dbLogger.debug('Processing MultiPoint geometry in detectZCoordinates', {
+                coordinates: geometry.coordinates,
+                feature
+              });
+            })().catch(console.error);
             processCoords(geometry.coordinates);
             break;
           }
           case 'MultiLineString': {
             const geometry = feature.geometry as MultiLineString;
+            (async () => {
+              await dbLogger.debug('Processing MultiLineString geometry in detectZCoordinates', {
+                coordinates: geometry.coordinates,
+                feature
+              });
+            })().catch(console.error);
             processCoords(geometry.coordinates[0]);
             break;
           }
           case 'MultiPolygon': {
             const geometry = feature.geometry as MultiPolygon;
-            processCoords(geometry.coordinates[0][0]);
+            (async () => {
+              await dbLogger.debug('Processing MultiPolygon geometry in detectZCoordinates', {
+                coordinates: geometry.coordinates,
+                feature
+              });
+            })().catch(console.error);
+            geometry.coordinates[0].forEach(ring => processCoords(ring));
             break;
           }
           case 'GeometryCollection': {
@@ -225,8 +262,14 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
         }
       } catch (error) {
         (async () => {
-          await dbLogger.error('Error processing geometry coordinates', { source: SOURCE, error });
+          await dbLogger.error('Error processing geometry coordinates in detectZCoordinates', {
+            source: SOURCE,
+            error,
+            feature,
+            geometry: feature.geometry
+          });
         })().catch(console.error);
+        return;
       }
     }
   });
