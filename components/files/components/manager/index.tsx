@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { FileList } from './file-list';
 import { useFileActions } from '../../hooks/useFileActions';
 import { ProjectFile } from '../../types';
@@ -13,6 +13,7 @@ import { UploadErrorDialog } from '../upload-error-dialog';
 import { Dialog, DialogContent, DialogTitle } from '../../../ui/dialog';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import type { WizardFileInfo } from '@/components/geo-import/wizard/WizardContext';
+import createClient from '@/utils/supabase/client';
 
 interface FileManagerProps {
   projectId: string;
@@ -37,6 +38,7 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
   const [importedOpen, setImportedOpen] = useState(true);
   const [importWizardFile, setImportWizardFile] = useState<WizardFileInfo | undefined>();
   const [importWizardStep, setImportWizardStep] = useState<number>(0);
+  const subscriptionRef = useRef<any>(null);
 
   const loadExistingFiles = useCallback(async () => {
     if (!projectId) {
@@ -67,13 +69,34 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
 
   useEffect(() => {
     if (!projectId) return;
-    (async () => {
-      try {
-        await loadExistingFiles();
-      } catch {
-        // Optionally handle error here
+    const supabase = createClient();
+    // Clean up previous subscription if any
+    if (subscriptionRef.current) {
+      supabase.removeChannel(subscriptionRef.current);
+      subscriptionRef.current = null;
+    }
+    // Subscribe to real-time changes for this project's files
+    const channel = supabase.channel(`project_files_changes_${projectId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'project_files',
+          filter: `project_id=eq.${projectId}`,
+        },
+        async (payload) => {
+          await loadExistingFiles();
+        }
+      )
+      .subscribe();
+    subscriptionRef.current = channel;
+    return () => {
+      if (subscriptionRef.current) {
+        supabase.removeChannel(subscriptionRef.current);
+        subscriptionRef.current = null;
       }
-    })().catch(() => {});
+    };
   }, [projectId, loadExistingFiles]);
 
   const handleFileDelete = useCallback(
@@ -125,7 +148,7 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
   };
 
   // Use main files as returned from the DB, which already have companions attached
-  const groupedFiles = files.filter(f => !f.main_file_id);
+  const groupedFiles = files.filter(f => !f.main_file_id && !f.is_imported);
 
   useEffect(() => {
     if (!(files && files.length > 0)) return;
@@ -157,7 +180,7 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-6 gap-2">
         <div>
           <h2 className="text-xl font-bold mb-1">Project Files</h2>
-          <p className="text-muted-foreground text-sm">Upload new files and import them into your project using the guided wizard.</p>
+          <p className="text-muted-foreground text-sm">Import files into your project using the guided wizard. All imported files are listed below.</p>
         </div>
         <Button onClick={() => setShowImportWizard(true)} className="gap-2" size="lg">
           <Upload className="w-5 h-5" /> Upload & Import
@@ -167,36 +190,7 @@ export function FileManager({ projectId, onError }: FileManagerProps) {
       {/* Main card */}
       <div className={cn('relative min-h-[200px] rounded-lg border bg-card')}>
         <div ref={dropZoneRef} className="p-4 space-y-6">
-          {/* Uploaded Files Section (Collapsible) */}
-          <div>
-            <button
-              className="flex items-center w-full text-left mb-3 group"
-              onClick={() => setUploadedOpen((v) => !v)}
-              type="button"
-            >
-              {uploadedOpen ? (
-                <ChevronDown className="w-4 h-4 mr-2 transition-transform" />
-              ) : (
-                <ChevronRight className="w-4 h-4 mr-2 transition-transform" />
-              )}
-              <span className="text-lg font-semibold">Uploaded Files</span>
-            </button>
-            {uploadedOpen && (
-              <div>
-                <FileList
-                  files={groupedFiles}
-                  onDelete={handleFileDelete}
-                  onImport={handleFileImport}
-                  isLoading={isLoading}
-                />
-              </div>
-            )}
-          </div>
-
-          {/* Divider */}
-          <div className="border-t border-border my-2"></div>
-
-          {/* Imported Files Section (Collapsible) */}
+          {/* Imported Files Section (Only) */}
           <div className="bg-muted/30 p-4 rounded-lg border border-border">
             <button
               className="flex items-center w-full text-left mb-3 group"

@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, useImperativeHandle, forwardRef, useCallback } from 'react';
+import { useEffect, useState, useImperativeHandle, forwardRef, useCallback, useRef } from 'react';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Eye, Trash2 } from 'lucide-react';
+import { Eye, Trash2, ChevronDown, ChevronRight } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { createClient } from '@/utils/supabase/client';
 import { dbLogger } from '@/utils/logging/dbLogger';
@@ -30,6 +30,8 @@ interface ImportedFile {
     failed_count: number;
     imported_at: string;
   };
+  size?: number;
+  file_type?: string;
 }
 
 type SupabaseProjectFileRow = {
@@ -45,7 +47,9 @@ type SupabaseProjectFileRow = {
     failed_count: number;
     imported_at: string;
   };
-};
+  size?: number;
+  file_type?: string;
+}
 
 const SOURCE = 'ImportedFilesList';
 
@@ -59,6 +63,9 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
     const [isLoading, setIsLoading] = useState(true);
     const [fileToDelete, setFileToDelete] = useState<ImportedFile | null>(null);
     const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+    const subscriptionRef = useRef<any>(null);
+    // Expandable state for each file
+    const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
     const loadImportedFiles = useCallback(async () => {
       try {
@@ -72,7 +79,9 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
             import_metadata,
             source_file_id,
             is_imported,
-            uploaded_at
+            uploaded_at,
+            size,
+            file_type
           `)
           .eq('project_id', projectId)
           .eq('is_imported', true)
@@ -108,6 +117,40 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
     }));
 
     useEffect(() => {
+      const supabase = createClient();
+      // Clean up previous subscription if any
+      if (subscriptionRef.current) {
+        supabase.removeChannel(subscriptionRef.current);
+        subscriptionRef.current = null;
+      }
+      // Subscribe to real-time changes for all files in this project
+      const channel = supabase.channel(`imported_files_changes_${projectId}`)
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'project_files',
+            filter: `project_id=eq.${projectId}`,
+          },
+          async (payload) => {
+            // Add a delay to avoid race condition
+            setTimeout(() => {
+              loadImportedFiles();
+            }, 300);
+          }
+        )
+        .subscribe();
+      subscriptionRef.current = channel;
+      return () => {
+        if (subscriptionRef.current) {
+          supabase.removeChannel(subscriptionRef.current);
+          subscriptionRef.current = null;
+        }
+      };
+    }, [projectId, loadImportedFiles]);
+
+    useEffect(() => {
       (async () => {
         await loadImportedFiles();
       })().catch(() => {});
@@ -125,6 +168,27 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
         setFileToDelete(null);
       }
     };
+
+    // Expandable state for each file
+    const toggleExpand = (fileId: string) => {
+      setExpanded((prev) => ({ ...prev, [fileId]: !prev[fileId] }));
+    };
+
+    // Helper to get file type or extension
+    function getFileTypeDisplay(file: ImportedFile): string {
+      if (file.file_type && file.file_type !== 'EMPTY') return file.file_type;
+      if (file.name) {
+        const ext = file.name.split('.').pop();
+        if (!ext) return 'Unknown';
+        // Friendly mapping for common geodata
+        if (ext.toLowerCase() === 'shp') return 'Shapefile (.shp)';
+        if (ext.toLowerCase() === 'dbf') return 'dBASE Table (.dbf)';
+        if (ext.toLowerCase() === 'shx') return 'Shape Index (.shx)';
+        if (ext.toLowerCase() === 'prj') return 'Projection (.prj)';
+        return `.${ext}`;
+      }
+      return 'Unknown';
+    }
 
     if (isLoading) {
       return (
@@ -161,6 +225,15 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
                           ` (${file.import_metadata.failed_count} failed)`}
                       </CardDescription>
                     </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => toggleExpand(file.id)}
+                      className="h-8"
+                      aria-label={expanded[file.id] ? 'Collapse details' : 'Expand details'}
+                    >
+                      {expanded[file.id] ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                    </Button>
                   </div>
                 </CardHeader>
                 <CardContent className="pb-2">
@@ -170,6 +243,13 @@ export const ImportedFilesList = forwardRef<ImportedFilesListRef, ImportedFilesL
                       'Recently imported'
                     }
                   </p>
+                  {expanded[file.id] && (
+                    <div className="mt-2 text-xs space-y-1">
+                      <div><strong>File size:</strong> {file.size ? `${(file.size / 1024).toFixed(1)} KB` : 'N/A'}</div>
+                      <div><strong>File type:</strong> {getFileTypeDisplay(file)}</div>
+                      <div><strong>Upload date:</strong> {file.uploaded_at ? new Date(file.uploaded_at).toLocaleString() : 'N/A'}</div>
+                    </div>
+                  )}
                 </CardContent>
                 <CardFooter className="flex justify-between mt-auto pt-4">
                   <div className="flex items-center gap-2">
