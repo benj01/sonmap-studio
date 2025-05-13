@@ -8,6 +8,7 @@ import type { WizardDataset } from '../WizardContext';
 import { createClient } from '@/utils/supabase/client';
 import type { GeoFeature } from '@/types/geo';
 import { detectZCoordinates } from '@/components/map/dialogs/height-configuration/utils';
+import { isDebugEnabled } from '@/utils/logging/debugFlags';
 
 interface ParseStepProps {
   onNext: () => void;
@@ -41,12 +42,14 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
 
     (async () => {
       try {
-        await dbLogger.debug('ParseStep: starting parse operation', {
-          fileInfoId: fileInfo.id,
-          fileName: fileInfo.name,
-          hasCompanions: !!fileInfo.companions?.length,
-          projectId,
-        });
+        if (isDebugEnabled('ParseStep')) {
+          await dbLogger.debug('ParseStep: starting parse operation', {
+            fileInfoId: fileInfo.id,
+            fileName: fileInfo.name,
+            hasCompanions: !!fileInfo.companions?.length,
+            projectId,
+          });
+        }
 
         const { data: file, error: dbError } = await supabase
           .from('project_files')
@@ -80,13 +83,15 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
 
             if (!hasStoragePath(companion)) {
               const warningMessage = 'Companion file storage_path is missing, null, empty, or not a string. Skipping this companion.';
-              await dbLogger.warn(warningMessage, {
-                source: 'ParseStep',
-                companionId: (companion as { id?: string }).id,
-                companionName: (companion as { name?: string }).name,
-                actualPathValue: (companion as any).storage_path,
-                projectId
-              });
+              if (isDebugEnabled('ParseStep')) {
+                await dbLogger.warn(warningMessage, {
+                  source: 'ParseStep',
+                  companionId: (companion as { id?: string }).id,
+                  companionName: (companion as { name?: string }).name,
+                  actualPathValue: (companion as any).storage_path,
+                  projectId
+                });
+              }
               continue;
             }
             const typedCompanion = companion as { id: string; name: string; storage_path: string };
@@ -94,21 +99,25 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
               .from('project-files')
               .createSignedUrl(typedCompanion.storage_path, 60);
             if (companionError) {
-              await dbLogger.warn('Failed to get companion file URL, skipping companion.', {
-                source: 'ParseStep',
-                companionId: typedCompanion.id,
-                companionName: typedCompanion.name,
-                error: companionError.message,
-                projectId
-              });
+              if (isDebugEnabled('ParseStep')) {
+                await dbLogger.warn('Failed to get companion file URL, skipping companion.', {
+                  source: 'ParseStep',
+                  companionId: typedCompanion.id,
+                  companionName: typedCompanion.name,
+                  error: companionError.message,
+                  projectId
+                });
+              }
               continue;
             }
             if (companionUrlData?.signedUrl) {
               const response = await fetch(companionUrlData.signedUrl);
               if (!response.ok) {
-                await dbLogger.warn(`Failed to fetch companion file ${typedCompanion.name}, status: ${response.status}. Skipping.`, {
-                  source: 'ParseStep', companionId: typedCompanion.id, projectId
-                });
+                if (isDebugEnabled('ParseStep')) {
+                  await dbLogger.warn(`Failed to fetch companion file ${typedCompanion.name}, status: ${response.status}. Skipping.`, {
+                    source: 'ParseStep', companionId: typedCompanion.id, projectId
+                  });
+                }
                 continue;
               }
               const extension = typedCompanion.name.slice(typedCompanion.name.lastIndexOf('.')).toLowerCase();
@@ -154,14 +163,16 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           throw new Error('Parsing resulted in no features or an invalid result structure.');
         }
 
-        await dbLogger.debug('ParseStep: parser.parse completed', {
-          fileName: fileInfo.name,
-          projectId,
-          resultSummary: {
-            featuresCount: resultOriginal.features.length,
-            hasMetadata: !!resultOriginal.metadata
-          }
-        });
+        if (isDebugEnabled('ParseStep')) {
+          await dbLogger.debug('ParseStep: parser.parse completed', {
+            fileName: fileInfo.name,
+            projectId,
+            resultSummary: {
+              featuresCount: resultOriginal.features.length,
+              hasMetadata: !!resultOriginal.metadata
+            }
+          });
+        }
 
         if (!cancelled) {
           // Store both datasets in context
@@ -192,9 +203,11 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
           });
 
           // --- Height detection logic ---
-          await dbLogger.debug('Sample feature geometries before height detection', {
-            sample: (resultOriginal.features || []).slice(0, 5).map(f => f.geometry)
-          });
+          if (isDebugEnabled('ParseStep')) {
+            await dbLogger.debug('Sample feature geometries before height detection', {
+              sample: (resultOriginal.features || []).slice(0, 5).map(f => f.geometry)
+            });
+          }
           const zInfo = detectZCoordinates((resultOriginal.features || []) as import('geojson').Feature[]);
           if (zInfo.hasZ) {
             setHeightSource({

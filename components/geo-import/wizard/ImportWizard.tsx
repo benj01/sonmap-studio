@@ -8,6 +8,7 @@ import { ValidationStep } from './steps/ValidationStep';
 import { ConfirmStep } from './steps/ConfirmStep';
 import { ReviewStep } from './steps/ReviewStep';
 import { useDevLogger } from '@/utils/logging/devLogger';
+import { isDebugEnabled } from '@/utils/logging/debugFlags';
 
 const steps = [
   { label: 'Select File', component: FileSelectStep },
@@ -32,7 +33,7 @@ export function ImportWizard({ projectId, onClose, initialFileInfo, initialStep 
   const logger = useDevLogger('ImportWizard');
 
   useEffect(() => {
-    if (logger.shouldLog()) {
+    if (isDebugEnabled('ImportWizard') && logger.shouldLog()) {
       logger.logInfo('Import wizard initialized', { projectId });
     }
   }, [logger, projectId]);

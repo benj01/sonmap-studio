@@ -10,6 +10,7 @@ import { groupFiles } from '../../../files/utils/file-processor';
 import { Alert, AlertTitle, AlertDescription } from '../../../ui/alert';
 import { useDevLogger } from '@/utils/logging/devLogger';
 import { dbLogger } from '@/utils/logging/dbLogger';
+import { isDebugEnabled } from '@/utils/logging/debugFlags';
 
 interface FileSelectStepProps {
   onNext: () => void;
@@ -30,7 +31,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
 
   // Log component initialization
   useEffect(() => {
-    if (logger.shouldLog()) {
+    if (isDebugEnabled('FileSelectStep') && logger.shouldLog()) {
       logger.logInfo('File select step initialized', { projectId });
     }
   }, [logger, projectId]);
@@ -65,7 +66,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         return;
       }
 
-      if (logger.shouldLog()) {
+      if (isDebugEnabled('FileSelectStep') && logger.shouldLog()) {
         logger.log('File groups created', {
           groupCount: groups.length,
           firstGroupFiles: groups[0].companions.length + 1
@@ -117,7 +118,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         return;
       }
 
-      if (logger.shouldLog()) {
+      if (isDebugEnabled('FileSelectStep') && logger.shouldLog()) {
         logger.log('Main file uploaded', {
           fileName: mainFile.name,
           path: mainFilePath
@@ -144,7 +145,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
       let mainFileRecord;
       try {
         mainFileRecord = await waitForFileRecord(mainFilePath);
-        if (logger.shouldLog()) {
+        if (isDebugEnabled('FileSelectStep') && logger.shouldLog()) {
           logger.log('Main file record created', {
             fileId: mainFileRecord.id,
             fileName: mainFileRecord.name
@@ -175,7 +176,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
           return;
         }
 
-        if (logger.shouldLog()) {
+        if (isDebugEnabled('FileSelectStep') && logger.shouldLog()) {
           logger.log('Companion file uploaded', {
             fileName: companion.name,
             path: companionPath
@@ -205,7 +206,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         let compFileRecord;
         try {
           compFileRecord = await waitForFileRecord(companionPath);
-          if (logger.shouldLog()) {
+          if (isDebugEnabled('FileSelectStep') && logger.shouldLog()) {
             logger.log('Companion file record created', {
               fileId: compFileRecord.id,
               fileName: compFileRecord.name
@@ -250,7 +251,7 @@ export function FileSelectStep({ onNext }: FileSelectStepProps) {
         projectId
       });
 
-      if (logger.shouldLog()) {
+      if (isDebugEnabled('FileSelectStep') && logger.shouldLog()) {
         logger.log('File upload completed', {
           mainFileId: mainFileRecord.id,
           companionCount: companionFileInfos.length

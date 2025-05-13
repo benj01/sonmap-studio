@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { AlertTriangle } from 'lucide-react';
 import bbox from '@turf/bbox';
 import { dbLogger } from '@/utils/logging/dbLogger';
+import { isLogLevelEnabled } from '@/core/logging/logLevelConfig';
 
 interface MapPreviewProps {
   features: GeoFeature[];
@@ -435,36 +436,44 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
         if (loadedFeatures.length > 0) {
           const sampleFeatures = loadedFeatures.slice(0, Math.min(3, loadedFeatures.length));
           for (const [index, feature] of sampleFeatures.entries()) {
-            await dbLogger.info(SOURCE, `Feature ${index} details:`, {
-              id: feature.id,
-              geometryType: feature.geometry.type
-            });
+            if (isLogLevelEnabled('MapPreview', 'debug')) {
+              await dbLogger.debug('MapPreview: Feature details', {
+                id: feature.id,
+                geometryType: feature.geometry.type
+              });
+            }
             if (feature.geometry.type === 'Point' && 'coordinates' in feature.geometry) {
               const coords = feature.geometry.coordinates;
-              await dbLogger.info(SOURCE, `Feature ${index} Point coordinates:`, { coordinates: coords });
+              if (isLogLevelEnabled('MapPreview', 'debug')) {
+                await dbLogger.debug('MapPreview: Feature Point coordinates', { coordinates: coords });
+              }
               if (Array.isArray(coords) && coords.length >= 2) {
                 const [lng, lat] = coords;
-                await dbLogger.info(SOURCE, `Feature ${index} coordinate validation:`, {
-                  lng, lat,
-                  isLngValid: lng >= -180 && lng <= 180,
-                  isLatValid: lat >= -90 && lat <= 90,
-                  isInWGS84Range: lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90
-                });
+                if (isLogLevelEnabled('MapPreview', 'debug')) {
+                  await dbLogger.debug('MapPreview: Feature coordinate validation', {
+                    lng, lat,
+                    isLngValid: lng >= -180 && lng <= 180,
+                    isLatValid: lat >= -90 && lat <= 90,
+                    isInWGS84Range: lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90
+                  });
+                }
               }
             } else if ((feature.geometry.type === 'LineString' || feature.geometry.type === 'MultiPoint') && 
                         'coordinates' in feature.geometry) {
               const coords = feature.geometry.coordinates.slice(0, 3);
-              await dbLogger.info(SOURCE, `Feature ${index} ${feature.geometry.type} coordinates (first 3 points):`, { 
-                coordinates: coords
-              });
+              if (isLogLevelEnabled('MapPreview', 'debug')) {
+                await dbLogger.debug('MapPreview: Feature coordinates (first 3 points)', { coordinates: coords });
+              }
               if (Array.isArray(coords) && coords.length > 0 && Array.isArray(coords[0]) && coords[0].length >= 2) {
                 const [lng, lat] = coords[0];
-                await dbLogger.info(SOURCE, `Feature ${index} first point validation:`, {
-                  lng, lat,
-                  isLngValid: lng >= -180 && lng <= 180,
-                  isLatValid: lat >= -90 && lat <= 90,
-                  isInWGS84Range: lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90
-                });
+                if (isLogLevelEnabled('MapPreview', 'debug')) {
+                  await dbLogger.debug('MapPreview: Feature first point validation', {
+                    lng, lat,
+                    isLngValid: lng >= -180 && lng <= 180,
+                    isLatValid: lat >= -90 && lat <= 90,
+                    isInWGS84Range: lng >= -180 && lng <= 180 && lat >= -90 && lat <= 90
+                  });
+                }
               }
             }
           }
@@ -561,7 +570,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
               }
             : null
         };
-        await dbLogger.info(SOURCE, 'GeoJSON summary for Mapbox', summary);
+        if (isLogLevelEnabled('MapPreview', 'debug')) {
+          await dbLogger.debug('MapPreview: GeoJSON summary for Mapbox', summary);
+        }
 
         // Add a specific check for coordinate order issues in the first few features
         if (sourceData.features.length > 0) {
@@ -616,12 +627,14 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           }
           
           if (sampleCoords.length > 0) {
-            await dbLogger.info(SOURCE, 'Coordinate order analysis', { 
-              samples: sampleCoords,
-              conclusion: sampleCoords.every(s => s.analysis.suspectedFormat === "Appears to be [lng, lat] (correct)")
-                ? "All sampled coordinates appear to be in correct [longitude, latitude] format"
-                : "Some coordinates may be in wrong order or outside normal ranges"
-            });
+            if (isLogLevelEnabled('MapPreview', 'debug')) {
+              await dbLogger.debug('MapPreview: Coordinate order analysis', { 
+                samples: sampleCoords,
+                conclusion: sampleCoords.every(s => s.analysis.suspectedFormat === "Appears to be [lng, lat] (correct)")
+                  ? "All sampled coordinates appear to be in correct [longitude, latitude] format"
+                  : "Some coordinates may be in wrong order or outside normal ranges"
+              });
+            }
           }
         }
 
@@ -629,8 +642,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
         try {
           // Only log this in debug mode, and truncate/clean the output
           const debugDump = JSON.stringify(sourceData, null, 2).slice(0, 2000);
-          // This log is intentionally debug-level to avoid log spam. Enable debug for 'MapPreview' to see full dumps.
-          await dbLogger.debug('MAPBOX GEOJSON RAW DUMP STRING (truncated sample)', debugDump);
+          if (isLogLevelEnabled('MapPreviewGeoJson', 'debug')) {
+            await dbLogger.debug('MAPBOX GEOJSON RAW DUMP STRING', { geojson: debugDump });
+          }
         } catch (err) {
           await dbLogger.debug('MAPBOX GEOJSON RAW DUMP STRING FAILED TO STRINGIFY', String(err));
         }
@@ -645,18 +659,26 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           if (mapInstance.getLayer(layerId)) {
             try {
               mapInstance.removeLayer(layerId);
-              await dbLogger.info(SOURCE, 'Removed existing layer', { layerId });
+              if (isLogLevelEnabled('MapPreview', 'debug')) {
+                await dbLogger.info(SOURCE, 'Removed existing layer', { layerId });
+              }
             } catch (err) {
-              await dbLogger.warn(SOURCE, 'Failed to remove layer', { layerId, error: err });
+              if (isLogLevelEnabled('MapPreview', 'debug')) {
+                await dbLogger.warn(SOURCE, 'Failed to remove layer', { layerId, error: err });
+              }
             }
           }
         }
         if (mapInstance.getSource('preview')) {
           try {
             mapInstance.removeSource('preview');
-            await dbLogger.info(SOURCE, 'Removed existing source', { sourceId: 'preview' });
+            if (isLogLevelEnabled('MapPreview', 'debug')) {
+              await dbLogger.info(SOURCE, 'Removed existing source', { sourceId: 'preview' });
+            }
           } catch (err) {
-            await dbLogger.warn(SOURCE, 'Failed to remove source', { sourceId: 'preview', error: err });
+            if (isLogLevelEnabled('MapPreview', 'debug')) {
+              await dbLogger.warn(SOURCE, 'Failed to remove source', { sourceId: 'preview', error: err });
+            }
           }
         }
         // --- End: Remove existing preview layers and source ---
@@ -667,7 +689,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             type: 'geojson',
             data: sourceData
           });
-          await dbLogger.info(SOURCE, 'Added new preview source');
+          if (isLogLevelEnabled('MapPreview', 'debug')) {
+            await dbLogger.info(SOURCE, 'Added new preview source');
+          }
         } catch (err) {
           await dbLogger.error(SOURCE, 'Failed to add new preview source', { error: err });
           return;
@@ -783,7 +807,9 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           try {
             mapInstance.addLayer(layer as unknown as mapboxgl.Layer);
           } catch (err) {
-            await dbLogger.warn(SOURCE, 'Failed to add layer', { layerId: layer.id, error: err });
+            if (isLogLevelEnabled('MapPreview', 'debug')) {
+              await dbLogger.warn(SOURCE, 'Failed to add layer', { layerId: layer.id, error: err });
+            }
           }
         }
 
@@ -854,9 +880,13 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
               ] as [mapboxgl.LngLatLike, mapboxgl.LngLatLike];
               mapInstance.fitBounds(mapboxBounds, { padding: 50, duration: 0 });
               didFitInitialBounds.current = true;
-              await dbLogger.info(SOURCE, 'fitBounds successful', { bounds: mapboxBounds });
+              if (isLogLevelEnabled('MapPreview', 'debug')) {
+                await dbLogger.info(SOURCE, 'fitBounds successful', { bounds: mapboxBounds });
+              }
             } else {
-              await dbLogger.warn(SOURCE, 'Invalid calculated bounds, skipping fitBounds', { calculatedBbox });
+              if (isLogLevelEnabled('MapPreview', 'debug')) {
+                await dbLogger.warn(SOURCE, 'Invalid calculated bounds, skipping fitBounds', { calculatedBbox });
+              }
             }
           } catch (boundsError) {
             await dbLogger.error(SOURCE, 'Error calculating or using bounds', { error: boundsError });

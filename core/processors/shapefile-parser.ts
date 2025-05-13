@@ -8,6 +8,7 @@ import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 import * as turf from '@turf/turf';
 import { detectSRIDFromCoordinates, detectSRIDFromWKT } from '@/core/coordinates/coordinate-detection';
+import { isDebugEnabled } from '@/utils/logging/debugFlags';
 
 const SOURCE = 'ShapefileParser';
 const DEFAULT_SRID = 2056; // Swiss LV95
@@ -208,22 +209,22 @@ export class ShapefileParser extends BaseGeoDataParser {
     options?: ParserOptions,
     onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
-    // CRITICAL DEBUG LOGS FOR TRANSFORMATION ISSUE - Using logger instead of console.log
-    await dbLogger.debug(SOURCE, "🔍 TRANSFORMATION DEBUG: Received options", { 
-      options,
-      optionsJSON: JSON.stringify(options, null, 2) 
-    });
-    
     const shouldTransform = options?.transformCoordinates !== false;
-    await dbLogger.debug(SOURCE, "🚨 TRANSFORMATION DEBUG: shouldTransform calculation", { 
-      shouldTransform,
-      transformCoordinatesOptionValue: options?.transformCoordinates,
-      calculationLogic: "options?.transformCoordinates !== false" 
-    });
-    
-    // Create simple stack trace
-    const stackTrace = new Error().stack?.split('\n').slice(1, 5).join('\n');
-    await dbLogger.debug(SOURCE, "📞 TRANSFORMATION DEBUG: Callstack", { stackTrace });
+    // CRITICAL DEBUG LOGS FOR TRANSFORMATION ISSUE - Using logger instead of console.log
+    if (isDebugEnabled('ShapefileParserTrace')) {
+      await dbLogger.debug(SOURCE, "🔍 TRANSFORMATION DEBUG: Received options", { 
+        options,
+        optionsJSON: JSON.stringify(options, null, 2) 
+      });
+      await dbLogger.debug(SOURCE, "🚨 TRANSFORMATION DEBUG: shouldTransform calculation", { 
+        shouldTransform,
+        transformCoordinatesOptionValue: options?.transformCoordinates,
+        calculationLogic: "options?.transformCoordinates !== false" 
+      });
+      // Create simple stack trace
+      const stackTrace = new Error().stack?.split('\n').slice(1, 5).join('\n');
+      await dbLogger.debug(SOURCE, "📞 TRANSFORMATION DEBUG: Callstack", { stackTrace });
+    }
     // --- END OF CRITICAL DEBUG LOGS ---
 
     try {
@@ -361,13 +362,15 @@ export class ShapefileParser extends BaseGeoDataParser {
               // Read Z (8 bytes) - this is what's missing from the library parsing
               const z = view.getFloat64(offset + 16, true);
               
-              await dbLogger.debug(SOURCE, `Extracted Z value for feature ${i}`, { 
-                x, y, z,
-                // Safe check before accessing coordinates
-                originalCoords: geojson.features[i].geometry.type === 'Point' ? 
-                  (geojson.features[i].geometry as Point).coordinates : 
-                  'non-point geometry'
-              });
+              // Only log per-feature Z extraction if debug flag is enabled
+              if (isDebugEnabled('ShapefileParser')) {
+                await dbLogger.debug(SOURCE, `Extracted Z value for feature ${i}`, { 
+                  x, y, z,
+                  originalCoords: geojson.features[i].geometry.type === 'Point' ? 
+                    (geojson.features[i].geometry as Point).coordinates : 
+                    'non-point geometry'
+                });
+              }
               
               // Update the feature with Z coordinate
               if (geojson.features[i].geometry.type === 'Point') {
@@ -396,8 +399,10 @@ export class ShapefileParser extends BaseGeoDataParser {
       if (geojson.features.length > 0) {
         const firstFeature = geojson.features[0];
         const coords = getCoordinates(firstFeature.geometry);
-        await dbLogger.debug(SOURCE, '📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
-        await dbLogger.debug(SOURCE, '   First feature geometry type', { geometryType: firstFeature.geometry.type });
+        if (isDebugEnabled('ShapefileParser')) {
+          await dbLogger.debug(SOURCE, '📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
+          await dbLogger.debug(SOURCE, '   First feature geometry type', { geometryType: firstFeature.geometry.type });
+        }
       }
       // --- END OF CRITICAL DEBUG LOG ---
 
@@ -435,17 +440,18 @@ export class ShapefileParser extends BaseGeoDataParser {
       }));
 
       if (shouldTransform && this.srid !== undefined && this.srid !== 4326) {
-        // CRITICAL DEBUG LOG FOR TRANSFORMATION ISSUE
-        await dbLogger.debug(SOURCE, '🔄 ENTERING TRANSFORMATION block', {
-          shouldTransform,
-          srid: this.srid,
-          transformCondition: {
+        if (isDebugEnabled('ShapefileParserTrace')) {
+          await dbLogger.debug(SOURCE, '🔄 ENTERING TRANSFORMATION block', {
             shouldTransform,
-            srid: this.srid, 
-            isSridNot4326: this.srid !== 4326, 
-            allConditionsMet: shouldTransform && this.srid !== undefined && this.srid !== 4326
-          }
-        });
+            srid: this.srid,
+            transformCondition: {
+              shouldTransform,
+              srid: this.srid, 
+              isSridNot4326: this.srid !== 4326, 
+              allConditionsMet: shouldTransform && this.srid !== undefined && this.srid !== 4326
+            }
+          });
+        }
         // --- END OF CRITICAL DEBUG LOG ---
         try {
           if (this.srid === undefined) throw new Error('SRID is undefined');
@@ -503,15 +509,16 @@ export class ShapefileParser extends BaseGeoDataParser {
           }));
         }
       } else {
-        // CRITICAL DEBUG LOG FOR TRANSFORMATION ISSUE
-        await dbLogger.debug(SOURCE, '⛔ SKIPPING TRANSFORMATION block', {
-          reasons: {
-            shouldTransform,
-            srid: this.srid,
-            isSridUndefined: this.srid === undefined,
-            isSridAlreadyWGS84: this.srid === 4326
-          }
-        });
+        if (isDebugEnabled('ShapefileParserTrace')) {
+          await dbLogger.debug(SOURCE, '⛔ SKIPPING TRANSFORMATION block', {
+            reasons: {
+              shouldTransform,
+              srid: this.srid,
+              isSridUndefined: this.srid === undefined,
+              isSridAlreadyWGS84: this.srid === 4326
+            }
+          });
+        }
         // --- END OF CRITICAL DEBUG LOG ---
       }
 

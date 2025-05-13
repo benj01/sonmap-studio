@@ -2,6 +2,7 @@ import { FileGroup, ProcessedFile, ProcessedFiles } from '../types';
 import { isMainGeoFile, getExtension, getConfigForFile, getMimeType, FileTypeConfig } from './file-types';
 import { dbLogger } from '../../../utils/logging/dbLogger';
 import { isMatchingCompanion } from './validation';
+import { isDebugEnabled } from '@/utils/logging/debugFlags';
 
 const LOG_SOURCE = 'FileProcessor';
 
@@ -65,20 +66,24 @@ export async function validateCompanions(config: FileTypeConfig, files: File[]):
  */
 
 export async function groupFiles(files: File[]): Promise<FileGroup[]> {
-  await dbLogger.debug('Starting file grouping', {
-    fileCount: files.length,
-    files: files.map(f => ({ name: f.name, type: f.type })),
-    LOG_SOURCE
-  });
+  if (isDebugEnabled('FileProcessor')) {
+    await dbLogger.debug('Starting file grouping', {
+      fileCount: files.length,
+      files: files.map(f => ({ name: f.name, type: f.type })),
+      LOG_SOURCE
+    });
+  }
   const groups: FileGroup[] = [];
   const remainingFiles = new Set(files);
   // First pass: identify main files
   for (const file of files) {
     if (isMainGeoFile(file.name)) {
-      await dbLogger.debug('Found main geo file', { 
-        fileName: file.name,
-        type: getExtension(file.name)
-      }, { LOG_SOURCE });
+      if (isDebugEnabled('FileProcessor')) {
+        await dbLogger.debug('Found main geo file', { 
+          fileName: file.name,
+          type: getExtension(file.name)
+        }, { LOG_SOURCE });
+      }
       const group: FileGroup = {
         mainFile: file,
         companions: []
@@ -86,20 +91,24 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
       groups.push(group);
       remainingFiles.delete(file);
     } else {
-      await dbLogger.debug('Skipping non-main file', { fileName: file.name }, { LOG_SOURCE });
+      if (isDebugEnabled('FileProcessor')) {
+        await dbLogger.debug('Skipping non-main file', { fileName: file.name }, { LOG_SOURCE });
+      }
     }
   }
   // Second pass: match companions with their main files
   for (const group of groups) {
     const config = getConfigForFile(group.mainFile.name);
     const baseFileName = group.mainFile.name.replace(/\.[^.]+$/, '');
-    await dbLogger.debug('Looking for companions', {
-      mainFile: group.mainFile.name,
-      fileType: getExtension(group.mainFile.name),
-      config: config?.companionFiles?.map(c => c.extension),
-      baseFileName,
-      remainingFiles: Array.from(remainingFiles).map(f => f.name)
-    }, { LOG_SOURCE });
+    if (isDebugEnabled('FileProcessor')) {
+      await dbLogger.debug('Looking for companions', {
+        mainFile: group.mainFile.name,
+        fileType: getExtension(group.mainFile.name),
+        config: config?.companionFiles?.map(c => c.extension),
+        baseFileName,
+        remainingFiles: Array.from(remainingFiles).map(f => f.name)
+      }, { LOG_SOURCE });
+    }
     if (config?.companionFiles) {
       // First, find all required companions
       const requiredConfigs = config.companionFiles.filter(c => c.required);
@@ -113,11 +122,13 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
           const isMatching = await isMatchingCompanion(group.mainFile.name, file, companionExt);
           if (isMatching) {
             foundRequiredCompanions.set(companionExt, file);
-            await dbLogger.debug('Found required companion', {
-              mainFile: group.mainFile.name,
-              companion: file.name,
-              extension: companionExt
-            }, { LOG_SOURCE });
+            if (isDebugEnabled('FileProcessor')) {
+              await dbLogger.debug('Found required companion', {
+                mainFile: group.mainFile.name,
+                companion: file.name,
+                extension: companionExt
+              }, { LOG_SOURCE });
+            }
           }
         }
       }
@@ -145,27 +156,31 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
           isMatchingCompanion(group.mainFile.name, file, companionConfig.extension)
         );
         if (matchingCompanion) {
-          await dbLogger.debug('Found optional companion', {
-            mainFile: group.mainFile.name,
-            companion: matchingCompanion.name,
-            extension: companionConfig.extension
-          }, { LOG_SOURCE });
+          if (isDebugEnabled('FileProcessor')) {
+            await dbLogger.debug('Found optional companion', {
+              mainFile: group.mainFile.name,
+              companion: matchingCompanion.name,
+              extension: companionConfig.extension
+            }, { LOG_SOURCE });
+          }
           group.companions.push(matchingCompanion);
           remainingFiles.delete(matchingCompanion);
         }
       }
     }
   }
-  await dbLogger.debug('File grouping complete', {
-    groupCount: groups.length,
-    groups: groups.map(g => ({
-      mainFile: g.mainFile.name,
-      fileType: getExtension(g.mainFile.name),
-      companionCount: g.companions.length,
-      companions: g.companions.map(c => c.name)
-    })),
-    LOG_SOURCE
-  });
+  if (isDebugEnabled('FileProcessor')) {
+    await dbLogger.debug('File grouping complete', {
+      groupCount: groups.length,
+      groups: groups.map(g => ({
+        mainFile: g.mainFile.name,
+        fileType: getExtension(g.mainFile.name),
+        companionCount: g.companions.length,
+        companions: g.companions.map(c => c.name)
+      })),
+      LOG_SOURCE
+    });
+  }
   return groups;
 }
 
