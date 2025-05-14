@@ -219,3 +219,6 @@ CREATE TABLE public.user_settings (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 COMMENT ON TABLE public.user_settings IS 'Stores user-specific application settings.';
+
+-- Add project_files table to supabase_realtime publication for realtime updates
+ALTER PUBLICATION supabase_realtime ADD TABLE public.project_files;
