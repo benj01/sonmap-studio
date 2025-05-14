@@ -1,0 +1,22 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+When the user asks you for help with fixing a bug or an issue, follow these guidelines:
+- make the neccessary "mental" analyzis first: Understand the question, understand the problem, etc.
+- then think where the core issue could be located at
+- think and find out where the responsible files could be located at 
+- then look in the file to check if you can find the issue, making sure to look at the complete file, not just finishing when you come across the first or even second issue. Make sure you go through the whole file, as somethimes that will change the complete understanding in unexpected ways
+- once you are sure you found the core issue, report back
+- If you don't get to the core issue right away, think where else to look for.
+- You have full access to tools like grep commands. Make use of them whenever needed
+- If you found another possibility where the core issue could be located at, look there. Repeat this process max. 3 time. If you found nothing promising, leave it be and give the user the information about the fact that you couldn't get to the root of the issue
+
+In general:
+- If you have questions that concern how to handle specific libraries, use Context7 MCP
+- If you feel that we came across a bigger issue that needs careful refactoring of the codebase, suggest to the user to use Taskmaster-AI MCP
+- in such a case, provide the user with a promt that will summarize the ongoing issue. Tell the user with a message, that you'd suggest to start a new chat, and provide the user with a concrete promt in the right format so the user can just copy/paste it into a new chat without writing anything else. That would be the most user friendly way, and thats what we are achieving, giving our best performance.
+- Reflect on yourself from time to time. That means, if you think the quality of your answers or "thinking progress" is decreasing - either based on your own "intuition" or from user feedback - suggest to the user to start a new chat, as this often increases the quality of the answers
+- In such a case, also provide the user with a promt to start a new chat with. It should be formated in the right way, so the user can just copy the whole promt and paste it into a new chat as the starting promt. That means it describes the ongoing issue, the things we tried to solve the issue, mentions the relevent files, maybe point into a direction to where the solution might be (if we know of any)
+

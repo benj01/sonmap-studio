@@ -123,10 +123,11 @@ const sanitizeCoordinates = async (coords: unknown): Promise<unknown> => {
   return coords;
 };
 
-const ensureValidMapboxCoordinates = async (feature: unknown): Promise<GeoJSON.Feature | unknown> => {
-  if (!feature || typeof feature !== 'object' || !('geometry' in feature)) return feature;
+const ensureValidMapboxCoordinates = async (feature: unknown): Promise<{ feature: GeoJSON.Feature | unknown, correction?: { featureId: unknown, geometryType: string, originalSample: string, correctedSample: string } }> => {
+  if (!feature || typeof feature !== 'object' || !('geometry' in feature)) return { feature };
   const safeFeature = { ...(feature as GeoJSON.Feature) };
   const geometry = (safeFeature as GeoJSON.Feature).geometry;
+  let correction: { featureId: unknown, geometryType: string, originalSample: string, correctedSample: string } | undefined = undefined;
   if (geometry && 'coordinates' in geometry) {
     const validateCoordPair = (coord: unknown): [number, number] => {
       if (!Array.isArray(coord) || coord.length < 2) {
@@ -155,13 +156,12 @@ const ensureValidMapboxCoordinates = async (feature: unknown): Promise<GeoJSON.F
     const originalCoords = geometry.coordinates;
     const validatedCoords = validateCoords(originalCoords);
     if (JSON.stringify(originalCoords) !== JSON.stringify(validatedCoords)) {
-      await dbLogger.info('Corrected invalid coordinates', {
-        source: SOURCE,
+      correction = {
         featureId: (safeFeature as GeoJSON.Feature).id,
         geometryType: geometry.type,
         originalSample: JSON.stringify(originalCoords).substring(0, 100) + '...',
         correctedSample: JSON.stringify(validatedCoords).substring(0, 100) + '...'
-      });
+      };
     }
     switch (geometry.type) {
       case 'Point':
@@ -192,7 +192,7 @@ const ensureValidMapboxCoordinates = async (feature: unknown): Promise<GeoJSON.F
         break;
     }
   }
-  return safeFeature;
+  return { feature: safeFeature, correction };
 };
 
 export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSelected, onProgress }: MapPreviewProps) {
@@ -518,7 +518,21 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           }
           
           // Now apply the final validation to ensure Mapbox-compatible coordinates
-          const validatedFeatures: GeoJSON.Feature[] = await Promise.all(basicFeatures.map(f => ensureValidMapboxCoordinates(f))) as GeoJSON.Feature[];
+          const validationResults = await Promise.all(basicFeatures.map(f => ensureValidMapboxCoordinates(f)));
+          const validatedFeatures: GeoJSON.Feature[] = validationResults.map(r => r.feature as GeoJSON.Feature);
+          const corrections = validationResults.filter(r => r.correction).map(r => r.correction!);
+          // Log only the first 5 and last correction samples (debug), and a summary (info)
+          if (corrections.length > 0) {
+            const sample = corrections.slice(0, 5);
+            if (corrections.length > 6) sample.push(corrections[corrections.length - 1]);
+            await dbLogger.debug('MapPreview', 'Coordinate correction samples', { samples: sample });
+            await dbLogger.info('MapPreview', 'Coordinate correction summary', {
+              totalFeatures: validatedFeatures.length,
+              correctedCount: corrections.length,
+              correctedFeatureIds: corrections.slice(0, 10).map(c => c.featureId),
+              ...(corrections.length > 10 ? { moreCorrected: corrections.length - 10 } : {})
+            });
+          }
           
           // Construct the final GeoJSON object
           sourceData = {

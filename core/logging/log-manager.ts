@@ -45,6 +45,10 @@ export class LogManager {
     this.sourceFilters.set('FileSelectStep', LogLevel.DEBUG);
     this.sourceFilters.set('GeoFileUpload', LogLevel.DEBUG);
     this.sourceFilters.set('GeoImportDialog', LogLevel.DEBUG);
+    // Add ReviewStep and GeoJsonParser for fine-grained control
+    this.sourceFilters.set('ReviewStep', LogLevel.INFO); // Default to INFO, can be set to DEBUG
+    this.sourceFilters.set('GeoJsonParser', LogLevel.INFO); // Default to INFO, can be set to DEBUG
+    this.sourceFilters.set('MapPreview', LogLevel.INFO); // Default to INFO, can be set to DEBUG
 
     // Map components - Focus on lifecycle events
     this.sourceFilters.set('MapContainer', LogLevel.WARN);

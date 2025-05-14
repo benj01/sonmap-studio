@@ -101,6 +101,41 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
           : []
       });
       
+      // Debug log: sample first 3-5 coordinate pairs of the first feature
+      if (features.length > 0) {
+        const firstFeature = features[0];
+        let coordSample: unknown = undefined;
+        if (firstFeature.geometry && 'coordinates' in firstFeature.geometry) {
+          const coords = (firstFeature.geometry as any).coordinates;
+          switch (firstFeature.geometry.type) {
+            case 'Point':
+              coordSample = coords;
+              break;
+            case 'LineString':
+              coordSample = Array.isArray(coords) ? coords.slice(0, 5) : coords;
+              break;
+            case 'MultiLineString':
+              coordSample = Array.isArray(coords) && coords.length > 0 ? coords[0].slice(0, 5) : coords;
+              break;
+            case 'Polygon':
+              coordSample = Array.isArray(coords) && coords.length > 0 ? coords[0].slice(0, 5) : coords;
+              break;
+            case 'MultiPolygon':
+              coordSample = Array.isArray(coords) && coords.length > 0 && coords[0].length > 0 ? coords[0][0].slice(0, 5) : coords;
+              break;
+            default:
+              coordSample = coords;
+          }
+        }
+        await dbLogger.debug('Import coordinate sample', {
+          source: 'GeoImportReviewStep',
+          featureId: firstFeature.id,
+          geometryType: firstFeature.geometry?.type,
+          sourceSrid: payload.sourceSrid,
+          coordSample,
+        });
+      }
+      
       // Check for missing required parameters
       if (!payload.projectFileId || !payload.collectionName || !payload.features.length || !payload.sourceSrid || !payload.targetSrid) {
         const missing = {
