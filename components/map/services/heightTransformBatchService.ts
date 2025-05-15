@@ -3,6 +3,7 @@
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
 import type { Feature, FeatureCollection, Point, MultiPoint, LineString, MultiLineString, Polygon, MultiPolygon } from 'geojson';
+import { summarizeFeaturesForLogging } from '../utils/logging';
 
 const LOG_SOURCE = 'HeightTransformBatchService';
 
@@ -89,7 +90,8 @@ export class HeightTransformBatchService {
       layerId,
       heightSourceType,
       heightSourceAttribute,
-      hasFeatureCollection: !!featureCollection
+      hasFeatureCollection: !!featureCollection,
+      ...(featureCollection && featureCollection.features ? { summary: summarizeFeaturesForLogging(featureCollection.features, 'info') } : {})
     };
 
     try {

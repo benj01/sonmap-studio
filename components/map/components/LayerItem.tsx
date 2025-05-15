@@ -12,6 +12,7 @@ import bbox from '@turf/bbox';
 import * as Cesium from 'cesium';
 import { useCesiumInstance } from '@/store/map/hooks';
 import { dbLogger } from '@/utils/logging/dbLogger';
+import { summarizeFeaturesForLogging } from '../utils/logging';
 
 export interface LayerItemLayer {
   id: string;
@@ -37,7 +38,7 @@ export function LayerItem({ layer, className }: LayerItemProps) {
       await dbLogger.info('LayerItem state', {
         layerId: layer.id,
         storeLayer,
-        data,
+        dataSummary: data && data.features ? summarizeFeaturesForLogging(data.features, 'info') : undefined,
         loading,
         error: storeError || dataError
       });

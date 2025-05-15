@@ -3,6 +3,7 @@
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import type { FeatureCollection } from 'geojson';
+import { summarizeFeaturesForLogging } from '../utils/logging';
 
 const LOG_SOURCE = 'HeightTransformService';
 
@@ -18,7 +19,8 @@ export async function processFeatureCollectionHeights(
 ): Promise<FeatureCollection> {
   const context = {
     source: LOG_SOURCE,
-    featureCount: featureCollection.features.length
+    featureCount: featureCollection.features.length,
+    summary: summarizeFeaturesForLogging(featureCollection.features, 'info')
   };
 
   try {

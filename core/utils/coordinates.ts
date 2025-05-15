@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { FeatureCollection, Feature } from 'geojson';
+import { summarizeFeaturesForLogging } from '@/components/map/utils/logging';
 
 const SOURCE = 'Coordinates';
 
@@ -283,6 +284,33 @@ export async function transformLv95ToWgs84WithDelta(
   }
 }
 
+// Helper to update the height (Z) value in geometry coordinates
+function updateGeometryHeight(geometry: Feature["geometry"], newHeight: number): Feature["geometry"] {
+  if (geometry.type === 'Point') {
+    const coords = geometry.coordinates as number[];
+    return {
+      ...geometry,
+      coordinates: [coords[0], coords[1], newHeight]
+    };
+  }
+  if (geometry.type === 'LineString') {
+    const coords = geometry.coordinates as number[][];
+    return {
+      ...geometry,
+      coordinates: coords.map(pt => [pt[0], pt[1], newHeight])
+    };
+  }
+  if (geometry.type === 'Polygon') {
+    const coords = geometry.coordinates as number[][][];
+    return {
+      ...geometry,
+      coordinates: coords.map(ring => ring.map(pt => [pt[0], pt[1], newHeight]))
+    };
+  }
+  // For other types, return as is
+  return geometry;
+}
+
 /**
  * Processes features with stored LV95 coordinates
  * This can be called to transform coordinates that were stored during import
@@ -367,17 +395,9 @@ export async function processStoredLv95Coordinates(
         feature.geometry.type === 'LineString' ||
         feature.geometry.type === 'Polygon'
       ) {
-        const coords = feature.geometry.coordinates;
         const updatedFeature = {
           ...feature,
-          geometry: {
-            ...feature.geometry,
-            coordinates: [
-              coords[0],
-              coords[1],
-              result.ell_height
-            ]
-          },
+          geometry: updateGeometryHeight(feature.geometry, result.ell_height),
           properties: {
             ...props,
             base_elevation_ellipsoidal: result.ell_height,
@@ -555,7 +575,7 @@ export async function processFeatureCollectionHeights(
 ): Promise<FeatureCollection> {
   try {
     await dbLogger.info(SOURCE, 'Processing feature collection heights', {
-      featureCount: featureCollection.features.length
+      summary: summarizeFeaturesForLogging(featureCollection.features, 'info')
     });
     
     let transformedCount = 0;

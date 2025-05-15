@@ -3,6 +3,7 @@
 import * as Cesium from 'cesium';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import type { Feature, FeatureCollection } from 'geojson';
+import { summarizeFeaturesForLogging } from './logging';
 
 const LOG_SOURCE = 'DataConverters';
 
@@ -55,7 +56,10 @@ export async function geoJsonToCesium(
 ) {
   const context = {
     source: LOG_SOURCE,
-    options
+    options,
+    ...(geoJson && 'features' in geoJson && Array.isArray((geoJson as any).features)
+      ? { summary: summarizeFeaturesForLogging((geoJson as any).features, 'info') }
+      : {})
   };
 
   try {

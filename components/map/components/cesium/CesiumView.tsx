@@ -27,6 +27,7 @@ interface CesiumLayer {
     type?: string;
     properties?: { geojson?: GeoJSON.FeatureCollection; url?: string };
     height?: { sourceType: string; attributeName?: string; interpretationMode?: string };
+    style?: { paint?: Record<string, unknown> };
   };
   setupStatus?: string;
   error?: string;
@@ -441,36 +442,54 @@ export function CesiumView() {
 
         // Handle GeoJSON layers
         if (layer.metadata?.type === 'vector' && layer.metadata?.properties?.geojson) {
-          if (!dataSourceMap.current.has(layer.id)) {
-            // Process heights before loading into Cesium
-            let processedGeoJson = layer.metadata.properties.geojson;
-            
-            // Apply height configuration if present
-            if (layer.metadata.height) {
-              processedGeoJson = applyHeightToFeatures(processedGeoJson, {
-                sourceType: layer.metadata.height.sourceType as 'z_coord' | 'attribute' | 'none',
-                attributeName: layer.metadata.height.attributeName,
-                interpretationMode: layer.metadata.height.interpretationMode as 'absolute' | 'relative' | 'extrusion'
-              });
+          // Always remove and re-add the data source if style or data changes
+          if (dataSourceMap.current.has(layer.id)) {
+            const ds = dataSourceMap.current.get(layer.id);
+            if (ds) {
+              viewer.dataSources.remove(ds, true);
+              dataSourceMap.current.delete(layer.id);
             }
-
-            // Check if Swiss height transformation is needed
-            if (needsHeightTransformation(processedGeoJson)) {
-              processedGeoJson = await processFeatureCollectionHeights(processedGeoJson);
-            }
-
-            // Load the processed GeoJSON into Cesium
-            const ds = await Cesium.GeoJsonDataSource.load(processedGeoJson, {
-              clampToGround: !layer.metadata.height, // Only clamp if no height config
-              stroke: Cesium.Color.fromCssColorString('#1E88E5'),
-              strokeWidth: 3,
-              fill: Cesium.Color.fromCssColorString('#1E88E5').withAlpha(0.5),
-            });
-            
-            viewer.dataSources.add(ds);
-            dataSourceMap.current.set(layer.id, ds);
-            updateLayerStatus(layer.id, 'complete');
           }
+
+          // Process heights before loading into Cesium
+          let processedGeoJson = layer.metadata.properties.geojson;
+          
+          // Apply height configuration if present
+          if (layer.metadata.height) {
+            processedGeoJson = applyHeightToFeatures(processedGeoJson, {
+              sourceType: layer.metadata.height.sourceType as 'z_coord' | 'attribute' | 'none',
+              attributeName: layer.metadata.height.attributeName,
+              interpretationMode: layer.metadata.height.interpretationMode as 'absolute' | 'relative' | 'extrusion'
+            });
+          }
+
+          // Check if Swiss height transformation is needed
+          if (needsHeightTransformation(processedGeoJson)) {
+            processedGeoJson = await processFeatureCollectionHeights(processedGeoJson);
+          }
+
+          // Extract style from layer metadata
+          const paint = layer.metadata?.style?.paint || {};
+          const strokeColor = typeof paint['line-color'] === 'string' ? paint['line-color'] : '#1E88E5';
+          const strokeWidth = typeof paint['line-width'] === 'number' ? paint['line-width'] : (typeof paint['line-width'] === 'string' ? parseFloat(paint['line-width']) : 3);
+          const fillColor = typeof paint['fill-color'] === 'string' ? paint['fill-color'] : '#1E88E5';
+          const fillOpacity = typeof paint['fill-opacity'] === 'number' ? paint['fill-opacity'] : (typeof paint['fill-opacity'] === 'string' ? parseFloat(paint['fill-opacity']) : 0.5);
+
+          // Ensure Cesium.Color.fromCssColorString only receives a string
+          const safeStrokeColor = typeof strokeColor === 'string' ? strokeColor : '#1E88E5';
+          const safeFillColor = typeof fillColor === 'string' ? fillColor : '#1E88E5';
+
+          // Load the processed GeoJSON into Cesium with dynamic style
+          const ds = await Cesium.GeoJsonDataSource.load(processedGeoJson, {
+            clampToGround: !layer.metadata.height, // Only clamp if no height config
+            stroke: Cesium.Color.fromCssColorString(safeStrokeColor),
+            strokeWidth: strokeWidth,
+            fill: Cesium.Color.fromCssColorString(safeFillColor).withAlpha(fillOpacity),
+          });
+          
+          viewer.dataSources.add(ds);
+          dataSourceMap.current.set(layer.id, ds);
+          updateLayerStatus(layer.id, 'complete');
         }
         
         // Handle 3D Tiles

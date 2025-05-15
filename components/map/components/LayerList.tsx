@@ -6,6 +6,7 @@ import { LayerItem } from './LayerItem';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { Layer as StoreLayer } from '@/store/layers/types';
 import { useEffect } from 'react';
+import { summarizeFeaturesForLogging } from '../utils/logging';
 
 interface LayerItemLayer {
   id: string;
@@ -59,9 +60,20 @@ export function LayerList({ className }: LayerListProps) {
         layers: layers.map((l: StoreLayer) => ({
           id: l.id,
           hasMetadata: !!l.metadata,
-          metadata: l.metadata,
           visible: l.visible,
-          setupStatus: l.setupStatus
+          setupStatus: l.setupStatus,
+          metadataSummary: (() => {
+            const geojson = l.metadata?.properties?.geojson;
+            if (
+              geojson &&
+              typeof geojson === 'object' &&
+              'features' in geojson &&
+              Array.isArray((geojson as any).features)
+            ) {
+              return summarizeFeaturesForLogging((geojson as any).features, 'info');
+            }
+            return undefined;
+          })()
         }))
       });
     }
