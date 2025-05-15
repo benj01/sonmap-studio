@@ -6,8 +6,11 @@ import 'mapbox-gl/dist/mapbox-gl.css';
 import { useViewStateStore } from '@/store/view/viewStateStore';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { useAutoZoom } from '../hooks/useAutoZoom';
+import { isLogLevelEnabled } from '@/core/logging/logLevelConfig';
 
 const SOURCE = 'MapView';
+
+console.log('MapView.tsx loaded');
 
 interface MapViewProps {
   accessToken: string;
@@ -15,6 +18,7 @@ interface MapViewProps {
 }
 
 export function MapView({ accessToken, style }: MapViewProps) {
+  console.log('MapView rendered');
   const mapContainer = useRef<HTMLDivElement>(null);
   const { viewState2D, setViewState2D } = useViewStateStore();
   const mapInstanceRef = useRef<mapboxgl.Map | null>(null);
@@ -23,7 +27,18 @@ export function MapView({ accessToken, style }: MapViewProps) {
 
   useAutoZoom();
 
+  // TEMPORARY: Diagnostic useEffect to check log level filtering on client
   useEffect(() => {
+    console.log('Calling isLogLevelEnabled from MapView useEffect');
+    isLogLevelEnabled('MapView', 'debug');
+    isLogLevelEnabled('MapContainer', 'debug');
+    isLogLevelEnabled('viewStateStore', 'debug');
+    isLogLevelEnabled('useLayers', 'debug');
+    isLogLevelEnabled('StatusMonitor', 'debug');
+  }, []);
+
+  useEffect(() => {
+    console.log('MapView useEffect running');
     // Copy the ref to a local variable for use in effect and cleanup
     const localMapContainer = mapContainer.current;
     if (localMapContainer) {

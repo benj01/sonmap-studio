@@ -5,7 +5,7 @@
 
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { useMapInstanceStore } from '@/store/map/mapInstanceStore';
@@ -239,6 +239,20 @@ export function CesiumView() {
   const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
   const updateLayerStatus = useLayerStore(state => state.updateLayerStatus);
   
+  // Add a stable signature for layers content
+  const layersSignature = useMemo(() => {
+    // Only include relevant properties for signature
+    return JSON.stringify(layers.map(l => ({
+      id: l.id,
+      visible: l.visible,
+      type: l.metadata?.type,
+      geojsonHash: l.metadata?.properties?.geojson ? JSON.stringify(l.metadata.properties.geojson).length : 0,
+      style: l.metadata?.style,
+      setupStatus: l.setupStatus,
+      error: l.error
+    })));
+  }, [layers]);
+
   const getCesiumDefaults = useCallback(() => {
     return {
       animation: false,
@@ -408,6 +422,12 @@ export function CesiumView() {
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed() || !isInitialLoadComplete) return;
 
+    dbLogger.debug('CesiumView: Layer management effect running', {
+      isInitialLoadComplete,
+      layersCount: layers.length,
+      layersSignature
+    }).catch(() => {});
+
     const removeCesiumLayer = async (layerId: string) => {
       await dbLogger.debug('Removing Cesium layer', { layerId });
       
@@ -547,7 +567,7 @@ export function CesiumView() {
         removeCesiumLayer(id).catch(console.error);
       }
     };
-  }, [layers, isInitialLoadComplete]); // Only depend on layers and isInitialLoadComplete
+  }, [layersSignature, isInitialLoadComplete]); // Depend on signature, not just reference
 
   // Mouse position tracking effect
   useEffect(() => {

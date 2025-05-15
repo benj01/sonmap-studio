@@ -1,3 +1,4 @@
+console.log('isLogLevelEnabled loaded');
 import { isDebugEnabled } from '@/utils/logging/debugFlags';
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'none';
@@ -50,10 +51,14 @@ export function setLogLevel(level: LogLevel, moduleName?: string) {
 export function isLogLevelEnabled(moduleName: string, level: LogLevel): boolean {
   // If debug flag is enabled, treat as minimum 'debug' level
   if (isDebugEnabled(moduleName)) {
-    return LOG_LEVEL_NUM[level] >= LOG_LEVEL_NUM['debug'];
+    const result = LOG_LEVEL_NUM[level] >= LOG_LEVEL_NUM['debug'];
+    console.log('[LogLevel Diagnostic] (debug flag) module:', moduleName, 'requested:', level, 'configured: debug (forced by flag)', 'result:', result);
+    return result;
   }
   const configuredLevel = getLogLevel(moduleName);
-  return LOG_LEVEL_NUM[level] >= LOG_LEVEL_NUM[configuredLevel];
+  const result = LOG_LEVEL_NUM[level] >= LOG_LEVEL_NUM[configuredLevel];
+  console.log('[LogLevel Diagnostic] module:', moduleName, 'requested:', level, 'configured:', configuredLevel, 'result:', result);
+  return result;
 }
 
 export function logLevelToNumber(level: LogLevel): number {
