@@ -41,68 +41,75 @@ async function extractCRSFromQMD(qmdContent: string): Promise<{ srid: number; pr
 /**
  * Transform coordinates using the provided proj4 string
  */
-async function transformCoordinates(coords: Position, fromSrid: number): Promise<Position> {
+async function transformCoordinates(coords: Position, fromSrid: number): Promise<{ result: Position, log: { fromSrid: number, input: Position, output: Position } }> {
   try {
     const fromSystem = await getCoordinateSystem(fromSrid);
     if (!proj4.defs(`EPSG:${fromSrid}`)) {
       proj4.defs(`EPSG:${fromSrid}`, fromSystem.proj4);
     }
     const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, coords);
-    await dbLogger.debug(SOURCE, 'Coordinate transformation', {
-      fromSrid,
-      toSrid: 4326,
-      input: coords,
-      output: result
-    });
     if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
       await dbLogger.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
     }
-    return result;
+    return { result, log: { fromSrid, input: coords, output: result } };
   } catch (error) {
     await dbLogger.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
-    return coords;
+    return { result: coords, log: { fromSrid, input: coords, output: coords } };
   }
 }
 
 /**
  * Transform a GeoJSON geometry using the provided SRID
  */
-async function transformGeometry(geometry: Geometry, fromSrid: number): Promise<Geometry> {
-  await dbLogger.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, fromSrid });
+async function transformGeometry(geometry: Geometry, fromSrid: number, logs: any[], geometrySamples?: { types: Set<string>, samples: any[], limit: number }): Promise<Geometry> {
+  if (geometrySamples && geometrySamples.samples.length < geometrySamples.limit) {
+    if (!geometrySamples.types.has(geometry.type)) {
+      geometrySamples.types.add(geometry.type);
+      geometrySamples.samples.push({ geometryType: geometry.type, fromSrid });
+    }
+  }
   switch (geometry.type) {
-    case 'Point':
-      return {
-        ...geometry,
-        coordinates: await transformCoordinates(geometry.coordinates, fromSrid)
-      };
+    case 'Point': {
+      const { result, log } = await transformCoordinates(geometry.coordinates, fromSrid);
+      logs.push(log);
+      return { ...geometry, coordinates: result };
+    }
     case 'LineString':
-    case 'MultiPoint':
-      return {
-        ...geometry,
-        coordinates: await Promise.all(geometry.coordinates.map(coord => transformCoordinates(coord, fromSrid)))
-      };
+    case 'MultiPoint': {
+      const coords = await Promise.all(geometry.coordinates.map(async coord => {
+        const { result, log } = await transformCoordinates(coord, fromSrid);
+        logs.push(log);
+        return result;
+      }));
+      return { ...geometry, coordinates: coords };
+    }
     case 'Polygon':
-    case 'MultiLineString':
-      return {
-        ...geometry,
-        coordinates: await Promise.all(geometry.coordinates.map(async ring => 
-          await Promise.all(ring.map(coord => transformCoordinates(coord, fromSrid)))
+    case 'MultiLineString': {
+      const coords = await Promise.all(geometry.coordinates.map(async ring =>
+        await Promise.all(ring.map(async coord => {
+          const { result, log } = await transformCoordinates(coord, fromSrid);
+          logs.push(log);
+          return result;
+        }))
+      ));
+      return { ...geometry, coordinates: coords };
+    }
+    case 'MultiPolygon': {
+      const coords = await Promise.all(geometry.coordinates.map(async polygon =>
+        await Promise.all(polygon.map(async ring =>
+          await Promise.all(ring.map(async coord => {
+            const { result, log } = await transformCoordinates(coord, fromSrid);
+            logs.push(log);
+            return result;
+          }))
         ))
-      };
-    case 'MultiPolygon':
-      return {
-        ...geometry,
-        coordinates: await Promise.all(geometry.coordinates.map(async polygon =>
-          await Promise.all(polygon.map(async ring => 
-            await Promise.all(ring.map(coord => transformCoordinates(coord, fromSrid)))
-          ))
-        ))
-      };
-    case 'GeometryCollection':
-      return {
-        ...geometry,
-        geometries: await Promise.all(geometry.geometries.map(g => transformGeometry(g, fromSrid)))
-      };
+      ));
+      return { ...geometry, coordinates: coords };
+    }
+    case 'GeometryCollection': {
+      const geometries = await Promise.all(geometry.geometries.map(g => transformGeometry(g, fromSrid, logs, geometrySamples)));
+      return { ...geometry, geometries };
+    }
     default:
       return geometry;
   }
@@ -115,6 +122,9 @@ export class GeoJsonParser extends BaseGeoDataParser {
     options?: ParserOptions,
     onProgress?: (event: ParserProgressEvent) => void
   ): Promise<FullDataset> {
+    const COORD_TRANSFORM_LOG_LIMIT = 3;
+    const coordTransformLogs: any[] = [];
+    const geometrySamples = { types: new Set<string>(), samples: [], limit: 3 };
     try {
       await dbLogger.info('Starting GeoJSON parse operation', {
         mainFileSize: mainFile.byteLength,
@@ -181,8 +191,9 @@ export class GeoJsonParser extends BaseGeoDataParser {
 
       await dbLogger.info('Skipping coordinate transformation for main features array');
 
-      // After features = geojson.features.map(...)
-      if (sourceSRID !== 4326) {
+      // Respect transformCoordinates option (like ShapefileParser)
+      const shouldTransform = options?.transformCoordinates !== false;
+      if (shouldTransform && sourceSRID !== 4326) {
         try {
           await dbLogger.info('Transforming coordinates for all features', {
             fromSrid: sourceSRID,
@@ -191,7 +202,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
           });
           features = await Promise.all(features.map(async feature => ({
             ...feature,
-            geometry: await transformGeometry(feature.geometry, sourceSRID)
+            geometry: await transformGeometry(feature.geometry, sourceSRID, coordTransformLogs, geometrySamples)
           })));
           await dbLogger.info('Coordinate transformation complete');
         } catch (error) {
@@ -237,6 +248,22 @@ export class GeoJsonParser extends BaseGeoDataParser {
       });
 
       await dbLogger.info('Parse complete', dataset.metadata);
+
+      if (geometrySamples.samples.length > 0) {
+        await dbLogger.debug(SOURCE, 'Transforming geometry samples', { samples: geometrySamples.samples });
+      }
+      await dbLogger.debug(SOURCE, 'Transforming geometry summary', {
+        totalGeometries: features.length,
+        sampleCount: Math.min(features.length, geometrySamples.limit),
+        uniqueTypes: Array.from(geometrySamples.types)
+      });
+      if (coordTransformLogs.length > 0) {
+        await dbLogger.debug(SOURCE, 'Coordinate transformation samples', { samples: coordTransformLogs.slice(0, COORD_TRANSFORM_LOG_LIMIT) });
+      }
+      await dbLogger.debug(SOURCE, 'Coordinate transformation summary', {
+        totalTransformed: coordTransformLogs.length,
+        sampleCount: Math.min(coordTransformLogs.length, COORD_TRANSFORM_LOG_LIMIT)
+      });
       return dataset;
     } catch (error) {
       await dbLogger.error('Parse failed', error);

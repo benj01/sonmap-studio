@@ -2,6 +2,7 @@
 // NOTE: LogManager is for internal logger system use only. All application logging must use dbLogger from @/utils/logging/dbLogger. Direct LogManager usage is prohibited in application code.
 import { saveAs } from 'file-saver';
 import { LoggingConfig, LogEntry, ILogAdapter, LogContext } from './types';
+import { v4 as uuidv4 } from 'uuid';
 
 /**
  * Log levels for the logging system
@@ -26,8 +27,14 @@ export class LogManager {
   private readonly RATE_LIMIT_MS = process.env.NODE_ENV === 'development' ? 100 : 1000; // Shorter rate limit in development
   private config: LoggingConfig = loadLoggingConfig();
   private adapters: ILogAdapter[] = this.config.adapters?.map(a => adapterRegistry[a]).filter(Boolean) || [adapterRegistry['console']];
+  private readonly instanceId: string;
 
-  private constructor() {}
+  private constructor() {
+    this.instanceId = uuidv4();
+    // Log the instance ID on creation for diagnostics
+    // eslint-disable-next-line no-console
+    console.info(`[LogManager] Created instance with ID: ${this.instanceId}`);
+  }
 
   /**
    * Configure specific components to use debug logging
@@ -438,6 +445,15 @@ export class LogManager {
 
   private async addLog(entry: LogEntry) {
     try {
+      // Forced info log for diagnosis (recursion guard)
+      if (entry.message !== 'FORCED_ADDLOG_CHECK') {
+        await this.info(entry.source, 'FORCED_ADDLOG_CHECK', {
+          originalLevel: entry.level,
+          originalMessage: entry.message,
+          diagnostic: true,
+          logManagerInstanceId: this.instanceId
+        });
+      }
       // Validate entry
       if (!entry || typeof entry !== 'object') {
         console.warn('Invalid log entry:', entry);

@@ -6,6 +6,7 @@ import { dbLogger, LogEntry } from '@/utils/logging/dbLogger';
 import { Download, Bug, Trash, Copy, Check } from 'lucide-react';
 import LogLevelControl from './LogLevelControl';
 import { Rnd } from 'react-rnd';
+import { SplitPane } from '@rexxars/react-split-pane';
 
 interface DebugPanelProps {
   children?: ReactNode;
@@ -106,7 +107,7 @@ export function DebugPanel({ children }: DebugPanelProps) {
       enableResizing={{ bottom: true, right: true, bottomRight: true, top: false, left: false, topLeft: false, topRight: false, bottomLeft: false }}
       style={{ zIndex: 9999 }}
     >
-      <div className="flex flex-col h-full bg-background border rounded-lg shadow-lg overflow-hidden" style={{ width: '100%', height: '100%' }}>
+      <div className="h-full w-full bg-background border rounded-lg shadow-lg overflow-hidden flex flex-col" style={{ width: '100%', height: '100%' }}>
         <div className="flex items-center justify-between p-2 border-b bg-muted debug-panel-drag-handle cursor-move select-none">
           <h3 className="font-medium">Debug Panel</h3>
           <div className="flex items-center gap-2">
@@ -151,42 +152,62 @@ export function DebugPanel({ children }: DebugPanelProps) {
             </Button>
           </div>
         </div>
-        {/* Log Level Controls (dev only) */}
-        {process.env.NODE_ENV !== 'production' && <LogLevelControl labelWidth="w-40" />}
-        {children && (
-          <div className="border-b pb-4">
-            {children}
-          </div>
-        )}
-        <div className="flex-1 p-2 flex flex-col min-h-0">
-          <h4 className="font-medium">Logs ({logs.length})</h4>
-          <div className="flex-1 mt-2 overflow-y-auto min-h-0">
-            {logs.length === 0 ? (
-              <div className="text-sm text-muted-foreground italic">No logs yet</div>
-            ) : (
-              <div className="space-y-2">
-                {logs.map((log, i) => (
-                  <div 
-                    key={`${log.timestamp}-${i}`}
-                    className={`text-sm font-mono whitespace-pre-wrap ${
-                      log.level === 'error' ? 'text-red-500' :
-                      log.level === 'warn' ? 'text-yellow-500' :
-                      log.level === 'info' ? 'text-blue-500' :
-                      'text-muted-foreground'
-                    }`}
-                  >
-                    [{log.timestamp}] {log.level.toUpperCase()}: {log.message}
-                    {log.data && (
-                      <pre className="mt-1 p-2 bg-muted rounded text-xs overflow-auto">
-                        {JSON.stringify(log.data, null, 2)}
-                      </pre>
-                    )}
-                  </div>
-                ))}
-              </div>
+        <SplitPane
+          split="horizontal"
+          minSize={120}
+          defaultSize={220}
+          style={{ position: 'relative', flex: 1, height: '100%' }}
+          paneStyle={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}
+          pane1Style={{ overflow: 'auto', background: 'var(--background)' }}
+          pane2Style={{ overflow: 'auto', background: 'var(--background)' }}
+          resizerStyle={{
+            height: 8,
+            background: '#eee',
+            borderTop: '1px solid #ccc',
+            borderBottom: '1px solid #ccc',
+            cursor: 'row-resize',
+            zIndex: 10,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div className="flex flex-col h-full min-h-0">
+            {process.env.NODE_ENV !== 'production' && <LogLevelControl labelWidth="w-40" />}
+            {children && (
+              <div className="border-b pb-4">{children}</div>
             )}
           </div>
-        </div>
+          <div className="flex-1 p-2 flex flex-col min-h-0">
+            <h4 className="font-medium">Logs ({logs.length})</h4>
+            <div className="flex-1 mt-2 overflow-y-auto min-h-0">
+              {logs.length === 0 ? (
+                <div className="text-sm text-muted-foreground italic">No logs yet</div>
+              ) : (
+                <div className="space-y-2">
+                  {logs.map((log, i) => (
+                    <div
+                      key={`${log.timestamp}-${i}`}
+                      className={`text-sm font-mono whitespace-pre-wrap ${
+                        log.level === 'error' ? 'text-red-500' :
+                        log.level === 'warn' ? 'text-yellow-500' :
+                        log.level === 'info' ? 'text-blue-500' :
+                        'text-muted-foreground'
+                      }`}
+                    >
+                      [{log.timestamp}] {log.level.toUpperCase()}: {log.message}
+                      {log.data && (
+                        <pre className="mt-1 p-2 bg-muted rounded text-xs overflow-auto">
+                          {JSON.stringify(log.data, null, 2)}
+                        </pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </SplitPane>
       </div>
     </Rnd>
   );

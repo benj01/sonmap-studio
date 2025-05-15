@@ -1,6 +1,7 @@
 /* eslint-disable no-restricted-syntax */
 import { LogContext } from '@/core/logging/types';
 import { isLogLevelEnabled, LogLevel } from '@/core/logging/logLevelConfig';
+import { LogManager } from '@/core/logging/log-manager';
 
 // Create an event emitter for logging events
 type LogEventListener = (log: LogEntry) => void;
@@ -76,67 +77,65 @@ function shouldLog(level: LogLevel, context?: LogContext): boolean {
   return isLogLevelEnabled(source, level);
 }
 
+function getSource(context?: LogContext): string {
+  return (context && typeof context === 'object' && 'source' in context && typeof (context as any).source === 'string')
+    ? (context as any).source as string
+    : 'unknown';
+}
+
 export const dbLogger = {
   addLogListener: (listener: LogEventListener) => logEmitter.addListener(listener),
 
   async debug(message: string, data?: unknown, context?: LogContext) {
-    if (!shouldLog('debug', context)) return;
-    const timestamp = new Date().toISOString();
-    if (context?.source !== 'DebugPanel') {
-      logEmitter.emit({
-        timestamp,
-        level: 'debug',
-        message,
-        data: normalizeData(data),
-        context
-      });
-    }
-    logToConsole('debug', message, data, context);
+    const source = getSource(context);
+    await LogManager.getInstance().debug(source, message, data, context);
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'debug',
+      message,
+      data: normalizeData(data),
+      context
+    };
+    logEmitter.emit(logEntry);
   },
 
   async info(message: string, data?: unknown, context?: LogContext) {
-    if (!shouldLog('info', context)) return;
-    const timestamp = new Date().toISOString();
-    if (context?.source !== 'DebugPanel') {
-      logEmitter.emit({
-        timestamp,
-        level: 'info',
-        message,
-        data: normalizeData(data),
-        context
-      });
-    }
-    logToConsole('info', message, data, context);
+    const source = getSource(context);
+    await LogManager.getInstance().info(source, message, data, context);
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message,
+      data: normalizeData(data),
+      context
+    };
+    logEmitter.emit(logEntry);
   },
 
   async warn(message: string, data?: unknown, context?: LogContext) {
-    if (!shouldLog('warn', context)) return;
-    const timestamp = new Date().toISOString();
-    if (context?.source !== 'DebugPanel') {
-      logEmitter.emit({
-        timestamp,
-        level: 'warn',
-        message,
-        data: normalizeData(data),
-        context
-      });
-    }
-    logToConsole('warn', message, data, context);
+    const source = getSource(context);
+    await LogManager.getInstance().warn(source, message, data, context);
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'warn',
+      message,
+      data: normalizeData(data),
+      context
+    };
+    logEmitter.emit(logEntry);
   },
 
   async error(message: string, data?: unknown, context?: LogContext) {
-    // Always log errors
-    const timestamp = new Date().toISOString();
-    if (context?.source !== 'DebugPanel') {
-      logEmitter.emit({
-        timestamp,
-        level: 'error',
-        message,
-        data: normalizeData(data),
-        context
-      });
-    }
-    logToConsole('error', message, data, context);
+    const source = getSource(context);
+    await LogManager.getInstance().error(source, message, data, context);
+    const logEntry = {
+      timestamp: new Date().toISOString(),
+      level: 'error',
+      message,
+      data: normalizeData(data),
+      context
+    };
+    logEmitter.emit(logEntry);
   }
 };
 

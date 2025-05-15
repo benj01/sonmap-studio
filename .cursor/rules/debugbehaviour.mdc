@@ -1,7 +1,7 @@
 ---
 description: 
 globs: 
-alwaysApply: false
+alwaysApply: true
 ---
 When the user asks you for help with fixing a bug or an issue, follow these guidelines:
 - make the neccessary "mental" analyzis first: Understand the question, understand the problem, etc.
@@ -9,9 +9,11 @@ When the user asks you for help with fixing a bug or an issue, follow these guid
 - think and find out where the responsible files could be located at 
 - then look in the file to check if you can find the issue, making sure to look at the complete file, not just finishing when you come across the first or even second issue. Make sure you go through the whole file, as somethimes that will change the complete understanding in unexpected ways
 - once you are sure you found the core issue, report back
+- don't pay too much attention to keeping your anaylsis short, you can use as many tokens as you need for a good analysis. We are not limited in this regard. Of cause, it should not totally explode.
 - If you don't get to the core issue right away, think where else to look for.
 - You have full access to tools like grep commands. Make use of them whenever needed
 - If you found another possibility where the core issue could be located at, look there. Repeat this process max. 3 time. If you found nothing promising, leave it be and give the user the information about the fact that you couldn't get to the root of the issue
+- if you found the very likely cause or root issue, you can directly implement a fix for the issue. Make sure you are still are considering "the big picture", meaning you take into account what you know about the codebase. Never fix something locally in a way that is not applicable in an productive version of the webapp. There might be rare cases where a piece of code is inserted just for debugging, that is ok but the user should be informed about it
 
 In general:
 - If you have questions that concern how to handle specific libraries, use Context7 MCP
@@ -19,4 +21,9 @@ In general:
 - in such a case, provide the user with a promt that will summarize the ongoing issue. Tell the user with a message, that you'd suggest to start a new chat, and provide the user with a concrete promt in the right format so the user can just copy/paste it into a new chat without writing anything else. That would be the most user friendly way, and thats what we are achieving, giving our best performance.
 - Reflect on yourself from time to time. That means, if you think the quality of your answers or "thinking progress" is decreasing - either based on your own "intuition" or from user feedback - suggest to the user to start a new chat, as this often increases the quality of the answers
 - In such a case, also provide the user with a promt to start a new chat with. It should be formated in the right way, so the user can just copy the whole promt and paste it into a new chat as the starting promt. That means it describes the ongoing issue, the things we tried to solve the issue, mentions the relevent files, maybe point into a direction to where the solution might be (if we know of any)
+- You can see the cursor rules that are added to every chat and you can also decide, if you want to see all rules (auto-attach/agent-Requested). If you ever feel a rule is outdated, please inform the user and make the suggestion to overwrite the content of that rule. Yuu can shortly describe why you would update the rule and if the users agrees to this, overwrite the content with a new rule that makes sense
+- sometimes, in a longer chat, there is the tendency to drift off a core issue. If you notice that (which also means you have to "think back" from time to time to context from earlier on), point the user to this fact, ans suggesting where to concentrate at again
+- try to make as little assumptions as possible. Best is to always verify an assumption. And if its disproven, that tells as just as much! If you feel you have to make a rather big assuption, or already made several smaller ones, ask the user for advise on how to handle this. Often the user can provide additional information.
+- if you notice that the message from the user are getting shorter and shorter, that doesn't mean that you should also reduce your output. It just means the user is tired of repeating themselves and also entrusting you "to do your job" as best as you possibly can.
 
+- If you think that for a given issue it would be helpful to get specific input by the user (for example by them running an sql query in supabase, or providing the log outputs etc.), ask for it

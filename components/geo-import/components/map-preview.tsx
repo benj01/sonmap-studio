@@ -863,20 +863,35 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
           });
         });
 
-        for (const feature of loadedFeatures) {
-          await dbLogger.debug('setFeatureState call', {
-            id: feature.id,
-            selected: !!selectedFeatureIds.includes(feature.id),
-            type: feature.geometry.type
-          });
+        // Only log set/get state for first 3, last 1, and summary
+        const total = loadedFeatures.length;
+        for (let i = 0; i < total; i++) {
+          const feature = loadedFeatures[i];
+          const isFirstFew = i < 3;
+          const isLast = i === total - 1;
+          if (isFirstFew || isLast) {
+            await dbLogger.debug('setFeatureState call', {
+              id: feature.id,
+              selected: !!selectedFeatureIds.includes(feature.id),
+              type: feature.geometry.type
+            });
+          }
           mapInstance.setFeatureState(
             { source: 'preview', id: feature.id },
             { selected: !!selectedFeatureIds.includes(feature.id) }
           );
           const state = mapInstance.getFeatureState({ source: 'preview', id: feature.id });
-          await dbLogger.debug('getFeatureState result', { id: feature.id, state });
+          if (isFirstFew || isLast) {
+            await dbLogger.debug('getFeatureState result', { id: feature.id, state });
+          }
           mapInstance.triggerRepaint();
         }
+        // Summary log
+        await dbLogger.debug('setFeatureState summary', {
+          total,
+          first3: loadedFeatures.slice(0, 3).map(f => ({ id: f.id, type: f.geometry.type })),
+          last: total > 0 ? { id: loadedFeatures[total - 1].id, type: loadedFeatures[total - 1].geometry.type } : null
+        });
 
         if (!didFitInitialBounds.current && !isLoading && bounds) {
           try {

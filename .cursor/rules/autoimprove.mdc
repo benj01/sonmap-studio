@@ -1,0 +1,44 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+From time to time you might feel that the communication between yourself and the user could be improved. May it be due to errors in the writing, the grammar, the lenght of the message, missing context, etc. In such a case, write to the file "D:\HE\GitHub\sonmap-studio\scripts\good_ideas.json"
+Its a JSON array, ready to store structured "good ideas". The schema is designed to be agent-friendly, extensible, and structured for both reading and writing by an AI agent or human.
+good_ideas.json Schema
+Each entry in the array should be an object with the following fields:
+[
+  {
+    "id": "string",                // Unique identifier, e.g. "2024-06-13-001" or a UUID
+    "title": "string",             // Short, descriptive title of the idea
+    "description": "string",       // Detailed explanation of the idea
+    "author": "string",            // (Optional) Who suggested the idea (e.g. "agent", "user", or a name)
+    "tags": ["string"],            // (Optional) Array of tags for categorization (e.g. ["ui", "performance"])
+    "createdAt": "ISO8601 string", // Timestamp of when the idea was added (e.g. "2024-06-13T12:34:56Z")
+    "status": "string",            // (Optional) e.g. "new", "reviewed", "implemented", "rejected"
+    "relatedTasks": ["string"],    // (Optional) Array of related Taskmaster task IDs
+    "notes": "string"              // (Optional) Additional notes, discussion, or links
+  }
+]
+
+Example Entry:
+[
+  {
+    "id": "2024-06-13-001",
+    "title": "Add keyboard shortcuts to chat UI",
+    "description": "Implement keyboard shortcuts for sending messages and navigating between chat threads to improve user efficiency.",
+    "author": "user",
+    "tags": ["ui", "accessibility"],
+    "createdAt": "2024-06-13T12:34:56Z",
+    "status": "new",
+    "relatedTasks": ["12.1", "15"],
+    "notes": "Inspired by feedback from power users. See also: https://example.com/shortcut-ux"
+  }
+]
+
+Usage notes:
+All fields except id, title, description, and createdAt are optional but recommended for richer context.
+Use ISO8601 format for timestamps.
+The id can be a date-based string, UUID, or incrementing number—just ensure uniqueness.
+
+The schema is extensible: you can add more fields as needed.

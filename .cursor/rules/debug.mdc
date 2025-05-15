@@ -79,27 +79,26 @@ Usage Examples
 // ✅ DO: Use async dbLogger with context and lifecycle logging
 async function getUserData(userId: string, requestId: string) {
   try {
-    await dbLogger.info('getUserData.start', { userId, requestId });
+    await dbLogger.info('getUserData.start', { userId, requestId, source: 'UserService' });
     const result = await db.users.findUnique({ where: { id: userId } });
-    await dbLogger.info('getUserData.success', { userId, requestId, resultCount: 1 });
+    await dbLogger.info('getUserData.success', { userId, requestId, resultCount: 1, source: 'UserService' });
     return result;
   } catch (error) {
-    await dbLogger.error('getUserData.error', { userId, requestId, error });
+    await dbLogger.error('getUserData.error', { userId, requestId, error, source: 'UserService' });
     throw error;
   }
 }
 
-// ❌ DON'T: Use old logger patterns or console.log
-function getUserData(userId) {
-  try {
-    console.log('Getting user data');  // No structured context
-    return db.users.findUnique({ where: { id: userId } });
-    // No success logging
-  } catch (error) {
-    logger.error('Error getting user data');  // Old pattern, no await, no context
-    throw error;
-  }
-}
+// ✅ DO: Use useLogger in React components
+const logger = useLogger();
+useEffect(() => {
+  logger.info('Component mounted', undefined, { source: 'MyComponent' });
+}, []);
+
+// ❌ DON'T: Use console.log or direct LogManager/createLogger
+console.log('Debug info');
+const logger = new LogManager();
+logger.error('Something went wrong');
 ```
 
 React/Client Usage
@@ -109,3 +108,60 @@ React/Client Usage
 See also: [core/logging/README.md](mdc:core/logging/README.md), [cursor_rules.mdc](mdc:cursor_rules.mdc)
 
 Update this rule whenever new adapters, patterns, or best practices are established.
+
+- **Centralized, Async Logging Only via dbLogger/DefaultLogger/useLogger**
+  - All application logging (DB, API, utilities, React/UI) **must** use the async/await `dbLogger` from `@/utils/logging/dbLogger`, or `DefaultLogger`/`useLogger` for React context.
+  - **Direct usage of `LogManager`, `createLogger`, or any custom logger instance is strictly prohibited** in application code. These are for internal logger system use only.
+  - **Direct usage of `console.log`, `console.error`, `console.warn`, or `console.info` is prohibited** in all production and shared code (including Supabase functions, scripts, and React components).
+  - All logger methods (`debug`, `info`, `warn`, `error`) are async and **must be awaited**.
+  - Always provide a **structured context object** (e.g., `{ userId, requestId, importLogId, source }`) for every log entry.
+  - Log at operation start, success, and error (with try/catch) for all major flows.
+
+- **React/Client Code**
+  - Use `useLogger()` from `LoggerContext` for UI components when possible. This provides a `DefaultLogger` instance.
+  - Direct use of `dbLogger` in UI code is allowed, but prefer `useLogger()` for future extensibility.
+  - Never use `console.*` in React components, even for error boundaries or effect cleanups.
+
+- **Migration & Legacy**
+  - All legacy logger usage (`LogManager`, `createLogger`, inline logger instances, or `console.*`) must be migrated to `dbLogger` or `DefaultLogger`.
+  - Migration comments should be removed once migration is complete.
+
+- **Adapters & Extensibility**
+  - Adapters (e.g., Console, Supabase) are managed internally by `LogManager` and configured via `logging.config.json` or `.env`.
+  - To add a new adapter, implement the `ILogAdapter` interface and register it in `core/logging/log-manager.ts`.
+
+- **Examples**
+```typescript
+// ✅ DO: Use async dbLogger with context and lifecycle logging
+async function getUserData(userId: string, requestId: string) {
+  try {
+    await dbLogger.info('getUserData.start', { userId, requestId, source: 'UserService' });
+    const result = await db.users.findUnique({ where: { id: userId } });
+    await dbLogger.info('getUserData.success', { userId, requestId, resultCount: 1, source: 'UserService' });
+    return result;
+  } catch (error) {
+    await dbLogger.error('getUserData.error', { userId, requestId, error, source: 'UserService' });
+    throw error;
+  }
+}
+
+// ✅ DO: Use useLogger in React components
+const logger = useLogger();
+useEffect(() => {
+  logger.info('Component mounted', undefined, { source: 'MyComponent' });
+}, []);
+
+// ❌ DON'T: Use console.log or direct LogManager/createLogger
+console.log('Debug info');
+const logger = new LogManager();
+logger.error('Something went wrong');
+```
+
+- **References**
+  - See [dbLogger implementation](mdc:utils/logging/dbLogger.ts) and [DefaultLogger](mdc:core/logging/DefaultLogger.ts) for actual code.
+  - See [LoggerContext](mdc:core/logging/LoggerContext.tsx) for React usage.
+  - See [core/logging/log-manager.ts](mdc:core/logging/log-manager.ts) for internal logger details (not for direct use).
+
+- **Rule Maintenance**
+  - Update this rule whenever new adapters, patterns, or best practices are established.
+  - Remove outdated migration comments and legacy patterns as codebase evolves.

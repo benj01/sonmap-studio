@@ -66,11 +66,7 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
 
   useEffect(() => {
     if (!isDev) return;
-    const stored = getStoredOverrides();
-    setOverrides(stored);
-    Object.entries(stored).forEach(([module, level]) => {
-      setLogLevel(level, module === 'global' ? undefined : module);
-    });
+    // Sync UI with LogManager on mount
     const logManager = LogManager.getInstance();
     const filters = logManager.getComponentFilters();
     const sorted = filters.map(([src]) => src).sort((a, b) => a.localeCompare(b));
@@ -79,6 +75,27 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
     const groupState: Record<string, boolean> = {};
     GROUPS.forEach(g => { groupState[g.name] = g.defaultOpen; });
     setOpenGroups(groupState);
+
+    // Sync UI overrides with LogManager's current log levels
+    const logManagerOverrides: Record<string, LogLevel> = {};
+    filters.forEach(([src, lvl]) => {
+      logManagerOverrides[src] = lvl.toLowerCase() as LogLevel;
+    });
+    // Also sync global log level
+    logManagerOverrides.global = (logManager.getLogLevel().toLowerCase() as LogLevel);
+    setOverrides(prev => ({ ...logManagerOverrides, ...prev }));
+
+    // Also apply any stored overrides to LogManager (for persistence)
+    const stored = getStoredOverrides();
+    Object.entries(stored).forEach(([module, level]) => {
+      setLogLevel(level, module === 'global' ? undefined : module);
+      const managerLevel = level.toUpperCase();
+      if (module === 'global') {
+        logManager.setLogLevel(managerLevel as any);
+      } else {
+        logManager.setComponentLogLevel(module, managerLevel as any);
+      }
+    });
   }, []);
 
   const handleChange = (module: string, level: LogLevel) => {
@@ -86,6 +103,16 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
     setOverrides(newOverrides);
     saveOverrides(newOverrides);
     setLogLevel(level, module === 'global' ? undefined : module);
+
+    // --- Bridge to LogManager ---
+    const logManager = LogManager.getInstance();
+    // Map UI log levels to LogManager's enum (uppercased)
+    const managerLevel = level.toUpperCase();
+    if (module === 'global') {
+      logManager.setLogLevel(managerLevel as any);
+    } else {
+      logManager.setComponentLogLevel(module, managerLevel as any);
+    }
   };
 
   if (!isDev) return null;
@@ -103,9 +130,9 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
   };
 
   return (
-    <div className="mb-4 p-2 border-b border-muted">
+    <div className="flex flex-col h-full min-h-0 mb-4 p-2 border-b border-muted">
       <h4 className="font-medium mb-2">Log Level Controls</h4>
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-2 flex-1 min-h-0">
         <div className="flex items-center gap-2">
           <label className={`font-mono pr-2 ${labelWidth}`}>Global</label>
           <select
@@ -118,7 +145,7 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
             ))}
           </select>
         </div>
-        <div className="max-h-96 overflow-y-auto border rounded bg-white mt-2">
+        <div className="flex-1 min-h-0 overflow-y-auto border rounded bg-white mt-2">
           {GROUPS.map(group => (
             grouped[group.name]?.length ? (
               <div key={group.name} className="border-b last:border-b-0">

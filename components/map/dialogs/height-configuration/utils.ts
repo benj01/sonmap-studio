@@ -128,8 +128,10 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
     (coords as number[][]).forEach(c => processCoords(c));
   };
   
+  // Collect first 3 feature IDs per geometry type
+  const debugSamples: Record<string, any[]> = {};
   // Process all features
-  features.forEach(feature => {
+  features.forEach((feature, idx) => {
     if (!feature) {
       (async () => {
         await dbLogger.warn('Null or undefined feature encountered in detectZCoordinates', { source: SOURCE });
@@ -171,90 +173,28 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
     // Only check geometry if we haven't already found Z data in properties
     if (!hasProcessedZForFeature && feature.geometry) {
       try {
-        switch (feature.geometry.type) {
-          case 'Point': {
-            const geometry = feature.geometry as Point;
-            (async () => {
-              await dbLogger.debug('Processing Point geometry in detectZCoordinates', {
-                coordinates: geometry.coordinates,
-                feature
-              });
-            })().catch(console.error);
-            processCoords(geometry.coordinates);
-            break;
-          }
-          case 'LineString': {
-            const geometry = feature.geometry as LineString;
-            (async () => {
-              await dbLogger.debug('Processing LineString geometry in detectZCoordinates', {
-                coordinates: geometry.coordinates,
-                feature
-              });
-            })().catch(console.error);
-            processCoords(geometry.coordinates);
-            break;
-          }
-          case 'Polygon': {
-            const geometry = feature.geometry as Polygon;
-            (async () => {
-              await dbLogger.debug('Processing Polygon geometry in detectZCoordinates', {
-                coordinates: geometry.coordinates,
-                feature
-              });
-            })().catch(console.error);
-            processCoords(geometry.coordinates[0]);
-            break;
-          }
-          case 'MultiPoint': {
-            const geometry = feature.geometry as MultiPoint;
-            (async () => {
-              await dbLogger.debug('Processing MultiPoint geometry in detectZCoordinates', {
-                coordinates: geometry.coordinates,
-                feature
-              });
-            })().catch(console.error);
-            processCoords(geometry.coordinates);
-            break;
-          }
-          case 'MultiLineString': {
-            const geometry = feature.geometry as MultiLineString;
-            (async () => {
-              await dbLogger.debug('Processing MultiLineString geometry in detectZCoordinates', {
-                coordinates: geometry.coordinates,
-                feature
-              });
-            })().catch(console.error);
-            processCoords(geometry.coordinates[0]);
-            break;
-          }
-          case 'MultiPolygon': {
-            const geometry = feature.geometry as MultiPolygon;
-            (async () => {
-              await dbLogger.debug('Processing MultiPolygon geometry in detectZCoordinates', {
-                coordinates: geometry.coordinates,
-                feature
-              });
-            })().catch(console.error);
-            geometry.coordinates[0].forEach(ring => processCoords(ring));
-            break;
-          }
+        const type = feature.geometry.type;
+        if (!debugSamples[type]) debugSamples[type] = [];
+        if (debugSamples[type].length < 3) {
+          debugSamples[type].push(feature.id || idx);
+        }
+        switch (type) {
+          case 'Point': processCoords((feature.geometry as Point).coordinates); break;
+          case 'LineString': processCoords((feature.geometry as LineString).coordinates); break;
+          case 'Polygon': processCoords((feature.geometry as Polygon).coordinates[0]); break;
+          case 'MultiPoint': processCoords((feature.geometry as MultiPoint).coordinates); break;
+          case 'MultiLineString': processCoords((feature.geometry as MultiLineString).coordinates[0]); break;
+          case 'MultiPolygon': (feature.geometry as MultiPolygon).coordinates[0].forEach(ring => processCoords(ring)); break;
           case 'GeometryCollection': {
             const geometryCollection = feature.geometry as GeometryCollection;
             if (geometryCollection.geometries) {
               geometryCollection.geometries.forEach(geom => {
-                if (geom.type === 'Point') {
-                  processCoords([(geom as Point).coordinates]);
-                } else if (geom.type === 'LineString') {
-                  processCoords((geom as LineString).coordinates);
-                } else if (geom.type === 'Polygon') {
-                  processCoords((geom as Polygon).coordinates[0]);
-                } else if (geom.type === 'MultiPoint') {
-                  processCoords((geom as MultiPoint).coordinates);
-                } else if (geom.type === 'MultiLineString') {
-                  processCoords((geom as MultiLineString).coordinates[0]);
-                } else if (geom.type === 'MultiPolygon') {
-                  processCoords((geom as MultiPolygon).coordinates[0][0]);
-                }
+                if (geom.type === 'Point') processCoords([(geom as Point).coordinates]);
+                else if (geom.type === 'LineString') processCoords((geom as LineString).coordinates);
+                else if (geom.type === 'Polygon') processCoords((geom as Polygon).coordinates[0]);
+                else if (geom.type === 'MultiPoint') processCoords((geom as MultiPoint).coordinates);
+                else if (geom.type === 'MultiLineString') processCoords((geom as MultiLineString).coordinates[0]);
+                else if (geom.type === 'MultiPolygon') processCoords((geom as MultiPolygon).coordinates[0][0]);
               });
             }
             break;
@@ -273,6 +213,14 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
       }
     }
   });
+  // After the loop, log samples and a summary
+  (async () => {
+    await dbLogger.debug('detectZCoordinates samples', debugSamples);
+    await dbLogger.debug('detectZCoordinates summary', {
+      totalFeatures: features.length,
+      sampleIdsPerType: debugSamples
+    });
+  })().catch(console.error);
   
   // If we have property-based Z values but no coordinates, use feature count
   if ((lv95StoredCount > 0 || propertyZCount > 0) && totalCoords === 0) {
