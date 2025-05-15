@@ -47,7 +47,7 @@ const GROUPS = [
   {
     name: 'Layer/Map Components',
     match: (src: string) => [
-      'LayerList', 'LayerItem', 'MapView', 'MapContext', 'Toolbar', 'coordinates',
+      'LayerList', 'LayerItem', 'MapContext', 'Toolbar', 'coordinates',
       'layerHooks', 'MapLayer', 'layerStore'
     ].includes(src),
     defaultOpen: false,

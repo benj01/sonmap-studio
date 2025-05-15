@@ -26,19 +26,23 @@ export const MapContainer = memo(function MapContainer({
   initialViewState3D,
   projectId
 }: MapContainerProps) {
+  // Remove previous diagnostic logs
+  // Keep only essential logs if needed
+  const mapInstanceStore = useMapInstanceStore();
+  const cleanup = useMapInstanceStore(state => state.cleanup);
+  const viewStateStore = useViewStateStore();
+  const setViewState3D = useViewStateStore(state => state.setViewState3D);
+  const projectLayers = useProjectLayers(projectId || '');
+  const { isInitialized } = projectLayers;
   const containerRef = useRef<HTMLDivElement>(null);
-  const { cleanup } = useMapInstanceStore();
-  const { setViewState3D } = useViewStateStore();
   const renderCount = useRef(0);
   const mountCount = useRef(0);
   const shouldRenderChildren = useRef(process.env.NODE_ENV === 'production');
 
-  // Call useProjectLayers at the top level
-  const { isInitialized } = useProjectLayers(projectId || '');
-
   // Memoize logging function to prevent it from causing re-renders
   const logRender = useCallback(async () => {
     renderCount.current++;
+    console.log('MapContainer: logRender called', { renderCount: renderCount.current });
     await dbLogger.info('MapContainer: Render', {
       renderCount: renderCount.current,
       mountCount: mountCount.current,
@@ -54,16 +58,19 @@ export const MapContainer = memo(function MapContainer({
 
   // Log render in effect to avoid render cycle
   useEffect(() => {
+    console.log('MapContainer: useEffect (logRender) triggered');
     logRender();
   }, [logRender]);
 
   useEffect(() => {
+    console.log('MapContainer: useEffect (mountCount) triggered');
     mountCount.current++;
     // Copy ref values to local variables for use in cleanup
     const localMountCount = mountCount.current;
     const localRenderCount = renderCount.current;
     
     const logMount = async () => {
+      console.log('MapContainer: logMount called', { mountCount: localMountCount, renderCount: localRenderCount });
       await dbLogger.info('MapContainer: Mounted', {
         mountCount: localMountCount,
         renderCount: localRenderCount,
@@ -100,7 +107,9 @@ export const MapContainer = memo(function MapContainer({
     }
 
     return () => {
+      console.log('MapContainer: useEffect (mountCount) cleanup triggered');
       const logUnmount = async () => {
+        console.log('MapContainer: logUnmount called', { mountCount: localMountCount, renderCount: localRenderCount });
         await dbLogger.info('MapContainer: Unmounting', {
           mountCount: localMountCount,
           renderCount: localRenderCount,
@@ -132,6 +141,7 @@ export const MapContainer = memo(function MapContainer({
   
   // Move logging to effect
   useEffect(() => {
+    console.log('MapContainer: useEffect (shouldRender) triggered', { shouldRender, isInitialized, shouldRenderChildren: shouldRenderChildren.current, environment: process.env.NODE_ENV });
     dbLogger.debug('MapContainer: shouldRender value', { 
       shouldRender,
       isInitialized,

@@ -37,8 +37,11 @@ function analyzeGeometryTypes(features: Feature<Geometry>[]): { hasPolygons: boo
 }
 
 export function useProjectLayers(projectId: string) {
+  console.log('useProjectLayers: running', { projectId });
   const supabase = createClient();
-  const { addLayer, setInitialLoadComplete, updateLayerStatus } = useLayerStore();
+  const addLayer = useLayerStore(state => state.addLayer);
+  const setInitialLoadComplete = useLayerStore(state => state.setInitialLoadComplete);
+  const updateLayerStatus = useLayerStore(state => state.updateLayerStatus);
   const mountCount = useRef(0);
   const [isInitialized, setIsInitialized] = useState(false);
   const currentProjectId = useRef(projectId);
@@ -281,7 +284,7 @@ export function useProjectLayers(projectId: string) {
     return () => {
       isMounted = false;
     };
-  }, [projectId, supabase, addLayer, setInitialLoadComplete, updateLayerStatus]);
+  }, [projectId]);
 
   return { isInitialized };
 } 

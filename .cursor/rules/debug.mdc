@@ -41,7 +41,6 @@ Core Components (INFO level)
 - ImportManager
 
 UI Components (WARN level)
-- MapView
 - LayerList
 - LayerItem
 - MapContext

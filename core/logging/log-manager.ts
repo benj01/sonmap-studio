@@ -61,7 +61,6 @@ export class LogManager {
     this.sourceFilters.set('MapContainer', LogLevel.WARN);
     this.sourceFilters.set('CesiumContext', LogLevel.INFO);
     this.sourceFilters.set('CesiumView', LogLevel.INFO);
-    this.sourceFilters.set('MapView', LogLevel.WARN);
     this.sourceFilters.set('LayerList', LogLevel.WARN);
     this.sourceFilters.set('LayerItem', LogLevel.WARN);
     this.sourceFilters.set('MapContext', LogLevel.WARN);
