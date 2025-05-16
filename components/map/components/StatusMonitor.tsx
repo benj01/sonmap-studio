@@ -33,10 +33,10 @@ export function StatusMonitor() {
 
   useEffect(() => {
     (async () => {
-      await dbLogger.debug(SOURCE, 'Map status check', {
+      await dbLogger.debug('Map status check', {
         cesiumStatus,
         hasCesium: !!cesiumInstance
-      });
+      }, { source: 'StatusMonitor' });
     })();
   }, [cesiumStatus, cesiumInstance]);
 
@@ -61,7 +61,7 @@ export function StatusMonitor() {
         ready3DStatus = layer.setupStatus === 'complete';
       }
 
-      await dbLogger.debug(SOURCE, 'Layer status check', {
+      await dbLogger.debug('Layer status check', {
         layerId: layer.id,
         name: layer.metadata?.name,
         type: layer.metadata?.type,
@@ -69,7 +69,7 @@ export function StatusMonitor() {
         hasGeoJson: !!layer.metadata?.properties?.geojson,
         ready2D: ready2DStatus,
         ready3D: ready3DStatus
-      });
+      }, { source: 'StatusMonitor' });
 
       if (ready2DStatus) ready2D++;
       if (ready3DStatus) ready3D++;
@@ -88,7 +88,7 @@ export function StatusMonitor() {
     }
 
     if (hasChanges || ready2D !== status.ready2DCount || ready3D !== status.ready3DCount) {
-      await dbLogger.info(SOURCE, 'Status update', {
+      await dbLogger.info('Status update', {
         ready2DCount: ready2D,
         ready3DCount: ready3D,
         layerStatuses: Object.entries(newStatuses).map(([id, status]) => ({
@@ -96,7 +96,7 @@ export function StatusMonitor() {
           ready2D: status.ready2D,
           ready3D: status.ready3D
         }))
-      });
+      }, { source: 'StatusMonitor' });
 
       setStatus({
         layerStatuses: newStatuses,

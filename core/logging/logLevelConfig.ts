@@ -1,4 +1,3 @@
-console.log('isLogLevelEnabled loaded');
 import { isDebugEnabled } from '@/utils/logging/debugFlags';
 
 export type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'none';
@@ -35,16 +34,17 @@ let config: LogLevelConfig = { ...defaultConfig };
 
 export function getLogLevel(moduleName?: string): LogLevel {
   if (moduleName && config.modules[moduleName]) {
-    return config.modules[moduleName];
+    return config.modules[moduleName].toLowerCase() as LogLevel;
   }
-  return config.global;
+  return config.global.toLowerCase() as LogLevel;
 }
 
 export function setLogLevel(level: LogLevel, moduleName?: string) {
+  const normalizedLevel = level.toLowerCase() as LogLevel;
   if (moduleName) {
-    config.modules[moduleName] = level;
+    config.modules[moduleName] = normalizedLevel;
   } else {
-    config.global = level;
+    config.global = normalizedLevel;
   }
 }
 
@@ -52,12 +52,11 @@ export function isLogLevelEnabled(moduleName: string, level: LogLevel): boolean 
   // If debug flag is enabled, treat as minimum 'debug' level
   if (isDebugEnabled(moduleName)) {
     const result = LOG_LEVEL_NUM[level] >= LOG_LEVEL_NUM['debug'];
-    console.log('[LogLevel Diagnostic] (debug flag) module:', moduleName, 'requested:', level, 'configured: debug (forced by flag)', 'result:', result);
     return result;
   }
-  const configuredLevel = getLogLevel(moduleName);
+  // Fallback: if moduleName is not in config.modules, use global log level
+  const configuredLevel = config.modules[moduleName] || config.global;
   const result = LOG_LEVEL_NUM[level] >= LOG_LEVEL_NUM[configuredLevel];
-  console.log('[LogLevel Diagnostic] module:', moduleName, 'requested:', level, 'configured:', configuredLevel, 'result:', result);
   return result;
 }
 

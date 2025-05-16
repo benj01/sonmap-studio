@@ -42,7 +42,6 @@ export const MapContainer = memo(function MapContainer({
   // Memoize logging function to prevent it from causing re-renders
   const logRender = useCallback(async () => {
     renderCount.current++;
-    console.log('MapContainer: logRender called', { renderCount: renderCount.current });
     await dbLogger.info('MapContainer: Render', {
       renderCount: renderCount.current,
       mountCount: mountCount.current,
@@ -53,29 +52,26 @@ export const MapContainer = memo(function MapContainer({
         initialViewState3D
       },
       timestamp: new Date().toISOString()
-    });
+    }, { source: 'MapContainer' });
   }, [isInitialized, projectId, initialViewState3D]);
 
   // Log render in effect to avoid render cycle
   useEffect(() => {
-    console.log('MapContainer: useEffect (logRender) triggered');
     logRender();
   }, [logRender]);
 
   useEffect(() => {
-    console.log('MapContainer: useEffect (mountCount) triggered');
     mountCount.current++;
     // Copy ref values to local variables for use in cleanup
     const localMountCount = mountCount.current;
     const localRenderCount = renderCount.current;
     
     const logMount = async () => {
-      console.log('MapContainer: logMount called', { mountCount: localMountCount, renderCount: localRenderCount });
       await dbLogger.info('MapContainer: Mounted', {
         mountCount: localMountCount,
         renderCount: localRenderCount,
         timestamp: new Date().toISOString()
-      });
+      }, { source: 'MapContainer' });
     };
     logMount();
 
@@ -86,17 +82,17 @@ export const MapContainer = memo(function MapContainer({
         shouldRenderChildren.current = true;
         dbLogger.debug('Development: Second mount - enabling child rendering', {
           mountCount: localMountCount
-        });
+        }, { source: 'MapContainer' });
       }
     } else {
       shouldRenderChildren.current = true;
       dbLogger.debug('Production: First mount - enabling child rendering', {
         mountCount: localMountCount
-      });
+      }, { source: 'MapContainer' });
     }
 
     if (initialViewState3D) {
-      dbLogger.debug('Setting initial 3D view state', { initialViewState3D });
+      dbLogger.debug('Setting initial 3D view state', { initialViewState3D }, { source: 'MapContainer' });
       setViewState3D({
         longitude: initialViewState3D.longitude ?? 0,
         latitude: initialViewState3D.latitude ?? 0,
@@ -107,14 +103,12 @@ export const MapContainer = memo(function MapContainer({
     }
 
     return () => {
-      console.log('MapContainer: useEffect (mountCount) cleanup triggered');
       const logUnmount = async () => {
-        console.log('MapContainer: logUnmount called', { mountCount: localMountCount, renderCount: localRenderCount });
         await dbLogger.info('MapContainer: Unmounting', {
           mountCount: localMountCount,
           renderCount: localRenderCount,
           timestamp: new Date().toISOString()
-        });
+        }, { source: 'MapContainer' });
       };
       logUnmount();
 
@@ -127,11 +121,11 @@ export const MapContainer = memo(function MapContainer({
         dbLogger.info('Map container final cleanup complete', {
           mountCount: localMountCount,
           renderCount: localRenderCount
-        });
+        }, { source: 'MapContainer' });
       } else {
         dbLogger.debug('Cleanup skipped - not final unmount', {
           mountCount: localMountCount
-        });
+        }, { source: 'MapContainer' });
       }
     };
   }, [cleanup, setViewState3D, initialViewState3D]);
@@ -141,13 +135,12 @@ export const MapContainer = memo(function MapContainer({
   
   // Move logging to effect
   useEffect(() => {
-    console.log('MapContainer: useEffect (shouldRender) triggered', { shouldRender, isInitialized, shouldRenderChildren: shouldRenderChildren.current, environment: process.env.NODE_ENV });
     dbLogger.debug('MapContainer: shouldRender value', { 
       shouldRender,
       isInitialized,
       shouldRenderChildren: shouldRenderChildren.current,
       environment: process.env.NODE_ENV
-    });
+    }, { source: 'MapContainer' });
   }, [shouldRender, isInitialized]);
 
   return (

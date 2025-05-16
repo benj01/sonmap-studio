@@ -64,21 +64,21 @@ export const useViewStateStore = create<ViewStateStore>()(
       setViewState2D: (state) => {
         set({ viewState2D: state });
         (async () => {
-          await dbLogger.debug('2D view state updated', { state, source: SOURCE });
+          await dbLogger.debug('2D view state updated', { state }, { source: SOURCE });
         })();
       },
 
       setViewState3D: (state) => {
         set({ viewState3D: state });
         (async () => {
-          await dbLogger.debug('3D view state updated', { state, source: SOURCE });
+          await dbLogger.debug('3D view state updated', { state }, { source: SOURCE });
         })();
       },
 
       reset: () => {
         set(initialState);
         (async () => {
-          await dbLogger.info('View state store reset', { action: 'reset', source: SOURCE });
+          await dbLogger.info('View state store reset', { action: 'reset' }, { source: SOURCE });
         })();
       }
     }),

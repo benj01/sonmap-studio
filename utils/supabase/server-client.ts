@@ -54,14 +54,14 @@ export async function createClient() {
               sameSite: 'lax'
             })
           } catch (error) {
-            await dbLogger.error('Error setting cookie', { source: SOURCE, name, error, options })
+            await dbLogger.error('Error setting cookie', { name, error, options }, { source: SOURCE })
           }
         },
         remove: async (name: string) => {
           try {
             cookieStore.delete(name)
           } catch (error) {
-            await dbLogger.error('Error removing cookie', { source: SOURCE, name, error })
+            await dbLogger.error('Error removing cookie', { name, error }, { source: SOURCE })
           }
         }
       }

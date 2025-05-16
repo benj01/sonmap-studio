@@ -24,7 +24,7 @@ async function extractCRSFromQMD(qmdContent: string): Promise<{ srid: number; pr
     const crs = result?.qgis?.crs?.spatialrefsys;
     
     if (!crs) {
-      await dbLogger.warn('No CRS information found in QMD file');
+      await dbLogger.warn('No CRS information found in QMD file', undefined, { source: SOURCE });
       return null;
     }
 
@@ -33,7 +33,7 @@ async function extractCRSFromQMD(qmdContent: string): Promise<{ srid: number; pr
       proj4String: crs.proj4
     };
   } catch (error) {
-    await dbLogger.warn('Failed to parse QMD file:', error);
+    await dbLogger.warn('Failed to parse QMD file', { error }, { source: SOURCE });
     return null;
   }
 }
@@ -49,11 +49,11 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
     }
     const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, coords);
     if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-      await dbLogger.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
+      await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result }, { source: SOURCE });
     }
     return { result, log: { fromSrid, input: coords, output: result } };
   } catch (error) {
-    await dbLogger.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
+    await dbLogger.warn('Failed to transform coordinates', { error, coords, fromSrid }, { source: SOURCE });
     return { result: coords, log: { fromSrid, input: coords, output: coords } };
   }
 }
@@ -129,8 +129,9 @@ export class GeoJsonParser extends BaseGeoDataParser {
       await dbLogger.info('Starting GeoJSON parse operation', {
         mainFileSize: mainFile.byteLength,
         companionFiles: companionFiles ? Object.keys(companionFiles) : []
-      });
+      }, { source: SOURCE });
 
+      // Context argument omitted due to linter restrictions
       this.reportProgress(onProgress, {
         phase: 'parsing',
         progress: 0,
@@ -160,7 +161,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
 
       await dbLogger.info('GeoJSON parsed', {
         featureCount: geojson.features.length
-      });
+      }, { source: SOURCE });
 
       // Check for QMD file and extract CRS information
       let sourceCRS = null;
@@ -168,7 +169,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
         const qmdContent = await this.readFileAsText(companionFiles['.qmd']);
         sourceCRS = await extractCRSFromQMD(qmdContent);
         if (sourceCRS) {
-          await dbLogger.info('Found CRS information in QMD file', sourceCRS);
+          await dbLogger.info('Found CRS information in QMD file', { srid: sourceCRS.srid, proj4String: sourceCRS.proj4String }, { source: SOURCE });
         }
       }
 
@@ -177,7 +178,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
       if (!sourceSRID) {
         // Fallback to CH1903+/LV95 if no CRS information is available
         sourceSRID = 2056; // Swiss LV95
-        await dbLogger.info('No CRS information found, assuming CH1903+/LV95 (EPSG:2056)');
+        await dbLogger.info('No CRS information found, assuming CH1903+/LV95 (EPSG:2056)', undefined, { source: SOURCE });
       }
 
       // Process GeoJSON into FullDataset WITHOUT transforming coordinates
@@ -189,7 +190,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
         originalIndex: index
       }));
 
-      await dbLogger.info('Skipping coordinate transformation for main features array');
+      await dbLogger.info('Skipping coordinate transformation for main features array', undefined, { source: SOURCE });
 
       // Respect transformCoordinates option (like ShapefileParser)
       const shouldTransform = options?.transformCoordinates !== false;
@@ -199,18 +200,18 @@ export class GeoJsonParser extends BaseGeoDataParser {
             fromSrid: sourceSRID,
             toSrid: 4326,
             featureCount: features.length
-          });
+          }, { source: SOURCE });
           features = await Promise.all(features.map(async feature => ({
             ...feature,
             geometry: await transformGeometry(feature.geometry, sourceSRID, coordTransformLogs, geometrySamples)
           })));
-          await dbLogger.info('Coordinate transformation complete');
+          await dbLogger.info('Coordinate transformation complete', undefined, { source: SOURCE });
         } catch (error) {
           await dbLogger.warn('Transformation failed, using original geometries', { 
             error,
             srid: sourceSRID,
             featureCount: features.length
-          });
+          }, { source: SOURCE });
           // Do not modify features, just log and continue
         }
       }
@@ -241,32 +242,33 @@ export class GeoJsonParser extends BaseGeoDataParser {
         }
       };
 
+      // Context argument omitted due to linter restrictions
       this.reportProgress(onProgress, {
         phase: 'complete',
         progress: 100,
         message: 'Parsing complete'
       });
 
-      await dbLogger.info('Parse complete', dataset.metadata);
+      await dbLogger.info('Parse complete', dataset.metadata, { source: SOURCE });
 
       if (geometrySamples.samples.length > 0) {
-        await dbLogger.debug(SOURCE, 'Transforming geometry samples', { samples: geometrySamples.samples });
+        await dbLogger.debug('Transforming geometry samples', { samples: geometrySamples.samples }, { source: SOURCE });
       }
-      await dbLogger.debug(SOURCE, 'Transforming geometry summary', {
+      await dbLogger.debug('Transforming geometry summary', {
         totalGeometries: features.length,
         sampleCount: Math.min(features.length, geometrySamples.limit),
         uniqueTypes: Array.from(geometrySamples.types)
-      });
+      }, { source: SOURCE });
       if (coordTransformLogs.length > 0) {
-        await dbLogger.debug(SOURCE, 'Coordinate transformation samples', { samples: coordTransformLogs.slice(0, COORD_TRANSFORM_LOG_LIMIT) });
+        await dbLogger.debug('Coordinate transformation samples', { samples: coordTransformLogs.slice(0, COORD_TRANSFORM_LOG_LIMIT) }, { source: SOURCE });
       }
-      await dbLogger.debug(SOURCE, 'Coordinate transformation summary', {
+      await dbLogger.debug('Coordinate transformation summary', {
         totalTransformed: coordTransformLogs.length,
         sampleCount: Math.min(coordTransformLogs.length, COORD_TRANSFORM_LOG_LIMIT)
-      });
+      }, { source: SOURCE });
       return dataset;
     } catch (error) {
-      await dbLogger.error('Parse failed', error);
+      await dbLogger.error('Parse failed', { error }, { source: SOURCE });
       throw new InvalidFileFormatError('geojson',
         error instanceof Error ? error.message : 'Unknown error'
       );
@@ -297,7 +299,7 @@ export class GeoJsonParser extends BaseGeoDataParser {
       
       return false;
     } catch (error) {
-      await dbLogger.warn('Validation failed', error);
+      await dbLogger.warn('Validation failed', error, { source: SOURCE });
       return false;
     }
   }

@@ -96,19 +96,19 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
       proj4.defs(`EPSG:${fromSrid}`, fromSystem.proj4);
     }
     const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, [coords[0], coords[1]]);
-    await dbLogger.debug(SOURCE, 'Coordinate transformation', {
+    await dbLogger.debug('Coordinate transformation', {
       fromSrid,
       toSrid: 4326,
       input: coords,
       output: result
-    });
+    }, { source: SOURCE });
     // Switzerland bounds check
     if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-      await dbLogger.warn(SOURCE, 'Transformed coordinates out of Swiss bounds', { result });
+      await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result }, { source: SOURCE });
     }
     return hasZ && z !== null ? [result[0], result[1], z] : result;
   } catch (error) {
-    await dbLogger.warn(SOURCE, 'Failed to transform coordinates', { error, coords, fromSrid });
+    await dbLogger.warn('Failed to transform coordinates', { error, coords, fromSrid }, { source: SOURCE });
     return coords;
   }
 }
@@ -118,7 +118,7 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
  */
 async function transformGeometry(geometry: Geometry, srid: number): Promise<Geometry> {
   try {
-    await dbLogger.debug(SOURCE, 'Transforming geometry', { geometryType: geometry.type, srid });
+    await dbLogger.debug('Transforming geometry', { geometryType: geometry.type, srid }, { source: SOURCE });
     switch (geometry.type) {
       case 'Point':
         return {
@@ -157,7 +157,7 @@ async function transformGeometry(geometry: Geometry, srid: number): Promise<Geom
         return geometry;
     }
   } catch (error) {
-    await dbLogger.warn('Failed to transform geometry', { error, geometryType: geometry.type, srid });
+    await dbLogger.warn('Failed to transform geometry', { error, geometryType: geometry.type, srid }, { source: SOURCE });
     return geometry;
   }
 }
@@ -212,18 +212,18 @@ export class ShapefileParser extends BaseGeoDataParser {
     const shouldTransform = options?.transformCoordinates !== false;
     // CRITICAL DEBUG LOGS FOR TRANSFORMATION ISSUE - Using logger instead of console.log
     if (isDebugEnabled('ShapefileParserTrace')) {
-      await dbLogger.debug(SOURCE, "🔍 TRANSFORMATION DEBUG: Received options", { 
+      await dbLogger.debug('🔍 TRANSFORMATION DEBUG: Received options', { 
         options,
         optionsJSON: JSON.stringify(options, null, 2) 
-      });
-      await dbLogger.debug(SOURCE, "🚨 TRANSFORMATION DEBUG: shouldTransform calculation", { 
+      }, { source: SOURCE });
+      await dbLogger.debug('🚨 TRANSFORMATION DEBUG: shouldTransform calculation', { 
         shouldTransform,
         transformCoordinatesOptionValue: options?.transformCoordinates,
         calculationLogic: "options?.transformCoordinates !== false" 
-      });
+      }, { source: SOURCE });
       // Create simple stack trace
       const stackTrace = new Error().stack?.split('\n').slice(1, 5).join('\n');
-      await dbLogger.debug(SOURCE, "📞 TRANSFORMATION DEBUG: Callstack", { stackTrace });
+      await dbLogger.debug('📞 TRANSFORMATION DEBUG: Callstack', { stackTrace }, { source: SOURCE });
     }
     // --- END OF CRITICAL DEBUG LOGS ---
 
@@ -238,7 +238,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         mainFileSize: mainFile.byteLength,
         companionFiles: companionFiles ? Object.keys(companionFiles) : [],
         options
-      });
+      }, { source: SOURCE });
 
       // Validate companion files
       if (!companionFiles || !companionFiles['.dbf']) {
@@ -263,7 +263,7 @@ export class ShapefileParser extends BaseGeoDataParser {
             await dbLogger.info('Detected coordinate system from PRJ', {
               srid: this.srid,
               prjContent
-            });
+            }, { source: SOURCE });
           }
         } catch (error) {
           await dbLogger.warn('Failed to parse .prj file', { error });
@@ -271,7 +271,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       }
 
       // Parse shapefile
-      await dbLogger.info('Reading shapefile data');
+      await dbLogger.info('Reading shapefile data', { source: SOURCE });
       await dbLogger.debug('ShapefileParser: buffer info', {
         mainFileType: typeof mainFile,
         mainFileConstructor: mainFile?.constructor?.name,
@@ -285,7 +285,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         dbfIsUint8Array: companionFiles['.dbf'] instanceof Uint8Array,
         dbfByteLength: companionFiles['.dbf']?.byteLength,
         dbfFirstBytes: Array.from(new Uint8Array(companionFiles['.dbf'], 0, Math.min(10, companionFiles['.dbf']?.byteLength || 0)))
-      });
+      }, { source: SOURCE });
       // mainFile and dbfBuffer are always ArrayBuffer
       let mainBuffer = mainFile;
       let dbfBuffer = companionFiles['.dbf'];
@@ -305,7 +305,7 @@ export class ShapefileParser extends BaseGeoDataParser {
           dbfType: typeof companionFiles['.dbf'],
           dbfIsArrayBuffer: companionFiles['.dbf'] instanceof ArrayBuffer,
           dbfByteLength: companionFiles['.dbf']?.byteLength
-        });
+        }, { source: SOURCE });
         throw readError;
       }
       const geojson = {
@@ -322,26 +322,26 @@ export class ShapefileParser extends BaseGeoDataParser {
 
       await dbLogger.info('Shapefile parsed successfully', {
         featureCount: geojson.features.length
-      });
+      }, { source: SOURCE });
       
       // Check for PointZ shapes and extract Z values if needed
       // Get the shape type (bytes 32-35, little-endian)
       const view = new DataView(mainFile);
       const shapeType = view.getInt32(32, true);
       
-      await dbLogger.info(SOURCE, `Detected shapefile type from header`, {
+      await dbLogger.info('Detected shapefile type from header', {
         shapeType,
         typeDescription: SHAPE_TYPE_NAMES[shapeType] || 'UNKNOWN',
         isPointZ: shapeType === SHAPE_TYPES.POINT_Z,
         headerBytes: Array.from(new Uint8Array(mainFile.slice(0, 40)))
           .map(b => b.toString(16).padStart(2, '0')).join(' ')
-      });
+      }, { source: SOURCE });
       
       // For PointZ types, we need to ensure Z values are preserved
       if (shapeType === SHAPE_TYPES.POINT_Z) {
-        await dbLogger.info(SOURCE, `Processing PointZ shapefile type`, {
+        await dbLogger.info('Processing PointZ shapefile type', {
           totalFeatures: geojson.features.length
-        });
+        }, { source: SOURCE });
         
         try {
           // Skip 100 bytes of the header
@@ -364,12 +364,12 @@ export class ShapefileParser extends BaseGeoDataParser {
               
               // Only log per-feature Z extraction if debug flag is enabled
               if (isDebugEnabled('ShapefileParser')) {
-                await dbLogger.debug(SOURCE, `Extracted Z value for feature ${i}`, { 
+                await dbLogger.debug('Extracted Z value for feature', { 
                   x, y, z,
                   originalCoords: geojson.features[i].geometry.type === 'Point' ? 
                     (geojson.features[i].geometry as Point).coordinates : 
                     'non-point geometry'
-                });
+                }, { source: SOURCE });
               }
               
               // Update the feature with Z coordinate
@@ -387,11 +387,11 @@ export class ShapefileParser extends BaseGeoDataParser {
                 offset += 8;
               }
             } catch (e) {
-              await dbLogger.warn(SOURCE, `Error reading Z value for feature ${i}`, { error: e });
+              await dbLogger.warn('Error reading Z value for feature', { error: e });
             }
           }
         } catch (e) {
-          await dbLogger.warn(SOURCE, `Error processing Z values from PointZ shapefile`, { error: e });
+          await dbLogger.warn('Error processing Z values from PointZ shapefile', { error: e });
         }
       }
 
@@ -400,8 +400,8 @@ export class ShapefileParser extends BaseGeoDataParser {
         const firstFeature = geojson.features[0];
         const coords = getCoordinates(firstFeature.geometry);
         if (isDebugEnabled('ShapefileParser')) {
-          await dbLogger.debug(SOURCE, '📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
-          await dbLogger.debug(SOURCE, '   First feature geometry type', { geometryType: firstFeature.geometry.type });
+          await dbLogger.debug('📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
+          await dbLogger.debug('   First feature geometry type', { geometryType: firstFeature.geometry.type });
         }
       }
       // --- END OF CRITICAL DEBUG LOG ---
@@ -441,7 +441,7 @@ export class ShapefileParser extends BaseGeoDataParser {
 
       if (shouldTransform && this.srid !== undefined && this.srid !== 4326) {
         if (isDebugEnabled('ShapefileParserTrace')) {
-          await dbLogger.debug(SOURCE, '🔄 ENTERING TRANSFORMATION block', {
+          await dbLogger.debug('🔄 ENTERING TRANSFORMATION block', {
             shouldTransform,
             srid: this.srid,
             transformCondition: {
@@ -510,7 +510,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         }
       } else {
         if (isDebugEnabled('ShapefileParserTrace')) {
-          await dbLogger.debug(SOURCE, '⛔ SKIPPING TRANSFORMATION block', {
+          await dbLogger.debug('⛔ SKIPPING TRANSFORMATION block', {
             reasons: {
               shouldTransform,
               srid: this.srid,

@@ -95,7 +95,7 @@ function validateGeometry(geometry: unknown): geometry is GeoJSON.Geometry {
 
 // Separate error handler function to handle the async logging
 function handleValidationError(error: unknown) {
-  void dbLogger.warn('Invalid geometry', { source: SOURCE, error }).catch(err => {
+  void dbLogger.warn('Invalid geometry', { error }, { source: SOURCE }).catch(err => {
     console.error('Failed to log validation error:', err);
   });
 }
@@ -114,13 +114,7 @@ export function useLayerData(layerId: string) {
   useEffect(() => {
     async function logInitialization() {
       try {
-        await dbLogger.info('useLayerData hook called', {
-          source: SOURCE,
-          layerId,
-          loading,
-          error: error?.message,
-          hasCachedData: !!layerCache.get(layerId)
-        });
+        await dbLogger.info('useLayerData hook called', { layerId, loading, error: error?.message, hasCachedData: !!layerCache.get(layerId) }, { source: SOURCE });
       } catch (err) {
         console.error('Failed to log initialization:', err);
       }
@@ -137,25 +131,14 @@ export function useLayerData(layerId: string) {
         cleanupRef.current = false;
         
         // Log mount effect
-        await dbLogger.info('useLayerData mount effect', {
-          source: SOURCE,
-          layerId,
-          isMounted: mounted.current,
-          isCleanup: cleanupRef.current
-        });
+        await dbLogger.info('useLayerData mount effect', { ...data }, { source: SOURCE });
         
         // Subscribe to cache
         const cached = layerCache.get(layerId);
         if (cached) {
           cached.subscribers++;
           if (cached.isValid) {
-            await dbLogger.info('Using cached layer data', {
-              source: SOURCE,
-              layerId,
-              dataTimestamp: new Date(cached.timestamp).toISOString(),
-              subscribers: cached.subscribers,
-              lastUpdate: new Date(cached.lastUpdate).toISOString()
-            });
+            await dbLogger.info('Using cached layer data', { ...data }, { source: SOURCE });
             setData(cached.data);
             setLoading(false);
           }
@@ -175,12 +158,7 @@ export function useLayerData(layerId: string) {
           mounted.current = false;
           cleanupRef.current = true;
           
-          await dbLogger.info('useLayerData cleanup', {
-            source: SOURCE,
-            layerId,
-            isMounted: mounted.current,
-            isCleanup: cleanupRef.current
-          });
+          await dbLogger.info('useLayerData cleanup', { ...data }, { source: SOURCE });
           
           // Unsubscribe from cache
           const cached = layerCache.get(layerId);
@@ -207,23 +185,14 @@ export function useLayerData(layerId: string) {
     async function fetchLayerData() {
       // Prevent concurrent fetches or fetching during cleanup
       if (fetchingRef.current || cleanupRef.current) {
-        await dbLogger.info('Skipping fetch - already fetching or cleanup in progress', {
-          source: SOURCE,
-          layerId,
-          isFetching: fetchingRef.current,
-          isCleanup: cleanupRef.current
-        });
+        await dbLogger.info('Skipping fetch - already fetching or cleanup in progress', { ...data }, { source: SOURCE });
         return;
       }
 
       // Throttle updates
       const now = Date.now();
       if (now - lastUpdateRef.current < UPDATE_THROTTLE) {
-        await dbLogger.debug('Skipping fetch - update throttled', {
-          source: SOURCE,
-          layerId,
-          timeSinceLastUpdate: now - lastUpdateRef.current
-        });
+        await dbLogger.debug('Skipping fetch - update throttled', { ...data }, { source: SOURCE });
         return;
       }
 
@@ -233,13 +202,7 @@ export function useLayerData(layerId: string) {
         // Check cache first
         const cached = layerCache.get(layerId);
         if (cached && cached.isValid && Date.now() - cached.timestamp < CACHE_TTL) {
-          await dbLogger.info('Using cached layer data', {
-            source: SOURCE,
-            layerId,
-            dataTimestamp: new Date(cached.timestamp).toISOString(),
-            subscribers: cached.subscribers,
-            lastUpdate: new Date(cached.lastUpdate).toISOString()
-          });
+          await dbLogger.info('Using cached layer data', { ...data }, { source: SOURCE });
           if (mounted.current) {
             setData(cached.data);
             setLoading(false);
@@ -250,7 +213,7 @@ export function useLayerData(layerId: string) {
         // Skip if cleanup started
         if (cleanupRef.current) return;
 
-        await dbLogger.info('Fetching layer data from Supabase', { source: SOURCE, layerId });
+        await dbLogger.info('Fetching layer data from Supabase', { ...data }, { source: SOURCE });
         
         // First get the layer metadata
         const { data: layerData, error: layerError } = await supabase
@@ -261,30 +224,25 @@ export function useLayerData(layerId: string) {
 
         // Skip if cleanup started
         if (cleanupRef.current) {
-          await dbLogger.info('Skipping metadata processing - cleanup in progress', { source: SOURCE, layerId });
+          await dbLogger.info('Skipping metadata processing - cleanup in progress', { ...data }, { source: SOURCE });
           return;
         }
 
         if (layerError) {
-          await dbLogger.error('Layer metadata fetch error', { source: SOURCE, error: layerError });
+          await dbLogger.error('Layer metadata fetch error', { error: layerError instanceof Error ? layerError.message : String(layerError) }, { source: SOURCE });
           throw layerError;
         }
         if (!layerData) {
-          await dbLogger.error('Layer not found', { source: SOURCE, layerId });
+          await dbLogger.error('Layer not found', { ...data }, { source: SOURCE });
           throw new Error('Layer not found');
         }
 
-        await dbLogger.info('Layer metadata fetched', { 
-          source: SOURCE,
-          layerId,
-          name: layerData.name,
-          type: layerData.type
-        });
+        await dbLogger.info('Layer metadata fetched', { ...layerData }, { source: SOURCE });
 
         // Skip if cleanup started
         if (cleanupRef.current) return;
 
-        await dbLogger.info('Fetching layer features', { source: SOURCE, layerId });
+        await dbLogger.info('Fetching layer features', { ...data }, { source: SOURCE });
 
         // Then get the features for this layer with PostGIS geometry
         const { data: features, error: featuresError } = await supabase
@@ -294,20 +252,16 @@ export function useLayerData(layerId: string) {
 
         // Skip if cleanup started
         if (cleanupRef.current) {
-          await dbLogger.info('Skipping features processing - cleanup in progress', { source: SOURCE, layerId });
+          await dbLogger.info('Skipping features processing - cleanup in progress', { ...data }, { source: SOURCE });
           return;
         }
 
         if (featuresError) {
-          await dbLogger.error('Features fetch error', { source: SOURCE, error: featuresError });
+          await dbLogger.error('Features fetch error', { error: featuresError instanceof Error ? featuresError.message : String(featuresError) }, { source: SOURCE });
           throw featuresError;
         }
 
-        await dbLogger.info('Layer features fetched', {
-          source: SOURCE,
-          layerId,
-          featureCount: features?.length || 0
-        });
+        await dbLogger.info('Layer features fetched', { ...data }, { source: SOURCE });
 
         // Process features into GeoJSON
         const processedFeatures = (await Promise.all(features?.map(async (feature: {
@@ -321,7 +275,7 @@ export function useLayerData(layerId: string) {
               : feature.geojson;
 
             if (!validateGeometry(geometry)) {
-              await dbLogger.warn('Invalid geometry in feature', { source: SOURCE, featureId: feature.id });
+              await dbLogger.warn('Invalid geometry in feature', { featureId: feature.id, error: error }, { source: SOURCE });
               return null;
             }
 
@@ -339,27 +293,18 @@ export function useLayerData(layerId: string) {
                 feature.properties?.lv95_northing && 
                 feature.properties?.lv95_height) {
               try {
-                await dbLogger.debug('Processing feature with LV95 stored coordinates', { source: SOURCE, featureId: feature.id });
+                await dbLogger.debug('Processing feature with LV95 stored coordinates', { ...feature }, { source: SOURCE });
                 geoJsonFeature = await processStoredLv95Coordinates(geoJsonFeature);
-                await dbLogger.debug('Transformed LV95 coordinates to WGS84 with accurate height', { 
-                  source: SOURCE,
-                  featureId: feature.id,
-                  height_mode: geoJsonFeature.properties?.height_mode,
-                  elevation: geoJsonFeature.properties?.base_elevation_ellipsoidal
-                });
+                await dbLogger.debug('Transformed LV95 coordinates to WGS84 with accurate height', { ...geoJsonFeature.properties }, { source: SOURCE });
               } catch (transformError) {
-                await dbLogger.warn('Failed to transform LV95 coordinates, using original feature', {
-                  source: SOURCE,
-                  featureId: feature.id,
-                  error: transformError
-                });
+                await dbLogger.warn('Failed to transform LV95 coordinates, using original feature', { ...feature }, { source: SOURCE });
                 // Continue with the original feature
               }
             }
 
             return geoJsonFeature;
           } catch (error) {
-            await dbLogger.warn('Failed to process feature', { source: SOURCE, featureId: feature.id, error });
+            await dbLogger.warn('Failed to process feature', { ...feature }, { source: SOURCE });
             return null;
           }
         }) || [])).filter((feature): feature is Feature => feature !== null);
@@ -386,12 +331,7 @@ export function useLayerData(layerId: string) {
           lastUpdate: Date.now()
         });
 
-        await dbLogger.info('Layer data cached', {
-          source: SOURCE,
-          layerId,
-          name: layerData.name,
-          featureCount: processedFeatures.length
-        });
+        await dbLogger.info('Layer data cached', { ...layerData }, { source: SOURCE });
 
         // Update layer store with GeoJSON data
         const layerStore = useLayerStore.getState();
@@ -407,7 +347,7 @@ export function useLayerData(layerId: string) {
 
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : 'Failed to fetch layer data';
-        await dbLogger.error('Layer data fetch error', { source: SOURCE, error: err });
+        await dbLogger.error('Layer data fetch error', { error: errorMessage }, { source: SOURCE });
         if (mounted.current) {
           setError(new Error(errorMessage));
           setLoading(false);
@@ -419,7 +359,7 @@ export function useLayerData(layerId: string) {
 
     if (layerId) {
       void fetchLayerData().catch(async (error) => {
-        await dbLogger.error('Unhandled error in fetchLayerData', { source: SOURCE, error });
+        await dbLogger.error('Unhandled error in fetchLayerData', { error: error instanceof Error ? error.message : String(error) }, { source: SOURCE });
       });
     }
   }, [layerId, supabase]);

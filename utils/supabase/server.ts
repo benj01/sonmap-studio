@@ -12,7 +12,7 @@ export async function createClient() {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    await dbLogger.error('Missing Supabase environment variables', { source: SOURCE, supabaseUrl, supabaseAnonKey });
+    await dbLogger.error('Missing Supabase environment variables', { supabaseUrl, supabaseAnonKey }, { source: SOURCE });
     throw new Error('Supabase environment variables are not set');
   }
 
@@ -29,14 +29,14 @@ export async function createClient() {
           try {
             cookieStore.set({ name, value, ...options })
           } catch (error) {
-            await dbLogger.error('Error setting cookie', { source: SOURCE, error, name, options });
+            await dbLogger.error('Error setting cookie', { error, name, options }, { source: SOURCE });
           }
         },
         remove: async (name: string, options: Record<string, unknown>) => {
           try {
             cookieStore.delete({ name, ...options })
           } catch (error) {
-            await dbLogger.error('Error removing cookie', { source: SOURCE, error, name, options });
+            await dbLogger.error('Error removing cookie', { error, name, options }, { source: SOURCE });
           }
         },
       },

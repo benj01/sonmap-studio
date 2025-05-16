@@ -16,24 +16,23 @@ export class NoticeHandler {
   ): Promise<void> {
     // Log notices based on level
     for (const notice of notices) {
-      const logContext = {
-        SOURCE,
+      const logData = {
         importLogId: context.importLogId,
         batchIndex: context.batchIndex,
         notice
       };
       switch (notice.level) {
         case 'error':
-          await dbLogger.error(notice.message, logContext);
+          await dbLogger.error(notice.message, logData, { source: SOURCE });
           break;
         case 'warning':
-          await dbLogger.warn(notice.message, logContext);
+          await dbLogger.warn(notice.message, logData, { source: SOURCE });
           break;
         case 'info':
-          await dbLogger.info(notice.message, logContext);
+          await dbLogger.info(notice.message, logData, { source: SOURCE });
           break;
         case 'debug':
-          await dbLogger.debug(notice.message, logContext);
+          await dbLogger.debug(notice.message, logData, { source: SOURCE });
           break;
       }
     }
@@ -51,11 +50,10 @@ export class NoticeHandler {
 
     if (error) {
       await dbLogger.error('Failed to update import log with notices', {
-        SOURCE,
         error,
         importLogId: context.importLogId,
         batchIndex: context.batchIndex
-      });
+      }, { source: SOURCE });
     }
   }
 
@@ -85,10 +83,9 @@ export class NoticeHandler {
       return data;
     } catch (e) {
       await dbLogger.error('Failed to capture notices', {
-        SOURCE,
         error: e,
         context
-      });
+      }, { source: SOURCE });
       throw e;
     }
   }

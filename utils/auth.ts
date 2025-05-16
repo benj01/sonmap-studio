@@ -9,7 +9,7 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 if (!supabaseUrl || !supabaseAnonKey) {
   const errorMsg = 'Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable.';
   // Log the error for observability
-  dbLogger.error(errorMsg, { supabaseUrl, supabaseAnonKey }).catch(() => {});
+  await dbLogger.error(errorMsg, { supabaseUrl, supabaseAnonKey }, { source: 'AuthUtil' });
   throw new Error(errorMsg);
 }
 

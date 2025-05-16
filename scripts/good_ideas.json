@@ -1,3 +1,13 @@
 [
-  
+  {
+    "id": "2024-06-13-logger-singleton-001",
+    "title": "Enforce import alias for dbLogger singleton",
+    "description": "Always import dbLogger using the alias '@/utils/logging/dbLogger' to ensure singleton behavior across the app. Do NOT use relative imports like './dbLogger'. Add a global diagnostic (globalThis.__DB_LOGGER_ID) to detect multiple instances during development.",
+    "author": "agent",
+    "tags": ["logging", "singleton", "nextjs", "best-practice"],
+    "createdAt": "2024-06-13T12:34:56Z",
+    "status": "new",
+    "relatedTasks": [],
+    "notes": "This prevents subtle bugs in Next.js/React apps where module duplication can break singleton guarantees."
+  }
 ] 

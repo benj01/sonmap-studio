@@ -25,7 +25,7 @@ export function ResetButton() {
   const handleReset = async () => {
     cleanup();
     resetViewState();
-    await dbLogger.info(SOURCE, 'Map and view state reset', {});
+    await dbLogger.info('Map and view state reset', undefined, { source: SOURCE });
   };
 
   return (

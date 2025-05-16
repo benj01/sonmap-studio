@@ -63,7 +63,7 @@ export async function geoJsonToCesium(
   };
 
   try {
-    await dbLogger.debug('Converting GeoJSON to Cesium entities', context);
+    await dbLogger.debug('Converting GeoJSON to Cesium entities', { ...context }, { source: LOG_SOURCE });
     
     // Create a GeoJSON data source
     const dataSource = new Cesium.GeoJsonDataSource();
@@ -84,7 +84,7 @@ export async function geoJsonToCesium(
         stack: error.stack,
         name: error.name
       } : error
-    });
+    }, { source: LOG_SOURCE });
     throw error;
   }
 }
@@ -99,7 +99,7 @@ export async function csvToCesium(csvData: string, options: CsvToCesiumOptions =
   };
 
   try {
-    await dbLogger.debug('Converting CSV to Cesium entities', context);
+    await dbLogger.debug('Converting CSV to Cesium entities', { ...context }, { source: LOG_SOURCE });
     
     // Create a CZML data source
     const dataSource = new Cesium.CzmlDataSource();
@@ -167,7 +167,7 @@ export async function csvToCesium(csvData: string, options: CsvToCesiumOptions =
         stack: error.stack,
         name: error.name
       } : error
-    });
+    }, { source: LOG_SOURCE });
     throw error;
   }
 }
@@ -182,7 +182,7 @@ export async function xyzToCesiumTerrain(xyzData: string, options: XyzToCesiumOp
   };
 
   try {
-    await dbLogger.debug('Converting XYZ to Cesium terrain', context);
+    await dbLogger.debug('Converting XYZ to Cesium terrain', { ...context }, { source: LOG_SOURCE });
     
     // This is a placeholder for actual terrain generation
     // In a real implementation, you would:
@@ -202,7 +202,7 @@ export async function xyzToCesiumTerrain(xyzData: string, options: XyzToCesiumOp
         stack: error.stack,
         name: error.name
       } : error
-    });
+    }, { source: LOG_SOURCE });
     throw error;
   }
 }
@@ -216,7 +216,7 @@ export async function cesiumToGeoJson(dataSource: Cesium.DataSource): Promise<Fe
   };
 
   try {
-    await dbLogger.debug('Converting Cesium entities to GeoJSON', context);
+    await dbLogger.debug('Converting Cesium entities to GeoJSON', { ...context }, { source: LOG_SOURCE });
     
     const entities = dataSource.entities.values;
     const features: Feature[] = [];
@@ -275,7 +275,7 @@ export async function cesiumToGeoJson(dataSource: Cesium.DataSource): Promise<Fe
         stack: error.stack,
         name: error.name
       } : error
-    });
+    }, { source: LOG_SOURCE });
     throw error;
   }
 } 

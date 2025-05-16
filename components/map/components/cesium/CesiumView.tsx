@@ -60,12 +60,11 @@ function applyHeightToFeatures(
   
   // Fire-and-forget logging: this function is not async
   void dbLogger.debug('Applying height to features', {
-    source: SOURCE,
     sourceType,
     attributeName,
     interpretationMode,
     featureCount: result.features.length
-  }).catch(() => {}); // ignore logging errors
+  }, { source: SOURCE }).catch(() => {}); // ignore logging errors
   
   // Process each feature
   result.features = result.features.map((feature: GeoJSON.Feature) => {

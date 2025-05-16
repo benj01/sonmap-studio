@@ -7,6 +7,7 @@ import { Download, Bug, Trash, Copy, Check } from 'lucide-react';
 import LogLevelControl from './LogLevelControl';
 import { Rnd } from 'react-rnd';
 import { SplitPane } from '@rexxars/react-split-pane';
+import { useLogStore } from '@/store/logs/logStore';
 
 interface DebugPanelProps {
   children?: ReactNode;
@@ -17,28 +18,24 @@ const MAX_LOGS = 1000; // Maximum number of logs to keep in memory
 
 export function DebugPanel({ children }: DebugPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [copied, setCopied] = useState(false);
+  const logs = useLogStore((state) => state.logs);
+  const addLog = useLogStore((state) => state.addLog);
+  const clearLogsStore = useLogStore((state) => state.clearLogs);
 
   useEffect(() => {
-    // Subscribe to log events
+    // Subscribe to log events globally
     const unsubscribe = dbLogger.addLogListener((log) => {
-      setLogs(prevLogs => {
-        const newLogs = [...prevLogs, log];
-        // Keep only the last MAX_LOGS entries
-        return newLogs.slice(-MAX_LOGS);
-      });
+      addLog(log);
     });
 
-    // Log that debug panel is ready
     dbLogger.info('Debug panel initialized', undefined, { source: LOG_SOURCE }).catch(() => {});
 
-    // Cleanup subscription on unmount
     return () => {
       unsubscribe();
       dbLogger.info('Debug panel destroyed', undefined, { source: LOG_SOURCE }).catch(() => {});
     };
-  }, []);
+  }, [addLog]);
 
   const exportLogs = async () => {
     try {
@@ -60,7 +57,7 @@ export function DebugPanel({ children }: DebugPanelProps) {
 
   const clearLogs = async () => {
     try {
-      setLogs([]);
+      clearLogsStore();
       await dbLogger.info('Logs cleared', undefined, { source: LOG_SOURCE });
     } catch (error) {
       await dbLogger.error('Failed to clear logs', { error }, { source: LOG_SOURCE });

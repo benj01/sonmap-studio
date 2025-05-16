@@ -80,7 +80,7 @@ export const usePreferenceStore = create<PreferenceStore>()(
       // Actions
       setHeightSourcePreference: (preference) => {
         (async () => {
-          await dbLogger.info('Setting height source preference', { preference, source: SOURCE });
+          await dbLogger.info('Setting height source preference', { preference }, { source: SOURCE });
         })();
         set(state => ({
           preferences: {
@@ -93,7 +93,7 @@ export const usePreferenceStore = create<PreferenceStore>()(
       // Reset all preferences to defaults
       reset: () => {
         (async () => {
-          await dbLogger.info('Resetting user preferences', { action: 'reset', source: SOURCE });
+          await dbLogger.info('Resetting user preferences', { action: 'reset' }, { source: SOURCE });
         })();
         set({ preferences: initialState });
       }

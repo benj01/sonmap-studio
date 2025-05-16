@@ -12,7 +12,6 @@ export class LineLayer {
 
   public async addFeature(feature: Feature<LineString>) {
     const context = {
-      source: LOG_SOURCE,
       featureId: feature.id || 'unknown',
       coordinates: {
         count: feature.geometry.coordinates.length,
@@ -22,7 +21,7 @@ export class LineLayer {
       properties: feature.properties
     };
 
-    await dbLogger.debug('addFeature.start', context);
+    await dbLogger.debug('addFeature.start', context, { source: LOG_SOURCE });
 
     try {
       // Validate feature geometry
@@ -31,7 +30,7 @@ export class LineLayer {
           ...context,
           geometryType: feature.geometry?.type,
           coordinateCount: feature.geometry?.coordinates?.length
-        });
+        }, { source: LOG_SOURCE });
         return;
       }
 
@@ -42,7 +41,7 @@ export class LineLayer {
         ...context,
         style,
         isVisible: this.isFeatureVisible(feature)
-      });
+      }, { source: LOG_SOURCE });
 
       // Add to layer
       this.features.push({
@@ -51,12 +50,12 @@ export class LineLayer {
       });
 
       await this.updateLayerStats();
-      await dbLogger.debug('addFeature.success', context);
+      await dbLogger.debug('addFeature.success', context, { source: LOG_SOURCE });
     } catch (error) {
       await dbLogger.error('addFeature.error', {
         ...context,
         error
-      });
+      }, { source: LOG_SOURCE });
       throw error; // Re-throw to allow caller to handle
     }
   }
@@ -74,12 +73,11 @@ export class LineLayer {
 
   private async updateLayerStats() {
     const stats = {
-      source: LOG_SOURCE,
       totalFeatures: this.features.length,
       visibleFeatures: this.features.filter(f => this.isFeatureVisible(f.feature)).length
     };
     
-    await dbLogger.debug('updateLayerStats', stats);
+    await dbLogger.debug('updateLayerStats', stats, { source: LOG_SOURCE });
   }
 
   private getFeatureStyle(feature: Feature<LineString>): VectorLayerStyle {

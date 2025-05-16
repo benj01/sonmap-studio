@@ -47,7 +47,8 @@ export async function transformLv95ToWgs84(
   try {
     // Enhanced logging - input coordinates with unique identifier
     const requestId = `req_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    await dbLogger.info(SOURCE, `Swiss Reframe transformation request ${requestId}`, { 
+    await dbLogger.info('Swiss Reframe transformation request', { 
+      source: SOURCE,
       eastingLv95,
       northingLv95,
       lhn95Height,
@@ -60,7 +61,8 @@ export async function transformLv95ToWgs84(
       lhn95Height
     };
     
-    await dbLogger.debug(SOURCE, `Sending transformation request ${requestId} to API`, { 
+    await dbLogger.debug('Sending transformation request', { 
+      source: SOURCE,
       endpoint: '/api/coordinates/transform',
       payload: requestPayload
     });
@@ -68,7 +70,8 @@ export async function transformLv95ToWgs84(
     const response = await axios.post('/api/coordinates/transform', requestPayload);
     
     if (response.status !== 200) {
-      await dbLogger.error(SOURCE, `Transformation API returned non-200 status for ${requestId}`, {
+      await dbLogger.error('Transformation API returned non-200 status', {
+        source: SOURCE,
         status: response.status,
         statusText: response.statusText,
         responseData: response.data
@@ -79,7 +82,8 @@ export async function transformLv95ToWgs84(
     const result = response.data as TransformResult;
     
     // Log successful transformation with both input and output
-    await dbLogger.info(SOURCE, `Swiss Reframe transformation completed ${requestId}`, { 
+    await dbLogger.info('Swiss Reframe transformation completed', { 
+      source: SOURCE,
       input: {
         eastingLv95,
         northingLv95,
@@ -95,7 +99,10 @@ export async function transformLv95ToWgs84(
     
     return result;
   } catch (error) {
-    await dbLogger.error(SOURCE, 'Swiss coordinate transformation failed:', { error });
+    await dbLogger.error('Swiss coordinate transformation failed:', {
+      source: SOURCE,
+      error
+    });
     
     // Fallback to approximation for development/testing
     // This is a very rough approximation and should not be used in production
@@ -103,7 +110,8 @@ export async function transformLv95ToWgs84(
     const roughLat = 46.82 + (northingLv95 - 1200000) / 111000;
     const roughEllHeight = lhn95Height + 49.5; // Average offset between LHN95 and ellipsoidal height
     
-    await dbLogger.warn(SOURCE, `Using fallback approximation for Swiss coordinates`, { 
+    await dbLogger.warn('Using fallback approximation for Swiss coordinates', { 
+      source: SOURCE,
       input: {
         eastingLv95,
         northingLv95,
@@ -147,7 +155,8 @@ export async function getHeightDelta(
   const now = Date.now();
   
   if (cachedDelta && (now - cachedDelta.timestamp < MAX_CACHE_AGE)) {
-    await dbLogger.debug(SOURCE, 'Using cached height delta', { 
+    await dbLogger.debug('Using cached height delta', { 
+      source: SOURCE,
       cacheKey, 
       age: Math.round((now - cachedDelta.timestamp) / 1000) + 's' 
     });
@@ -155,7 +164,10 @@ export async function getHeightDelta(
   }
   
   // Calculate new delta
-  await dbLogger.debug(SOURCE, 'Calculating new height delta', { cacheKey });
+  await dbLogger.debug('Calculating new height delta', {
+    source: SOURCE,
+    cacheKey
+  });
   
   // Use grid cell center for reference point
   const refEasting = gridX + (GRID_CELL_SIZE / 2);
@@ -205,10 +217,11 @@ export function applyHeightDelta(
   
   // If too far, return null to force a new API call
   if (distance > delta.validRadius) {
-    dbLogger.debug(SOURCE, 'Point too far from reference, delta not applied', { 
+    void dbLogger.debug('Point too far from reference, delta not applied', { 
+      source: SOURCE,
       distance, 
       validRadius: delta.validRadius 
-    }).catch(() => {});
+    });
     return null;
   }
   
@@ -230,11 +243,12 @@ export function applyHeightDelta(
   const lon = delta.refWgs84.lon + (dx * lonPerMeter);
   const lat = delta.refWgs84.lat + (dy * latPerMeter);
   
-  dbLogger.debug(SOURCE, 'Applied height delta', { 
+  void dbLogger.debug('Applied height delta', { 
+    source: SOURCE,
     input: { eastingLv95, northingLv95, lhn95Height },
     output: { lon, lat, ellipsoidalHeight },
     heightOffset: delta.heightOffset
-  }).catch(() => {});
+  });
   
   return {
     lon,
@@ -272,13 +286,16 @@ export async function transformLv95ToWgs84WithDelta(
     
     // If delta application failed, fall back to API call
     if (!result) {
-      await dbLogger.debug(SOURCE, 'Delta application failed, falling back to API call');
+      await dbLogger.debug('Delta application failed, falling back to API call');
       return await transformLv95ToWgs84(eastingLv95, northingLv95, lhn95Height);
     }
     
     return result;
   } catch (error) {
-    await dbLogger.error(SOURCE, 'Delta-based transformation failed, falling back to direct call', { error });
+    await dbLogger.error('Delta-based transformation failed, falling back to direct call', {
+      source: SOURCE,
+      error
+    });
     // Fall back to original implementation
     return await transformLv95ToWgs84(eastingLv95, northingLv95, lhn95Height);
   }
@@ -331,7 +348,8 @@ export async function processStoredLv95Coordinates(
     const featureId = feature.id || 'unknown';
     
     // Log feature processing start
-    await dbLogger.info(SOURCE, `Processing feature with LV95 coordinates`, {
+    await dbLogger.info('Processing feature with LV95 coordinates', {
+      source: SOURCE,
       featureId,
       height_mode: props?.height_mode,
       transformationMethod: options.transformationMethod || 'api',
@@ -344,7 +362,8 @@ export async function processStoredLv95Coordinates(
         props.lv95_height) {
       
       // Log LV95 values for debugging
-      await dbLogger.debug(SOURCE, `Feature LV95 coordinates`, {
+      await dbLogger.debug('Feature LV95 coordinates', {
+        source: SOURCE,
         featureId,
         lv95_easting: props.lv95_easting,
         lv95_northing: props.lv95_northing,
@@ -355,7 +374,8 @@ export async function processStoredLv95Coordinates(
       
       // Use appropriate transformation method
       if (options.transformationMethod === 'delta') {
-        await dbLogger.debug(SOURCE, `Using delta-based transformation for feature`, {
+        await dbLogger.debug('Using delta-based transformation for feature', {
+          source: SOURCE,
           featureId,
           cacheResults: options.cacheResults ?? true
         });
@@ -368,7 +388,8 @@ export async function processStoredLv95Coordinates(
         );
       } else {
         // Default to direct API call
-        await dbLogger.debug(SOURCE, `Using direct API transformation for feature`, {
+        await dbLogger.debug('Using direct API transformation for feature', {
+          source: SOURCE,
           featureId
         });
         
@@ -380,7 +401,8 @@ export async function processStoredLv95Coordinates(
       }
       
       // Log transformation result
-      await dbLogger.info(SOURCE, `Feature transformation completed`, {
+      await dbLogger.info('Feature transformation completed', {
+        source: SOURCE,
         featureId,
         height_mode: 'lv95_stored',
         newHeightMode: 'absolute_ellipsoidal',
@@ -408,7 +430,8 @@ export async function processStoredLv95Coordinates(
         };
         
         // Log updated feature data
-        await dbLogger.debug(SOURCE, `Updated feature properties after transformation`, {
+        await dbLogger.debug('Updated feature properties after transformation', {
+          source: SOURCE,
           featureId,
           updatedProperties: {
             base_elevation_ellipsoidal: updatedFeature.properties.base_elevation_ellipsoidal,
@@ -424,7 +447,8 @@ export async function processStoredLv95Coordinates(
       }
     }
     
-    await dbLogger.warn(SOURCE, `Feature skipped - not eligible for LV95 processing`, {
+    await dbLogger.warn('Feature skipped - not eligible for LV95 processing', {
+      source: SOURCE,
       featureId,
       height_mode: props?.height_mode,
       hasLv95Easting: !!props?.lv95_easting,
@@ -435,8 +459,12 @@ export async function processStoredLv95Coordinates(
     return feature;
   } catch (error) {
     const featureId = feature?.id || 'unknown';
-    await dbLogger.error(SOURCE, `Error processing LV95 coordinates for feature ${featureId}:`, { error });
-    await dbLogger.error(SOURCE, `Feature that caused error:`, {
+    await dbLogger.error('Error processing LV95 coordinates for feature', {
+      source: SOURCE,
+      featureId
+    }, { error });
+    await dbLogger.error('Feature that caused error:', {
+      source: SOURCE,
       featureId,
       properties: feature?.properties ? {
         height_mode: feature.properties.height_mode,
@@ -473,7 +501,10 @@ export async function batchTransformLv95ToWgs84(
   error?: string;
 }>> {
   try {
-    await dbLogger.debug(SOURCE, `Batch transforming ${coordinates.length} coordinates`);
+    await dbLogger.debug('Batch transforming', {
+      source: SOURCE,
+      coordinates: coordinates.length
+    });
     
     // Split into chunks of maximum 100 coordinates
     const MAX_BATCH_SIZE = 100;
@@ -483,7 +514,10 @@ export async function batchTransformLv95ToWgs84(
       batches.push(coordinates.slice(i, i + MAX_BATCH_SIZE));
     }
     
-    await dbLogger.debug(SOURCE, `Split into ${batches.length} batches`);
+    await dbLogger.debug('Split into', {
+      source: SOURCE,
+      batches: batches.length
+    });
     
     // Process each batch
     const results = [];
@@ -498,12 +532,19 @@ export async function batchTransformLv95ToWgs84(
       
       results.push(...response.data.results);
       
-      await dbLogger.debug(SOURCE, `Batch processed with ${response.data.summary.success} successes and ${response.data.summary.failed} failures`);
+      await dbLogger.debug('Batch processed with', {
+        source: SOURCE,
+        success: response.data.summary.success,
+        failed: response.data.summary.failed
+      });
     }
     
     return results;
   } catch (error) {
-    await dbLogger.error(SOURCE, 'Batch coordinate transformation failed:', { error });
+    await dbLogger.error('Batch coordinate transformation failed:', {
+      source: SOURCE,
+      error
+    });
     
     // Return array with errors for all coordinates
     return coordinates.map(coord => ({
@@ -574,7 +615,8 @@ export async function processFeatureCollectionHeights(
   featureCollection: FeatureCollection
 ): Promise<FeatureCollection> {
   try {
-    await dbLogger.info(SOURCE, 'Processing feature collection heights', {
+    await dbLogger.info('Processing feature collection heights', {
+      source: SOURCE,
       summary: summarizeFeaturesForLogging(featureCollection.features, 'info')
     });
     
@@ -592,7 +634,8 @@ export async function processFeatureCollectionHeights(
             transformedCount++;
             return transformedFeature;
           } catch (error) {
-            await dbLogger.error(SOURCE, 'Error transforming feature height', {
+            await dbLogger.error('Error transforming feature height', {
+              source: SOURCE,
               featureId: feature.id,
               error
             });
@@ -608,7 +651,8 @@ export async function processFeatureCollectionHeights(
       })
     );
     
-    await dbLogger.info(SOURCE, 'Feature heights processed', {
+    await dbLogger.info('Feature heights processed', {
+      source: SOURCE,
       transformedCount,
       unchangedCount,
       totalCount: featureCollection.features.length
@@ -619,7 +663,10 @@ export async function processFeatureCollectionHeights(
       features: transformedFeatures
     };
   } catch (error) {
-    await dbLogger.error(SOURCE, 'Error processing feature collection heights', { error });
+    await dbLogger.error('Error processing feature collection heights', {
+      source: SOURCE,
+      error
+    });
     // Return original collection if processing fails
     return featureCollection;
   }

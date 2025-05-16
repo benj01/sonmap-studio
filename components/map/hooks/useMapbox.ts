@@ -21,13 +21,13 @@ const initializeMap = async ({
     accessToken: !!accessToken,
     initialCenter,
     initialZoom
-  });
+  }, { source: 'useMapbox' });
 
   if (!container || !accessToken) {
     await dbLogger.error('Cannot initialize map - missing required parameters', {
       hasContainer: !!container,
       hasToken: !!accessToken
-    });
+    }, { source: 'useMapbox' });
     return undefined;
   }
 
@@ -43,7 +43,7 @@ const initializeMap = async ({
       style: map.getStyle().name,
       center: map.getCenter(),
       zoom: map.getZoom()
-    });
+    }, { source: 'useMapbox' });
   });
 
   map.on('load', async () => {
@@ -52,7 +52,7 @@ const initializeMap = async ({
       styleLoaded: map.isStyleLoaded(),
       center: map.getCenter(),
       zoom: map.getZoom()
-    });
+    }, { source: 'useMapbox' });
   });
 
   return map;
@@ -60,7 +60,7 @@ const initializeMap = async ({
 
 const cleanup = async (mapInstance?: mapboxgl.Map): Promise<void> => {
   if (mapInstance) {
-    await dbLogger.debug('Cleaning up map', { mapId: mapInstance.getCanvasContainer().id });
+    await dbLogger.debug('Cleaning up map', { mapId: mapInstance.getCanvasContainer().id }, { source: 'useMapbox' });
     mapInstance.remove();
   }
 };

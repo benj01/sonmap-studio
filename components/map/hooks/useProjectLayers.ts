@@ -37,7 +37,6 @@ function analyzeGeometryTypes(features: Feature<Geometry>[]): { hasPolygons: boo
 }
 
 export function useProjectLayers(projectId: string) {
-  console.log('useProjectLayers: running', { projectId });
   const supabase = createClient();
   const addLayer = useLayerStore(state => state.addLayer);
   const setInitialLoadComplete = useLayerStore(state => state.setInitialLoadComplete);

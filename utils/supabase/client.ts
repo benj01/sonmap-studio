@@ -10,7 +10,7 @@ export const createClient = () => {
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   if (!supabaseUrl || !supabaseAnonKey) {
-    (async () => { await dbLogger.error('Supabase env vars missing in client', { supabaseUrl, supabaseAnonKey }) })();
+    (async () => { await dbLogger.error('Supabase env vars missing in client', { supabaseUrl, supabaseAnonKey }, { source: 'SupabaseClient' }) })();
     throw new Error('Supabase environment variables are not set');
   }
 
@@ -29,7 +29,7 @@ export const createClient = () => {
               .find((row) => row.startsWith(`${name}=`))
               ?.split('=')[1]
           } catch (error) {
-            (async () => { await dbLogger.error('Error getting cookie', { name, error }) })();
+            (async () => { await dbLogger.error('Error getting cookie', { name, error }, { source: 'SupabaseClient' }) })();
             return undefined;
           }
         },
@@ -41,7 +41,7 @@ export const createClient = () => {
               options?.maxAge ? `; max-age=${options.maxAge}` : ''
             }${options?.domain ? `; domain=${options.domain}` : ''}; secure; samesite=lax`
           } catch (error) {
-            (async () => { await dbLogger.error('Error setting cookie', { name, value, options, error }) })();
+            (async () => { await dbLogger.error('Error setting cookie', { name, value, options, error }, { source: 'SupabaseClient' }) })();
           }
         },
         remove(name: string, options: { path?: string }) {
@@ -49,7 +49,7 @@ export const createClient = () => {
           try {
             document.cookie = `${name}=; max-age=0${options?.path ? `; path=${options.path}` : '; path=/'}`
           } catch (error) {
-            (async () => { await dbLogger.error('Error removing cookie', { name, options, error }) })();
+            (async () => { await dbLogger.error('Error removing cookie', { name, options, error }, { source: 'SupabaseClient' }) })();
           }
         },
       },

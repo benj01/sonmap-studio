@@ -70,8 +70,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
     await dbLogger.debug('Starting file grouping', {
       fileCount: files.length,
       files: files.map(f => ({ name: f.name, type: f.type })),
-      LOG_SOURCE
-    });
+    }, { source: LOG_SOURCE });
   }
   const groups: FileGroup[] = [];
   const remainingFiles = new Set(files);
@@ -82,7 +81,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
         await dbLogger.debug('Found main geo file', { 
           fileName: file.name,
           type: getExtension(file.name)
-        }, { LOG_SOURCE });
+        }, { source: LOG_SOURCE });
       }
       const group: FileGroup = {
         mainFile: file,
@@ -92,7 +91,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
       remainingFiles.delete(file);
     } else {
       if (isDebugEnabled('FileProcessor')) {
-        await dbLogger.debug('Skipping non-main file', { fileName: file.name }, { LOG_SOURCE });
+        await dbLogger.debug('Skipping non-main file', { fileName: file.name }, { source: LOG_SOURCE });
       }
     }
   }
@@ -107,7 +106,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
         config: config?.companionFiles?.map(c => c.extension),
         baseFileName,
         remainingFiles: Array.from(remainingFiles).map(f => f.name)
-      }, { LOG_SOURCE });
+      }, { source: LOG_SOURCE });
     }
     if (config?.companionFiles) {
       // First, find all required companions
@@ -127,7 +126,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
                 mainFile: group.mainFile.name,
                 companion: file.name,
                 extension: companionExt
-              }, { LOG_SOURCE });
+              }, { source: LOG_SOURCE });
             }
           }
         }
@@ -139,7 +138,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
         await dbLogger.warn('Missing required companions', {
           mainFile: group.mainFile.name,
           missing: missingRequired
-        }, { LOG_SOURCE });
+        }, { source: LOG_SOURCE });
         throw new FileProcessingError(`Missing required companion files: ${missingRequired.join(', ')}`, 'MISSING_REQUIRED_COMPANIONS');
       }
 
@@ -161,7 +160,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
               mainFile: group.mainFile.name,
               companion: matchingCompanion.name,
               extension: companionConfig.extension
-            }, { LOG_SOURCE });
+            }, { source: LOG_SOURCE });
           }
           group.companions.push(matchingCompanion);
           remainingFiles.delete(matchingCompanion);
@@ -178,8 +177,7 @@ export async function groupFiles(files: File[]): Promise<FileGroup[]> {
         companionCount: g.companions.length,
         companions: g.companions.map(c => c.name)
       })),
-      LOG_SOURCE
-    });
+    }, { source: LOG_SOURCE });
   }
   return groups;
 }
@@ -188,7 +186,7 @@ export async function processFiles(mainFile: File, companions: File[]): Promise<
   await dbLogger.info('Processing file group', {
     mainFile: mainFile.name,
     companions: companions.map(c => c.name)
-  }, { LOG_SOURCE });
+  }, { source: LOG_SOURCE });
   const processedMain = await processFile(mainFile);
   const processedCompanions: ProcessedFile[] = [];
   for (const companion of companions) {
@@ -206,8 +204,7 @@ export async function processFiles(mainFile: File, companions: File[]): Promise<
       isValid: c.isValid,
       error: c.error
     })),
-    LOG_SOURCE
-  });
+  }, { source: LOG_SOURCE });
   return {
     main: processedMain,
     companions: processedCompanions
@@ -216,17 +213,17 @@ export async function processFiles(mainFile: File, companions: File[]): Promise<
 
 export async function processFile(file: File): Promise<ProcessedFile> {
   try {
-    await dbLogger.info('Processing individual file', { fileName: file.name }, { LOG_SOURCE });
+    await dbLogger.info('Processing individual file', { fileName: file.name }, { source: LOG_SOURCE });
     const config = getConfigForFile(file.name);
     let isValid = true;
     let error: string | undefined;
     if (config?.validateContent) {
       try {
-        await dbLogger.info('Validating file content', { fileName: file.name }, { LOG_SOURCE });
+        await dbLogger.info('Validating file content', { fileName: file.name }, { source: LOG_SOURCE });
         isValid = await config.validateContent(file);
         if (!isValid) {
           error = 'File content validation failed';
-          await dbLogger.warn('File content validation failed', { fileName: file.name }, { LOG_SOURCE });
+          await dbLogger.warn('File content validation failed', { fileName: file.name }, { source: LOG_SOURCE });
         }
       } catch (e) {
         isValid = false;
@@ -234,13 +231,13 @@ export async function processFile(file: File): Promise<ProcessedFile> {
         await dbLogger.error('File validation error', {
           fileName: file.name,
           error: error
-        }, { LOG_SOURCE });
+        }, { source: LOG_SOURCE });
       }
     }
     if (config?.maxSize && file.size > config.maxSize) {
       isValid = false;
       error = `File exceeds maximum size of ${config.maxSize} bytes`;
-      await dbLogger.warn('File size exceeds maximum', { fileName: file.name, maxSize: config.maxSize }, { LOG_SOURCE });
+      await dbLogger.warn('File size exceeds maximum', { fileName: file.name, maxSize: config.maxSize }, { source: LOG_SOURCE });
     }
     return {
       file,
@@ -250,7 +247,7 @@ export async function processFile(file: File): Promise<ProcessedFile> {
       error
     };
   } catch (err) {
-    await dbLogger.error('Error processing file', { fileName: file.name, error: err instanceof Error ? err.message : err }, { LOG_SOURCE });
+    await dbLogger.error('Error processing file', { fileName: file.name, error: err instanceof Error ? err.message : err }, { source: LOG_SOURCE });
     return {
       file,
       type: getMimeType(file.name),

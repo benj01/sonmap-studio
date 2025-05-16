@@ -17,7 +17,7 @@ export const updateSession = async (request: NextRequest) => {
     const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
     if (!supabaseUrl || !supabaseAnonKey) {
       const errorMsg = 'Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable.';
-      await dbLogger.error(errorMsg, { supabaseUrl, supabaseAnonKey });
+      await dbLogger.error(errorMsg, { supabaseUrl, supabaseAnonKey }, { source: 'SupabaseMiddleware' });
       return response;
     }
 
@@ -56,7 +56,7 @@ export const updateSession = async (request: NextRequest) => {
     return response;
   } catch (error) {
     // Log the error for observability
-    await dbLogger.error('Error in updateSession middleware', { error });
+    await dbLogger.error('Error in updateSession middleware', { error }, { source: 'SupabaseMiddleware' });
     // Fallback response
     return NextResponse.next({
       request: {

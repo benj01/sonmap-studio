@@ -10,7 +10,7 @@ const Switch = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof SwitchPrimitives.Root>
 >(({ className, onCheckedChange, ...props }, ref) => {
   const handleCheckedChange = async (checked: boolean) => {
-    await dbLogger.debug('Switch toggled', { checked, id: props.id, source: 'Switch' });
+    await dbLogger.debug('Switch toggled', { checked, id: props.id }, { source: 'Switch' });
     if (onCheckedChange) {
       onCheckedChange(checked);
     }

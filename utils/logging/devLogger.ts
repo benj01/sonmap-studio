@@ -1,5 +1,7 @@
+// Always import dbLogger using the alias '@/utils/logging/dbLogger' to ensure singleton behavior across the app.
+// Do NOT use relative imports like './dbLogger'.
 import { useEffect, useRef, useCallback } from 'react';
-import { dbLogger } from './dbLogger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 export const useDevLogger = (componentName: string) => {
   const mountCount = useRef(0);
@@ -15,12 +17,12 @@ export const useDevLogger = (componentName: string) => {
         await dbLogger.debug(`[Strict Mode First Mount] ${componentName}`, {
           mountCount: mountCount.current,
           isStrictMode
-        });
+        }, { source: componentName });
       } else if (mountCount.current === 2) {
         await dbLogger.debug(`${componentName} mounted`, {
           mountCount: mountCount.current,
           isStrictMode
-        });
+        }, { source: componentName });
       }
     };
 
@@ -28,9 +30,9 @@ export const useDevLogger = (componentName: string) => {
 
     return () => {
       if (mountCount.current === 1) {
-        void dbLogger.debug(`[Strict Mode First Cleanup] ${componentName}`);
+        void dbLogger.debug(`[Strict Mode First Cleanup] ${componentName}`, undefined, { source: componentName });
       } else if (mountCount.current === 2) {
-        void dbLogger.debug(`${componentName} unmounted`);
+        void dbLogger.debug(`${componentName} unmounted`, undefined, { source: componentName });
       }
     };
   }, [componentName, isStrictMode]);
@@ -38,7 +40,7 @@ export const useDevLogger = (componentName: string) => {
   const log = useCallback(async (message: string, data?: Record<string, unknown>) => {
     if (!isDevMode) return;
     if (!isStrictMode || mountCount.current >= 2) {
-      await dbLogger.debug(`${componentName}: ${message}`, data);
+      await dbLogger.debug(`${componentName}: ${message}`, data, { source: componentName });
     }
   }, [componentName, isStrictMode]);
 
@@ -50,13 +52,13 @@ export const useDevLogger = (componentName: string) => {
       error: errorMessage,
       stack: errorStack,
       mountCount: mountCount.current
-    });
+    }, { source: componentName });
   }, [componentName]);
 
   const logInfo = useCallback(async (message: string, data?: Record<string, unknown>) => {
     if (!isDevMode) return;
     if (!isStrictMode || mountCount.current >= 2) {
-      await dbLogger.info(`${componentName}: ${message}`, data);
+      await dbLogger.info(`${componentName}: ${message}`, data, { source: componentName });
     }
   }, [componentName]);
 
@@ -65,7 +67,7 @@ export const useDevLogger = (componentName: string) => {
     await dbLogger.warn(`${componentName}: ${message}`, {
       ...data,
       mountCount: mountCount.current
-    });
+    }, { source: componentName });
   }, [componentName]);
 
   const shouldLog = useCallback(() => {

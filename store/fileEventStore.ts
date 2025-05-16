@@ -16,13 +16,12 @@ export interface FileEventState {
 
 export const useFileEventStore = create<FileEventState>()((set) => ({
   lastEvent: null,
-  emitFileEvent: (event) => {
+  emitFileEvent: async (event) => {
     const fullEvent = {
       ...event,
       timestamp: Date.now()
     };
-    // Await async logger and provide structured context
-    dbLogger.debug('File event emitted', { event: fullEvent, source: SOURCE }).catch(() => {});
+    await dbLogger.debug('File event emitted', { event: fullEvent }, { source: SOURCE });
     set({ lastEvent: fullEvent });
   }
 })); 

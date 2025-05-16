@@ -67,7 +67,7 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
       };
 
       (async () => {
-        await dbLogger.debug('Verification status updated', { layerId, status, error, source: SOURCE });
+        await dbLogger.debug('Verification status updated', { layerId, status, error }, { source: SOURCE });
       })();
       return {
         verification: {
@@ -85,7 +85,7 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
       
       const updatedPending = [...state.verification.pending, layerId];
       (async () => {
-        await dbLogger.debug('Layer added to pending verification', { layerId, source: SOURCE });
+        await dbLogger.debug('Layer added to pending verification', { layerId }, { source: SOURCE });
       })();
       return {
         verification: {
@@ -100,7 +100,7 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
     set((state) => {
       const updatedPending = state.verification.pending.filter(id => id !== layerId);
       (async () => {
-        await dbLogger.debug('Layer removed from pending verification', { layerId, source: SOURCE });
+        await dbLogger.debug('Layer removed from pending verification', { layerId }, { source: SOURCE });
       })();
       return {
         verification: {
@@ -117,7 +117,7 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
       
       const updatedInProgress = [...state.verification.inProgress, layerId];
       (async () => {
-        await dbLogger.debug('Layer added to in-progress verification', { layerId, source: SOURCE });
+        await dbLogger.debug('Layer added to in-progress verification', { layerId }, { source: SOURCE });
       })();
       return {
         verification: {
@@ -132,7 +132,7 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
     set((state) => {
       const updatedInProgress = state.verification.inProgress.filter(id => id !== layerId);
       (async () => {
-        await dbLogger.debug('Layer removed from in-progress verification', { layerId, source: SOURCE });
+        await dbLogger.debug('Layer removed from in-progress verification', { layerId }, { source: SOURCE });
       })();
       return {
         verification: {
@@ -151,7 +151,7 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
         [layerId]: now
       };
       (async () => {
-        await dbLogger.debug('Last verified timestamp updated', { layerId, timestamp: now, source: SOURCE });
+        await dbLogger.debug('Last verified timestamp updated', { layerId, timestamp: now }, { source: SOURCE });
       })();
       return {
         verification: {
@@ -165,7 +165,7 @@ export const useVerificationStore = create<VerificationStore>()((set) => ({
   reset: () => {
     set({ verification: initialState });
     (async () => {
-      await dbLogger.info('Verification store reset', { action: 'reset', source: SOURCE });
+      await dbLogger.info('Verification store reset', { action: 'reset' }, { source: SOURCE });
     })();
   }
 }));

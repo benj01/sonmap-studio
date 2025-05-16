@@ -107,6 +107,6 @@ export async function isMatchingCompanion(mainFileName: string, companionFile: F
     companionExt: companionExt.toLowerCase(),
     requiredExt: companionExtension.toLowerCase(),
     matches
-  }, { LOG_SOURCE });
+  }, { source: LOG_SOURCE });
   return matches;
 } 

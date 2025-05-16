@@ -18,7 +18,7 @@ export async function getSignedUploadUrl(fileName: string, projectId: string) {
     const data = await response.json();
     return data.signedUrl;
   } catch (error) {
-    await dbLogger.error('Failed to get signed URL', { fileName, projectId, error });
+    await dbLogger.error('Failed to get signed URL', { fileName, projectId, error }, { source: 'SupabaseS3Util' });
     throw error;
   }
 }

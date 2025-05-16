@@ -3,16 +3,7 @@
 import { saveAs } from 'file-saver';
 import { LoggingConfig, LogEntry, ILogAdapter, LogContext } from './types';
 import { v4 as uuidv4 } from 'uuid';
-
-/**
- * Log levels for the logging system
- */
-export enum LogLevel {
-  DEBUG = 'DEBUG',
-  INFO = 'INFO',
-  WARN = 'WARN',
-  ERROR = 'ERROR'
-}
+import { isLogLevelEnabled, setLogLevel, getLogLevel, LogLevel } from './logLevelConfig';
 
 /**
  * Singleton logger for the geo-loader system
@@ -21,8 +12,6 @@ export class LogManager {
   private static instance: LogManager;
   private logs: LogEntry[] = [];
   private readonly MAX_LOGS = 10000; // Prevent memory issues
-  private logLevel: LogLevel = LogLevel.INFO; // Default to INFO level
-  private sourceFilters: Map<string, LogLevel> = new Map(); // Source-specific log levels
   private rateLimits: Map<string, number> = new Map(); // Track last log time for rate limiting
   private readonly RATE_LIMIT_MS = process.env.NODE_ENV === 'development' ? 100 : 1000; // Shorter rate limit in development
   private config: LoggingConfig = loadLoggingConfig();
@@ -37,127 +26,57 @@ export class LogManager {
   }
 
   /**
-   * Configure specific components to use debug logging
-   */
-  public configureDefaultSources() {
-    // Core functionality - INFO/WARN is usually good
-    this.sourceFilters.set('Auth', LogLevel.WARN);
-    this.sourceFilters.set('LoginForm', LogLevel.WARN);
-    this.sourceFilters.set('ModalProvider', LogLevel.WARN);
-    this.sourceFilters.set('FileManager', LogLevel.WARN);
-    this.sourceFilters.set('ImportManager', LogLevel.INFO);
-
-    // Import Wizard components - Enable debug logging
-    this.sourceFilters.set('ImportWizard', LogLevel.DEBUG);
-    this.sourceFilters.set('FileSelectStep', LogLevel.DEBUG);
-    this.sourceFilters.set('GeoFileUpload', LogLevel.DEBUG);
-    this.sourceFilters.set('GeoImportDialog', LogLevel.DEBUG);
-    // Add ReviewStep and GeoJsonParser for fine-grained control
-    this.sourceFilters.set('ReviewStep', LogLevel.INFO); // Default to INFO, can be set to DEBUG
-    this.sourceFilters.set('GeoJsonParser', LogLevel.INFO); // Default to INFO, can be set to DEBUG
-    this.sourceFilters.set('MapPreview', LogLevel.INFO); // Default to INFO, can be set to DEBUG
-
-    // Map components - Focus on lifecycle events
-    this.sourceFilters.set('MapContainer', LogLevel.WARN);
-    this.sourceFilters.set('CesiumContext', LogLevel.INFO);
-    this.sourceFilters.set('CesiumView', LogLevel.INFO);
-    this.sourceFilters.set('LayerList', LogLevel.WARN);
-    this.sourceFilters.set('LayerItem', LogLevel.WARN);
-    this.sourceFilters.set('MapContext', LogLevel.WARN);
-    this.sourceFilters.set('Toolbar', LogLevel.WARN);
-    this.sourceFilters.set('LayerPanel', LogLevel.WARN);
-    this.sourceFilters.set('MapLayers', LogLevel.WARN);
-
-    // Cesium-specific components - More granular control
-    this.sourceFilters.set('CesiumCamera', LogLevel.WARN);
-    this.sourceFilters.set('CesiumScene', LogLevel.WARN);
-    this.sourceFilters.set('CesiumTerrain', LogLevel.WARN);
-    this.sourceFilters.set('CesiumImagery', LogLevel.WARN);
-    this.sourceFilters.set('CesiumPrimitives', LogLevel.WARN);
-
-    // Hooks and Layer Components - Reduced from DEBUG to WARN
-    this.sourceFilters.set('useAutoZoom', LogLevel.WARN);
-    this.sourceFilters.set('layerHooks', LogLevel.WARN);
-    this.sourceFilters.set('useLayerData', LogLevel.WARN);
-    this.sourceFilters.set('useMapbox', LogLevel.WARN);
-    this.sourceFilters.set('MapLayer', LogLevel.WARN);
-    this.sourceFilters.set('layerStore', LogLevel.INFO);
-    
-    // Swiss Height Transformation - Set to DEBUG for detailed logging
-    this.sourceFilters.set('coordinates', LogLevel.DEBUG);
-    this.sourceFilters.set('HeightTransformBatchService', LogLevel.DEBUG);
-    this.sourceFilters.set('HeightTransformService', LogLevel.DEBUG);
-    this.sourceFilters.set('HeightConfigurationDialog', LogLevel.DEBUG);
-    this.sourceFilters.set('api/coordinates/transform', LogLevel.INFO);
-    this.sourceFilters.set('api/coordinates/transform-batch', LogLevel.INFO);
-    this.sourceFilters.set('api/height-transformation/initialize', LogLevel.DEBUG);
-    this.sourceFilters.set('api/height-transformation/feature-counts', LogLevel.DEBUG);
-    this.sourceFilters.set('api/height-transformation/status', LogLevel.DEBUG);
-  }
-
-  /**
    * Get the singleton instance
    */
   public static getInstance(): LogManager {
     if (!LogManager.instance) {
       LogManager.instance = new LogManager();
-      LogManager.instance.configureDefaultSources();
     }
     return LogManager.instance;
   }
 
-  /**
-   * Add a source-specific log level filter
-   */
-  public addFilter(source: string, level: LogLevel): void {
-    this.sourceFilters.set(source, level);
-  }
-
-  /**
-   * Remove a source-specific log level filter
-   */
-  public removeFilter(source: string): void {
-    this.sourceFilters.delete(source);
-  }
-
-  /**
-   * Clear all source-specific filters
-   */
-  public clearFilters(): void {
-    this.sourceFilters.clear();
-  }
-
+  // Log level management now delegates to logLevelConfig
   public setLogLevel(level: LogLevel): void {
-    this.logLevel = level;
+    setLogLevel(level);
   }
 
   public getLogLevel(): LogLevel {
-    return this.logLevel;
+    return getLogLevel();
   }
 
   public setComponentLogLevel(component: string, level: LogLevel): void {
-    this.sourceFilters.set(component, level);
+    setLogLevel(level, component);
   }
 
   public getComponentLogLevel(component: string): LogLevel {
-    return this.sourceFilters.get(component) || this.logLevel;
+    return getLogLevel(component);
   }
 
   public getComponentFilters(): [string, LogLevel][] {
-    return Array.from(this.sourceFilters.entries());
+    // Not all modules may be present in config, so return empty array or fetch from config if needed
+    // For compatibility, return global and modules from logLevelConfig
+    const config = require('./logLevelConfig');
+    const logLevelConfig = config.getLogLevelConfig();
+    return Object.entries(logLevelConfig.modules);
+  }
+
+  public addFilter(source: string, level: LogLevel): void {
+    setLogLevel(level, source);
+  }
+
+  public removeFilter(source: string): void {
+    setLogLevel(getLogLevel(), source); // Reset to global
+  }
+
+  public clearFilters(): void {
+    // Clear all module-specific overrides
+    const config = require('./logLevelConfig');
+    const logLevelConfig = config.getLogLevelConfig();
+    Object.keys(logLevelConfig.modules).forEach(module => setLogLevel(getLogLevel(), module));
   }
 
   private shouldLog(level: LogLevel, source: string): boolean {
-    // Check source-specific filter first
-    const sourceLevel = this.sourceFilters.get(source);
-    if (sourceLevel) {
-      const levels = [LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR];
-      return levels.indexOf(level) >= levels.indexOf(sourceLevel);
-    }
-    
-    // Fall back to global log level
-    const levels = [LogLevel.DEBUG, LogLevel.INFO, LogLevel.WARN, LogLevel.ERROR];
-    return levels.indexOf(level) >= levels.indexOf(this.logLevel);
+    return isLogLevelEnabled(source, level);
   }
 
   private shouldRateLimit(key: string): boolean {
@@ -513,7 +432,7 @@ export class LogManager {
    * Log a debug message
    */
   public async debug(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    if (this.shouldLog(LogLevel.DEBUG, source)) {
+    if (this.shouldLog('debug', source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
         level: 'debug', source, message, data, context
@@ -525,7 +444,7 @@ export class LogManager {
    * Log an info message
    */
   public async info(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    if (this.shouldLog(LogLevel.INFO, source)) {
+    if (this.shouldLog('info', source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
         level: 'info', source, message, data, context
@@ -537,7 +456,7 @@ export class LogManager {
    * Log a warning message
    */
   public async warn(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    if (this.shouldLog(LogLevel.WARN, source)) {
+    if (this.shouldLog('warn', source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
         level: 'warn', source, message, data, context
@@ -549,7 +468,7 @@ export class LogManager {
    * Log an error message
    */
   public async error(source: string, message: string, data?: unknown, context?: LogContext): Promise<void> {
-    if (this.shouldLog(LogLevel.ERROR, source)) {
+    if (this.shouldLog('error', source)) {
       await this.addLog({
         timestamp: new Date().toISOString(),
         level: 'error', source, message, data, context
@@ -583,7 +502,7 @@ export class LogManager {
       '=== Sonmap Studio Logs ===',
       `Generated: ${new Date().toISOString()}`,
       `Environment: ${process.env.NODE_ENV}`,
-      `Log Level: ${this.logLevel}`,
+      `Log Level: ${this.getLogLevel()}`,
       `Total Logs: ${this.logs.length}`,
       '========================\n\n'
     ].join('\n');

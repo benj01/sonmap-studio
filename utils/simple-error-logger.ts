@@ -30,7 +30,7 @@ export const logImportError = async (
   }
   
   // Log to dbLogger for immediate visibility
-  await dbLogger.error('Import Error', { importLogId, errorMessage, errorDetails }, context);
+  await dbLogger.error('Import Error', { importLogId, errorMessage, errorDetails }, { ...(context || {}), source: 'SimpleErrorLogger' });
   
   // Update the realtime_import_logs table
   try {
@@ -47,9 +47,9 @@ export const logImportError = async (
       .eq('id', importLogId);
       
     if (updateError) {
-      await dbLogger.error('Failed to update import log', { updateError, importLogId }, context);
+      await dbLogger.error('Failed to update import log', { updateError, importLogId }, { ...(context || {}), source: 'SimpleErrorLogger' });
     }
   } catch (logError: unknown) {
-    await dbLogger.error('Error logging to database', { logError, importLogId }, context);
+    await dbLogger.error('Error logging to database', { logError, importLogId }, { ...(context || {}), source: 'SimpleErrorLogger' });
   }
 }; 

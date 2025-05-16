@@ -1,3 +1,5 @@
+// Always import dbLogger using the alias '@/utils/logging/dbLogger' to ensure singleton behavior across the app.
+// Do NOT use relative imports like './dbLogger'.
 /* eslint-disable no-restricted-syntax */
 import { LogContext } from '@/core/logging/types';
 import { isLogLevelEnabled, LogLevel } from '@/core/logging/logLevelConfig';
@@ -84,62 +86,89 @@ function getSource(context?: LogContext): string {
 }
 
 export const dbLogger = {
-  addLogListener: (listener: LogEventListener) => logEmitter.addListener(listener),
+  addLogListener: (listener: LogEventListener) => {
+    return logEmitter.addListener(listener);
+  },
 
   async debug(message: string, data?: unknown, context?: LogContext) {
     const source = getSource(context);
-    await LogManager.getInstance().debug(source, message, data, context);
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      level: 'debug',
-      message,
-      data: normalizeData(data),
-      context
-    };
-    logEmitter.emit(logEntry);
+    if (isLogLevelEnabled(source, 'debug')) {
+      await LogManager.getInstance().debug(source, message, data, context);
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        level: 'debug',
+        message,
+        data: normalizeData(data),
+        context
+      };
+      logEmitter.emit(logEntry);
+    }
   },
 
   async info(message: string, data?: unknown, context?: LogContext) {
     const source = getSource(context);
-    await LogManager.getInstance().info(source, message, data, context);
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      level: 'info',
-      message,
-      data: normalizeData(data),
-      context
-    };
-    logEmitter.emit(logEntry);
+    const enabled = isLogLevelEnabled(source, 'info');
+    if (enabled) {
+      await LogManager.getInstance().info(source, message, data, context);
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        level: 'info',
+        message,
+        data: normalizeData(data),
+        context
+      };
+      logEmitter.emit(logEntry);
+    }
   },
 
   async warn(message: string, data?: unknown, context?: LogContext) {
     const source = getSource(context);
-    await LogManager.getInstance().warn(source, message, data, context);
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      level: 'warn',
-      message,
-      data: normalizeData(data),
-      context
-    };
-    logEmitter.emit(logEntry);
+    if (isLogLevelEnabled(source, 'warn')) {
+      await LogManager.getInstance().warn(source, message, data, context);
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        level: 'warn',
+        message,
+        data: normalizeData(data),
+        context
+      };
+      logEmitter.emit(logEntry);
+    }
   },
 
   async error(message: string, data?: unknown, context?: LogContext) {
     const source = getSource(context);
-    await LogManager.getInstance().error(source, message, data, context);
-    const logEntry = {
-      timestamp: new Date().toISOString(),
-      level: 'error',
-      message,
-      data: normalizeData(data),
-      context
-    };
-    logEmitter.emit(logEntry);
+    if (isLogLevelEnabled(source, 'error')) {
+      await LogManager.getInstance().error(source, message, data, context);
+      const logEntry = {
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        message,
+        data: normalizeData(data),
+        context
+      };
+      logEmitter.emit(logEntry);
+    }
   }
 };
 
 // Export a type for the logger to help with type checking
 export type DbLogger = typeof dbLogger;
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __DB_LOGGER_ID: string | undefined;
+}
+
+// --- DIAGNOSTIC: Singleton Instance Check ---
+if (!globalThis.__DB_LOGGER_ID) {
+  globalThis.__DB_LOGGER_ID = Math.random().toString(36).slice(2);
+  // Diagnostic log removed for production cleanliness. Uncomment for debugging:
+  // console.log('[dbLogger] instance created:', globalThis.__DB_LOGGER_ID);
+} else {
+  // Diagnostic log removed for production cleanliness. Uncomment for debugging:
+  // console.log('[dbLogger] instance reused:', globalThis.__DB_LOGGER_ID);
+}
+// --- END DIAGNOSTIC ---
 
 /* eslint-enable no-restricted-syntax */ 

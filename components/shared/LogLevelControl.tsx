@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { setLogLevel, getLogLevel, LogLevel } from '@/core/logging/logLevelConfig';
 import { LogManager } from '@/core/logging/log-manager';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const LOG_LEVELS: LogLevel[] = ['trace', 'debug', 'info', 'warn', 'error', 'none'];
 const STORAGE_KEY = 'logLevelOverrides';
@@ -69,8 +70,8 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
     // Sync UI with LogManager on mount
     const logManager = LogManager.getInstance();
     const filters = logManager.getComponentFilters();
-    const sorted = filters.map(([src]) => src).sort((a, b) => a.localeCompare(b));
-    setSources(sorted);
+    const initialSources = filters.map(([src]) => src).sort((a, b) => a.localeCompare(b));
+    setSources(initialSources);
     // Set initial open/closed state for groups
     const groupState: Record<string, boolean> = {};
     GROUPS.forEach(g => { groupState[g.name] = g.defaultOpen; });
@@ -96,7 +97,20 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
         logManager.setComponentLogLevel(module, managerLevel as any);
       }
     });
-  }, []);
+
+    // --- NEW: Listen for new log sources dynamically ---
+    const unsubscribe = dbLogger.addLogListener((log) => {
+      const source = log.context?.source;
+      setSources((prev) => {
+        if (typeof source === 'string' && !prev.includes(source)) {
+          const updated = [...prev, source];
+          return updated;
+        }
+        return prev;
+      });
+    });
+    return () => unsubscribe();
+  }, [isDev]);
 
   const handleChange = (module: string, level: LogLevel) => {
     const newOverrides = { ...overrides, [module]: level };
@@ -115,6 +129,13 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
     }
   };
 
+  const handleResetLogLevels = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('logLevelOverrides');
+      window.location.reload();
+    }
+  };
+
   if (!isDev) return null;
 
   // Group sources
@@ -129,9 +150,44 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
     setOpenGroups(prev => ({ ...prev, [group]: !prev[group] }));
   };
 
+  // Helper to get group log level (returns the common level, or '' if mixed)
+  const getGroupLogLevel = (groupName: string): string => {
+    const modules = grouped[groupName] || [];
+    if (modules.length === 0) return '';
+    const firstLevel = overrides[modules[0]] || getLogLevel(modules[0]);
+    if (modules.every(m => (overrides[m] || getLogLevel(m)) === firstLevel)) {
+      return firstLevel;
+    }
+    return '';
+  };
+
+  // Handler to set all modules in a group to a log level
+  const handleGroupChange = (groupName: string, level: LogLevel) => {
+    const modules = grouped[groupName] || [];
+    const newOverrides = { ...overrides };
+    modules.forEach(module => {
+      newOverrides[module] = level;
+      setLogLevel(level, module);
+      // Bridge to LogManager
+      const logManager = LogManager.getInstance();
+      logManager.setComponentLogLevel(module, level.toUpperCase() as any);
+    });
+    setOverrides(newOverrides);
+    saveOverrides(newOverrides);
+  };
+
   return (
     <div className="flex flex-col h-full min-h-0 mb-4 p-2 border-b border-muted">
-      <h4 className="font-medium mb-2">Log Level Controls</h4>
+      <div className="flex items-center justify-between mb-2">
+        <h4 className="font-medium">Log Level Controls</h4>
+        <button
+          className="border rounded px-2 py-1 text-sm bg-white text-gray-900 hover:bg-gray-100"
+          onClick={handleResetLogLevels}
+          title="Reset all log level overrides to default"
+        >
+          Reset Log Levels
+        </button>
+      </div>
       <div className="flex flex-col gap-2 flex-1 min-h-0">
         <div className="flex items-center gap-2">
           <label className={`font-mono pr-2 ${labelWidth}`}>Global</label>
@@ -160,6 +216,20 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
                 </button>
                 {openGroups[group.name] && (
                   <div className="pl-4 pb-2">
+                    {/* Group-level log level dropdown */}
+                    <div className="flex items-center gap-2 py-1 mb-2">
+                      <label className={`font-mono pr-2 ${labelWidth}`}>[All]</label>
+                      <select
+                        className="border rounded px-2 py-1 text-sm bg-white text-gray-900 focus:border-blue-500 focus:ring-2 focus:ring-blue-200"
+                        value={getGroupLogLevel(group.name)}
+                        onChange={e => handleGroupChange(group.name, e.target.value as LogLevel)}
+                      >
+                        <option value="">mixed</option>
+                        {LOG_LEVELS.map(lvl => (
+                          <option key={lvl} value={lvl}>{lvl}</option>
+                        ))}
+                      </select>
+                    </div>
                     {grouped[group.name].map(module => (
                       <div key={module} className="flex items-center gap-2 py-1">
                         <label className={`font-mono pr-2 ${labelWidth}`}>{module}</label>

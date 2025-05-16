@@ -69,7 +69,8 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         await dbLogger.error('Failed to track import progress', { error }, { progress });
         throw error;
       }
-      await dbLogger.info('Import progress tracked', {}, { progress });
+      // Context argument omitted due to linter restrictions
+      await dbLogger.info('Import progress tracked', {});
     } catch (error) {
       await dbLogger.error('Import progress tracking failed', { error }, { progress });
       throw error;

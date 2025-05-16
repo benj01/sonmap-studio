@@ -67,9 +67,8 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
       (async () => {
         await dbLogger.debug('Cesium instance set', {
           hasInstance: !!instance,
-          instanceId: updatedCesium.instanceId,
-          source: SOURCE
-        });
+          instanceId: updatedCesium.instanceId
+        }, { source: SOURCE });
       })();
       return {
         mapInstances: {
@@ -89,7 +88,7 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
       };
 
       (async () => {
-        await dbLogger.debug('Cesium status updated', { status, error, source: SOURCE });
+        await dbLogger.debug('Cesium status updated', { status, error }, { source: SOURCE });
       })();
       return {
         mapInstances: {
@@ -125,7 +124,7 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
       };
     });
     (async () => {
-      await dbLogger.info('Cesium instance cleanup check complete', { action: 'cleanup', source: SOURCE });
+      await dbLogger.info('Cesium instance cleanup check complete', { action: 'cleanup' }, { source: SOURCE });
     })();
   },
 
@@ -139,7 +138,7 @@ export const useMapInstanceStore = create<MapInstanceStore>()((set) => ({
       };
     });
     (async () => {
-      await dbLogger.info('Map instance store reset', { action: 'reset', source: SOURCE });
+      await dbLogger.info('Map instance store reset', { action: 'reset' }, { source: SOURCE });
     })();
   }
 }));
