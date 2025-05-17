@@ -2,7 +2,7 @@
 // See debug.mdc and cursor_rules.mdc for migration details.
 
 import { EPSG } from '@/core/coordinates/coordinates';
-import { dbLogger } from '@/utils/logger';
+import { dbLogger } from '@/utils/logging/dbLogger';
 
 const SOURCE = 'CoordinateSystems';
 
@@ -53,7 +53,7 @@ export async function getCoordinateSystem(srid: number): Promise<CoordinateSyste
       
       return data;
     } catch (error) {
-      await dbLogger.error(`Failed to fetch coordinate system for SRID ${srid}`, { error, srid, source: SOURCE });
+      await dbLogger.error(`Failed to fetch coordinate system for SRID ${srid}`, { error, srid }, { source: SOURCE });
       throw error;
     } finally {
       // Clean up pending request
@@ -81,6 +81,6 @@ export async function preloadCommonCoordinateSystems(): Promise<void> {
   try {
     await Promise.all(COMMON_SRIDS.map(srid => getCoordinateSystem(srid)));
   } catch (error) {
-    await dbLogger.warn('Failed to preload some coordinate systems', { error, source: SOURCE });
+    await dbLogger.warn('Failed to preload some coordinate systems', { error }, { source: SOURCE });
   }
 } 

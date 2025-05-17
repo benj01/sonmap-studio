@@ -14,7 +14,6 @@ async function transformCoordinates() {
     // Transform to WGS84
     const wgs84 = proj4('EPSG:2056', 'EPSG:4326', swissCoords);
     await dbLogger.info('Coordinate transformation', {
-      source: SOURCE,
       original: {
         type: 'Swiss LV95',
         coordinates: swissCoords
@@ -23,18 +22,17 @@ async function transformCoordinates() {
         type: 'WGS84',
         coordinates: wgs84
       }
-    });
+    }, { source: SOURCE });
 
     // Now transform to Web Mercator (EPSG:3857)
     proj4.defs('EPSG:3857', '+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +wktext +no_defs +type=crs');
     const webMercator = proj4('EPSG:4326', 'EPSG:3857', wgs84);
     await dbLogger.info('Web Mercator transformation', {
-      source: SOURCE,
       webMercator: {
         type: 'Web Mercator',
         coordinates: webMercator
       }
-    });
+    }, { source: SOURCE });
 
     return {
       swissCoords,
@@ -43,9 +41,8 @@ async function transformCoordinates() {
     };
   } catch (error) {
     await dbLogger.error('Error transforming coordinates', {
-      source: SOURCE,
       error
-    });
+    }, { source: SOURCE });
     throw error;
   }
 }
