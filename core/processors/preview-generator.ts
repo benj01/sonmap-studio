@@ -335,7 +335,8 @@ async function processChunks(
   features: Feature[],
   tolerance: number,
   chunkSize: number,
-  onChunkProcessed?: (chunk: PreviewFeature[]) => void
+  onChunkProcessed?: (chunk: PreviewFeature[], context?: any) => void,
+  context?: any
 ): Promise<{ 
   features: PreviewFeature[];
   stats: { 
@@ -423,7 +424,7 @@ async function processChunks(
     results.push(...validResults);
     
     if (onChunkProcessed) {
-      onChunkProcessed(validResults);
+      onChunkProcessed(validResults, context);
     }
 
     // Allow UI to update between chunks
@@ -459,15 +460,16 @@ async function processChunks(
 export async function generatePreview(
   dataset: FullDataset,
   config: Partial<PreviewConfig> = {},
-  onProgress?: (features: PreviewFeature[]) => void
-): Promise<PreviewDataset & { 
-  stats?: { 
-    processed: number; 
-    repaired: number; 
-    failed: number; 
+  onProgress?: (features: PreviewFeature[], context?: any) => void,
+  context?: any
+): Promise<PreviewDataset & {
+  stats?: {
+    processed: number;
+    repaired: number;
+    failed: number;
     simplified: number;
     withIssues: number;
-  }; 
+  };
 }> {
   await dbLogger.info('Starting preview generation', {
     sourceDataset: {
@@ -507,7 +509,8 @@ export async function generatePreview(
     sampledFeatures,
     finalConfig.simplificationTolerance,
     finalConfig.chunkSize,
-    onProgress
+    (chunk, ctx) => onProgress?.(chunk, ctx ?? context),
+    context
   );
 
   const processingTime = Date.now() - startTime;

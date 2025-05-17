@@ -29,24 +29,44 @@ export function PreviewStep({ onNext, onBack }: PreviewStepProps) {
         // Log sample coordinates based on geometry type
         if (firstGeometry) {
           if (firstGeometry.type === 'Point' && 'coordinates' in firstGeometry) {
+            const coords = firstGeometry.coordinates;
             await dbLogger.debug('First point coordinates', {
               source: 'PreviewStep',
-              coordinates: firstGeometry.coordinates
+              coordinates: Array.isArray(coords) && coords.length > 6
+                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
+                : coords,
+              abbreviated: Array.isArray(coords) && coords.length > 6,
+              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
             });
           } else if ((firstGeometry.type === 'LineString' || firstGeometry.type === 'MultiPoint') && 'coordinates' in firstGeometry) {
+            const coords = firstGeometry.coordinates;
             await dbLogger.debug('First line/multipoint coordinates (first 3 points)', {
               source: 'PreviewStep',
-              coordinates: Array.isArray(firstGeometry.coordinates) ? firstGeometry.coordinates.slice(0, 3) : []
+              coordinates: Array.isArray(coords) && coords.length > 6
+                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
+                : coords,
+              abbreviated: Array.isArray(coords) && coords.length > 6,
+              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
             });
           } else if ((firstGeometry.type === 'Polygon' || firstGeometry.type === 'MultiLineString') && 'coordinates' in firstGeometry) {
+            const coords = Array.isArray(firstGeometry.coordinates) && Array.isArray(firstGeometry.coordinates[0]) ? firstGeometry.coordinates[0] : [];
             await dbLogger.debug('First polygon/multiline coordinates (first ring, first 3 points)', {
               source: 'PreviewStep',
-              coordinates: Array.isArray(firstGeometry.coordinates) && Array.isArray(firstGeometry.coordinates[0]) ? firstGeometry.coordinates[0].slice(0, 3) : []
+              coordinates: Array.isArray(coords) && coords.length > 6
+                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
+                : coords,
+              abbreviated: Array.isArray(coords) && coords.length > 6,
+              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
             });
           } else if (firstGeometry.type === 'MultiPolygon' && 'coordinates' in firstGeometry) {
+            const coords = Array.isArray(firstGeometry.coordinates) && Array.isArray(firstGeometry.coordinates[0]) && Array.isArray(firstGeometry.coordinates[0][0]) ? firstGeometry.coordinates[0][0] : [];
             await dbLogger.debug('First multipolygon coordinates (first polygon, first ring, first 3 points)', {
               source: 'PreviewStep',
-              coordinates: Array.isArray(firstGeometry.coordinates) && Array.isArray(firstGeometry.coordinates[0]) && Array.isArray(firstGeometry.coordinates[0][0]) ? firstGeometry.coordinates[0][0].slice(0, 3) : []
+              coordinates: Array.isArray(coords) && coords.length > 6
+                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
+                : coords,
+              abbreviated: Array.isArray(coords) && coords.length > 6,
+              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
             });
           }
         }

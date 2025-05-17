@@ -49,7 +49,7 @@ export interface ImportState {
 
 export interface StreamParams extends ImportParams {
   signal?: AbortSignal;
-  onProgress?: (progress: ImportProgress) => Promise<void>;
+  onProgress?: (progress: ImportProgress, context?: any) => Promise<void>;
   onComplete?: (result: ImportResult) => Promise<void>;
   onError?: (error: Error) => Promise<void>;
 }

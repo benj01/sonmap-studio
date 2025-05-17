@@ -53,17 +53,12 @@ export function summarizeFeaturesForLogging(features: Feature[], level: 'info' |
 }
 
 /**
- * Truncates coordinates in a feature for logging (max 10 coords per geometry array).
+ * Abbreviates large coordinate arrays for logging. If a geometry has more than 5 coordinates at any top-level array,
+ * logs the first 3, last, and a summary (total count, abbreviated: true).
+ * @param geometry GeoJSON Geometry object
+ * @returns Abbreviated geometry for logging
  */
-function truncateFeature(feature: Feature): any {
-  const truncated = { ...feature };
-  if (feature.geometry) {
-    truncated.geometry = truncateGeometry(feature.geometry);
-  }
-  return truncated;
-}
-
-function truncateGeometry(geometry: Geometry): any {
+export function abbreviateCoordinatesForLog(geometry: Geometry): any {
   if (
     geometry.type === 'GeometryCollection' ||
     !('coordinates' in geometry)
@@ -72,21 +67,45 @@ function truncateGeometry(geometry: Geometry): any {
     return { type: geometry.type };
   }
   const { type, coordinates } = geometry as Extract<Geometry, { coordinates: any }>;
-  // Truncate arrays to max 10 elements at each nesting level
-  function truncateCoords(coords: any, depth = 0): any {
+
+  function abbreviateCoords(coords: any, depth = 0): any {
     if (Array.isArray(coords)) {
-      if (depth < 2) {
-        // For LineString, MultiPoint, Polygon, MultiLineString, etc.
-        return coords.slice(0, 10).map(c => truncateCoords(c, depth + 1));
+      if (depth === 0 && coords.length > 5) {
+        return [
+          ...coords.slice(0, 3),
+          `... (${coords.length - 4} more points) ...`,
+          coords[coords.length - 1]
+        ];
+      } else if (depth === 1 && coords.length > 5) {
+        return [
+          ...coords.slice(0, 3),
+          `... (${coords.length - 4} more points) ...`,
+          coords[coords.length - 1]
+        ];
       } else {
-        // For deepest level (actual coordinate arrays)
-        return coords.slice(0, 3); // Only first 3 numbers (lon, lat, [z])
+        return coords.map(c => abbreviateCoords(c, depth + 1));
       }
     }
     return coords;
   }
+
+  const abbreviated = Array.isArray(coordinates) && coordinates.length > 5;
+  const totalCoordinates = Array.isArray(coordinates) ? coordinates.length : undefined;
+
   return {
     type,
-    coordinates: truncateCoords(coordinates),
+    coordinates: abbreviateCoords(coordinates),
+    ...(abbreviated ? { abbreviated: true, totalCoordinates } : {})
   };
+}
+
+/**
+ * Truncates coordinates in a feature for logging (max 10 coords per geometry array).
+ */
+function truncateFeature(feature: Feature): any {
+  const truncated = { ...feature };
+  if (feature.geometry) {
+    truncated.geometry = abbreviateCoordinatesForLog(feature.geometry);
+  }
+  return truncated;
 } 

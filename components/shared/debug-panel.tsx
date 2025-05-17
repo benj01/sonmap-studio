@@ -67,7 +67,7 @@ export function DebugPanel({ children }: DebugPanelProps) {
   const copyLogs = async () => {
     try {
       const logsText = logs.map(log => 
-        `[${log.timestamp}] ${log.level.toUpperCase()}: ${log.message}${
+        `[${log.timestamp}] ${log.level.toUpperCase()}: ${log.context?.source ? `[${log.context.source}] ` : ''}${log.message}${
           log.data ? '\n' + JSON.stringify(log.data, null, 2) : ''
         }`
       ).join('\n');
@@ -192,7 +192,7 @@ export function DebugPanel({ children }: DebugPanelProps) {
                         'text-muted-foreground'
                       }`}
                     >
-                      [{log.timestamp}] {log.level.toUpperCase()}: {log.message}
+                      [{log.timestamp}] {log.level.toUpperCase()}: {log.context?.source ? `[${log.context.source}] ` : ''}{log.message}
                       {log.data && (
                         <pre className="mt-1 p-2 bg-muted rounded text-xs overflow-auto">
                           {JSON.stringify(log.data, null, 2)}

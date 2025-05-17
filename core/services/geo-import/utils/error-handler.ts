@@ -17,13 +17,12 @@ export class ImportErrorHandler {
 
   async handleStreamError(error: ImportError, importLogId: string): Promise<void> {
     await dbLogger.error('Import stream error', {
-      SOURCE,
       error,
       importLogId,
       details: error.details,
       hint: error.hint,
       code: error.code
-    });
+    }, { source: 'ImportErrorHandler', importLogId });
 
     await this.updateImportLog(importLogId, {
       status: 'failed',
@@ -46,14 +45,13 @@ export class ImportErrorHandler {
     end: number;
   }): Promise<void> {
     await dbLogger.error('Batch import failed', {
-      SOURCE,
       error,
       importLogId,
       ...batchInfo,
       details: error.details,
       hint: error.hint,
       code: error.code
-    });
+    }, { source: 'ImportErrorHandler', importLogId });
 
     await this.updateImportLog(importLogId, {
       status: 'failed',
@@ -68,7 +66,7 @@ export class ImportErrorHandler {
   }
 
   async handleAuthError(error: Error): Promise<void> {
-    await dbLogger.error('Authentication failed', { SOURCE, error });
+    await dbLogger.error('Authentication failed', { error }, { source: 'ImportErrorHandler' });
   }
 
   private async updateImportLog(importLogId: string, update: {
@@ -82,11 +80,10 @@ export class ImportErrorHandler {
 
     if (error) {
       await dbLogger.error('Failed to update import log', {
-        SOURCE,
         error,
         importLogId,
         update
-      });
+      }, { source: 'ImportErrorHandler', importLogId });
     }
   }
 } 

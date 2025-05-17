@@ -80,7 +80,7 @@ export interface LoaderOptions {
   // Shapefile options
   importAttributes?: boolean;
   // Progress and logging callbacks
-  onProgress?: (progress: number) => void;
+  onProgress?: (progress: number, context?: any) => void;
   onLog?: (message: string) => void;
 }
 

@@ -47,7 +47,7 @@ export class FeatureProcessingPipeline {
           await dbLogger.warn('Feature processing stopped due to unrecoverable error', {
             featureId: feature.id,
             errors: processorResult.errors
-          }, { featureId: feature.id });
+          }, { source: 'FeatureProcessingPipeline', featureId: feature.id });
           break;
         }
       }
@@ -60,7 +60,7 @@ export class FeatureProcessingPipeline {
       await dbLogger.error('Pipeline processing failed', {
         error: errorMessage,
         featureId: feature.id
-      }, { featureId: feature.id });
+      }, { source: 'FeatureProcessingPipeline', featureId: feature.id });
     }
 
     return result;
@@ -70,7 +70,7 @@ export class FeatureProcessingPipeline {
     await dbLogger.info('Starting batch feature processing', {
       featureCount: features.length,
       context
-    }, { featureCount: features.length });
+    }, { source: 'FeatureProcessingPipeline' });
 
     const results = await Promise.all(
       features.map(async (feature) => {
@@ -81,7 +81,7 @@ export class FeatureProcessingPipeline {
           await dbLogger.error('Feature processing failed', {
             error: errorMessage,
             featureId: feature.id
-          }, { featureId: feature.id });
+          }, { source: 'FeatureProcessingPipeline', featureId: feature.id });
           return {
             feature,
             isValid: false,
@@ -100,7 +100,7 @@ export class FeatureProcessingPipeline {
       failed: results.filter(r => !r.isValid && !r.wasRepaired).length
     };
 
-    await dbLogger.info('Batch feature processing completed', { summary }, { total: summary.total });
+    await dbLogger.info('Batch feature processing completed', { summary }, { source: 'FeatureProcessingPipeline', total: summary.total });
     return results;
   }
 }

@@ -4,6 +4,7 @@ import { Position, Geometry } from 'geojson';
 import proj4 from 'proj4';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { FeatureProcessor, ProcessingContext, ProcessingResult } from './types';
+import { abbreviateCoordinatesForLog } from '@/components/map/utils/logging';
 
 export class CoordinateTransformer implements FeatureProcessor {
   async process(feature: GeoFeature, context: ProcessingContext): Promise<ProcessingResult> {
@@ -60,11 +61,11 @@ export class CoordinateTransformer implements FeatureProcessor {
       await dbLogger.debug('Coordinate transformation', {
         fromSrid,
         toSrid,
-        input: coords,
-        output: result
+        input: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }),
+        output: abbreviateCoordinatesForLog({ type: 'Point', coordinates: result })
       }, { fromSrid, toSrid });
       if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-        await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result }, { fromSrid, toSrid });
+        await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result: abbreviateCoordinatesForLog({ type: 'Point', coordinates: result }) }, { fromSrid, toSrid });
       }
       return result;
     } catch (error) {

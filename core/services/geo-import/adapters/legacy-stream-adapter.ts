@@ -43,7 +43,7 @@ export async function processImportStream(
       .single();
 
     if (getError) {
-      await dbLogger.error('Failed to get import log', { error: getError }, { importLogId, projectFileId, collectionName });
+      await dbLogger.error('Failed to get import log', { error: getError }, { source: 'LegacyStreamAdapter', importLogId, projectFileId, collectionName });
       throw new Error('Failed to get import log');
     }
     importLog = data;
@@ -61,13 +61,13 @@ export async function processImportStream(
       .single();
 
     if (createError) {
-      await dbLogger.error('Failed to create import log', { error: createError }, { projectFileId, collectionName });
+      await dbLogger.error('Failed to create import log', { error: createError }, { source: 'LegacyStreamAdapter', projectFileId, collectionName });
       throw new Error('Failed to create import log');
     }
     importLog = data;
   }
 
-  await dbLogger.info('Import log ready', {}, { importLogId: importLog?.id, projectFileId, collectionName });
+  await dbLogger.info('Import log ready', {}, { source: 'LegacyStreamAdapter', importLogId: importLog?.id, projectFileId, collectionName });
 
   // Use the new service layer for streaming
   return await importService.streamFeatures({
@@ -93,9 +93,9 @@ export async function processImportStream(
             }
           })
           .eq('id', importLog.id);
-        await dbLogger.info('Import progress updated', { progress }, { importLogId: importLog.id, projectFileId, collectionName });
+        await dbLogger.info('Import progress updated', { progress }, { source: 'LegacyStreamAdapter', importLogId: importLog.id, projectFileId, collectionName });
       } catch (error) {
-        await dbLogger.error('Failed to update import progress', { error }, { importLogId: importLog.id, projectFileId, collectionName });
+        await dbLogger.error('Failed to update import progress', { error }, { source: 'LegacyStreamAdapter', importLogId: importLog.id, projectFileId, collectionName });
       }
     },
     onComplete: async (result: ImportResult) => {
@@ -113,9 +113,9 @@ export async function processImportStream(
             }
           })
           .eq('id', importLog.id);
-        await dbLogger.info('Import completed', { result }, { importLogId: importLog.id, projectFileId, collectionName });
+        await dbLogger.info('Import completed', { result }, { source: 'LegacyStreamAdapter', importLogId: importLog.id, projectFileId, collectionName });
       } catch (error) {
-        await dbLogger.error('Failed to update import completion', { error }, { importLogId: importLog.id, projectFileId, collectionName });
+        await dbLogger.error('Failed to update import completion', { error }, { source: 'LegacyStreamAdapter', importLogId: importLog.id, projectFileId, collectionName });
       }
     },
     onError: async (error: Error) => {
@@ -130,9 +130,9 @@ export async function processImportStream(
             }
           })
           .eq('id', importLog.id);
-        await dbLogger.error('Import failed', { error }, { importLogId: importLog.id, projectFileId, collectionName });
+        await dbLogger.error('Import failed', { error }, { source: 'LegacyStreamAdapter', importLogId: importLog.id, projectFileId, collectionName });
       } catch (err) {
-        await dbLogger.error('Failed to update import error', { error: err }, { importLogId: importLog.id, projectFileId, collectionName });
+        await dbLogger.error('Failed to update import error', { error: err }, { source: 'LegacyStreamAdapter', importLogId: importLog.id, projectFileId, collectionName });
       }
     }
   });

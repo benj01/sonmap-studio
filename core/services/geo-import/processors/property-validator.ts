@@ -48,9 +48,8 @@ export class PropertyValidator implements FeatureProcessor {
       const errorMessage = isErrorWithMessage(error) ? error.message : 'Unknown error';
       result.errors.push(`Property validation failed: ${errorMessage}`);
       await dbLogger.error('Property validation failed', {
-        error: errorMessage,
-        featureId: feature.id
-      }, { featureId: feature.id });
+        error: errorMessage
+      }, { source: 'PropertyValidator', featureId: String(feature.id) });
     }
 
     return result;

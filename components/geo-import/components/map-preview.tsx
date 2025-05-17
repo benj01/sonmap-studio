@@ -15,7 +15,7 @@ interface MapPreviewProps {
   bounds?: [number, number, number, number];
   selectedFeatureIds: number[];
   onFeaturesSelected?: (featureIdsOrUpdater: number[] | ((prev: number[]) => number[])) => void;
-  onProgress?: (progress: number) => void;
+  onProgress?: (progress: number, context?: any) => void;
 }
 
 const SOURCE = 'MapPreview';

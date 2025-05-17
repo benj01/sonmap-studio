@@ -7,6 +7,7 @@ import proj4 from 'proj4';
 import { XMLParser } from 'fast-xml-parser';
 import { getCoordinateSystem } from '@/lib/coordinate-systems';
 import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
+import { abbreviateCoordinatesForLog } from '@/components/map/utils/logging';
 
 const SOURCE = 'GeoJsonParser';
 
@@ -49,12 +50,12 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
     }
     const result = proj4(`EPSG:${fromSrid}`, COORDINATE_SYSTEMS.WGS84, coords);
     if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-      await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result }, { source: SOURCE });
+      await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result: abbreviateCoordinatesForLog({ type: 'Point', coordinates: result }) }, { source: SOURCE });
     }
-    return { result, log: { fromSrid, input: coords, output: result } };
+    return { result, log: { fromSrid, input: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }), output: abbreviateCoordinatesForLog({ type: 'Point', coordinates: result }) } };
   } catch (error) {
-    await dbLogger.warn('Failed to transform coordinates', { error, coords, fromSrid }, { source: SOURCE });
-    return { result: coords, log: { fromSrid, input: coords, output: coords } };
+    await dbLogger.warn('Failed to transform coordinates', { error, coords: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }), fromSrid }, { source: SOURCE });
+    return { result: coords, log: { fromSrid, input: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }), output: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }) } };
   }
 }
 
@@ -120,7 +121,8 @@ export class GeoJsonParser extends BaseGeoDataParser {
     mainFile: ArrayBuffer,
     companionFiles?: Record<string, ArrayBuffer>,
     options?: ParserOptions,
-    onProgress?: (event: ParserProgressEvent) => void
+    onProgress?: (event: ParserProgressEvent, context?: any) => void,
+    context?: any
   ): Promise<FullDataset> {
     const COORD_TRANSFORM_LOG_LIMIT = 3;
     const coordTransformLogs: any[] = [];
@@ -131,12 +133,11 @@ export class GeoJsonParser extends BaseGeoDataParser {
         companionFiles: companionFiles ? Object.keys(companionFiles) : []
       }, { source: SOURCE });
 
-      // Context argument omitted due to linter restrictions
       this.reportProgress(onProgress, {
         phase: 'parsing',
         progress: 0,
         message: 'Starting GeoJSON parsing'
-      });
+      }, context);
 
       // Parse GeoJSON content
       const content = await this.readFileAsText(mainFile);
@@ -242,12 +243,11 @@ export class GeoJsonParser extends BaseGeoDataParser {
         }
       };
 
-      // Context argument omitted due to linter restrictions
       this.reportProgress(onProgress, {
         phase: 'complete',
         progress: 100,
         message: 'Parsing complete'
-      });
+      }, context);
 
       await dbLogger.info('Parse complete', dataset.metadata, { source: SOURCE });
 

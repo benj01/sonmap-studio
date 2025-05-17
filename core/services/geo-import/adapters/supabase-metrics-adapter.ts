@@ -38,12 +38,12 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         });
 
       if (error) {
-        await dbLogger.error('Failed to track import start', { error }, { importId, params });
+        await dbLogger.error('Failed to track import start', { error }, { source: 'SupabaseMetricsAdapter', importId, params });
         throw error;
       }
-      await dbLogger.info('Import start tracked', {}, { importId, params });
+      await dbLogger.info('Import start tracked', {}, { source: 'SupabaseMetricsAdapter', importId, params });
     } catch (error) {
-      await dbLogger.error('Import start tracking failed', { error }, { importId, params });
+      await dbLogger.error('Import start tracking failed', { error }, { source: 'SupabaseMetricsAdapter', importId, params });
       throw error;
     }
   }
@@ -66,13 +66,12 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         .eq('import_id', progress.importId);
 
       if (error) {
-        await dbLogger.error('Failed to track import progress', { error }, { progress });
+        await dbLogger.error('Failed to track import progress', { error }, { source: 'SupabaseMetricsAdapter', progress });
         throw error;
       }
-      // Context argument omitted due to linter restrictions
-      await dbLogger.info('Import progress tracked', {});
+      await dbLogger.info('Import progress tracked', {}, { source: 'SupabaseMetricsAdapter', progress });
     } catch (error) {
-      await dbLogger.error('Import progress tracking failed', { error }, { progress });
+      await dbLogger.error('Import progress tracking failed', { error }, { source: 'SupabaseMetricsAdapter', progress });
       throw error;
     }
   }
@@ -94,14 +93,14 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         .eq('import_id', result.importId);
 
       if (error) {
-        await dbLogger.error('Failed to track import completion', { error }, { result });
+        await dbLogger.error('Failed to track import completion', { error }, { source: 'SupabaseMetricsAdapter', result });
         throw error;
       }
-      await dbLogger.info('Import completion tracked', {}, { result });
+      await dbLogger.info('Import completion tracked', {}, { source: 'SupabaseMetricsAdapter', result });
       // Clean up start time
       this.importStartTimes.delete(result.importId);
     } catch (error) {
-      await dbLogger.error('Import completion tracking failed', { error }, { result });
+      await dbLogger.error('Import completion tracking failed', { error }, { source: 'SupabaseMetricsAdapter', result });
       throw error;
     }
   }
@@ -119,12 +118,12 @@ export class SupabaseMetricsAdapter implements MetricsAdapter {
         .eq('status', 'in_progress');
 
       if (dbError) {
-        await dbLogger.error('Failed to track import error', { dbError }, { error });
+        await dbLogger.error('Failed to track import error', { dbError }, { source: 'SupabaseMetricsAdapter', error });
         throw dbError;
       }
-      await dbLogger.info('Import error tracked', {}, { error });
+      await dbLogger.info('Import error tracked', {}, { source: 'SupabaseMetricsAdapter', error });
     } catch (err) {
-      await dbLogger.error('Import error tracking failed', { error: err }, { error });
+      await dbLogger.error('Import error tracking failed', { error: err }, { source: 'SupabaseMetricsAdapter', error });
       throw err;
     }
   }

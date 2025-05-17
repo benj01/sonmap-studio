@@ -31,12 +31,12 @@ export class SupabaseImportAdapter implements ImportAdapter {
       );
 
       if (error) {
-        await dbLogger.error('Import RPC failed', { error }, { importId, params });
+        await dbLogger.error('Import RPC failed', { error }, { source: 'SupabaseImportAdapter', importId, params });
         throw error;
       }
 
       if (!result || !Array.isArray(result) || result.length === 0) {
-        await dbLogger.error('No results returned from import function', {}, { importId, params });
+        await dbLogger.error('No results returned from import function', {}, { source: 'SupabaseImportAdapter', importId, params });
         throw new Error('No results returned from import function');
       }
 
@@ -86,10 +86,10 @@ export class SupabaseImportAdapter implements ImportAdapter {
           }
         }
       }
-      await dbLogger.info('Import completed', { aggregatedResult }, { importId, params });
+      await dbLogger.info('Import completed', { aggregatedResult }, { source: 'SupabaseImportAdapter', importId, params });
       return aggregatedResult;
     } catch (error) {
-      await dbLogger.error('Import failed', { error }, { importId, params });
+      await dbLogger.error('Import failed', { error }, { source: 'SupabaseImportAdapter', importId, params });
       throw error;
     }
   }
@@ -101,7 +101,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
 
     // Add validation and early error handling
     if (!params.projectFileId) {
-      await dbLogger.error('Project file ID is required', {}, { importId, params });
+      await dbLogger.error('Project file ID is required', {}, { source: 'SupabaseImportAdapter', importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Project file ID is required',
@@ -112,7 +112,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
       }));
     }
     if (!params.collectionName) {
-      await dbLogger.error('Collection name is required', {}, { importId, params });
+      await dbLogger.error('Collection name is required', {}, { source: 'SupabaseImportAdapter', importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Collection name is required',
@@ -123,7 +123,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
       }));
     }
     if (!params.features || !Array.isArray(params.features) || params.features.length === 0) {
-      await dbLogger.error('Features array is required and must not be empty', {}, { importId, params });
+      await dbLogger.error('Features array is required and must not be empty', {}, { source: 'SupabaseImportAdapter', importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Features array is required and must not be empty',
@@ -134,7 +134,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
       }));
     }
     if (!params.sourceSrid) {
-      await dbLogger.error('Source SRID is required', {}, { importId, params });
+      await dbLogger.error('Source SRID is required', {}, { source: 'SupabaseImportAdapter', importId, params });
       throw new Error(JSON.stringify({
         type: 'ValidationError',
         message: 'Source SRID is required',
@@ -152,13 +152,13 @@ export class SupabaseImportAdapter implements ImportAdapter {
         features: totalFeatures,
         sourceSrid: params.sourceSrid,
         targetSrid: params.targetSrid
-      }, { importId, params });
+      }, { source: 'SupabaseImportAdapter', importId, params });
       
       // Create the transform stream with improved error handling
       const stream = new TransformStream({
         async start() {
           // Stream initialization code goes here if needed
-          await dbLogger.debug('Stream started', { importId }, { importId });
+          await dbLogger.debug('Stream started', { importId }, { source: 'SupabaseImportAdapter', importId });
         },
         async transform(chunk, controller) {
           try {
@@ -176,11 +176,7 @@ export class SupabaseImportAdapter implements ImportAdapter {
             );
 
             if (error) {
-              await dbLogger.error('Import failed', { error }, {
-                importId,
-                error: error.message,
-                details: error.details
-              });
+              await dbLogger.error('Import failed', { error }, { source: 'SupabaseImportAdapter', importId, error: error.message, details: error.details });
               throw error;
             }
 

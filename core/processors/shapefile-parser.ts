@@ -9,6 +9,7 @@ import { COORDINATE_SYSTEMS } from '@/core/coordinates/coordinates';
 import * as turf from '@turf/turf';
 import { detectSRIDFromCoordinates, detectSRIDFromWKT } from '@/core/coordinates/coordinate-detection';
 import { isDebugEnabled } from '@/utils/logging/debugFlags';
+import { abbreviateCoordinatesForLog } from '@/components/map/utils/logging';
 
 const SOURCE = 'ShapefileParser';
 const DEFAULT_SRID = 2056; // Swiss LV95
@@ -99,16 +100,16 @@ async function transformCoordinates(coords: Position, fromSrid: number): Promise
     await dbLogger.debug('Coordinate transformation', {
       fromSrid,
       toSrid: 4326,
-      input: coords,
-      output: result
+      input: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }),
+      output: abbreviateCoordinatesForLog({ type: 'Point', coordinates: result })
     }, { source: SOURCE });
     // Switzerland bounds check
     if (result[0] < 5 || result[0] > 11 || result[1] < 45 || result[1] > 48) {
-      await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result }, { source: SOURCE });
+      await dbLogger.warn('Transformed coordinates out of Swiss bounds', { result: abbreviateCoordinatesForLog({ type: 'Point', coordinates: result }) }, { source: SOURCE });
     }
     return hasZ && z !== null ? [result[0], result[1], z] : result;
   } catch (error) {
-    await dbLogger.warn('Failed to transform coordinates', { error, coords, fromSrid }, { source: SOURCE });
+    await dbLogger.warn('Failed to transform coordinates', { error, coords: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }), fromSrid }, { source: SOURCE });
     return coords;
   }
 }
@@ -207,7 +208,8 @@ export class ShapefileParser extends BaseGeoDataParser {
     mainFile: ArrayBuffer,
     companionFiles?: Record<string, ArrayBuffer>,
     options?: ParserOptions,
-    onProgress?: (event: ParserProgressEvent) => void
+    onProgress?: (event: ParserProgressEvent, context?: any) => void,
+    context?: any
   ): Promise<FullDataset> {
     const shouldTransform = options?.transformCoordinates !== false;
     // CRITICAL DEBUG LOGS FOR TRANSFORMATION ISSUE - Using logger instead of console.log
@@ -232,7 +234,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         phase: 'reading',
         progress: 0,
         message: 'Starting shapefile parsing'
-      });
+      }, context);
       await Promise.resolve(); // yield
       await dbLogger.info('Starting parse operation', {
         mainFileSize: mainFile.byteLength,
@@ -243,14 +245,14 @@ export class ShapefileParser extends BaseGeoDataParser {
       // Validate companion files
       if (!companionFiles || !companionFiles['.dbf']) {
         const error = 'Missing required .dbf file';
-        await dbLogger.error('Invalid shapefile format', { error });
+        await dbLogger.error('Invalid shapefile format', { error }, { source: SOURCE });
         throw new InvalidFileFormatError('shapefile', error);
       }
 
       // First check if SRID is provided in options
       if (options?.srid) {
         this.srid = options.srid;
-        await dbLogger.info('Using provided coordinate system', { srid: this.srid });
+        await dbLogger.info('Using provided coordinate system', { srid: this.srid }, { source: SOURCE });
       }
       
       // If no SRID in options, try to detect from .prj file
@@ -260,13 +262,10 @@ export class ShapefileParser extends BaseGeoDataParser {
           const detectedSrid = this.parsePrjFile(prjContent);
           if (detectedSrid !== null) {
             this.srid = detectedSrid;
-            await dbLogger.info('Detected coordinate system from PRJ', {
-              srid: this.srid,
-              prjContent
-            }, { source: SOURCE });
+            await dbLogger.info('Detected coordinate system from PRJ', { srid: this.srid, prjContent }, { source: SOURCE });
           }
         } catch (error) {
-          await dbLogger.warn('Failed to parse .prj file', { error });
+          await dbLogger.warn('Failed to parse .prj file', { error }, { source: SOURCE });
         }
       }
 
@@ -317,7 +316,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         progress: 10,
         message: 'Shapefile read, parsing features',
         totalFeatures: geojson.features.length
-      });
+      }, context);
       await Promise.resolve(); // yield
 
       await dbLogger.info('Shapefile parsed successfully', {
@@ -400,7 +399,13 @@ export class ShapefileParser extends BaseGeoDataParser {
         const firstFeature = geojson.features[0];
         const coords = getCoordinates(firstFeature.geometry);
         if (isDebugEnabled('ShapefileParser')) {
-          await dbLogger.debug('📍 ORIGINAL first feature coordinates sample', { coords: coords.slice(0, 10) });
+          await dbLogger.debug('📍 ORIGINAL first feature coordinates sample', {
+            coords: coords.length > 10
+              ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
+              : coords,
+            abbreviated: coords.length > 10,
+            totalCoordinates: coords.length
+          });
           await dbLogger.debug('   First feature geometry type', { geometryType: firstFeature.geometry.type });
         }
       }
@@ -415,18 +420,11 @@ export class ShapefileParser extends BaseGeoDataParser {
           const detected = detectSRIDFromCoordinates(x, y);
           if (detected) {
             this.srid = detected.srid;
-            await dbLogger.info('Detected coordinate system from coordinates', {
-              name: detected.name,
-              srid: detected.srid,
-              coordinates: [x, y]
-            });
+            await dbLogger.info('Detected coordinate system from coordinates', { name: detected.name, srid: detected.srid, coordinates: [x, y] }, { source: SOURCE });
           } else {
             // If no SRID detected, use default Swiss LV95
             this.srid = DEFAULT_SRID;
-            await dbLogger.info('Using default coordinate system', {
-              srid: DEFAULT_SRID,
-              system: 'Swiss LV95'
-            });
+            await dbLogger.info('Using default coordinate system', { srid: DEFAULT_SRID, system: 'Swiss LV95' }, { source: SOURCE });
           }
         }
       }
@@ -455,11 +453,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         // --- END OF CRITICAL DEBUG LOG ---
         try {
           if (this.srid === undefined) throw new Error('SRID is undefined');
-          await dbLogger.info('Transforming coordinates for all features', {
-            fromSrid: this.srid,
-            toSrid: 4326,
-            featureCount: features.length
-          });
+          await dbLogger.info('Transforming coordinates for all features', { fromSrid: this.srid, toSrid: 4326, featureCount: features.length }, { source: SOURCE });
           // Chunked async transformation for progress
           const total = features.length;
           const chunkSize = Math.max(1, Math.floor(total / 10));
@@ -477,16 +471,12 @@ export class ShapefileParser extends BaseGeoDataParser {
               message: `Transforming coordinates (${i + chunk.length}/${total})`,
               featuresProcessed: i + chunk.length,
               totalFeatures: total
-            });
+            }, context);
             await Promise.resolve(); // yield
           }
-          await dbLogger.info('Coordinate transformation complete');
+          await dbLogger.info('Coordinate transformation complete', undefined, { source: SOURCE });
         } catch (error) {
-          await dbLogger.warn('Transformation failed, creating simplified fallback', { 
-            error,
-            srid: this.srid,
-            featureCount: features.length
-          });
+          await dbLogger.warn('Transformation failed, creating simplified fallback', { error, srid: this.srid, featureCount: features.length }, { source: SOURCE });
           features = features.map(f => ({
             ...f,
             geometry: (() => {
@@ -546,7 +536,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         message: 'Parsing complete',
         featuresProcessed: features.length,
         totalFeatures: features.length
-      });
+      }, context);
       await Promise.resolve(); // yield
 
       return {
@@ -567,7 +557,7 @@ export class ShapefileParser extends BaseGeoDataParser {
         error,
         errorMessage: error instanceof Error ? error.message : String(error),
         errorStack: error instanceof Error ? error.stack : undefined
-      });
+      }, { source: SOURCE });
       throw error;
     }
   }

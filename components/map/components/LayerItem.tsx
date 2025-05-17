@@ -35,13 +35,14 @@ export function LayerItem({ layer, className }: LayerItemProps) {
 
   useEffect(() => {
     async function logState() {
+      // summarizeFeaturesForLogging now abbreviates large coordinate arrays for logging
       await dbLogger.info('LayerItem state', {
         layerId: layer.id,
         storeLayer,
         dataSummary: data && data.features ? summarizeFeaturesForLogging(data.features, 'info') : undefined,
         loading,
         error: storeError || dataError
-      });
+      }, { source: 'LayerItem' });
     }
     logState().catch(() => {});
   }, [layer.id, storeLayer, data, loading, storeError, dataError]);
@@ -52,13 +53,13 @@ export function LayerItem({ layer, className }: LayerItemProps) {
   };
 
   const handleZoomToFeature = async () => {
-    await dbLogger.info('Zoom to feature clicked', { layerId: layer.id });
+    await dbLogger.info('Zoom to feature clicked', { layerId: layer.id }, { source: 'LayerItem' });
     if (!cesiumInstance?.instance) {
-      await dbLogger.error('Cesium instance not available');
+      await dbLogger.error('Cesium instance not available', {}, { source: 'LayerItem' });
       return;
     }
     if (!data?.features?.length) {
-      await dbLogger.warn('No features available to zoom to', { layerId: layer.id });
+      await dbLogger.warn('No features available to zoom to', { layerId: layer.id }, { source: 'LayerItem' });
       return;
     }
     try {
@@ -68,34 +69,34 @@ export function LayerItem({ layer, className }: LayerItemProps) {
         features: data.features
       };
       const bounds = bbox(featureCollection) as [number, number, number, number];
-      await dbLogger.debug('Computed bbox for layer', { layerId: layer.id, bounds });
+      await dbLogger.debug('Computed bbox for layer', { layerId: layer.id, bounds }, { source: 'LayerItem' });
       // Convert bbox to Cesium rectangle
       const rectangle = Cesium.Rectangle.fromDegrees(bounds[0], bounds[1], bounds[2], bounds[3]);
-      await dbLogger.debug('Converted bbox to Cesium rectangle', { rectangle });
+      await dbLogger.debug('Converted bbox to Cesium rectangle', { rectangle }, { source: 'LayerItem' });
       // Type guard for Cesium.Viewer
       if ('camera' in cesiumInstance.instance) {
         await cesiumInstance.instance.camera.flyTo({
           destination: rectangle,
           duration: 2,
-          complete: () => { void dbLogger.info('Camera flyTo complete', { layerId: layer.id }).catch(() => {}); },
-          cancel: () => { void dbLogger.warn('Camera flyTo cancelled', { layerId: layer.id }).catch(() => {}); }
+          complete: () => { void dbLogger.info('Camera flyTo complete', { layerId: layer.id }, { source: 'LayerItem' }).catch(() => {}); },
+          cancel: () => { void dbLogger.warn('Camera flyTo cancelled', { layerId: layer.id }, { source: 'LayerItem' }).catch(() => {}); }
         });
       } else {
-        await dbLogger.error('Cesium instance does not have camera property', { layerId: layer.id });
+        await dbLogger.error('Cesium instance does not have camera property', { layerId: layer.id }, { source: 'LayerItem' });
       }
     } catch (error) {
-      await dbLogger.error('Failed to zoom to feature', { layerId: layer.id, error });
+      await dbLogger.error('Failed to zoom to feature', { layerId: layer.id, error }, { source: 'LayerItem' });
     }
   };
 
   // Determine if the layer has untransformed heights, with defensive checks and logging
   const hasUntransformedHeights = !!data?.features?.some((f, idx) => {
     if (!f) {
-      void dbLogger.warn(`Null or undefined feature at index ${idx}:`, f).catch(() => {});
+      void dbLogger.warn(`Null or undefined feature at index ${idx}:`, { feature: f }, { source: 'LayerItem' }).catch(() => {});
       return false;
     }
     if (!f.properties) {
-      void dbLogger.warn(`Feature missing properties at index ${idx}:`, f).catch(() => {});
+      void dbLogger.warn(`Feature missing properties at index ${idx}:`, { feature: f }, { source: 'LayerItem' }).catch(() => {});
       return false;
     }
     return f.properties.height_mode === 'lv95_stored';

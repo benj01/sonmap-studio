@@ -85,7 +85,8 @@ export interface GeoDataParser {
     mainFile: ArrayBuffer,
     companionFiles?: Record<string, ArrayBuffer>,
     options?: ParserOptions,
-    onProgress?: (event: ParserProgressEvent) => void
+    onProgress?: (event: ParserProgressEvent, context?: any) => void,
+    context?: any
   ): Promise<FullDataset>;
 
   /**
@@ -125,15 +126,16 @@ export interface GeoDataParser {
  */
 export abstract class BaseGeoDataParser implements GeoDataParser {
   protected reportProgress(
-    onProgress: ((event: ParserProgressEvent) => void) | undefined,
-    event: Partial<ParserProgressEvent>
+    onProgress: ((event: ParserProgressEvent, context?: any) => void) | undefined,
+    event: Partial<ParserProgressEvent>,
+    context?: any
   ) {
     if (onProgress) {
       onProgress({
         phase: 'processing',
         progress: 0,
         ...event
-      });
+      }, context);
     }
   }
 
@@ -141,7 +143,8 @@ export abstract class BaseGeoDataParser implements GeoDataParser {
     mainFile: ArrayBuffer,
     companionFiles?: Record<string, ArrayBuffer>,
     options?: ParserOptions,
-    onProgress?: (event: ParserProgressEvent) => void
+    onProgress?: (event: ParserProgressEvent, context?: any) => void,
+    context?: any
   ): Promise<FullDataset>;
 
   abstract validate(

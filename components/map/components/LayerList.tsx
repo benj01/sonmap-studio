@@ -73,9 +73,9 @@ export function LayerList({ className }: LayerListProps) {
               return summarizeFeaturesForLogging((geojson as any).features, 'info');
             }
             return undefined;
-          })()
-        }))
-      });
+          })(),
+        })),
+      }, { source: 'LayerList' });
     }
     logHookData().catch(() => {});
   }, [layers]);
@@ -86,8 +86,8 @@ export function LayerList({ className }: LayerListProps) {
         layerCount: layers.length,
         isLoading,
         hasLayers: layers.length > 0,
-        layersWithMetadata: layers.filter((l: StoreLayer) => l.metadata).length
-      });
+        layersWithMetadata: layers.filter((l: StoreLayer) => l.metadata).length,
+      }, { source: 'LayerList' });
     }
     logRender().catch(() => {});
   }, [layers, isLoading]);
@@ -95,7 +95,7 @@ export function LayerList({ className }: LayerListProps) {
   useEffect(() => {
     async function logLoading() {
       if (isLoading) {
-        await dbLogger.debug('LayerList is loading, rendering skeletons');
+        await dbLogger.debug('LayerList is loading, rendering skeletons', { }, { source: 'LayerList' });
       }
     }
     logLoading().catch(() => {});
@@ -104,7 +104,7 @@ export function LayerList({ className }: LayerListProps) {
   useEffect(() => {
     async function logNoLayers() {
       if (!isLoading && layers.length === 0) {
-        await dbLogger.debug('LayerList: No layers available');
+        await dbLogger.debug('LayerList: No layers available', { }, { source: 'LayerList' });
       }
     }
     logNoLayers().catch(() => {});
@@ -113,7 +113,7 @@ export function LayerList({ className }: LayerListProps) {
   useEffect(() => {
     async function logRenderError() {
       if (renderError !== null) {
-        await dbLogger.error('LayerList: Error rendering layers', { error: renderError });
+        await dbLogger.error('LayerList: Error rendering layers', { error: renderError }, { source: 'LayerList' });
       }
     }
     logRenderError().catch(() => {});
@@ -123,8 +123,8 @@ export function LayerList({ className }: LayerListProps) {
     async function logRenderEnd() {
       await dbLogger.debug('LayerList render end', {
         renderedCount,
-        renderError
-      });
+        renderError,
+      }, { source: 'LayerList' });
     }
     logRenderEnd().catch(() => {});
   }, [renderedCount, renderError]);

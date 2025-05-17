@@ -133,7 +133,7 @@ export function ParseStep({ onNext, onBack }: ParseStepProps) {
         const mainFileBuffer = await mainFileResponse.arrayBuffer();
         const parser = ParserFactory.createParser(fileInfo.name!);
 
-        const onProgress = (event: ParserProgressEvent) => {
+        const onProgress = (event: ParserProgressEvent, _context?: any) => {
           if (!cancelled) setParseProgress(event.progress);
         };
 

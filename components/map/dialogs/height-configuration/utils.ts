@@ -215,10 +215,16 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
   });
   // After the loop, log samples and a summary
   (async () => {
-    await dbLogger.debug('detectZCoordinates samples', debugSamples);
+    const isArray = Array.isArray(debugSamples);
+    const abbreviatedSamples = isArray && debugSamples.length > 6
+      ? [...debugSamples.slice(0, 5), `... (${debugSamples.length - 6} more) ...`, debugSamples[debugSamples.length - 1]]
+      : debugSamples;
+    await dbLogger.debug('detectZCoordinates samples', abbreviatedSamples);
     await dbLogger.debug('detectZCoordinates summary', {
       totalFeatures: features.length,
-      sampleIdsPerType: debugSamples
+      sampleCount: isArray ? debugSamples.length : undefined,
+      abbreviated: isArray ? debugSamples.length > 6 : false,
+      sampleIdsPerType: abbreviatedSamples
     });
   })().catch(console.error);
   

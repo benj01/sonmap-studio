@@ -49,7 +49,10 @@ const GROUPS = [
     name: 'Layer/Map Components',
     match: (src: string) => [
       'LayerList', 'LayerItem', 'MapContext', 'Toolbar', 'coordinates',
-      'layerHooks', 'MapLayer', 'layerStore'
+      'layerHooks', 'MapLayer', 'layerStore', 'LayersPanel', 'useLayers', 'useLayerData',
+      'SharedLayerContext', 'CesiumContext', 'ResetButton', 'StatusMonitor',
+      'HeightTransformProgress', 'CesiumViewWithProvider', 'CesiumView',
+      'HeightConfigurationDialog'
     ].includes(src),
     defaultOpen: false,
   },
@@ -72,6 +75,7 @@ const LogLevelControl: React.FC<LogLevelControlProps> = ({ labelWidth = 'w-40' }
     const filters = logManager.getComponentFilters();
     const initialSources = filters.map(([src]) => src).sort((a, b) => a.localeCompare(b));
     setSources(initialSources);
+    console.log('[LogLevelControl] initialSources:', initialSources); // TEMP DEBUG
     // Set initial open/closed state for groups
     const groupState: Record<string, boolean> = {};
     GROUPS.forEach(g => { groupState[g.name] = g.defaultOpen; });

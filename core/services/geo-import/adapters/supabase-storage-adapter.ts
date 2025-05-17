@@ -18,12 +18,12 @@ export class SupabaseStorageAdapter implements StorageAdapter {
         });
 
       if (error) {
-        await dbLogger.error('Failed to save checkpoint', { error }, { importId, state });
+        await dbLogger.error('Failed to save checkpoint', { error }, { source: 'SupabaseStorageAdapter', importId, state });
         throw error;
       }
-      await dbLogger.info('Checkpoint saved', {}, { importId, state });
+      await dbLogger.info('Checkpoint saved', {}, { source: 'SupabaseStorageAdapter', importId, state });
     } catch (error) {
-      await dbLogger.error('Checkpoint save failed', { error }, { importId, state });
+      await dbLogger.error('Checkpoint save failed', { error }, { source: 'SupabaseStorageAdapter', importId, state });
       throw error;
     }
   }
@@ -37,13 +37,13 @@ export class SupabaseStorageAdapter implements StorageAdapter {
         .single();
 
       if (error) {
-        await dbLogger.error('Failed to load checkpoint', { error }, { importId });
+        await dbLogger.error('Failed to load checkpoint', { error }, { source: 'SupabaseStorageAdapter', importId });
         throw error;
       }
-      await dbLogger.info('Checkpoint loaded', {}, { importId });
+      await dbLogger.info('Checkpoint loaded', {}, { source: 'SupabaseStorageAdapter', importId });
       return data?.state || null;
     } catch (error) {
-      await dbLogger.error('Checkpoint load failed', { error }, { importId });
+      await dbLogger.error('Checkpoint load failed', { error }, { source: 'SupabaseStorageAdapter', importId });
       throw error;
     }
   }
@@ -56,12 +56,12 @@ export class SupabaseStorageAdapter implements StorageAdapter {
         .eq('import_id', importId);
 
       if (error) {
-        await dbLogger.error('Failed to clear checkpoint', { error }, { importId });
+        await dbLogger.error('Failed to clear checkpoint', { error }, { source: 'SupabaseStorageAdapter', importId });
         throw error;
       }
-      await dbLogger.info('Checkpoint cleared', {}, { importId });
+      await dbLogger.info('Checkpoint cleared', {}, { source: 'SupabaseStorageAdapter', importId });
     } catch (error) {
-      await dbLogger.error('Checkpoint clear failed', { error }, { importId });
+      await dbLogger.error('Checkpoint clear failed', { error }, { source: 'SupabaseStorageAdapter', importId });
       throw error;
     }
   }

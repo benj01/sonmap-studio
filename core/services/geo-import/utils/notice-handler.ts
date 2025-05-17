@@ -23,16 +23,16 @@ export class NoticeHandler {
       };
       switch (notice.level) {
         case 'error':
-          await dbLogger.error(notice.message, logData, { source: SOURCE });
+          await dbLogger.error(notice.message, logData, { source: SOURCE, ...logData });
           break;
         case 'warning':
-          await dbLogger.warn(notice.message, logData, { source: SOURCE });
+          await dbLogger.warn(notice.message, logData, { source: SOURCE, ...logData });
           break;
         case 'info':
-          await dbLogger.info(notice.message, logData, { source: SOURCE });
+          await dbLogger.info(notice.message, logData, { source: SOURCE, ...logData });
           break;
         case 'debug':
-          await dbLogger.debug(notice.message, logData, { source: SOURCE });
+          await dbLogger.debug(notice.message, logData, { source: SOURCE, ...logData });
           break;
       }
     }
@@ -53,7 +53,7 @@ export class NoticeHandler {
         error,
         importLogId: context.importLogId,
         batchIndex: context.batchIndex
-      }, { source: SOURCE });
+      }, { source: SOURCE, importLogId: context.importLogId, batchIndex: context.batchIndex });
     }
   }
 
@@ -85,7 +85,7 @@ export class NoticeHandler {
       await dbLogger.error('Failed to capture notices', {
         error: e,
         context
-      }, { source: SOURCE });
+      }, { source: SOURCE, ...context });
       throw e;
     }
   }
