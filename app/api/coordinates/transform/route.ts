@@ -11,17 +11,14 @@ export async function POST(request: Request) {
     const requestId = `transform_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
     
     // Log incoming request details
-    await dbLogger.info('Swiss transformation request received', {
-      requestId,
-      input: { eastingLv95, northingLv95, lhn95Height }
-    });
+    await dbLogger.info('CoordinatesTransformRoute: Starting coordinate transformation', { requestId }, { source: 'CoordinatesTransformRoute' });
     
     // Validate input
     if (!eastingLv95 || !northingLv95 || lhn95Height === undefined) {
       await dbLogger.warn('Invalid transformation request - missing parameters', {
         requestId,
         parameters: { eastingLv95, northingLv95, lhn95Height }
-      });
+      }, { source: 'CoordinatesTransformRoute' });
       
       return NextResponse.json(
         { error: 'Missing required coordinates' },
@@ -37,7 +34,7 @@ export async function POST(request: Request) {
       requestId,
       url: besselUrl,
       input: { eastingLv95, northingLv95, altitude: lhn95Height }
-    });
+    }, { source: 'CoordinatesTransformRoute' });
     
     const besselStart = Date.now();
     const besselResponse = await axios.get(besselUrl);
@@ -49,7 +46,7 @@ export async function POST(request: Request) {
       status: besselResponse.status,
       duration: `${besselDuration}ms`,
       responseData: besselResponse.data
-    });
+    }, { source: 'CoordinatesTransformRoute' });
     
     if (besselResponse.status !== 200) {
       await dbLogger.error('Bessel API failed', {
@@ -57,7 +54,7 @@ export async function POST(request: Request) {
         status: besselResponse.status,
         statusText: besselResponse.statusText,
         url: besselUrl
-      });
+      }, { source: 'CoordinatesTransformRoute' });
       
       return NextResponse.json(
         { error: 'Bessel transformation API failed' },
@@ -72,7 +69,7 @@ export async function POST(request: Request) {
         requestId,
         responseData: besselResponse.data,
         url: besselUrl
-      });
+      }, { source: 'CoordinatesTransformRoute' });
       
       return NextResponse.json(
         { error: 'Invalid response from Bessel API' },
@@ -88,7 +85,7 @@ export async function POST(request: Request) {
       requestId,
       url: wgs84Url,
       input: { eastingLv95, northingLv95, altitude: besselHeight }
-    });
+    }, { source: 'CoordinatesTransformRoute' });
     
     const wgs84Start = Date.now();
     const wgs84Response = await axios.get(wgs84Url);
@@ -100,7 +97,7 @@ export async function POST(request: Request) {
       status: wgs84Response.status,
       duration: `${wgs84Duration}ms`,
       responseData: wgs84Response.data
-    });
+    }, { source: 'CoordinatesTransformRoute' });
     
     if (wgs84Response.status !== 200) {
       await dbLogger.error('WGS84 API failed', {
@@ -108,7 +105,7 @@ export async function POST(request: Request) {
         status: wgs84Response.status,
         statusText: wgs84Response.statusText,
         url: wgs84Url
-      });
+      }, { source: 'CoordinatesTransformRoute' });
       
       return NextResponse.json(
         { error: 'WGS84 transformation API failed' },
@@ -125,31 +122,14 @@ export async function POST(request: Request) {
     
     // Log successful transformation with complete input/output data
     const totalDuration = besselDuration + wgs84Duration;
-    await dbLogger.info('Transformation complete', {
-      requestId,
-      input: { eastingLv95, northingLv95, lhn95Height },
-      intermediate: { besselHeight },
-      output: result,
-      duration: {
-        total: `${totalDuration}ms`,
-        besselCall: `${besselDuration}ms`,
-        wgs84Call: `${wgs84Duration}ms`
-      }
-    });
+    await dbLogger.info('CoordinatesTransformRoute: Transformation complete', { requestId, resultCount: Object.keys(result).length }, { source: 'CoordinatesTransformRoute' });
     
     return NextResponse.json(result);
   } catch (error) {
     // Generate error ID for tracking
     const errorId = `err_${Date.now()}`;
     
-    await dbLogger.error('Coordinate transformation error', {
-      errorId,
-      error: error instanceof Error ? {
-        message: error.message,
-        name: error.name,
-        stack: error.stack
-      } : error
-    });
+    await dbLogger.error('CoordinatesTransformRoute: Error transforming coordinates', { error }, { source: 'CoordinatesTransformRoute' });
     
     return NextResponse.json(
       { error: 'Coordinate transformation failed', errorId },

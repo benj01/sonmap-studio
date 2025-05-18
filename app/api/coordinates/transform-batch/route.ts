@@ -28,24 +28,24 @@ interface TransformResponse {
 async function transformSingleCoordinate(coordinate: CoordinateInput, requestId: string): Promise<TransformResponse> {
   try {
     const { eastingLv95, northingLv95, lhn95Height } = coordinate;
-    await dbLogger.info('Starting single coordinate transformation', { requestId, coordinate });
+    await dbLogger.info('Starting single coordinate transformation', { requestId, coordinate }, { source: 'CoordinatesTransformBatchRoute' });
     // First API call: LHN95 to Bessel
     const besselUrl = `https://geodesy.geo.admin.ch/reframe/lhn95tobessel?easting=${eastingLv95}&northing=${northingLv95}&altitude=${lhn95Height}&format=json`;
     const besselResponse = await axios.get(besselUrl);
     if (besselResponse.status !== 200) {
-      await dbLogger.error('Bessel API failed', { requestId, coordinate, status: besselResponse.status, statusText: besselResponse.statusText });
+      await dbLogger.error('Bessel API failed', { requestId, coordinate, status: besselResponse.status, statusText: besselResponse.statusText }, { source: 'CoordinatesTransformBatchRoute' });
       throw new Error(`Bessel API failed: ${besselResponse.statusText}`);
     }
     const besselHeight = besselResponse.data.altitude;
     if (besselHeight === undefined) {
-      await dbLogger.error('Bessel API missing altitude in response', { requestId, coordinate, response: besselResponse.data });
+      await dbLogger.error('Bessel API missing altitude in response', { requestId, coordinate, response: besselResponse.data }, { source: 'CoordinatesTransformBatchRoute' });
       throw new Error('Bessel API missing altitude in response');
     }
     // Second API call: LV95 to WGS84
     const wgs84Url = `https://geodesy.geo.admin.ch/reframe/lv95towgs84?easting=${eastingLv95}&northing=${northingLv95}&altitude=${besselHeight}&format=json`;
     const wgs84Response = await axios.get(wgs84Url);
     if (wgs84Response.status !== 200) {
-      await dbLogger.error('WGS84 API failed', { requestId, coordinate, status: wgs84Response.status, statusText: wgs84Response.statusText });
+      await dbLogger.error('WGS84 API failed', { requestId, coordinate, status: wgs84Response.status, statusText: wgs84Response.statusText }, { source: 'CoordinatesTransformBatchRoute' });
       throw new Error(`WGS84 API failed: ${wgs84Response.statusText}`);
     }
     // Extract and format result
@@ -54,7 +54,7 @@ async function transformSingleCoordinate(coordinate: CoordinateInput, requestId:
       lat: wgs84Response.data.northing,
       ell_height: wgs84Response.data.altitude
     };
-    await dbLogger.info('Coordinate transformation successful', { requestId, coordinate, result });
+    await dbLogger.info('Coordinate transformation successful', { requestId, coordinate, result }, { source: 'CoordinatesTransformBatchRoute' });
     return {
       input: coordinate,
       result
@@ -65,7 +65,7 @@ async function transformSingleCoordinate(coordinate: CoordinateInput, requestId:
       coordinate,
       error: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined
-    });
+    }, { source: 'CoordinatesTransformBatchRoute' });
     return {
       input: coordinate,
       error: error instanceof Error ? error.message : 'Unknown error'
@@ -79,10 +79,10 @@ async function transformSingleCoordinate(coordinate: CoordinateInput, requestId:
 export async function POST(request: Request) {
   const requestId = uuidv4();
   try {
-    await dbLogger.info('Received batch coordinate transformation request', { requestId });
+    await dbLogger.info('Received batch coordinate transformation request', { requestId }, { source: 'CoordinatesTransformBatchRoute' });
     const { coordinates }: { coordinates: CoordinateInput[] } = await request.json();
     if (!coordinates || !Array.isArray(coordinates) || coordinates.length === 0) {
-      await dbLogger.warn('Invalid or empty coordinates array', { requestId, coordinates });
+      await dbLogger.warn('Invalid or empty coordinates array', { requestId, coordinates }, { source: 'CoordinatesTransformBatchRoute' });
       return NextResponse.json(
         { error: 'Invalid or empty coordinates array' },
         { status: 400 }
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
     // Limit batch size to prevent overloading
     const MAX_BATCH_SIZE = 100;
     if (coordinates.length > MAX_BATCH_SIZE) {
-      await dbLogger.warn('Batch size exceeds maximum', { requestId, batchSize: coordinates.length });
+      await dbLogger.warn('Batch size exceeds maximum', { requestId, batchSize: coordinates.length }, { source: 'CoordinatesTransformBatchRoute' });
       return NextResponse.json(
         { error: `Batch size exceeds maximum of ${MAX_BATCH_SIZE}` },
         { status: 400 }
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
         const { eastingLv95, northingLv95, lhn95Height } = coord;
         // Validate input
         if (typeof eastingLv95 !== 'number' || typeof northingLv95 !== 'number' || typeof lhn95Height !== 'number') {
-          await dbLogger.warn('Invalid coordinate - missing required values', { requestId, coord });
+          await dbLogger.warn('Invalid coordinate - missing required values', { requestId, coord }, { source: 'CoordinatesTransformBatchRoute' });
           return {
             input: coord,
             error: 'Invalid coordinate - missing required values'
@@ -116,7 +116,7 @@ export async function POST(request: Request) {
     // Generate summary statistics
     const successCount = results.filter(r => r.result).length;
     const failureCount = results.filter(r => r.error).length;
-    await dbLogger.info('Batch transformation complete', { requestId, total: coordinates.length, success: successCount, failed: failureCount });
+    await dbLogger.info('Batch transformation complete', { requestId, total: coordinates.length, success: successCount, failed: failureCount }, { source: 'CoordinatesTransformBatchRoute' });
     return NextResponse.json({
       results,
       summary: {
@@ -130,7 +130,7 @@ export async function POST(request: Request) {
       requestId,
       error: error instanceof Error ? error.message : 'Unknown error',
       stack: error instanceof Error ? error.stack : undefined
-    });
+    }, { source: 'CoordinatesTransformBatchRoute' });
     return NextResponse.json(
       { error: 'Batch transformation failed: ' + (error instanceof Error ? error.message : 'Unknown error') },
       { status: 500 }

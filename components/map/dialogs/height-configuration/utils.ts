@@ -215,16 +215,17 @@ export function detectZCoordinates(features: Feature[]): ZCoordinatesInfo {
   });
   // After the loop, log samples and a summary
   (async () => {
-    const isArray = Array.isArray(debugSamples);
-    const abbreviatedSamples = isArray && debugSamples.length > 6
-      ? [...debugSamples.slice(0, 5), `... (${debugSamples.length - 6} more) ...`, debugSamples[debugSamples.length - 1]]
-      : debugSamples;
-    await dbLogger.debug('detectZCoordinates samples', abbreviatedSamples);
+    // Log up to 3 sample IDs per geometry type
+    const sampleSummary = Object.entries(debugSamples).reduce((acc, [type, ids]) => {
+      acc[type] = ids.length > 3 ? [...ids.slice(0, 3), `... (${ids.length - 3} more)`] : ids;
+      return acc;
+    }, {} as Record<string, any[]>);
+    await dbLogger.debug('detectZCoordinates samples', sampleSummary);
     await dbLogger.debug('detectZCoordinates summary', {
       totalFeatures: features.length,
-      sampleCount: isArray ? debugSamples.length : undefined,
-      abbreviated: isArray ? debugSamples.length > 6 : false,
-      sampleIdsPerType: abbreviatedSamples
+      sampleTypes: Object.keys(debugSamples),
+      sampleCounts: Object.fromEntries(Object.entries(debugSamples).map(([type, ids]) => [type, ids.length])),
+      sampleIdsPerType: sampleSummary
     });
   })().catch(console.error);
   

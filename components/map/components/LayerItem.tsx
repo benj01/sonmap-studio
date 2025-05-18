@@ -35,10 +35,20 @@ export function LayerItem({ layer, className }: LayerItemProps) {
 
   useEffect(() => {
     async function logState() {
-      // summarizeFeaturesForLogging now abbreviates large coordinate arrays for logging
+      // Only log minimal identifying info for storeLayer, and summarize geojson if present
+      let geojsonSummary;
+      if (storeLayer?.metadata?.properties?.geojson && typeof storeLayer.metadata.properties.geojson === 'object') {
+        const geojson = storeLayer.metadata.properties.geojson as any;
+        if (geojson.features && Array.isArray(geojson.features)) {
+          geojsonSummary = summarizeFeaturesForLogging(geojson.features, 'info');
+        }
+      }
       await dbLogger.info('LayerItem state', {
         layerId: layer.id,
-        storeLayer,
+        storeLayerId: storeLayer?.id,
+        storeLayerName: storeLayer?.metadata?.name,
+        storeLayerType: storeLayer?.metadata?.type,
+        geojsonSummary,
         dataSummary: data && data.features ? summarizeFeaturesForLogging(data.features, 'info') : undefined,
         loading,
         error: storeError || dataError

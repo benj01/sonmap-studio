@@ -6,6 +6,7 @@ import { dbLogger } from '@/utils/logging/dbLogger';
 import { useLayerStore } from '@/store/layers/layerStore';
 import type { Feature } from 'geojson';
 import { processStoredLv95Coordinates } from '@/core/utils/coordinates';
+import { summarizeFeaturesForLogging, abbreviateCoordinatesForLog } from '../utils/logging';
 
 const SOURCE = 'useLayerData';
 
@@ -292,12 +293,19 @@ export function useLayerData(layerId: string) {
                 feature.properties?.lv95_easting && 
                 feature.properties?.lv95_northing && 
                 feature.properties?.lv95_height) {
+              // Ensure feature is a valid GeoJSON Feature for logging
+              const validFeature: Feature = {
+                type: 'Feature',
+                geometry: typeof feature.geojson === 'string' ? JSON.parse(feature.geojson) : feature.geojson,
+                properties: feature.properties || {},
+                id: feature.id || undefined
+              };
               try {
-                await dbLogger.debug('Processing feature with LV95 stored coordinates', { ...feature }, { source: SOURCE });
+                await dbLogger.debug('Processing feature with LV95 stored coordinates', { summary: summarizeFeaturesForLogging([validFeature], 'info') }, { source: SOURCE });
                 geoJsonFeature = await processStoredLv95Coordinates(geoJsonFeature);
-                await dbLogger.debug('Transformed LV95 coordinates to WGS84 with accurate height', { ...geoJsonFeature.properties }, { source: SOURCE });
+                await dbLogger.debug('Transformed LV95 coordinates to WGS84 with accurate height', { properties: { ...geoJsonFeature.properties }, geometry: abbreviateCoordinatesForLog(geoJsonFeature.geometry) }, { source: SOURCE });
               } catch (transformError) {
-                await dbLogger.warn('Failed to transform LV95 coordinates, using original feature', { ...feature }, { source: SOURCE });
+                await dbLogger.warn('Failed to transform LV95 coordinates, using original feature', { summary: summarizeFeaturesForLogging([validFeature], 'info') }, { source: SOURCE });
                 // Continue with the original feature
               }
             }

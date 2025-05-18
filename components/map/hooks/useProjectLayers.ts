@@ -51,14 +51,14 @@ export function useProjectLayers(projectId: string) {
     async function initializeProjectLayers() {
       // Skip if already loading
       if (isLoadingRef.current) {
-        await dbLogger.debug('Project layers loading already in progress', { projectId });
+        await dbLogger.debug('Project layers loading already in progress', { projectId }, { source: 'useProjectLayers' });
         return;
       }
 
       // Skip first mount in development due to strict mode
       if (process.env.NODE_ENV === 'development' && mountCount.current === 0) {
         mountCount.current += 1;
-        await dbLogger.debug('Skipping first mount in development', { projectId });
+        await dbLogger.debug('Skipping first mount in development', { projectId }, { source: 'useProjectLayers' });
         return;
       }
 
@@ -67,14 +67,14 @@ export function useProjectLayers(projectId: string) {
         await dbLogger.info('Project ID changed, resetting initialization', {
           oldProjectId: currentProjectId.current,
           newProjectId: projectId
-        });
+        }, { source: 'useProjectLayers' });
         setIsInitialized(false);
         currentProjectId.current = projectId;
       }
 
       // Skip if already initialized for this project
       if (isInitialized && currentProjectId.current === projectId) {
-        await dbLogger.debug('Project layers already initialized for this project', { projectId });
+        await dbLogger.debug('Project layers already initialized for this project', { projectId }, { source: 'useProjectLayers' });
         return;
       }
 
@@ -91,7 +91,7 @@ export function useProjectLayers(projectId: string) {
 
     async function loadProjectLayers() {
       try {
-        await dbLogger.info('Starting to load project layers', { projectId });
+        await dbLogger.info('Starting to load project layers', { projectId }, { source: 'useProjectLayers' });
 
         // Get all imported files for the project
         const { data: importedFiles, error: filesError } = await supabase
@@ -102,12 +102,12 @@ export function useProjectLayers(projectId: string) {
           .not('import_metadata', 'is', null);
 
         if (filesError) {
-          await dbLogger.error('Error fetching imported files', { error: filesError, projectId });
+          await dbLogger.error('Error fetching imported files', { error: filesError, projectId }, { source: 'useProjectLayers' });
           throw filesError;
         }
 
         if (!importedFiles?.length) {
-          await dbLogger.info('No imported files found for project', { projectId });
+          await dbLogger.info('No imported files found for project', { projectId }, { source: 'useProjectLayers' });
           if (isMounted) {
             setInitialLoadComplete(true);
             setIsInitialized(true);
@@ -124,12 +124,12 @@ export function useProjectLayers(projectId: string) {
             hasImportMetadata: !!f.import_metadata,
             collectionId: f.import_metadata?.collection_id
           }))
-        });
+        }, { source: 'useProjectLayers' });
 
         // Process each imported file
         for (const importedFile of importedFiles) {
           if (!isMounted) {
-            await dbLogger.info('Component unmounted, stopping layer loading', { projectId });
+            await dbLogger.info('Component unmounted, stopping layer loading', { projectId }, { source: 'useProjectLayers' });
             return;
           }
 
@@ -138,7 +138,7 @@ export function useProjectLayers(projectId: string) {
               projectId,
               fileId: importedFile.id,
               importMetadata: importedFile.import_metadata
-            });
+            }, { source: 'useProjectLayers' });
             continue;
           }
 
@@ -163,7 +163,7 @@ export function useProjectLayers(projectId: string) {
               projectId,
               error: collectionsError,
               fileId: importedFile.id 
-            });
+            }, { source: 'useProjectLayers' });
             continue;
           }
 
@@ -172,7 +172,7 @@ export function useProjectLayers(projectId: string) {
               projectId,
               fileId: importedFile.id,
               collectionId: importedFile.import_metadata.collection_id
-            });
+            }, { source: 'useProjectLayers' });
             continue;
           }
 
@@ -183,12 +183,12 @@ export function useProjectLayers(projectId: string) {
             name: collections.name,
             layerCount: collections.layers.length,
             layers: collections.layers.map(l => ({ id: l.id, name: l.name, type: l.type }))
-          });
+          }, { source: 'useProjectLayers' });
 
           // Add each layer to the store
           for (const layer of collections.layers as ProjectLayer[]) {
             if (!isMounted) {
-              await dbLogger.info('Component unmounted, stopping layer loading', { projectId });
+              await dbLogger.info('Component unmounted, stopping layer loading', { projectId }, { source: 'useProjectLayers' });
               return;
             }
 
@@ -198,25 +198,25 @@ export function useProjectLayers(projectId: string) {
               name: layer.name,
               type: layer.type,
               fileId: importedFile.id
-            });
+            }, { source: 'useProjectLayers' });
 
             // Fetch GeoJSON for vector layers
             let geojson = undefined;
             if (layer.type === 'vector') {
-              await dbLogger.info('Fetching GeoJSON for vector layer', { projectId, layerId: layer.id });
+              await dbLogger.info('Fetching GeoJSON for vector layer', { projectId, layerId: layer.id }, { source: 'useProjectLayers' });
               const { data: geojsonData, error: geojsonError } = await supabase.rpc('get_layer_features_geojson', { p_layer_id: layer.id });
               if (geojsonError) {
-                await dbLogger.error('Error fetching GeoJSON for layer', { projectId, layerId: layer.id, error: geojsonError });
+                await dbLogger.error('Error fetching GeoJSON for layer', { projectId, layerId: layer.id, error: geojsonError }, { source: 'useProjectLayers' });
               } else {
                 geojson = geojsonData;
-                await dbLogger.info('Fetched GeoJSON for layer', { projectId, layerId: layer.id, hasGeojson: !!geojson });
+                await dbLogger.info('Fetched GeoJSON for layer', { projectId, layerId: layer.id, hasGeojson: !!geojson }, { source: 'useProjectLayers' });
                 if (geojson && Array.isArray(geojson.features)) {
                   layer.features = geojson.features;
                   await dbLogger.debug('Set layer.features from GeoJSON', {
                     layerId: layer.id,
                     featureCount: layer.features ? layer.features.length : 0,
                     sampleFeature: layer.features && layer.features.length > 0 ? layer.features[0] : null
-                  });
+                  }, { source: 'useProjectLayers' });
                 }
               }
             }
@@ -233,7 +233,7 @@ export function useProjectLayers(projectId: string) {
               layerId: layer.id,
               geometryTypes,
               featureCount: layer.features?.length || 0
-            });
+            }, { source: 'useProjectLayers' });
 
             // Add geojson to properties if present
             const propertiesWithGeojson = geojson ? { ...layer.properties, geojson } : layer.properties || {};
@@ -263,14 +263,14 @@ export function useProjectLayers(projectId: string) {
           projectId,
           layerCount: loadedLayers.size,
           layerIds: Array.from(loadedLayers)
-        });
+        }, { source: 'useProjectLayers' });
         if (isMounted) {
           setIsInitialized(true);
           setInitialLoadComplete(true);
         }
-        await dbLogger.info('Project layers initialization complete', { projectId });
+        await dbLogger.info('Project layers initialization complete', { projectId }, { source: 'useProjectLayers' });
       } catch (error) {
-        await dbLogger.error('Error loading project layers', { error, projectId });
+        await dbLogger.error('Error loading project layers', { error, projectId }, { source: 'useProjectLayers' });
         if (isMounted) {
           setIsInitialized(false);
           setInitialLoadComplete(true);

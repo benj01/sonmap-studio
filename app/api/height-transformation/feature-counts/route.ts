@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     // Get query parameters
     const url = new URL(req.url);
     const layerId = url.searchParams.get('layerId');
-    await dbLogger.debug('Getting feature counts by height mode', { layerId });
+    await dbLogger.debug('Getting feature counts by height mode', { layerId }, { source: 'HeightTransformationFeatureCountsRoute' });
     // Validate required parameters
     if (!layerId) {
       return NextResponse.json(
@@ -29,14 +29,14 @@ export async function GET(req: NextRequest) {
       .eq('id', layerId)
       .maybeSingle();
     if (layerError) {
-      await dbLogger.error('Failed to get layer', { error: layerError, layerId });
+      await dbLogger.error('Failed to get layer', { error: layerError, layerId }, { source: 'HeightTransformationFeatureCountsRoute' });
       return NextResponse.json(
         { error: layerError.message || 'Failed to get layer' },
         { status: 500 }
       );
     }
     if (!layer) {
-      await dbLogger.warn('Layer not found', { layerId });
+      await dbLogger.warn('Layer not found', { layerId }, { source: 'HeightTransformationFeatureCountsRoute' });
       return NextResponse.json(
         { error: `Layer with ID ${layerId} not found` },
         { status: 404 }
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
       { p_layer_id: layerId }
     );
     if (totalCountError) {
-      await dbLogger.error('Failed to count features', { error: totalCountError, layerId });
+      await dbLogger.error('Failed to count features', { error: totalCountError, layerId }, { source: 'HeightTransformationFeatureCountsRoute' });
       return NextResponse.json(
         { error: totalCountError.message || 'Failed to count features' },
         { status: 500 }
@@ -60,7 +60,7 @@ export async function GET(req: NextRequest) {
       { p_layer_id: layerId }
     );
     if (lv95CountError) {
-      await dbLogger.error('Failed to count LV95 features', { error: lv95CountError, layerId });
+      await dbLogger.error('Failed to count LV95 features', { error: lv95CountError, layerId }, { source: 'HeightTransformationFeatureCountsRoute' });
       return NextResponse.json(
         { error: lv95CountError.message || 'Failed to count LV95 features' },
         { status: 500 }
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
         }
       );
       if (countError) {
-        await dbLogger.warn('Failed to count features by height mode', { error: countError, heightMode: mode });
+        await dbLogger.warn('Failed to count features by height mode', { error: countError, heightMode: mode }, { source: 'HeightTransformationFeatureCountsRoute' });
         heightModeCounts[mode] = -1; // Indicate error
       } else {
         heightModeCounts[mode] = count || 0;
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     const { data: queryData, error: queryError } = await supabase
       .rpc('get_height_mode_distribution', { p_layer_id: layerId });
     if (queryError) {
-      await dbLogger.warn('Failed to query features by height mode', { error: queryError });
+      await dbLogger.warn('Failed to query features by height mode', { error: queryError }, { source: 'HeightTransformationFeatureCountsRoute' });
     }
     const result = {
       layer_id: layerId,
@@ -102,7 +102,7 @@ export async function GET(req: NextRequest) {
       layerId, 
       totalCount, 
       lv95Count
-    });
+    }, { source: 'HeightTransformationFeatureCountsRoute' });
     return NextResponse.json(result);
   } catch (error: unknown) {
     await dbLogger.error('Unexpected error getting feature counts', {
@@ -111,7 +111,7 @@ export async function GET(req: NextRequest) {
         stack: error.stack,
         name: error.name
       } : error
-    });
+    }, { source: 'HeightTransformationFeatureCountsRoute' });
     return NextResponse.json(
       { error: 'Unexpected error getting feature counts' },
       { status: 500 }

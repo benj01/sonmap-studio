@@ -295,7 +295,7 @@ export function CesiumView() {
 
     const initViewer = async () => {
       try {
-        await dbLogger.info('CesiumView: Starting initialization process');
+        await dbLogger.info('CesiumView: Starting initialization process', undefined, { source: SOURCE });
         setCesiumStatus('initializing');
 
         viewerInstanceId.current = `cesium-viewer-${Date.now()}`;
@@ -331,7 +331,7 @@ export function CesiumView() {
         if (viewerInstanceId.current) {
           setCesiumInstance(viewer, viewerInstanceId.current);
           setCesiumStatus('ready');
-          await dbLogger.info('CesiumView: Viewer initialized successfully');
+          await dbLogger.info('CesiumView: Viewer initialized successfully', undefined, { source: SOURCE });
         }
       } catch (error) {
         await dbLogger.error('CesiumView: Error initializing viewer', {
@@ -370,7 +370,7 @@ export function CesiumView() {
         }
       });
 
-      dbLogger.info('CesiumView: Cleanup complete').catch(console.error);
+      dbLogger.info('CesiumView: Cleanup complete', undefined, { source: SOURCE }).catch(console.error);
     };
   }, [
     setCesiumInstance,
@@ -604,7 +604,7 @@ export function CesiumView() {
         viewer.imageryLayers.removeAll();
         
         if (mapType === 'osm') {
-          await dbLogger.info('Switching to OpenStreetMap imagery');
+          await dbLogger.info('Switching to OpenStreetMap imagery', undefined, { source: SOURCE });
           const osmProvider = new Cesium.OpenStreetMapImageryProvider({
             url: 'https://tile.openstreetmap.org/',
             credit: new Cesium.Credit('© OpenStreetMap contributors'),
@@ -612,7 +612,7 @@ export function CesiumView() {
           });
           viewer.imageryLayers.addImageryProvider(osmProvider);
         } else {
-          await dbLogger.info('Switching to Satellite imagery');
+          await dbLogger.info('Switching to Satellite imagery', undefined, { source: SOURCE });
           const worldImagery = await Cesium.createWorldImageryAsync();
           viewer.imageryLayers.addImageryProvider(worldImagery);
         }

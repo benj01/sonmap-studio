@@ -5,6 +5,7 @@ import { dbLogger } from '@/utils/logging/dbLogger';
 import { useRouter } from 'next/navigation';
 import toast from 'react-hot-toast';
 import { GeoFeature } from '@/types/geo';
+import { abbreviateCoordinatesForLog } from '@/components/map/utils/logging';
 
 interface ReviewStepProps {
   onNext: () => void;
@@ -90,12 +91,7 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
         features: payload.features.length > 0 
           ? [{ 
               id: payload.features[0].id, 
-              geometry: { 
-                type: payload.features[0].geometry.type,
-                coordinates: 'coordinates' in payload.features[0].geometry
-                  ? JSON.stringify((payload.features[0].geometry as { coordinates: unknown }).coordinates).substring(0, 100) + '...'
-                  : undefined
-              },
+              geometry: abbreviateCoordinatesForLog(payload.features[0].geometry),
               properties: payload.features[0].properties
             }] 
           : []
@@ -104,35 +100,12 @@ export function ReviewStep({ onBack, onClose, onRefreshFiles }: ReviewStepProps)
       // Debug log: sample first 3-5 coordinate pairs of the first feature
       if (features.length > 0) {
         const firstFeature = features[0];
-        let coordSample: unknown = undefined;
-        if (firstFeature.geometry && 'coordinates' in firstFeature.geometry) {
-          const coords = (firstFeature.geometry as any).coordinates;
-          switch (firstFeature.geometry.type) {
-            case 'Point':
-              coordSample = coords;
-              break;
-            case 'LineString':
-              coordSample = Array.isArray(coords) ? coords.slice(0, 5) : coords;
-              break;
-            case 'MultiLineString':
-              coordSample = Array.isArray(coords) && coords.length > 0 ? coords[0].slice(0, 5) : coords;
-              break;
-            case 'Polygon':
-              coordSample = Array.isArray(coords) && coords.length > 0 ? coords[0].slice(0, 5) : coords;
-              break;
-            case 'MultiPolygon':
-              coordSample = Array.isArray(coords) && coords.length > 0 && coords[0].length > 0 ? coords[0][0].slice(0, 5) : coords;
-              break;
-            default:
-              coordSample = coords;
-          }
-        }
         await dbLogger.debug('Import coordinate sample', {
           source: 'GeoImportReviewStep',
           featureId: firstFeature.id,
           geometryType: firstFeature.geometry?.type,
           sourceSrid: payload.sourceSrid,
-          coordSample,
+          abbreviatedGeometry: abbreviateCoordinatesForLog(firstFeature.geometry),
         });
       }
       

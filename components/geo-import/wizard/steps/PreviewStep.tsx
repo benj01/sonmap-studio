@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import { useWizard } from '../WizardContext';
 import { MapPreview } from '../../components/map-preview';
 import { dbLogger } from '@/utils/logging/dbLogger';
+import { abbreviateCoordinatesForLog } from '@/components/map/utils/logging';
 import { GeoFeature, DatasetMetadata } from '@/types/geo-import';
 
 interface PreviewStepProps {
@@ -32,41 +33,25 @@ export function PreviewStep({ onNext, onBack }: PreviewStepProps) {
             const coords = firstGeometry.coordinates;
             await dbLogger.debug('First point coordinates', {
               source: 'PreviewStep',
-              coordinates: Array.isArray(coords) && coords.length > 6
-                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
-                : coords,
-              abbreviated: Array.isArray(coords) && coords.length > 6,
-              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
+              coordinates: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords })
             });
           } else if ((firstGeometry.type === 'LineString' || firstGeometry.type === 'MultiPoint') && 'coordinates' in firstGeometry) {
             const coords = firstGeometry.coordinates;
             await dbLogger.debug('First line/multipoint coordinates (first 3 points)', {
               source: 'PreviewStep',
-              coordinates: Array.isArray(coords) && coords.length > 6
-                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
-                : coords,
-              abbreviated: Array.isArray(coords) && coords.length > 6,
-              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
+              coordinates: abbreviateCoordinatesForLog({ type: firstGeometry.type, coordinates: coords })
             });
           } else if ((firstGeometry.type === 'Polygon' || firstGeometry.type === 'MultiLineString') && 'coordinates' in firstGeometry) {
             const coords = Array.isArray(firstGeometry.coordinates) && Array.isArray(firstGeometry.coordinates[0]) ? firstGeometry.coordinates[0] : [];
             await dbLogger.debug('First polygon/multiline coordinates (first ring, first 3 points)', {
               source: 'PreviewStep',
-              coordinates: Array.isArray(coords) && coords.length > 6
-                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
-                : coords,
-              abbreviated: Array.isArray(coords) && coords.length > 6,
-              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
+              coordinates: abbreviateCoordinatesForLog({ type: firstGeometry.type, coordinates: coords })
             });
           } else if (firstGeometry.type === 'MultiPolygon' && 'coordinates' in firstGeometry) {
             const coords = Array.isArray(firstGeometry.coordinates) && Array.isArray(firstGeometry.coordinates[0]) && Array.isArray(firstGeometry.coordinates[0][0]) ? firstGeometry.coordinates[0][0] : [];
             await dbLogger.debug('First multipolygon coordinates (first polygon, first ring, first 3 points)', {
               source: 'PreviewStep',
-              coordinates: Array.isArray(coords) && coords.length > 6
-                ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
-                : coords,
-              abbreviated: Array.isArray(coords) && coords.length > 6,
-              totalCoordinates: Array.isArray(coords) ? coords.length : undefined
+              coordinates: abbreviateCoordinatesForLog({ type: firstGeometry.type, coordinates: coords })
             });
           }
         }

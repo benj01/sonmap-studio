@@ -9,6 +9,7 @@ import { AlertTriangle } from 'lucide-react';
 import bbox from '@turf/bbox';
 import { dbLogger } from '@/utils/logging/dbLogger';
 import { isLogLevelEnabled } from '@/core/logging/logLevelConfig';
+import { abbreviateCoordinatesForLog } from '@/components/map/utils/logging';
 
 interface MapPreviewProps {
   features: GeoFeature[];
@@ -334,11 +335,12 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             }
           });
         });
+        await dbLogger.info('MapPreview: Map preview initialized', undefined, { source: 'MapPreview' });
       } catch (error) {
         if (isActive) {
           const errorMessage = error instanceof Error ? error.message : 'Failed to initialize map';
           setMapError(errorMessage);
-          await dbLogger.error('Failed to initialize map', { error });
+          await dbLogger.error('MapPreview: Error initializing map preview', { error }, { source: 'MapPreview' });
         }
       }
     };
@@ -445,7 +447,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
             if (feature.geometry.type === 'Point' && 'coordinates' in feature.geometry) {
               const coords = feature.geometry.coordinates;
               if (isLogLevelEnabled('MapPreview', 'debug')) {
-                await dbLogger.debug('MapPreview: Feature Point coordinates', { coordinates: coords });
+                await dbLogger.debug('MapPreview: Feature Point coordinates', { coordinates: abbreviateCoordinatesForLog({ type: 'Point', coordinates: coords }) });
               }
               if (Array.isArray(coords) && coords.length >= 2) {
                 const [lng, lat] = coords;
@@ -462,7 +464,7 @@ export function MapPreview({ features, bounds, selectedFeatureIds, onFeaturesSel
                         'coordinates' in feature.geometry) {
               const coords = feature.geometry.coordinates.slice(0, 3);
               if (isLogLevelEnabled('MapPreview', 'debug')) {
-                await dbLogger.debug('MapPreview: Feature coordinates (first 3 points)', { coordinates: coords });
+                await dbLogger.debug('MapPreview: Feature coordinates (first 3 points)', { coordinates: abbreviateCoordinatesForLog({ type: 'LineString', coordinates: coords }) });
               }
               if (Array.isArray(coords) && coords.length > 0 && Array.isArray(coords[0]) && coords[0].length >= 2) {
                 const [lng, lat] = coords[0];

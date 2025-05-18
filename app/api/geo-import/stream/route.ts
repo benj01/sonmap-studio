@@ -9,7 +9,7 @@ const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 // Check if we have the required environment variables
 if (!supabaseUrl || !supabaseServiceKey) {
-  await dbLogger.error('Missing Supabase environment variables');
+  await dbLogger.error('Missing Supabase environment variables', undefined, { source: 'GeoImportStreamRoute' });
 }
 
 export async function POST(request: NextRequest) {
@@ -20,7 +20,7 @@ export async function POST(request: NextRequest) {
     const authHeader = request.headers.get('Authorization');
     
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      await dbLogger.error('Missing or invalid Authorization header', { requestId });
+      await dbLogger.error('Missing or invalid Authorization header', { requestId }, { source: 'GeoImportStreamRoute' });
       return NextResponse.json(
         { error: 'Missing or invalid Authorization header' },
         { status: 401 }
@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     const { data: { user }, error: userError } = await supabase.auth.getUser(token);
     
     if (userError || !user) {
-      await dbLogger.error('Authentication error', { requestId, error: userError });
+      await dbLogger.error('Authentication error', { requestId, error: userError }, { source: 'GeoImportStreamRoute' });
       return NextResponse.json(
         { error: 'Authentication error', details: userError },
         { status: 401 }
@@ -56,14 +56,14 @@ export async function POST(request: NextRequest) {
     }
     
     userId = user.id;
-    await dbLogger.info('Authenticated user', { requestId, userId });
+    await dbLogger.info('Authenticated user', { requestId, userId }, { source: 'GeoImportStreamRoute' });
     
     // Parse request body
     let requestBody;
     try {
       requestBody = await request.json();
     } catch (jsonError) {
-      await dbLogger.error('Invalid JSON in request body', { requestId, userId, error: jsonError });
+      await dbLogger.error('Invalid JSON in request body', { requestId, userId, error: jsonError }, { source: 'GeoImportStreamRoute' });
       return NextResponse.json(
         { error: 'Invalid JSON in request body' },
         { status: 400 }
@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     
     // Validate required parameters
     if (!projectFileId || !features || !Array.isArray(features) || !collectionName) {
-      await dbLogger.warn('Missing required parameters', { requestId, userId, projectFileId, collectionName });
+      await dbLogger.warn('Missing required parameters', { requestId, userId, projectFileId, collectionName }, { source: 'GeoImportStreamRoute' });
       return NextResponse.json(
         {
           error: 'Missing required parameters',
@@ -110,7 +110,7 @@ export async function POST(request: NextRequest) {
       .single();
       
     if (logError) {
-      await dbLogger.error('Failed to create import log', { requestId, userId, error: logError, projectFileId });
+      await dbLogger.error('Failed to create import log', { requestId, userId, error: logError, projectFileId }, { source: 'GeoImportStreamRoute' });
       return NextResponse.json(
         { error: 'Failed to create import log', details: logError },
         { status: 500 }
@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
       importLogId: importLog.id,
       featureCount: features.length,
       batchSize
-    });
+    }, { source: 'GeoImportStreamRoute' });
     
     // Call the same RPC function used by test import
     const { data, error } = await supabase.rpc(
@@ -139,7 +139,7 @@ export async function POST(request: NextRequest) {
     );
     
     if (error) {
-      await dbLogger.error('Import failed', { requestId, userId, error, importLogId: importLog.id });
+      await dbLogger.error('Import failed', { requestId, userId, error, importLogId: importLog.id }, { source: 'GeoImportStreamRoute' });
       
       // Update import log with error
       await supabase
@@ -161,7 +161,7 @@ export async function POST(request: NextRequest) {
     }
     
     if (!data || !Array.isArray(data) || data.length === 0) {
-      await dbLogger.error('No results returned from import function', { requestId, userId, importLogId: importLog.id });
+      await dbLogger.error('No results returned from import function', { requestId, userId, importLogId: importLog.id }, { source: 'GeoImportStreamRoute' });
       
       // Update import log with error
       await supabase
@@ -190,7 +190,7 @@ export async function POST(request: NextRequest) {
       failedCount: result.failed_count,
       collectionId: result.collection_id,
       layerId: result.layer_id
-    });
+    }, { source: 'GeoImportStreamRoute' });
     
     // Update import log with success
     await supabase
@@ -228,7 +228,7 @@ export async function POST(request: NextRequest) {
         userId,
         error: updateError,
         projectFileId
-      });
+      }, { source: 'GeoImportStreamRoute' });
       // Continue anyway as the import was successful
     } else {
       await dbLogger.info('Updated project_files record', {
@@ -237,7 +237,7 @@ export async function POST(request: NextRequest) {
         projectFileId,
         is_imported: true,
         import_metadata: importMetadata
-      });
+      }, { source: 'GeoImportStreamRoute' });
     }
     
     return NextResponse.json({
@@ -258,7 +258,7 @@ export async function POST(request: NextRequest) {
       userId,
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined
-    });
+    }, { source: 'GeoImportStreamRoute' });
     
     return NextResponse.json(
       { 

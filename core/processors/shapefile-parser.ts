@@ -236,16 +236,12 @@ export class ShapefileParser extends BaseGeoDataParser {
         message: 'Starting shapefile parsing'
       }, context);
       await Promise.resolve(); // yield
-      await dbLogger.info('Starting parse operation', {
-        mainFileSize: mainFile.byteLength,
-        companionFiles: companionFiles ? Object.keys(companionFiles) : [],
-        options
-      }, { source: SOURCE });
+      await dbLogger.info('ShapefileParser: Starting parse', { fileName: options?.filename, fileSize: mainFile.byteLength }, { source: SOURCE });
 
       // Validate companion files
       if (!companionFiles || !companionFiles['.dbf']) {
         const error = 'Missing required .dbf file';
-        await dbLogger.error('Invalid shapefile format', { error }, { source: SOURCE });
+        await dbLogger.error('ShapefileParser: Invalid shapefile format', { error }, { source: SOURCE });
         throw new InvalidFileFormatError('shapefile', error);
       }
 
@@ -319,9 +315,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       }, context);
       await Promise.resolve(); // yield
 
-      await dbLogger.info('Shapefile parsed successfully', {
-        featureCount: geojson.features.length
-      }, { source: SOURCE });
+      await dbLogger.info('ShapefileParser: Finished parse', { fileName: options?.filename, featureCount: geojson.features.length }, { source: SOURCE });
       
       // Check for PointZ shapes and extract Z values if needed
       // Get the shape type (bytes 32-35, little-endian)
@@ -400,13 +394,8 @@ export class ShapefileParser extends BaseGeoDataParser {
         const coords = getCoordinates(firstFeature.geometry);
         if (isDebugEnabled('ShapefileParser')) {
           await dbLogger.debug('📍 ORIGINAL first feature coordinates sample', {
-            coords: coords.length > 10
-              ? [...coords.slice(0, 5), `... (${coords.length - 6} more) ...`, coords[coords.length - 1]]
-              : coords,
-            abbreviated: coords.length > 10,
-            totalCoordinates: coords.length
-          });
-          await dbLogger.debug('   First feature geometry type', { geometryType: firstFeature.geometry.type });
+            coords: abbreviateCoordinatesForLog(firstFeature.geometry),
+          }, { source: SOURCE });
         }
       }
       // --- END OF CRITICAL DEBUG LOG ---
@@ -553,11 +542,7 @@ export class ShapefileParser extends BaseGeoDataParser {
       };
 
     } catch (error) {
-      await dbLogger.error('Failed to parse shapefile', {
-        error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        errorStack: error instanceof Error ? error.stack : undefined
-      }, { source: SOURCE });
+      await dbLogger.error('ShapefileParser: Error parsing shapefile', { error }, { source: SOURCE });
       throw error;
     }
   }

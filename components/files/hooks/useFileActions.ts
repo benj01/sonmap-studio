@@ -122,12 +122,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
     setIsLoading(true);
     let user: User | null = null; // Explicit any for user
     try {
-      await dbLogger.info('Starting file upload transaction', {
-        fileName: uploadedFile.name,
-        fileType: uploadedFile.type,
-        fileSize: uploadedFile.size,
-        hasRelatedFiles: !!uploadedFile.relatedFiles
-      }, { projectId });
+      await dbLogger.info('useFileActions: File upload started', { fileName: uploadedFile.name, fileSize: uploadedFile.size, hasRelatedFiles: !!uploadedFile.relatedFiles }, { source: 'useFileActions' });
 
       // Start a transaction
       const { error: txError } = await supabase.rpc('begin_transaction');
@@ -246,7 +241,7 @@ export function useFileActions({ projectId, onSuccess, onError }: UseFileActions
         throw innerError;
       }
     } catch (error) {
-      await dbLogger.error('File upload failed', { error }, { projectId, userId: user && typeof user === 'object' && 'id' in user ? (user as User).id : undefined });
+      await dbLogger.error('useFileActions: File upload failed', { error }, { source: 'useFileActions' });
       throw error;
     } finally {
       setIsLoading(false);

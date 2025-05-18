@@ -135,7 +135,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
 
   const handleSave = async () => {
     if (!layer) {
-      await dbLogger.error('Cannot save style - layer not found', { baseLayerId });
+      await dbLogger.error('Cannot save style - layer not found', { baseLayerId }, { source: 'LayerSettingsDialog' });
       return;
     }
 
@@ -145,7 +145,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       geometryTypes,
       currentStyle: layer.metadata?.style,
       newColor: color
-    });
+    }, { source: 'LayerSettingsDialog' });
 
     // Create paint object based on detected geometry types
     const paint: Record<string, unknown> = {};
@@ -183,7 +183,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
           layerType: layer.metadata?.type,
           geometryTypes,
           existingPaint
-        });
+        }, { source: 'LayerSettingsDialog' });
         paint['line-color'] = color;
         paint['line-width'] = 2;
       }
@@ -196,7 +196,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
       layerExists: !!layer,
       updateStyleExists: !!updateStyle,
       metadata: layer.metadata
-    });
+    }, { source: 'LayerSettingsDialog' });
 
     try {
       updateStyle({ paint });
@@ -204,13 +204,13 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
         baseLayerId,
         paint,
         geometryTypes
-      });
+      }, { source: 'LayerSettingsDialog' });
     } catch (error) {
       await dbLogger.error('Error updating style', {
         baseLayerId,
         error: error instanceof Error ? error.message : error,
         stack: error instanceof Error ? error.stack : undefined
-      });
+      }, { source: 'LayerSettingsDialog' });
     }
 
     onOpenChange(false);
@@ -456,7 +456,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
     });
     
     if (selectedLayerIds.length === 0) {
-      await dbLogger.debug('No layers selected for height configuration');
+      await dbLogger.debug('No layers selected for height configuration', undefined, { source: 'LayerSettingsDialog' });
       return;
     }
     
@@ -591,7 +591,7 @@ export function LayerSettingsDialog({ layerId, open, onOpenChange, initialTab }:
   const handleApplyToSelectedLayers = async () => {
     // Get the height configuration from the current layer
     if (!layer?.metadata?.height || !layer.metadata.height.sourceType) {
-      void dbLogger.error('Cannot apply to other layers - current layer has no height configuration').catch(() => {});
+      void dbLogger.error('Cannot apply to other layers - current layer has no height configuration', undefined, { source: 'LayerSettingsDialog' }).catch(() => {});
       return;
     }
     
