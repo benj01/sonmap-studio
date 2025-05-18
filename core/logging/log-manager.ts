@@ -537,22 +537,7 @@ const adapterRegistry: Record<string, ILogAdapter> = {};
 // Console adapter (default)
 class ConsoleAdapter implements ILogAdapter {
   async log(entry: LogEntry): Promise<void> {
-    const { level, source, message, data, context } = entry;
-    const ctx = context ? ` | ctx: ${JSON.stringify(context)}` : '';
-    if (level === 'warn') {
-      if (data) {
-        console.warn(`[${source}] ${message}${ctx}`, data);
-      } else {
-        console.warn(`[${source}] ${message}${ctx}`);
-      }
-    } else if (level === 'error') {
-      if (data) {
-        console.error(`[${source}] ${message}${ctx}`, data);
-      } else {
-        console.error(`[${source}] ${message}${ctx}`);
-      }
-    }
-    // For info/debug, do not log to console
+    // Do nothing: suppress all console output
   }
 }
 adapterRegistry['console'] = new ConsoleAdapter();

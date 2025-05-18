@@ -16,6 +16,7 @@ import { useLayerStore } from '@/store/layers/layerStore';
 import { processFeatureCollectionHeights, needsHeightTransformation } from '../../services/heightTransformService';
 import * as GeoJSON from 'geojson';
 import debounce from 'lodash/debounce';
+import { useMapInstance } from '@/store/map/hooks';
 
 const SOURCE = 'CesiumView';
 
@@ -237,6 +238,7 @@ export function CesiumView() {
   const { layers } = useLayers();
   const isInitialLoadComplete = useLayerStore(state => state.isInitialLoadComplete);
   const updateLayerStatus = useLayerStore(state => state.updateLayerStatus);
+  const { cesiumStatus } = useMapInstance();
   
   // Add a stable signature for layers content
   const layersSignature = useMemo(() => {
@@ -419,12 +421,13 @@ export function CesiumView() {
   // Layer management effect
   useEffect(() => {
     const viewer = viewerRef.current;
-    if (!viewer || viewer.isDestroyed() || !isInitialLoadComplete) return;
+    if (!viewer || viewer.isDestroyed() || !isInitialLoadComplete || cesiumStatus !== 'ready') return;
 
     dbLogger.debug('CesiumView: Layer management effect running', {
       isInitialLoadComplete,
       layersCount: layers.length,
-      layersSignature
+      layersSignature,
+      cesiumStatus
     }).catch(() => {});
 
     const removeCesiumLayer = async (layerId: string) => {
@@ -566,7 +569,7 @@ export function CesiumView() {
         removeCesiumLayer(id).catch(console.error);
       }
     };
-  }, [layersSignature, isInitialLoadComplete]); // Depend on signature, not just reference
+  }, [layersSignature, isInitialLoadComplete, cesiumStatus]); // Depend on signature, initial load, and Cesium readiness
 
   // Mouse position tracking effect
   useEffect(() => {

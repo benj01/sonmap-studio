@@ -52,7 +52,8 @@ const GROUPS = [
       'layerHooks', 'MapLayer', 'layerStore', 'LayersPanel', 'useLayers', 'useLayerData',
       'SharedLayerContext', 'CesiumContext', 'ResetButton', 'StatusMonitor',
       'HeightTransformProgress', 'CesiumViewWithProvider', 'CesiumView',
-      'HeightConfigurationDialog'
+      'HeightConfigurationDialog',
+      'MapContainer', 'useProjectLayers'
     ].includes(src),
     defaultOpen: false,
   },
